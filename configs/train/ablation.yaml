@@ -1,0 +1,22 @@
+# Ablation-friendly config: small epochs, easy to sweep
+defaults:
+  - model: mlp
+  - data: toy
+  - override hydra/job_logging: default
+
+train:
+  epochs: 10
+  device: "cuda"
+  seed: 2025
+  log_interval: 10
+  save_dir: "outputs/checkpoints_ablation"
+
+optimizer:
+  name: "adam"
+  lr: 1e-3
+  weight_decay: 0.0
+
+scheduler:
+  name: "step"
+  step_size: 5
+  gamma: 0.5
