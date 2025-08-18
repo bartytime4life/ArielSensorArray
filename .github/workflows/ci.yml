@@ -50,7 +50,7 @@ jobs:
       - name: Validate submission.csv (283 bins)
         run: poetry run python scripts/validate_submission.py outputs/submission.csv
 
-      - name: Calibrate (temperature scaling)
+      - name: Calibrate (temperature)
         run: poetry run python -m asa.calib.temperature
         continue-on-error: true
 
