@@ -1,0 +1,3 @@
+# Use console logging by default.
+defaults:
+  - console
