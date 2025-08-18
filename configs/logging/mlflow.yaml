@@ -1,14 +1,25 @@
-# MLflow logger (assumes mlflow is installed + tracking URI configured)
+# MLflow helper config. Assumes mlflow is installed and a tracking URI is set.
+# This keeps Python logging simple and relies on your training loop to call mlflow.log_*
 logging:
   version: 1
   disable_existing_loggers: false
+  formatters:
+    simple:
+      format: "[%(levelname)s] %(message)s"
   handlers:
-    mlflow:
+    console:
       class: logging.StreamHandler
+      formatter: simple
       stream: ext://sys.stdout
   root:
     level: INFO
-    handlers: [mlflow]
+    handlers: [console]
+  loggers:
+    asa:
+      level: DEBUG
+      handlers: [console]
+      propagate: false
+
 mlflow:
   tracking_uri: ${oc.env:MLFLOW_TRACKING_URI, "file:./mlruns"}
   experiment_name: "spectramind_v50"
