@@ -1,25 +1,52 @@
-.PHONY: push pushm push-amend
+.PHONY: version bump-major bump-minor bump-patch bump-set release
 
-# Reuse the last commit message automatically.
-push:
-	@branch=$$(git rev-parse --abbrev-ref HEAD); \
-	msg=$$(git log -1 --pretty=%B 2>/dev/null || echo "chore(update): sync changes"); \
-	git add -A; \
-	if git diff --cached --quiet; then echo "No changes to commit."; exit 0; fi; \
-	git commit -m "$$msg" || true; \
-	git push origin "$$branch"
+# Show current version
+version:
+	@cat VERSION
 
-# Push with a custom message: make pushm M="feat: add training loop"
-pushm:
-	@branch=$$(git rev-parse --abbrev-ref HEAD); \
-	test -n "$$M" || { echo "Usage: make pushm M='your message'"; exit 2; }; \
-	git add -A; \
-	git commit -m "$$M" || true; \
-	git push origin "$$branch"
+# Bump major version (X+1.0.0)
+bump-major:
+	@v=$$(bin/version_tools.py bump-major); \
+	git add VERSION pyproject.toml src/asa/__init__.py; \
+	git commit -m "chore(version): bump to $$v" || true; \
+	git tag -a v$$v -m "Release v$$v"; \
+	git push origin main; \
+	git push origin v$$v; \
+	echo "✅ Released v$$v"
 
-# Amend the previous commit (no new message) and push safely.
-push-amend:
-	@branch=$$(git rev-parse --abbrev-ref HEAD); \
-	git add -A; \
-	git commit --amend --no-edit || true; \
-	git push --force-with-lease origin "$$branch"
+# Bump minor version (X.Y+1.0)
+bump-minor:
+	@v=$$(bin/version_tools.py bump-minor); \
+	git add VERSION pyproject.toml src/asa/__init__.py; \
+	git commit -m "chore(version): bump to $$v" || true; \
+	git tag -a v$$v -m "Release v$$v"; \
+	git push origin main; \
+	git push origin v$$v; \
+	echo "✅ Released v$$v"
+
+# Bump patch version (X.Y.Z+1)
+bump-patch:
+	@v=$$(bin/version_tools.py bump-patch); \
+	git add VERSION pyproject.toml src/asa/__init__.py; \
+	git commit -m "chore(version): bump to $$v" || true; \
+	git tag -a v$$v -m "Release v$$v"; \
+	git push origin main; \
+	git push origin v$$v; \
+	echo "✅ Released v$$v"
+
+# Set an exact version (use: make bump-set V=0.3.0)
+bump-set:
+	@test -n "$(V)" || (echo "Usage: make bump-set V=0.3.0" && exit 2) ; \
+	v=$$(bin/version_tools.py set "$(V)"); \
+	git add VERSION pyproject.toml src/asa/__init__.py; \
+	git commit -m "chore(version): set to $$v" || true; \
+	git tag -a v$$v -m "Release v$$v"; \
+	git push origin main; \
+	git push origin v$$v; \
+	echo "✅ Released v$$v"
+
+# Tag current VERSION without bumping
+release:
+	@v=$$(cat VERSION); \
+	git tag -a v$$v -m "Release v$$v" || true; \
+	git push origin v$$v
