@@ -1,3 +1,5 @@
+[![CI](https://github.com/bartytime4life/ArielSensorArray/actions/workflows/ci.yml/badge.svg)](https://github.com/bartytime4life/ArielSensorArray/actions/workflows/ci.yml) [![Release](https://github.com/bartytime4life/ArielSensorArray/actions/workflows/release.yml/badge.svg)](https://github.com/bartytime4life/ArielSensorArray/actions/workflows/release.yml)
+
 # ArielSensorArray — NeurIPS 2025 Ariel Data Challenge
 
 Mission-grade, **reproducible** scaffold for Ariel’s sensor array challenge:
