@@ -1,4 +1,5 @@
-# File logger — writes to logs/v50_debug.log
+# Rotating file logger — writes verbose debug logs to logs/v50_debug.log
+# Good for local runs and CI artifacts (attach logs/ as artifact).
 logging:
   version: 1
   disable_existing_loggers: false
@@ -8,10 +9,17 @@ logging:
       datefmt: "%Y-%m-%d %H:%M:%S"
   handlers:
     file:
-      class: logging.FileHandler
+      class: logging.handlers.RotatingFileHandler
       formatter: detailed
       filename: logs/v50_debug.log
-      mode: a
+      maxBytes: 5242880         # 5 MB
+      backupCount: 3
+      encoding: utf-8
   root:
-    level: DEBUG
+    level: INFO
     handlers: [file]
+  loggers:
+    asa:
+      level: DEBUG
+      handlers: [file]
+      propagate: false
