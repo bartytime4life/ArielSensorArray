@@ -1,0 +1,56 @@
+[build-system]
+requires = ["poetry-core>=1.9.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+name = "arielsensorarray"
+version = "0.0.1"
+description = "NeurIPS 2025 Ariel Data Challenge — ArielSensorArray (CLI, Hydra, CI, DVC, pre-commit)"
+authors = ["SpectraMind Team"]
+license = "MIT"
+readme = "README.md"
+packages = [{ include = "asa", from = "src" }]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+hydra-core = "^1.3.2"
+typer = "^0.12.3"
+pydantic = "^2.7.0"
+jinja2 = "^3.1.4"
+psutil = "^5.9.8"
+pyyaml = "^6.0.2"
+dvc = "^3.51.3"
+rich = "^13.7.1"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.2.1"
+pytest-cov = "^5.0.0"
+ruff = "^0.6.9"
+black = "^24.8.0"
+isort = "^5.13.2"
+mypy = "^1.11.2"
+types-PyYAML = "*"
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+src_paths = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+lint.select = ["E","F","I","UP","B","SIM"]
+lint.ignore = ["E203","E501"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_configs = true
+disallow_untyped_defs = true
+ignore_missing_imports = true
+
+[tool.poetry.scripts]
+asa = "asa.cli:app"
