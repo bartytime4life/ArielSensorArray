@@ -35,13 +35,13 @@ RUN_HASH_FILE   := run_hash_summary_v50.json
 
 Colors for pretty output
 
-BOLD:=\033[1m
-DIM :=\033[2m
-RED :=\033[31m
-GRN :=\033[32m
-YEL :=\033[33m
-BLU :=\033[34m
-RST :=\033[0m
+BOLD := \033[1m
+DIM  := \033[2m
+RED  := \033[31m
+GRN  := \033[32m
+YEL  := \033[33m
+BLU  := \033[34m
+RST  := \033[0m
 
 Ensure required dirs exist before most targets
 
@@ -63,7 +63,7 @@ Help
 help:
 @echo “”
 @echo “$(BOLD)SpectraMind V50 — Make targets$(RST)”
-@echo “  $(BOLD)make e2e$(RST)            : Selftest → Train → Predict → Calibrate → Dashboard”
+@echo “  $(BOLD)make e2e$(RST)            : Selftest -> Train -> Predict -> Calibrate -> Dashboard”
 @echo “  $(BOLD)make train/predict/…$(RST) : Run individual pipeline stages”
 @echo “  $(BOLD)make fmt lint test$(RST)   : Code quality (ruff/black/isort/mypy/pytest)”
 @echo “  $(BOLD)make submit$(RST)          : Validate and bundle submission”
@@ -107,7 +107,7 @@ Code quality
 –––––––––––––––––––––––––––––––––––
 
 fmt:
-@echo “$(BLU)[FMT]$(RST) isort → black → ruff”
+@echo “$(BLU)[FMT]$(RST) isort -> black -> ruff”
 $(POETRY) run isort src tests
 $(POETRY) run black src tests
 $(POETRY) run ruff check –fix src tests
@@ -127,7 +127,7 @@ $(POETRY) run pre-commit run –all-files
 
 –––––––––––––––––––––––––––––––––––
 
-End-to-End pipeline (selftest → train → predict → validate → calibrate → report)
+End-to-End pipeline (selftest -> train -> predict -> validate -> calibrate -> report)
 
 –––––––––––––––––––––––––––––––––––
 
