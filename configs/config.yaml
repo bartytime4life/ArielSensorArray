@@ -1,0 +1,17 @@
+# =====================================================================
+# SpectraMind V50 — Top-level App Config (Hydra)
+# =====================================================================
+
+defaults:
+  - train: default        # training recipe (can be fast/full/ablation/…)
+  - logging: default      # console by default
+  - _self_
+
+# Global runtime switches (can be overridden at CLI)
+device: ${train.device}
+seed: ${train.seed}
+
+# Where common artifacts should go if not overridden by submodules
+paths:
+  outputs: outputs
+  logs: logs
