@@ -13,3 +13,8 @@ logging:
   root:
     level: INFO
     handlers: [console]
+  loggers:
+    asa:          # your package can log more verbosely
+      level: DEBUG
+      handlers: [console]
+      propagate: false
