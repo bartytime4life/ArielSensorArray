@@ -1,0 +1,8 @@
+# Real training split preset (expects .pt tensors under data/)
+data:
+  root: "data/"
+  split: "train"          # used by ArielRealDataset
+  batch_size: 32
+  num_workers: 4
+  bins: 283
+  seed: 1337
