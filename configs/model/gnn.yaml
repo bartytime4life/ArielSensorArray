@@ -1,0 +1,6 @@
+# Graph neural network baseline (spectral correlations)
+_target_: src.asa.pipeline.models.SpectralGNN
+hidden_dim: 128
+num_layers: 3
+dropout: 0.1
+gnn_type: "gat"   # options: gat, gcn, mpnn
