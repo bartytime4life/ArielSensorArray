@@ -1,0 +1,34 @@
+# configs/calib/config.yaml
+# Hydra-compatible config for calibration phase
+
+defaults:
+  - override hydra/job_logging: default
+  - override hydra/run_logging: default
+
+# Input prediction tensors
+preds_pt: "outputs/preds.pt"           # μ, σ from predictor
+targets_pt: "data/y_val.pt"            # optional ground truth (if available)
+
+# Outputs
+out_csv: "outputs/submission_calibrated.csv"
+out_pt: "outputs/preds_calibrated.pt"
+report_html: "outputs/calib_report.html"
+
+# Calibration method
+method: "temperature"                  # options: ["temperature", "corel", "none"]
+
+temperature:
+  enabled: true
+  min_sigma: 1e-8                      # clamp floor for σ
+  fallback_T: 1.0                      # used if no targets available
+
+corel:
+  enabled: false
+  graph_type: "gat"                    # placeholder: GAT, GCN, MPNN
+  bins: 283
+  lr: 1e-3
+  epochs: 10
+
+# General
+device: "cpu"                          # or "cuda"
+seed: 1337
