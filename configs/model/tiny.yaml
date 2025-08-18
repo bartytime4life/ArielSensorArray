@@ -1,0 +1,3 @@
+# Tiny predictor used for CI and smoke tests
+_target_: src.asa.pipeline.models.TinyPredictor
+bins: 283
