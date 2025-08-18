@@ -1,0 +1,63 @@
+# COREL-style learnable calibration (graph over spectral bins)
+method: "corel"
+
+corel:
+  # Graph construction over bins
+  graph:
+    type: "knn"          # "knn" | "dense" | "threshold"
+    k: 8                 # neighbors if knn
+    distance: "l2"       # "l1" | "l2" | "cosine"
+    self_loops: true
+    normalize_adj: true  # symmetric Ā = D^{-1/2}(A+I)D^{-1/2}
+    dropout: 0.0
+
+  # Model (message passing over bins)
+  model:
+    arch: "gat"          # "gcn" | "gat" | "mpnn"
+    in_dim: 2            # input features per bin (μ, σ) — extend if you add more
+    hidden_dim: 64
+    num_layers: 3
+    heads: 4             # only for GAT
+    activation: "gelu"
+    residual: true
+    norm: "layer"        # "batch" | "layer" | "none"
+    out_head: "scale"    # "scale" (predict T_b) or "delta" (predict Δμ, Δσ)
+
+  # Optimization
+  optim:
+    name: "adamw"
+    lr: 1e-3
+    weight_decay: 1e-4
+    betas: [0.9, 0.999]
+    eps: 1e-8
+
+  # Scheduler (optional)
+  sched:
+    name: "cosine"
+    warmup_steps: 100
+    min_lr_scale: 0.05
+
+  # Training
+  train:
+    epochs: 30
+    batch_bins: 283      # operate per-sample over all bins; keep = bins
+    loss: "nll"          # "nll" | "mse" (on μ)
+    label_smoothing: 0.0
+    grad_clip: 1.0
+    mixed_precision: false
+    log_every: 20
+
+  # Regularization / priors
+  reg:
+    # Encourage T≈1 for stability
+    t_l2_to_1: 1e-3
+    # Keep σ’ above a floor
+    min_sigma: 1e-8
+    # Optional penalty on μ shifts if using out_head="delta"
+    mu_delta_l2: 0.0
+
+  # Checkpointing
+  ckpt:
+    dir: "outputs/corel_ckpts"
+    keep_last: 3
+    save_best_on: "val_nll"  # or "train_nll"
