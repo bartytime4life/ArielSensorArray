@@ -1,0 +1,17 @@
+# JSONL structured logging — logs/v50_event_log.jsonl
+logging:
+  version: 1
+  disable_existing_loggers: false
+  formatters:
+    jsonl:
+      format: '{"time": "%(asctime)s", "level": "%(levelname)s", "name": "%(name)s", "msg": "%(message)s"}'
+      datefmt: "%Y-%m-%dT%H:%M:%SZ"
+  handlers:
+    jsonl:
+      class: logging.FileHandler
+      formatter: jsonl
+      filename: logs/v50_event_log.jsonl
+      mode: a
+  root:
+    level: INFO
+    handlers: [jsonl]
