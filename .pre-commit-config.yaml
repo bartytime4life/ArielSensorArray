@@ -1,22 +1,60 @@
 repos:
+  # Ruff: linting + formatting
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.6.9
     hooks:
       - id: ruff
-        args: [--fix]
+        args: [--fix, --exit-non-zero-on-fix, --show-fixes]
       - id: ruff-format
+
+  # Black: deterministic Python formatting
   - repo: https://github.com/psf/black
     rev: 24.8.0
     hooks:
       - id: black
+        args: [--line-length=88]
+
+  # isort: import sorting, compatible with Black
   - repo: https://github.com/pycqa/isort
     rev: 5.13.2
     hooks:
       - id: isort
-        args: ["--profile","black"]
+        args: ["--profile", "black", "--filter-files"]
+
+  # Pre-commit built-ins
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.6.0
     hooks:
       - id: check-yaml
       - id: end-of-file-fixer
       - id: trailing-whitespace
+      - id: check-added-large-files
+      - id: check-merge-conflict
+      - id: check-json
+      - id: debug-statements
+
+  # YAML and JSON schema validation
+  - repo: https://github.com/python-jsonschema/check-jsonschema
+    rev: 0.28.0
+    hooks:
+      - id: check-jsonschema
+        files: ^configs/.*\.ya?ml$
+        args: ["--schemafile", "schemas/config_v50.schema.json"]
+
+  # Pytest quick-run before commit (fast unit subset)
+  - repo: local
+    hooks:
+      - id: pytest-quick
+        name: pytest quick
+        entry: pytest -q --maxfail=1 --disable-warnings -m "not slow"
+        language: system
+        types: [python]
+
+  # Ensure no large binary data in tracked source
+  - repo: local
+    hooks:
+      - id: data-check
+        name: prevent large data files
+        entry: bash -c 'find . -type f -size +50M | grep -v "data/raw" && exit 1 || exit 0'
+        language: system
+        pass_filenames: false
