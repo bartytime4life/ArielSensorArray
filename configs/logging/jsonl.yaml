@@ -1,10 +1,14 @@
 # JSONL structured logging — logs/v50_event_log.jsonl
+# Great for downstream parsing (e.g., scripts that turn JSONL into tables).
 logging:
   version: 1
   disable_existing_loggers: false
   formatters:
     jsonl:
-      format: '{"time": "%(asctime)s", "level": "%(levelname)s", "name": "%(name)s", "msg": "%(message)s"}'
+      format: >-
+        {"time":"%(asctime)s","level":"%(levelname)s","name":"%(name)s",
+         "module":"%(module)s","func":"%(funcName)s","line":%(lineno)d,
+         "msg":"%(message)s"}
       datefmt: "%Y-%m-%dT%H:%M:%SZ"
   handlers:
     jsonl:
@@ -12,6 +16,12 @@ logging:
       formatter: jsonl
       filename: logs/v50_event_log.jsonl
       mode: a
+      encoding: utf-8
   root:
     level: INFO
     handlers: [jsonl]
+  loggers:
+    asa:
+      level: DEBUG
+      handlers: [jsonl]
+      propagate: false
