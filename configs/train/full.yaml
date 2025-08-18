@@ -1,0 +1,25 @@
+# Full training setup for real experiments (long runs on GPU)
+defaults:
+  - model: transformer
+  - data: train
+  - override hydra/job_logging: default
+
+train:
+  epochs: 100
+  device: "cuda"
+  seed: 42
+  log_interval: 50
+  save_dir: "outputs/checkpoints_full"
+  resume: null
+
+optimizer:
+  name: "adamw"
+  lr: 3e-4
+  weight_decay: 1e-2
+  betas: [0.9, 0.999]
+  eps: 1e-8
+
+scheduler:
+  name: "cosine"
+  warmup_steps: 500
+  min_lr_scale: 0.01
