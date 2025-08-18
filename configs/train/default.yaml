@@ -1,0 +1,32 @@
+# =====================================================================
+# SpectraMind V50 — Default Training Config
+# ---------------------------------------------------------------------
+# This is the baseline training recipe, using AdamW optimizer,
+# cosine LR scheduler, and the toy dataset.
+# =====================================================================
+
+defaults:
+  - model: tiny       # swap with mlp/cnn/transformer/gnn
+  - data: toy
+  - override hydra/job_logging: default
+  - override hydra/hydra_logging: default
+
+train:
+  epochs: 5
+  device: "cpu"        # "cuda" if available
+  seed: 1337
+  log_interval: 20
+  save_dir: "outputs/checkpoints"
+  resume: null         # checkpoint path if resuming
+
+optimizer:
+  name: "adamw"
+  lr: 1e-3
+  weight_decay: 1e-4
+  betas: [0.9, 0.999]
+  eps: 1e-8
+
+scheduler:
+  name: "cosine"
+  warmup_steps: 50
+  min_lr_scale: 0.05
