@@ -1,6 +1,58 @@
+# =====================================================================
+# SpectraMind V50 — Calibration Config (Hydra)
+# =====================================================================
+
+defaults:
+  - override hydra/job_logging: default
+  - override hydra/hydra_logging: default
+
+# --- Data context (optional for temperature; useful for COREL/future) ---
 data:
   root: "data/"
-  split: "train"   # change to "val" or another split name as needed
+  split: "train"          # "train" | "val" | "toy"
   batch_size: 8
   num_workers: 0
   bins: 283
+
+# --- I/O + runtime ---
+device: "cpu"             # or "cuda"
+seed: 1337
+
+calibration:
+  method: "temperature"   # "temperature" | "corel" | "none"
+  preds_pt: "outputs/preds.pt"
+  targets_pt: null        # e.g., "data/y_val.pt" if available
+  ids_path: null          # optional text file with planet_id lines
+  out_csv: "outputs/submission_calibrated.csv"
+  out_preds_pt: "outputs/preds_calibrated.pt"
+  report_html: "outputs/diagnostics/calib_report.html"
+
+# --- Temperature scaling options (used when method=temperature) ---
+temperature:
+  mode: "global"          # "global" or "perbin"
+  l2: 0.0                 # L2 regularization toward T=1.0
+  min_sigma: 1e-8         # sigma clamp floor for safety
+  fallback_T: 1.0         # used when no valid targets
+
+# --- COREL (future learnable graph calibrator; currently off) ---
+corel:
+  model: "gat"            # "gat" | "gcn" | "mpnn"
+  epochs: 50
+  lr: 1e-3
+  weight_decay: 1e-4
+  hidden_dim: 128
+  dropout: 0.1
+  log_interval: 10
+  graph:
+    type: "knn"           # "knn" | "dense" | "threshold"
+    k: 8
+    distance: "l2"
+    self_loops: true
+    normalize_adj: true
+
+hydra:
+  run:
+    dir: outputs/calib/${now:%Y%m%d_%H%M%S}
+  sweep:
+    dir: outputs/calib/multirun
+    subdir: ${hydra.job.num}
