@@ -1,0 +1,7 @@
+# Simple multilayer perceptron baseline
+_target_: src.asa.pipeline.models.MLP
+input_size: 283
+hidden_layers: 2
+hidden_size: 256
+activation: "relu"
+dropout: 0.1
