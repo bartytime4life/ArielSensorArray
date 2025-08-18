@@ -1,0 +1,15 @@
+# MLflow logger (assumes mlflow is installed + tracking URI configured)
+logging:
+  version: 1
+  disable_existing_loggers: false
+  handlers:
+    mlflow:
+      class: logging.StreamHandler
+      stream: ext://sys.stdout
+  root:
+    level: INFO
+    handlers: [mlflow]
+mlflow:
+  tracking_uri: ${oc.env:MLFLOW_TRACKING_URI, "file:./mlruns"}
+  experiment_name: "spectramind_v50"
+  run_name: ${hydra.job.name}_${now:%Y%m%d_%H%M%S}
