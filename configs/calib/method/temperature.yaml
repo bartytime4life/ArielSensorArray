@@ -1,0 +1,8 @@
+# Temperature scaling (closed-form)
+method: "temperature"
+
+temperature:
+  mode: "global"     # "global" or "perbin"
+  l2: 0.0            # L2 toward T=1.0 (0 = off)
+  min_sigma: 1e-8    # clamp floor for σ
+  fallback_T: 1.0    # used if no targets are available
