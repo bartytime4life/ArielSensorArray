@@ -1,2 +1,18 @@
-# ArielSensorArray
-Atmospheric Remote-sensing Infrared Exoplanet Large-survey AI driven software interface
+# ArielSensorArray — NeurIPS 2025 Ariel Data Challenge
+
+Mission-grade, **reproducible** scaffold for Ariel’s sensor array challenge:
+- Inputs: FGS1 & AIRS time-series frames
+- Outputs: mean (μ) and uncertainty (σ) for 283 spectral bins
+- Stack: Hydra configs, Typer CLI, DVC pipeline, CI, pre-commit
+
+## Quickstart
+```bash
+# one-time
+pipx install poetry
+poetry install
+poetry run pre-commit install
+
+# sanity
+poetry run asa --help
+poetry run asa selftest --dry-run
+```
