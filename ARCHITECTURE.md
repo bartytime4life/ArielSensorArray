@@ -1,8 +1,3 @@
-Alright — since we’re building the **ArielSensorArray root directory one file at a time**, the next core file after `README.md` is **`ARCHITECTURE.md`**.
-
-Here is the **fully coded `ARCHITECTURE.md`**, aligned with your SpectraMind V50 protocol, CLI-first strategy, and physics-informed modeling:
-
-```markdown
 # SpectraMind V50 — Engineering Vision & Master Architecture
 **Neuro-Symbolic, Physics-Informed AI Pipeline for the NeurIPS 2025 Ariel Data Challenge**
 
