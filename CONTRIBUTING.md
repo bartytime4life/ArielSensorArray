@@ -1,4 +1,3 @@
-```markdown
 # Contributing to SpectraMind V50 — ArielSensorArray
 
 Welcome, and thank you for considering a contribution to the **SpectraMind V50** project for the NeurIPS 2025 Ariel Data Challenge.  
