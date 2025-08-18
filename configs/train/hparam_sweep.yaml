@@ -1,0 +1,50 @@
+# =====================================================================
+# SpectraMind V50 — Hyperparameter Sweep (Grid)
+# ---------------------------------------------------------------------
+# Uses Hydra's built-in BasicSweeper (no extra deps).
+# Example:
+#   poetry run spectramind train train=hparam_sweep
+# =====================================================================
+
+defaults:
+  - model: mlp          # swap to cnn/transformer/gnn/tiny on CLI if desired
+  - data: toy
+  - override hydra/job_logging: default
+  - override hydra/hydra_logging: default
+
+# Base training recipe (values may be overridden by sweeps below)
+train:
+  epochs: 5
+  device: "cpu"
+  seed: 1337
+  log_interval: 20
+  save_dir: "outputs/checkpoints_sweep"
+
+optimizer:
+  name: "adamw"
+  lr: 1e-3
+  weight_decay: 1e-4
+  betas: [0.9, 0.999]
+  eps: 1e-8
+
+scheduler:
+  name: "cosine"
+  warmup_steps: 50
+  min_lr_scale: 0.05
+
+# ---- Hydra sweep settings ----------------------------------------------------
+hydra:
+  run:
+    dir: outputs/train/${now:%Y%m%d_%H%M%S}
+  sweep:
+    dir: outputs/train/multirun
+    subdir: ${hydra.job.num}
+  sweeper:
+    # BasicSweeper: expand a Cartesian product over params
+    params:
+      optimizer.lr: 1e-3, 5e-4, 1e-4
+      optimizer.weight_decay: 0.0, 1e-4
+      train.epochs: 3, 5
+      data.batch_size: 8, 32
+      # Try a couple of model options in the same sweep:
+      model: mlp, transformer
