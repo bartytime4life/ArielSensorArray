@@ -1,0 +1,21 @@
+# Quick smoke test training — for CI and dev loops
+defaults:
+  - model: tiny
+  - data: toy
+  - override hydra/job_logging: default
+
+train:
+  epochs: 1
+  device: "cpu"
+  seed: 1337
+  log_interval: 1
+  save_dir: "outputs/checkpoints_fast"
+
+optimizer:
+  name: "sgd"
+  lr: 0.01
+  momentum: 0.9
+  weight_decay: 0.0
+
+scheduler:
+  name: "none"
