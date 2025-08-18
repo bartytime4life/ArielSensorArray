@@ -9,7 +9,7 @@ on:
 jobs:
   lint-test:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v4
@@ -29,7 +29,7 @@ jobs:
           poetry run pre-commit install
 
       - name: Install torch (CPU)
-        run: poetry run pip install --upgrade --extra-index-url https://download.pytorch.org/whl/cpu torch
+        run: poetry run pip install --upgrade --index-url https://download.pytorch.org/whl/cpu torch
 
       - name: Lint (pre-commit)
         run: poetry run pre-commit run --all-files
@@ -37,24 +37,35 @@ jobs:
       - name: Tests
         run: poetry run pytest -q
 
-      - name: Smoke: CLI selftest (dry-run)
+      - name: "Smoke: CLI selftest (dry-run)"
         run: poetry run python -m asa.cli selftest --dry-run
 
-      # ---- E2E smoke (CPU) ----
-      - name: Train (1 epoch)
+      # ---- End-to-end smoke on CPU ----
+      - name: Train (toy)
         run: poetry run asa train
 
-      - name: Predict
+      - name: Predict (283 bins)
         run: poetry run asa predict
 
-      - name: Validate 283-bin submission
+      - name: Validate submission.csv (283 bins)
         run: poetry run python scripts/validate_submission.py outputs/submission.csv
 
-      # Optional but nice: temperature scaling + diagnostics
-      - name: Calibrate (temperature)
+      - name: Calibrate (temperature scaling)
         run: poetry run python -m asa.calib.temperature
         continue-on-error: true
 
-      - name: Generate diagnostics report
+      - name: Generate diagnostics report (HTML)
         run: poetry run python -m asa.diagnostics.report
         continue-on-error: true
+
+      - name: Upload artifacts (report & preds)
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-artifacts
+          path: |
+            outputs/submission.csv
+            outputs/submission_calibrated.csv
+            outputs/report.html
+            outputs/preds.pt
+            outputs/preds_calibrated.pt
+          if-no-files-found: ignore
