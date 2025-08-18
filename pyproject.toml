@@ -20,7 +20,7 @@ jinja2 = "^3.1.4"
 psutil = "^5.9.8"
 pyyaml = "^6.0.2"
 dvc = "^3.51.3"
-rich = "^13.7.1"
+rich = "^14.1.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.2.1"
