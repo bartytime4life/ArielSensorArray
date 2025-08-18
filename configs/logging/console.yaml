@@ -1,0 +1,15 @@
+# Console-only logging (Hydra + Python stdout)
+logging:
+  version: 1
+  disable_existing_loggers: false
+  formatters:
+    simple:
+      format: "[%(levelname)s] %(message)s"
+  handlers:
+    console:
+      class: logging.StreamHandler
+      formatter: simple
+      stream: ext://sys.stdout
+  root:
+    level: INFO
+    handlers: [console]
