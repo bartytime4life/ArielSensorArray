@@ -62,6 +62,7 @@ pymdown-extensions = "^10.9"
 
 [tool.poetry.scripts]
 asa = "asa.cli:app"
+spectramind = "asa.cli:app"
 
 [tool.black]
 line-length = 100
@@ -118,5 +119,5 @@ skip_covered = true
 precision = 2
 exclude_lines = [
   "pragma: no cover",
-  "if __name__ == .__main__.:",
+  "if __name__ == \"__main__\":",
 ]
