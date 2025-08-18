@@ -1,11 +1,1 @@
-# Toy-data preset used for CI/dev loops and examples.
-data:
-  root: "data/"
-  split: "toy"            # synthetic generator (ArielToyDataset)
-  batch_size: 8
-  num_workers: 0          # keep 0 in CI; override locally for speed
-  bins: 283
-  fgs1_len: 128
-  n_samples: 64
-  with_targets: true
-  seed: 1337              # deterministic samples + DataLoader order
+delete
