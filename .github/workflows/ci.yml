@@ -9,20 +9,52 @@ on:
 jobs:
   lint-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
+
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
       - name: Install Poetry
         run: pipx install poetry==1.8.3
+
       - name: Install deps
         run: |
           poetry install --no-interaction
           poetry run pre-commit install
+
+      - name: Install torch (CPU)
+        run: poetry run pip install --upgrade --extra-index-url https://download.pytorch.org/whl/cpu torch
+
       - name: Lint (pre-commit)
         run: poetry run pre-commit run --all-files
+
       - name: Tests
         run: poetry run pytest -q
-      - name: "Smoke: CLI selftest (dry-run)"
+
+      - name: Smoke: CLI selftest (dry-run)
         run: poetry run python -m asa.cli selftest --dry-run
+
+      # ---- E2E smoke (CPU) ----
+      - name: Train (1 epoch)
+        run: poetry run asa train
+
+      - name: Predict
+        run: poetry run asa predict
+
+      - name: Validate 283-bin submission
+        run: poetry run python scripts/validate_submission.py outputs/submission.csv
+
+      # Optional but nice: temperature scaling + diagnostics
+      - name: Calibrate (temperature)
+        run: poetry run python -m asa.calib.temperature
+        continue-on-error: true
+
+      - name: Generate diagnostics report
+        run: poetry run python -m asa.diagnostics.report
+        continue-on-error: true
