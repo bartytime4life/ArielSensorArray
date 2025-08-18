@@ -1,0 +1,6 @@
+data:
+  root: "data/"
+  split: "train"   # change to "val" or another split name as needed
+  batch_size: 8
+  num_workers: 0
+  bins: 283
