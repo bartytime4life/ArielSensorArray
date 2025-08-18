@@ -1,50 +1,42 @@
 # =====================================================================
 # SpectraMind V50 — .gitignore (NeurIPS Ariel Data Challenge 2025)
-# ---------------------------------------------------------------------
-# Purpose: Prevent accidental commits of build artifacts, caches,
-# personal env files, Kaggle outputs, and large datasets.
 # =====================================================================
 
-# -------------------------------
-# Python bytecode / caches
-# -------------------------------
+# Python caches
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
-*.pdb
 *.egg-info/
-*.egg
 .eggs/
-.python-version
-*.manifest
 
-# -------------------------------
 # Virtual environments
-# -------------------------------
 .env
 .venv
 venv/
 ENV/
-env.bak/
 env/
+env.bak/
 
-# -------------------------------
-# Build / Distribution artifacts
-# -------------------------------
+# Build / dist
 dist/
 build/
 wheels/
 *.whl
 *.tar.gz
-*.log
 pip-wheel-metadata/
+
+# Coverage / test
 .coverage
 htmlcov/
+.mypy_cache/
+.pytest_cache/
+.dmypy.json
+.pyre/
+.pytype/
+__pypackages__/
 
-# -------------------------------
-# Logs and Outputs
-# -------------------------------
+# Logs and outputs
 logs/
 outputs/
 results/
@@ -55,27 +47,20 @@ runs/
 v50_debug_log.md
 v50_event_log.jsonl
 
-# -------------------------------
-# Jupyter / IPython
-# -------------------------------
+# Checkpoints / models
+checkpoints/
+models/
+*.pt
+*.pth
+*.ckpt
+*.ckpt.*
+
+# Jupyter
 .ipynb_checkpoints/
-profile_default/
 .ipython/
+profile_default/
 
-# -------------------------------
-# Caches
-# -------------------------------
-.cache/
-.mypy_cache/
-.pytest_cache/
-.dmypy.json
-.pyre/
-.pytype/
-__pypackages__/
-
-# -------------------------------
-# Editors / IDE
-# -------------------------------
+# IDEs / Editors
 .vscode/
 .idea/
 *.swp
@@ -83,48 +68,43 @@ __pypackages__/
 *.bak
 *.tmp
 *.DS_Store
-*.project
-*.pydevproject
 
-# -------------------------------
-# Data Science / ML
-# -------------------------------
-*.npy
-*.npz
-*.pkl
-*.pt
-*.pth
-*.h5
-*.ckpt
-*.onnx
-*.joblib
-*.dill
-
-# -------------------------------
-# Kaggle / Challenge outputs
-# -------------------------------
+# Kaggle
 submission.csv
 submission*.zip
 kaggle.json
 
-# -------------------------------
-# DVC / lakeFS / Hydra
-# -------------------------------
+# DVC / Hydra
 .dvc/
 .dvcignore
 .dvc/tmp/
 .dvc/cache/
 hydra/
 multirun/
-outputs/.hydra/
 *.hydra/
+outputs/.hydra/
 
-# -------------------------------
-# OS-specific cruft
-# -------------------------------
+# Docs build
+site/
+mkdocs-site/
+docs/_build/
+
+# Data (keep .gitkeep if needed)
+data/
+datasets/
+!data/.gitkeep
+!datasets/.gitkeep
+
+# System cruft
 Thumbs.db
 Desktop.ini
 $RECYCLE.BIN/
 *.stackdump
 *.orig
 *.rej
+.AppleDouble
+.Spotlight-V100
+.Trash-*
+
+# Optional: CI/CD local artifacts
+ci-artifacts/
