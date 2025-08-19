@@ -1,79 +1,98 @@
+# .github/workflows/ci.yml
+# SpectraMind V50 — Continuous Integration Workflow
+# Runs self-tests, linting, smoke pipelines, and diagnostics on every push/PR.
+
 name: CI
+
 on:
   push:
-    branches: [ main ]
+    branches: [ main, develop ]
   pull_request:
-    branches: [ main ]
-  workflow_dispatch:
+    branches: [ main, develop ]
 
 jobs:
-  lint-test:
+  build-and-test:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    env:
-      POETRY_VIRTUALENVS_IN_PROJECT: "true"
+    defaults:
+      run:
+        shell: bash -l {0}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git-lfs
+          git lfs install
+
+      - name: Install Poetry
+        run: pip install poetry==1.8.3
+
+      - name: Cache Poetry virtualenv
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pypoetry
+          key: poetry-${{ runner.os }}-${{ hashFiles('**/poetry.lock') }}
+          restore-keys: |
+            poetry-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: poetry install --no-root
+
+      - name: Run pre-commit hooks
+        run: poetry run pre-commit run --all-files
+
+      - name: Run unit tests
+        run: poetry run pytest -q --disable-warnings --maxfail=1
+
+      - name: Run SpectraMind selftest
+        run: poetry run python -m spectramind selftest --deep
+
+      - name: Smoke pipeline (toy dataset)
+        run: |
+          poetry run python -m spectramind calibrate data=toy calibration.cache=true
+          poetry run python -m spectramind train data=toy training=fast
+          poetry run python -m spectramind predict data=toy --out-csv outputs/smoke_submission.csv
+          poetry run python -m spectramind diagnose dashboard --html-out outputs/diagnostics/smoke_report.html
+
+      - name: Upload smoke artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-artifacts
+          path: |
+            outputs/smoke_submission.csv
+            outputs/diagnostics/smoke_report.html
+            logs/v50_debug_log.md
+
+  coverage:
+    runs-on: ubuntu-latest
+    needs: build-and-test
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
-
-      - name: Bootstrap pip/setuptools/wheel
-        run: |
-          python -m pip install --upgrade pip setuptools wheel
+          python-version: "3.10"
 
       - name: Install Poetry
-        run: pipx install poetry==1.8.3
+        run: pip install poetry==1.8.3
 
-      - name: Install deps (poetry)
-        run: |
-          poetry --version
-          poetry install --no-interaction
+      - name: Install dependencies
+        run: poetry install --no-root
 
-      - name: Install torch (CPU) separately
-        run: poetry run pip install --upgrade --index-url https://download.pytorch.org/whl/cpu torch
+      - name: Run coverage
+        run: poetry run pytest --cov=src --cov-report=xml --cov-report=term-missing
 
-      - name: Lint (pre-commit)
-        run: |
-          poetry run pre-commit install
-          poetry run pre-commit run --all-files
-
-      - name: Tests
-        run: poetry run pytest -q
-
-      - name: "Smoke: CLI selftest (dry-run)"
-        run: poetry run python -m asa.cli selftest --dry-run
-
-      # ---- End-to-end smoke on CPU ----
-      - name: Train (toy)
-        run: poetry run asa train
-
-      - name: Predict (283 bins)
-        run: poetry run asa predict
-
-      - name: Validate submission.csv (283 bins)
-        run: poetry run python scripts/validate_submission.py outputs/submission.csv
-
-      - name: Calibrate (temperature)
-        run: poetry run python -m asa.calib.temperature
-        continue-on-error: true
-
-      - name: Generate diagnostics report (HTML)
-        run: poetry run python -m asa.diagnostics.report
-        continue-on-error: true
-
-      - name: Upload artifacts (report & preds)
-        uses: actions/upload-artifact@v4
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
         with:
-          name: e2e-artifacts
-          path: |
-            outputs/submission.csv
-            outputs/submission_calibrated.csv
-            outputs/report.html
-            outputs/preds.pt
-            outputs/preds_calibrated.pt
-          if-no-files-found: ignore
+          file: ./coverage.xml
+          flags: unittests
+          fail_ci_if_error: true
