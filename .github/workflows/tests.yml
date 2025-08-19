@@ -1,0 +1,143 @@
+# .github/workflows/tests.yml
+# GitHub Actions workflow to run unit tests for SpectraMind V50
+# - Matrix across Python versions
+# - Poetry-based install with caching
+# - Pytest with coverage + JUnit report
+# - Artifacts uploaded on every run
+
+name: tests
+
+on:
+  push:
+    branches: [ "**" ]
+  pull_request:
+    branches: [ "**" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    name: Unit Tests (pytest) • py${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    env:
+      POETRY_VIRTUALENVS_IN_PROJECT: "true"
+      POETRY_NO_INTERACTION: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      PIP_NO_PYTHON_VERSION_WARNING: "1"
+      COVERAGE_FILE: ".coverage.${{ matrix.python-version }}"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python ${{ matrix.python-version }}
+        id: setup-py
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install pipx (for Poetry)
+        uses: pipxproject/action-install-pipx@v1
+
+      - name: Install Poetry
+        run: pipx install poetry==1.8.3
+
+      - name: Cache Poetry virtualenv & cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            .venv
+            ~/.cache/pypoetry
+          key: poetry-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('poetry.lock') }}
+          restore-keys: |
+            poetry-${{ runner.os }}-${{ matrix.python-version }}-
+
+      - name: Install dependencies (Poetry)
+        run: |
+          poetry env use "${{ steps.setup-py.outputs.python-path }}"
+          # Prefer dev dependencies if defined
+          if poetry show --tree >/dev/null 2>&1; then
+            poetry install
+          else
+            poetry install --no-root
+          fi
+
+      - name: Show versions
+        run: |
+          python --version
+          poetry --version
+          poetry run python -c "import sys,platform;print('platform:', platform.platform());print('py:', sys.version)"
+
+      - name: Run pytest
+        run: |
+          mkdir -p artifacts
+          # If tests/ is absent, exit with a friendly message (fail loudly to keep expectations clear)
+          if [ ! -d "tests" ]; then
+            echo "::error::No tests/ directory found. Please add unit tests."
+            exit 1
+          fi
+          poetry run pytest \
+            -q \
+            --maxfail=1 \
+            --disable-warnings \
+            -ra \
+            --cov=src \
+            --cov-report=term-missing \
+            --cov-report=xml:artifacts/coverage-${{ matrix.python-version }}.xml \
+            --junitxml=artifacts/junit-${{ matrix.python-version }}.xml
+
+      - name: Upload test artifacts (coverage, junit)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-artifacts-py${{ matrix.python-version }}
+          path: artifacts/
+          if-no-files-found: warn
+          retention-days: 14
+
+  summarize:
+    name: Summarize Coverage
+    needs: unit
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Download coverage artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: test-artifacts-*
+          merge-multiple: true
+
+      - name: Combine coverage (if multiple builds) and print quick summary
+        run: |
+          # This step prints out which coverage files were produced.
+          echo "Coverage XML files found:"
+          ls -1 artifacts/coverage-*.xml || true
+          # Optional: you can aggregate with coverage.py if repo uses it; otherwise, keep per-Python reports.
+          # Example aggregation (requires coverage >=7 and identical source mapping):
+          # pip install coverage
+          # coverage combine artifacts/coverage-*.xml || true
+          # coverage xml -o artifacts/coverage-combined.xml || true
+
+      - name: Upload combined/summary artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-artifacts-summary
+          path: artifacts/
+          if-no-files-found: ignore
+          retention-days: 14
