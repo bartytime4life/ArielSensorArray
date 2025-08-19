@@ -4,7 +4,7 @@ ____
 
 Fill out every section. If something doesn’t apply, write N/A and explain why. This template enforces our NASA‑grade reproducibility, physics‑informed modeling, and CLI‑first standards.
 
-⸻
+____
 
 0) Pre‑submission Checklist (must pass before filing)
 	•	I searched existing issues and discussions for this bug.
