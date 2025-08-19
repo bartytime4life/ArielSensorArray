@@ -1,4 +1,3 @@
-```toml
 [build-system]
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
@@ -6,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "spectramindv50"
 version = "0.1.0"
-description = "NeurIPS 2025 Ariel Data Challenge — SpectraMind V50: neuro-symbolic, physics‑informed exoplanet spectroscopy with a unified Typer CLI, Hydra configs, DVC, diagnostics, and CI."
+description = "NeurIPS 2025 Ariel Data Challenge — SpectraMind V50: neuro-symbolic, physics-informed exoplanet spectroscopy with a unified Typer CLI, Hydra configs, DVC, diagnostics, and CI."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -21,13 +20,17 @@ keywords = [
   "hydra", "cli", "dvc", "diagnostics", "umap", "tsne"
 ]
 classifiers = [
-  "Programming Language :: Python :: 3",
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Science/Research",
   "License :: OSI Approved :: MIT License",
   "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
   "Topic :: Scientific/Engineering :: Astronomy",
   "Topic :: Scientific/Engineering :: Artificial Intelligence",
-  "Framework :: Pydantic",
-  "Framework :: Pytest"
+  "Typing :: Typed"
 ]
 
 dependencies = [
@@ -52,8 +55,7 @@ dependencies = [
 
   # Graph/geom (AIRS GNN)
   "networkx>=3.2",
-  # If using torch-geometric, prefer installing wheels per PyTorch CUDA index; light dep here:
-  'torch-geometric>=2.5; platform_system != "Windows"',
+  "torch-geometric>=2.5; platform_system != \"Windows\"",
 
   # Visualization & diagnostics
   "matplotlib>=3.8",
@@ -71,7 +73,7 @@ dependencies = [
 
   # Optional experiment tracking (enabled when installed)
   "mlflow>=2.14.0",
-  "wandb>=0.17.0",
+  "wandb>=0.17.0"
 ]
 
 [project.optional-dependencies]
@@ -98,20 +100,29 @@ azure = ["dvc[azure]>=3.50"]
 [project.scripts]
 spectramind = "spectramind:app"
 
+[project.urls]
+Homepage = "https://github.com/bartytime4life/ArielSensorArray"
+Repository = "https://github.com/bartytime4life/ArielSensorArray"
+Issues = "https://github.com/bartytime4life/ArielSensorArray/issues"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+include-package-data = true
+
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["spectramind*", "asa*"]
 namespaces = false
 
 [tool.setuptools.package-data]
-spectramindv50 = ["py.typed"]
+spectramind = ["py.typed"]
 
 [tool.ruff]
 line-length = 100
 target-version = "py310"
 extend-select = ["E", "F", "I", "UP", "B", "C4", "SIM"]
 ignore = [
-  "E501",  # handled by Black’s wrap
+  "E501"
 ]
 exclude = [
   "docs/",
@@ -119,7 +130,7 @@ exclude = [
   "dist/",
   ".venv/",
   "outputs/",
-  "data/",
+  "data/"
 ]
 
 [tool.black]
@@ -128,12 +139,12 @@ target-version = ["py310"]
 skip-string-normalization = true
 exclude = '''
 /(
-  \.venv
- |\.git
- |build
- |dist
- |outputs
- |data
+.venv
+|.git
+|build
+|dist
+|outputs
+|data
 )/
 '''
 
@@ -158,7 +169,7 @@ branch = true
 source = ["src"]
 omit = [
   "tests/*",
-  "docs/*",
+  "docs/*"
 ]
 
 [tool.coverage.report]
@@ -173,14 +184,3 @@ warn_return_any = true
 warn_unused_ignores = true
 ignore_missing_imports = true
 plugins = []
-
-[tool.hatch.build.targets.wheel]
-packages = ["src"]
-```
-
-Notes:
-
-* No escaped brackets—valid TOML for Git, Poetry, and setuptools.
-* Console script points to the `app()` in `spectramind.py`.
-* Optional DVC remotes are split into extras (`pip install .[s3]`, etc.).
-* Pytest/coverage/linters are configured here so you don’t need separate config files (you can still keep `pytest.ini` if you prefer).
