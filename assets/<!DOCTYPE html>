@@ -1,0 +1,58 @@
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>SpectraMind V50 — Diagnostics Report</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <style>
+    :root { --fg:#0f172a; --muted:#64748b; --accent:#0ea5e9; --bg:#ffffff; }
+    * { box-sizing:border-box; }
+    body { margin:0; font-family:ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica Neue, Arial, "Apple Color Emoji", "Segoe UI Emoji"; color:var(--fg); background:var(--bg);}
+    header { padding:24px 16px; border-bottom:1px solid #e2e8f0; display:flex; align-items:center; gap:12px;}
+    header img { width:28px; height:28px;}
+    header h1 { font-size:20px; margin:0;}
+    header .meta { margin-left:auto; text-align:right; color:var(--muted); font-size:12px;}
+    main { padding:24px; max-width:1200px; margin:0 auto;}
+    section { margin-bottom:28px; }
+    h2 { font-size:18px; margin:0 0 12px; }
+    .grid { display:grid; grid-template-columns:repeat(12, 1fr); gap:16px; }
+    .card { grid-column: span 6; border:1px solid #e2e8f0; border-radius:12px; padding:12px; background:#fff; }
+    .card img { width:100%; border-radius:8px; display:block; }
+    table { border-collapse: collapse; width:100%; font-size:14px;}
+    th, td { border-bottom:1px solid #e2e8f0; padding:8px; text-align:left;}
+    .small { color:var(--muted); font-size:12px; }
+    footer { padding:16px; color:var(--muted); font-size:12px; border-top:1px solid #e2e8f0; text-align:center;}
+    .tag { display:inline-block; padding:2px 8px; border-radius:999px; background:#e0f2fe; color:#0369a1; font-size:12px; margin-right:6px;}
+  </style>
+</head>
+<body>
+  <header>
+    <img src="../icons/spectra_icon.svg" alt="icon"/>
+    <h1>SpectraMind V50 — Diagnostics Report</h1>
+    <div class="meta">
+      <div id="timestamp">Timestamp: {{ TIMESTAMP }}</div>
+      <div class="small">Config hash: {{ CONFIG_HASH }}</div>
+    </div>
+  </header>
+  <main>
+    <section class="grid">
+      <div class="card">
+        <h2>Sample Spectrum</h2>
+        <img src="../plots/sample_spectrum.png" alt="sample spectrum"/>
+        <div class="small">Synthetic μ with indicative features.</div>
+      </div>
+      <div class="card">
+        <h2>SHAP × μ Overlay</h2>
+        <img src="../plots/shap_overlay.png" alt="shap overlay"/>
+        <div class="small">Feature attributions overlaid on μ spectrum.</div>
+      </div>
+      <div class="card">
+        <h2>UMAP Latent Clusters</h2>
+        <img src="../plots/umap_clusters.png" alt="umap clusters"/>
+        <div class="small">2D embedding with cluster coloring.</div>
+      </div>
+      <div class="card">
+        <h2>t‑SNE Projection</h2>
+        <img src="../plots/tsne_projection.png" alt="tsne projection"/>
+        <div class="small">Complementary embedding space view.</div>
+      </div>
+    </section>
