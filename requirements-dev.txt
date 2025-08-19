@@ -1,0 +1,39 @@
+# ======================================================================
+# SpectraMind V50 — requirements-dev.txt
+# ----------------------------------------------------------------------
+# Purpose: Developer tooling for linting, testing, typing, hooks, and reports.
+# Usage:
+#   pip install -r requirements.txt -r requirements-dev.txt
+#   pre-commit install
+#   pytest
+# ======================================================================
+
+# ----------------------------
+# Linters / Formatters
+# ----------------------------
+ruff>=0.6.9
+black>=24.8.0
+isort>=5.13.2
+
+# ----------------------------
+# Testing / Coverage
+# ----------------------------
+pytest>=7.4
+pytest-cov>=4.1
+
+# ----------------------------
+# Pre-commit hooks
+# ----------------------------
+pre-commit>=3.7.1
+
+# ----------------------------
+# Typing / Stubs
+# ----------------------------
+mypy>=1.10.0
+types-PyYAML>=6.0.12
+types-requests>=2.32.0.20240622
+
+# ----------------------------
+# Optional diagnostics (local)
+# ----------------------------
+# rich[jupyter]>=13.7.1
