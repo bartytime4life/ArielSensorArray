@@ -1,84 +1,71 @@
-==============================================================================
+# ==============================================================================
+# SpectraMind V50 — CI/Kaggle Makefile (Deterministic, Non‑Interactive)
+# Use this in GitHub Actions / Kaggle to run a minimal, reproducible pipeline.
+#
+# Pipeline stages:
+#   • validate → selftest → train(1 epoch, cpu) → diagnose → analyze
+#   • artifacts end up under outputs/ and logs/
+# ==============================================================================
 
-SpectraMind V50 — CI/Kaggle Makefile (Deterministic, Non‑Interactive)
-
-Use this in GitHub Actions / Kaggle to run a minimal, reproducible pipeline.
-
-
-
-Pipeline stages:
-
-• validate → selftest → train(1 epoch, cpu) → diagnose → analyze-log
-
-• artifacts end up under outputs/ and logs/
-
-==============================================================================
-
-========= Shell =========
-
+# ========= Shell =========
 SHELL         := /usr/bin/env bash
 .ONESHELL:
 .SHELLFLAGS   := -euo pipefail -c
 
-========= Tooling =========
-
+# ========= Tooling =========
 PYTHON        ?= python3
 POETRY        ?= poetry
 CLI           ?= $(POETRY) run spectramind
 
-========= Paths / artifacts =========
-
+# ========= Paths / artifacts =========
 OUT_DIR       ?= outputs
 LOGS_DIR      ?= logs
 DIAG_DIR      ?= $(OUT_DIR)/diagnostics
 PRED_DIR      ?= $(OUT_DIR)/predictions
 
-========= Fixed knobs for CI =========
-
+# ========= Fixed knobs for CI =========
 DEVICE        ?= cpu
 EPOCHS        ?= 1
 OVERRIDES     ?=
 EXTRA_ARGS    ?=
 
-========= PHONY =========
+# ========= PHONY =========
+.PHONY: ci validate selftest train diagnose analyze dvc-pull dvc-push clean
 
-.PHONY: ci validate selftest train diagnose analyze log dvc-pull dvc-push clean
-
-Default target
-
+# Default target
 ci: validate selftest train diagnose analyze
 
-Minimal validation (init dirs or add env validation hook here)
-
+# Minimal validation (init dirs or add env validation hook here)
 validate:
-mkdir -p “$(OUT_DIR)” “$(LOGS_DIR)” “$(DIAG_DIR)” “$(PRED_DIR)”
-@echo “>>> Validation complete (env/init).”
+	mkdir -p "$(OUT_DIR)" "$(LOGS_DIR)" "$(DIAG_DIR)" "$(PRED_DIR)"
+	@echo ">>> Validation complete (env/init)."
 
 selftest:
-@echo “>>> Selftest (fast, CI)”
-$(CLI) selftest –fast
+	@echo ">>> Selftest (fast, CI)"
+	$(CLI) selftest --fast
 
 train:
-@echo “>>> Train (CI deterministic: EPOCHS=$(EPOCHS), DEVICE=$(DEVICE))”
-$(CLI) train +training.epochs=$(EPOCHS) $(OVERRIDES) –device $(DEVICE) –outdir “$(OUT_DIR)” $(EXTRA_ARGS)
+	@echo ">>> Train (CI deterministic: EPOCHS=$(EPOCHS), DEVICE=$(DEVICE))"
+	$(CLI) train +training.epochs=$(EPOCHS) $(OVERRIDES) --device $(DEVICE) --outdir "$(OUT_DIR)" $(EXTRA_ARGS)
 
 diagnose:
-@echo “>>> Diagnostics (CI)”
-$(CLI) diagnose smoothness –outdir “$(DIAG_DIR)” $(EXTRA_ARGS)
-$(CLI) diagnose dashboard –outdir “$(DIAG_DIR)” $(EXTRA_ARGS) || true
+	@echo ">>> Diagnostics (CI)"
+	$(CLI) diagnose smoothness --outdir "$(DIAG_DIR)" $(EXTRA_ARGS)
+	# try a lightweight dashboard first, then full if needed
+	$(CLI) diagnose dashboard --no-umap --no-tsne --outdir "$(DIAG_DIR)" $(EXTRA_ARGS) || \
+	$(CLI) diagnose dashboard --outdir "$(DIAG_DIR)" $(EXTRA_ARGS) || true
 
 analyze:
-@echo “>>> Analyze CLI logs (CI)”
-$(CLI) analyze-log –md “$(OUT_DIR)/log_table.md” –csv “$(OUT_DIR)/log_table.csv”
+	@echo ">>> Analyze CLI logs (CI)"
+	$(CLI) analyze-log --md "$(OUT_DIR)/log_table.md" --csv "$(OUT_DIR)/log_table.csv"
 
-Optional DVC pulls in CI
-
+# Optional DVC pulls in CI
 dvc-pull:
-dvc pull || true
+	dvc pull || true
 
 dvc-push:
-dvc push || true
+	dvc push || true
 
 clean:
-rm -rf “$(OUT_DIR)” “$(DIAG_DIR)” “$(PRED_DIR)”
-rm -rf .pytest_cache .ruff_cache .mypy_cache
+	rm -rf "$(OUT_DIR)" "$(DIAG_DIR)" "$(PRED_DIR)"
+	rm -rf .pytest_cache .ruff_cache .mypy_cache
