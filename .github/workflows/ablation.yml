@@ -1,0 +1,220 @@
+# .github/workflows/ablation.yml
+# SpectraMind V50 — Ablation Workflow
+# Runs symbolic/physics-aware ablation studies with Hydra overrides,
+# exports leaderboard (MD/HTML/CSV), and uploads artifacts for review.
+
+name: ablation
+
+on:
+  workflow_dispatch:
+    inputs:
+      top_n:
+        description: "Top-N configs to keep/export (e.g., 10)"
+        required: false
+        default: "10"
+        type: string
+      extra_overrides:
+        description: "Hydra overrides (e.g., +data.split=toy +diagnostics.light=true)"
+        required: false
+        default: "+data.split=toy +diagnostics.light=true"
+        type: string
+      parallel:
+        description: "Parallel jobs (e.g., 2)"
+        required: false
+        default: "2"
+        type: string
+      max_trials:
+        description: "Max ablation trials (e.g., 20)"
+        required: false
+        default: "20"
+        type: string
+      html:
+        description: "Also render HTML leaderboard (true|false)"
+        required: false
+        default: "true"
+        type: string
+      md:
+        description: "Also render Markdown leaderboard (true|false)"
+        required: false
+        default: "true"
+        type: string
+  schedule:
+    # Weekly ablation snapshot (Saturdays 07:00 UTC)
+    - cron: "0 7 * * 6"
+  push:
+    branches: [ "main" ]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ablation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ablate:
+    name: Ablation • py${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    env:
+      POETRY_VIRTUALENVS_IN_PROJECT: "true"
+      POETRY_NO_INTERACTION: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      PIP_NO_PYTHON_VERSION_WARNING: "1"
+      HYDRA_FULL_ERROR: "1"
+      # Output/Artifacts
+      ABLATE_DIR: "artifacts/ablation/py${{ matrix.python-version }}"
+      TOP_N: "${{ inputs.top_n || '10' }}"
+      PARALLEL_JOBS: "${{ inputs.parallel || '2' }}"
+      MAX_TRIALS: "${{ inputs.max_trials || '20' }}"
+      HTML_OUT: "${{ inputs.html || 'true' }}"
+      MD_OUT: "${{ inputs.md || 'true' }}"
+      EXTRA_OVERRIDES: "${{ inputs.extra_overrides || '+data.split=toy +diagnostics.light=true' }}"
+      DEVICE: "cpu"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python ${{ matrix.python-version }}
+        id: setup-python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install pipx
+        uses: pipxproject/action-install-pipx@v1
+
+      - name: Install Poetry
+        run: pipx install poetry==1.8.3
+
+      - name: Cache Poetry & venv
+        uses: actions/cache@v4
+        with:
+          path: |
+            .venv
+            ~/.cache/pypoetry
+          key: poetry-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('poetry.lock') }}
+          restore-keys: |
+            poetry-${{ runner.os }}-${{ matrix.python-version }}-
+
+      - name: Install dependencies
+        run: |
+          poetry env use "${{ steps.setup-python.outputs.python-path }}"
+          poetry install --no-interaction
+
+      - name: Show versions
+        run: |
+          python --version
+          poetry --version
+          poetry run python -c "import sys, platform; print('platform:', platform.platform()); print('python:', sys.version.replace('\\n',' '))"
+
+      - name: Pipeline selftest (fast)
+        run: |
+          poetry run spectramind test --fast
+
+      - name: Prepare ablation directories
+        run: |
+          mkdir -p "${ABLATE_DIR}"
+
+      - name: Run Ablation Study
+        run: |
+          echo ">>> Starting ablation"
+          echo "    Top-N       : ${TOP_N}"
+          echo "    Parallel    : ${PARALLEL_JOBS}"
+          echo "    Max trials  : ${MAX_TRIALS}"
+          echo "    Overrides   : ${EXTRA_OVERRIDES}"
+          echo "    HTML        : ${HTML_OUT}"
+          echo "    MD          : ${MD_OUT}"
+
+          # Construct optional flags
+          HTML_FLAG=""
+          [ "${HTML_OUT}" = "true" ] && HTML_FLAG="--html"
+
+          MD_FLAG=""
+          [ "${MD_OUT}" = "true" ] && MD_FLAG="--md"
+
+          # Run ablation (assumes CLI supports these flags; adjust if needed)
+          poetry run spectramind ablate \
+            --top_n "${TOP_N}" \
+            --parallel "${PARALLEL_JOBS}" \
+            --max_trials "${MAX_TRIALS}" \
+            --device "${DEVICE}" \
+            --outdir "${ABLATE_DIR}" \
+            ${HTML_FLAG} ${MD_FLAG} \
+            ${EXTRA_OVERRIDES}
+
+      - name: Collect common artifacts
+        run: |
+          # Copy likely leaderboard and outputs into ABLATE_DIR for upload
+          for pat in \
+            "*.html" "*.md" "*.csv" "*.json" "*.png" "*.svg" "*.zip" "*.log"; do
+            find . -maxdepth 4 -type f -name "$pat" -path "*/ablation/*" -exec cp -v {} "${ABLATE_DIR}/" \; || true
+          done
+          # Summary file
+          {
+            echo "SpectraMind V50 — Ablation Summary"
+            date
+            echo "Python: ${{ matrix.python-version }}"
+            echo "Device: ${DEVICE}"
+            echo "Top-N : ${TOP_N}"
+            echo "Trials: ${MAX_TRIALS}"
+            echo "Overrides: ${EXTRA_OVERRIDES}"
+            echo "Artifacts in ${ABLATE_DIR}:"
+            ls -lh "${ABLATE_DIR}" || true
+          } > "${ABLATE_DIR}/summary.txt"
+          cat "${ABLATE_DIR}/summary.txt" || true
+
+      - name: Upload ablation artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ablation-py${{ matrix.python-version }}
+          path: ${{ env.ABLATE_DIR }}
+          if-no-files-found: warn
+          retention-days: 21
+
+  aggregate:
+    name: Aggregate Ablation Leaderboards
+    needs: ablate
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Download ablation artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ablation-py*
+          merge-multiple: true
+
+      - name: Build combined leaderboard index
+        run: |
+          mkdir -p aggregated
+          {
+            echo "# SpectraMind V50 — Ablation Leaderboards"
+            echo ""
+            echo "_Generated: $(date -u)_"
+            echo ""
+            echo "## Files"
+            find artifacts -type f -maxdepth 3 | sed 's/^/- /' || true
+            echo ""
+            echo "## Hints"
+            echo "- Look for files like: leaderboard.md / leaderboard.html / ablation_results.csv"
+            echo "- ZIP bundles may include top-N configs and manifests."
+          } > aggregated/ABLATION_INDEX.md
+          head -n 60 aggregated/ABLATION_INDEX.md || true
+
+      - name: Upload combined index
+        uses: actions/upload-artifact@v4
+        with:
+          name: ablation-aggregated
+          path: aggregated/ABLATION_INDEX.md
+          if-no-files-found: warn
+          retention-days: 30
