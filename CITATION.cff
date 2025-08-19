@@ -1,0 +1,53 @@
+cff-version: 1.2.0
+title: "SpectraMind V50 — Neuro-symbolic, Physics-informed Exoplanet Spectroscopy"
+message: "If you use this software in your research, please cite it as below."
+type: software
+
+authors:
+  - family-names: "Barta"
+    given-names: "Andy"
+    orcid: "https://orcid.org/0000-0002-1825-0097"
+  - family-names: "SpectraMind"
+    given-names: "Team"
+
+repository-code: "https://github.com/bartytime4life/ArielSensorArray"
+license: "MIT"
+
+version: "0.1.0"
+date-released: "2025-08-18"
+
+keywords:
+  - exoplanets
+  - Ariel
+  - spectroscopy
+  - uncertainty quantification
+  - symbolic AI
+  - reproducibility
+  - physics-informed ML
+  - NeurIPS 2025
+
+abstract: >
+  SpectraMind V50 implements a neuro-symbolic, physics-informed AI pipeline for the NeurIPS 2025 Ariel Data Challenge.
+  It ingests Ariel FGS1/AIRS spectroscopic data cubes and outputs μ and σ estimates for 283 wavelength bins, 
+  calibrated via COREL conformal methods and enriched with symbolic constraints (smoothness, asymmetry, non-negativity).
+  The system is fully reproducible (Hydra configs, DVC data tracking, GitHub Actions CI), CLI-driven, and designed to
+  generate leaderboard-ready submissions under Kaggle runtime limits. Diagnostics include SHAP overlays, FFT analysis,
+  and symbolic violation mapping with integrated HTML dashboards.
+
+identifiers:
+  - type: doi
+    value: "10.5281/zenodo.1234567"
+    description: "Zenodo record for archived releases"
+
+preferred-citation:
+  type: article
+  title: "SpectraMind V50: Neuro-symbolic, Physics-informed Exoplanet Spectroscopy for the NeurIPS 2025 Ariel Data Challenge"
+  authors:
+    - family-names: "Barta"
+      given-names: "Andy"
+    - family-names: "SpectraMind"
+      given-names: "Team"
+  journal: "Proceedings of the NeurIPS 2025 Competitions Track"
+  year: 2025
+  publisher: "NeurIPS"
+  url: "https://github.com/bartytime4life/ArielSensorArray"
