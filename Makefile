@@ -1,50 +1,47 @@
 # ==============================================================================
-# SpectraMind V50 — Local Developer Makefile
-# Neuro‑Symbolic, Physics‑Informed AI Pipeline (Dev Workflows)
-#
+# SpectraMind V50 — Master Makefile (Dev/Local)
+# Neuro‑Symbolic, Physics‑Informed AI Pipeline
+# ==============================================================================
 # Philosophy:
-#   • CLI-first → all tasks routed through Typer CLI (`spectramind`)
-#   • Hydra-backed configs → reproducibility, override via OVERRIDES
-#   • CI/Kaggle parity helpers (local benchmark + kaggle-run)
-#   • Scientific rigor → calibration, training, diagnostics, ablations
-#   • Dev ergonomics → fmt/lint/test/analyze
+#   • CLI-first → all tasks through Typer CLI (`spectramind`)
+#   • Hydra-backed overrides via OVERRIDES
+#   • Parity helpers → local benchmark + Kaggle shims
+#   • Dev ergonomics → fmt / lint / test / analyze-log
 #
 # Quickstart:
-#   make selftest            # verify wiring
-#   make calibrate           # raw → calibrated
-#   make train               # train model
-#   make predict             # run inference (writes submission.csv)
-#   make diagnose            # build diagnostics dashboard
-#   make submit              # bundle submission artifacts
-#   make benchmark           # local Kaggle-like run
-#
-# Examples:
-#   make train DEVICE=gpu EPOCHS=2 OVERRIDES='+data.split=toy'
-#   make diagnose EXTRA_ARGS='--open' OVERRIDES='+diagnostics.light=true'
+#   make selftest
+#   make calibrate
+#   make train DEVICE=gpu EPOCHS=2
+#   make predict
+#   make diagnose
+#   make submit
+#   make benchmark DEVICE=gpu
 # ==============================================================================
 
-# ========= Global =========
-SHELL         := /usr/bin/env bash
+# ========= Shell =========
+SHELL       := /usr/bin/env bash
 .ONESHELL:
-.SHELLFLAGS   := -euo pipefail -c
+.SHELLFLAGS := -euo pipefail -c
 
 # ========= Tooling =========
-PYTHON        ?= python3
-POETRY        ?= poetry
-CLI           ?= $(POETRY) run spectramind
+PYTHON      ?= python3
+POETRY      ?= poetry
+CLI         ?= $(POETRY) run spectramind
 
 # ========= Defaults (override at CLI) =========
-DEVICE        ?= cpu
-EPOCHS        ?= 1
-TS            := $(shell date +%Y%m%d_%H%M%S)
-OUT_DIR       ?= outputs
-LOGS_DIR      ?= logs
-DIAG_DIR      ?= $(OUT_DIR)/diagnostics
-PRED_DIR      ?= $(OUT_DIR)/predictions
-SUBMIT_DIR    ?= $(OUT_DIR)/submission
-SUBMIT_ZIP    ?= $(SUBMIT_DIR)/bundle.zip
-OVERRIDES     ?=
-EXTRA_ARGS    ?=
+DEVICE      ?= cpu
+EPOCHS      ?= 1
+TS          := $(shell date +%Y%m%d_%H%M%S)
+
+OUT_DIR     ?= outputs
+LOGS_DIR    ?= logs
+DIAG_DIR    ?= $(OUT_DIR)/diagnostics
+PRED_DIR    ?= $(OUT_DIR)/predictions
+SUBMIT_DIR  ?= $(OUT_DIR)/submission
+SUBMIT_ZIP  ?= $(SUBMIT_DIR)/bundle.zip
+
+OVERRIDES   ?=
+EXTRA_ARGS  ?=
 
 # ========= PHONY =========
 .PHONY: help init env info \
@@ -54,23 +51,17 @@ EXTRA_ARGS    ?=
         train predict diagnose ablate submit \
         analyze-log check-cli-map \
         dvc-pull dvc-push \
-        benchmark benchmark-cpu benchmark-gpu benchmark-run benchmark-report benchmark-clean bench-selftest \
+        benchmark bench-selftest benchmark-cpu benchmark-gpu benchmark-run benchmark-report benchmark-clean \
         kaggle-run kaggle-submit \
         clean realclean
 
 # ========= Help =========
 help:
-	@echo "SpectraMind V50 — CLI targets"
-	@echo "make selftest          # fast integrity check"
-	@echo "make train             # train model"
-	@echo "make predict           # inference → $(PRED_DIR)"
-	@echo "make diagnose          # diagnostics dashboard"
-	@echo "make submit            # package submission"
-	@echo "make benchmark         # simulate Kaggle run"
-	@echo "make kaggle-run        # run inside Kaggle env (single-epoch GPU)"
-	@echo "make kaggle-submit     # push to Kaggle competition"
-	@echo "make dvc-pull/push     # sync DVC artifacts"
-	@echo "make clean/realclean   # remove artifacts/caches"
+	@echo "SpectraMind V50 — Make targets"
+	@echo "  selftest | calibrate | train | predict | diagnose | submit"
+	@echo "  benchmark | kaggle-run | kaggle-submit"
+	@echo "  fmt | lint | test | analyze-log"
+	@echo "Vars: DEVICE=$(DEVICE) EPOCHS=$(EPOCHS) OUT_DIR=$(OUT_DIR) OVERRIDES='$(OVERRIDES)' EXTRA_ARGS='$(EXTRA_ARGS)'"
 
 # ========= Init =========
 init: env
@@ -78,10 +69,10 @@ env:
 	mkdir -p "$(OUT_DIR)" "$(LOGS_DIR)" "$(DIAG_DIR)" "$(PRED_DIR)" "$(SUBMIT_DIR)"
 
 info:
-	@echo "python  : $$($(PYTHON) --version 2>&1)"
-	@echo "poetry  : $$($(POETRY) --version 2>&1 || true)"
-	@echo "cli     : $(CLI)"
-	@echo "device  : $(DEVICE)"
+	@echo "python : $$($(PYTHON) --version 2>&1)"
+	@echo "poetry : $$($(POETRY) --version 2>&1 || true)"
+	@echo "cli    : $(CLI)"
+	@echo "device : $(DEVICE)"
 
 # ========= Dev / Quality =========
 fmt:
@@ -119,7 +110,7 @@ predict: init
 
 diagnose: init
 	$(CLI) diagnose smoothness --outdir "$(DIAG_DIR)" $(EXTRA_ARGS)
-	# try light/no-embed first, then full
+	# try lightweight dashboard first (no UMAP/TSNE), fall back to full
 	$(CLI) diagnose dashboard --no-umap --no-tsne --outdir "$(DIAG_DIR)" $(EXTRA_ARGS) || \
 	$(CLI) diagnose dashboard --outdir "$(DIAG_DIR)" $(EXTRA_ARGS) || true
 
@@ -136,7 +127,7 @@ analyze-log: init
 check-cli-map:
 	$(CLI) check-cli-map
 
-# ========= Data via DVC =========
+# ========= DVC =========
 dvc-pull:
 	dvc pull || true
 
@@ -150,10 +141,10 @@ bench-selftest:
 benchmark: bench-selftest
 	@$(MAKE) --no-print-directory benchmark-run DEVICE=$(DEVICE) EPOCHS=$(EPOCHS) OVERRIDES='$(OVERRIDES)' EXTRA_ARGS='$(EXTRA_ARGS)'
 
-benchmark-cpu:
+benchmark-cpu: bench-selftest
 	@$(MAKE) --no-print-directory benchmark-run DEVICE=cpu EPOCHS=$(EPOCHS) OVERRIDES='$(OVERRIDES)' EXTRA_ARGS='$(EXTRA_ARGS)'
 
-benchmark-gpu:
+benchmark-gpu: bench-selftest
 	@$(MAKE) --no-print-directory benchmark-run DEVICE=gpu EPOCHS=$(EPOCHS) OVERRIDES='$(OVERRIDES)' EXTRA_ARGS='$(EXTRA_ARGS)'
 
 benchmark-run:
@@ -163,28 +154,45 @@ benchmark-run:
 	$(CLI) diagnose smoothness --outdir "$$OUTDIR" $(EXTRA_ARGS)
 	$(CLI) diagnose dashboard --no-umap --no-tsne --outdir "$$OUTDIR" $(EXTRA_ARGS) || \
 	$(CLI) diagnose dashboard --outdir "$$OUTDIR" $(EXTRA_ARGS) || true
-	@echo "Benchmark complete → $$OUTDIR/summary.txt" | tee "$$OUTDIR/summary.txt"
+	{ \
+	  echo "Benchmark summary"; \
+	  date; \
+	  echo "python   : $$($(PYTHON) --version 2>&1)"; \
+	  echo "poetry   : $$($(POETRY) --version 2>&1 || true)"; \
+	  echo "cli      : $(CLI)"; \
+	  echo "device   : $(DEVICE)"; \
+	  echo "epochs   : $(EPOCHS)"; \
+	  echo "overrides: $(OVERRIDES)"; \
+	  command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi || true; \
+	  echo ""; \
+	  echo "Artifacts in $$OUTDIR:"; \
+	  ls -lh "$$OUTDIR" || true; \
+	} > "$$OUTDIR/summary.txt"
+	@echo ">>> Benchmark complete → $$OUTDIR/summary.txt"
 
 benchmark-report:
 	mkdir -p aggregated
 	{ \
-	  echo "# Benchmark Report"; \
-	  for f in $$(find benchmarks -name summary.txt | sort); do \
+	  echo "# SpectraMind V50 Benchmark Report"; \
+	  echo ""; \
+	  for f in $$(find benchmarks -type f -name summary.txt | sort); do \
 	    echo "## $$f"; echo ""; cat "$$f"; echo ""; \
 	  done; \
 	} > aggregated/report.md
+	@echo ">>> Aggregated → aggregated/report.md"
 
 benchmark-clean:
 	rm -rf benchmarks aggregated
 
 # ========= Kaggle Helpers =========
 kaggle-run: init
-	@echo ">>> Running inside Kaggle notebook"
+	@echo ">>> Running single-epoch GPU run (Kaggle-like)"
 	$(CLI) selftest --fast
 	$(CLI) train +training.epochs=1 --device gpu --outdir "$(OUT_DIR)"
 	$(CLI) predict --out-csv "$(PRED_DIR)/submission.csv"
 
 kaggle-submit: kaggle-run
+	@echo ">>> Submitting to Kaggle competition"
 	kaggle competitions submit -c neurips-2025-ariel -f "$(PRED_DIR)/submission.csv" -m "SpectraMind V50 auto-submit"
 
 # ========= Cleanup =========
@@ -192,4 +200,4 @@ clean:
 	rm -rf "$(OUT_DIR)" "$(DIAG_DIR)" "$(PRED_DIR)" "$(SUBMIT_DIR)"
 
 realclean: clean
-	rm -rf .pytest_cache .ruff_cache .mypy_cache .dvc/cache
+	rm -rf .pytest_cache .ruff_cache .mypy_cache .dvc/tmp .dvc/cache
