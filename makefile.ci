@@ -1,0 +1,84 @@
+==============================================================================
+
+SpectraMind V50 — CI/Kaggle Makefile (Deterministic, Non‑Interactive)
+
+Use this in GitHub Actions / Kaggle to run a minimal, reproducible pipeline.
+
+
+
+Pipeline stages:
+
+• validate → selftest → train(1 epoch, cpu) → diagnose → analyze-log
+
+• artifacts end up under outputs/ and logs/
+
+==============================================================================
+
+========= Shell =========
+
+SHELL         := /usr/bin/env bash
+.ONESHELL:
+.SHELLFLAGS   := -euo pipefail -c
+
+========= Tooling =========
+
+PYTHON        ?= python3
+POETRY        ?= poetry
+CLI           ?= $(POETRY) run spectramind
+
+========= Paths / artifacts =========
+
+OUT_DIR       ?= outputs
+LOGS_DIR      ?= logs
+DIAG_DIR      ?= $(OUT_DIR)/diagnostics
+PRED_DIR      ?= $(OUT_DIR)/predictions
+
+========= Fixed knobs for CI =========
+
+DEVICE        ?= cpu
+EPOCHS        ?= 1
+OVERRIDES     ?=
+EXTRA_ARGS    ?=
+
+========= PHONY =========
+
+.PHONY: ci validate selftest train diagnose analyze log dvc-pull dvc-push clean
+
+Default target
+
+ci: validate selftest train diagnose analyze
+
+Minimal validation (init dirs or add env validation hook here)
+
+validate:
+mkdir -p “$(OUT_DIR)” “$(LOGS_DIR)” “$(DIAG_DIR)” “$(PRED_DIR)”
+@echo “>>> Validation complete (env/init).”
+
+selftest:
+@echo “>>> Selftest (fast, CI)”
+$(CLI) selftest –fast
+
+train:
+@echo “>>> Train (CI deterministic: EPOCHS=$(EPOCHS), DEVICE=$(DEVICE))”
+$(CLI) train +training.epochs=$(EPOCHS) $(OVERRIDES) –device $(DEVICE) –outdir “$(OUT_DIR)” $(EXTRA_ARGS)
+
+diagnose:
+@echo “>>> Diagnostics (CI)”
+$(CLI) diagnose smoothness –outdir “$(DIAG_DIR)” $(EXTRA_ARGS)
+$(CLI) diagnose dashboard –outdir “$(DIAG_DIR)” $(EXTRA_ARGS) || true
+
+analyze:
+@echo “>>> Analyze CLI logs (CI)”
+$(CLI) analyze-log –md “$(OUT_DIR)/log_table.md” –csv “$(OUT_DIR)/log_table.csv”
+
+Optional DVC pulls in CI
+
+dvc-pull:
+dvc pull || true
+
+dvc-push:
+dvc push || true
+
+clean:
+rm -rf “$(OUT_DIR)” “$(DIAG_DIR)” “$(PRED_DIR)”
+rm -rf .pytest_cache .ruff_cache .mypy_cache
