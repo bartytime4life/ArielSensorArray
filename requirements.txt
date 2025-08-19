@@ -77,5 +77,3 @@ Notes:
 • Prefer poetry install or pip install -e . using pyproject.toml for canonical versions.
 • For CUDA wheels of torch/torchvision/torchaudio, follow https://pytorch.org/get-started/locally/
 • For torch-geometric, consult https://data.pyg.org/whl/ for the correct torch/CUDA match.
-
-ChatGPT can make mistakes. Check important info.
