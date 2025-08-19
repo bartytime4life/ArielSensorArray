@@ -1,0 +1,100 @@
+# dvc.yaml — SpectraMind V50 (NeurIPS 2025 Ariel Data Challenge)
+# DVC pipeline orchestrating: calibrate → train → predict → diagnose → bundle
+# All commands are CLI-first (Typer) and Hydra-aware via config files.
+
+stages:
+  calibrate:
+    desc: "Run calibration pipeline to produce science‑ready time‑series & spectra"
+    cmd: >
+      poetry run spectramind calibrate
+      --outdir outputs/calibrated
+    deps:
+      - pyproject.toml
+      - poetry.lock
+      - src
+      - configs
+      - data
+    outs:
+      - path: outputs/calibrated
+        persist: true
+
+  train:
+    desc: "Train SpectraMind V50 model (SSM + GNN); write checkpoints & run logs"
+    cmd: >
+      poetry run spectramind train
+      --outdir outputs/checkpoints
+    deps:
+      - pyproject.toml
+      - poetry.lock
+      - src
+      - configs
+      - outputs/calibrated
+    outs:
+      - path: outputs/checkpoints
+        persist: true
+
+  predict:
+    desc: "Generate predictions (μ, σ) and submission CSV from trained checkpoints"
+    cmd: >
+      poetry run spectramind predict
+      --out-csv outputs/submission.csv
+    deps:
+      - pyproject.toml
+      - poetry.lock
+      - src
+      - configs
+      - outputs/calibrated
+      - outputs/checkpoints
+    outs:
+      - path: outputs/submission.csv
+
+  diagnose:
+    desc: "Produce diagnostics (HTML/PNG/JSON) — dashboards, smoothness, heatmaps"
+    cmd: >
+      bash -lc '
+        poetry run spectramind diagnose dashboard
+          --no-umap --no-tsne
+          --outdir outputs/diagnostics || \
+        poetry run spectramind diagnose dashboard
+          --outdir outputs/diagnostics || true
+        poetry run spectramind diagnose smoothness
+          --outdir outputs/diagnostics
+      '
+    deps:
+      - pyproject.toml
+      - poetry.lock
+      - src
+      - configs
+      - outputs/submission.csv
+    outs:
+      - path: outputs/diagnostics
+        persist: true
+    metrics:
+      - outputs/diagnostics/diagnostic_summary.json
+    plots:
+      - outputs/diagnostics/gll_per_bin.csv:
+          x: bin
+          y: gll
+          header: true
+      - outputs/diagnostics/calibration_coverage.csv:
+          x: bin
+          y: coverage
+          header: true
+
+  bundle:
+    desc: "Create final submission bundle (zip) including CSV and key diagnostics"
+    cmd: >
+      poetry run spectramind submit
+      --csv outputs/submission.csv
+      --diagnostics outputs/diagnostics
+      --out outputs/submission_bundle.zip
+    deps:
+      - pyproject.toml
+      - poetry.lock
+      - src
+      - configs
+      - outputs/submission.csv
+      - outputs/diagnostics
+    outs:
+      - path: outputs/submission_bundle.zip
+        cache: true
