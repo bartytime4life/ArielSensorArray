@@ -1,9 +1,17 @@
-— SpectraMind V50 (ArielSensorArray)
-Pin minimally for portability; prefer pyproject.toml as the source of truth.
-Install with: pip install -r requirements.txt
-For CUDA-specific PyTorch/torch-geometric wheels, see notes near the bottom.
-── Core configuration & CLI
+# ======================================================================
+# SpectraMind V50 (ArielSensorArray) — requirements.txt
+# ----------------------------------------------------------------------
+# Purpose: Minimal pinning for portability.
+# Notes:
+#   • Prefer `poetry install` or `pip install -e .` from pyproject.toml
+#   • This file exists for Kaggle / CI environments where pyproject isn’t used.
+#   • CUDA wheels for torch/torchvision/torchaudio/torch-geometric must be
+#     selected explicitly — see notes at bottom.
+# ======================================================================
 
+# ----------------------------
+# Core configuration & CLI
+# ----------------------------
 hydra-core>=1.3.2
 typer>=0.12.3
 rich>=13.7.1
@@ -13,8 +21,9 @@ packaging>=24.0
 jinja2>=3.1
 click>=8.1
 
-── Numerics & ML
-
+# ----------------------------
+# Numerics & ML
+# ----------------------------
 numpy>=1.26
 scipy>=1.11
 pandas>=2.1
@@ -23,57 +32,64 @@ torch>=2.2
 torchvision>=0.17
 torchaudio>=2.2
 
-── Graph/geom (AIRS GNN)
-
+# ----------------------------
+# Graph/geom (AIRS GNN)
+# ----------------------------
 networkx>=3.2
-
-torch-geometric wheels are platform/CUDA specific; on Windows they may be unavailable on PyPI.
-On Linux/macOS:
-pip install torch-geometric -f https://data.pyg.org/whl/torch-2.2.0+cpu.html
-or use the CUDA-specific index for your CUDA version from https://data.pyg.org/whl/
-
 torch-geometric>=2.5; platform_system != "Windows"
 
-── Visualization & diagnostics
-
+# ----------------------------
+# Visualization & diagnostics
+# ----------------------------
 matplotlib>=3.8
 plotly>=5.22
 umap-learn>=0.5.6
 shap>=0.45.0
 
-── I/O, progress, system
-
+# ----------------------------
+# I/O, progress, system utils
+# ----------------------------
 tqdm>=4.66
 joblib>=1.3
 psutil>=5.9
 
-── DVC core (choose a remote extra below as needed)
-
+# ----------------------------
+# Data Version Control (DVC)
+# ----------------------------
 dvc>=3.50
 
-── Optional experiment tracking (used if installed)
-
+# ----------------------------
+# Optional experiment tracking
+# ----------------------------
 mlflow>=2.14.0
 wandb>=0.17.0
 
-───────────────────────────────────────────────────────────────────────────────
-Optional extras (uncomment exactly one line for your storage backend, if used)
-dvc[gdrive,gcs]>=3.50
-dvc[s3,boto3]>=3.50
-dvc[ssh]>=3.50
-dvc[azure]>=3.50
-Dev tooling (optional; install via pip install -r requirements.txt -r requirements-dev.txt)
-See separate requirements-dev.txt if you prefer splitting; otherwise uncomment:
-pytest>=7.4
-pytest-cov>=4.1
-ruff>=0.6.9
-black>=24.8.0
-isort>=5.13.2
-pre-commit>=3.7.1
-mypy>=1.10.0
-types-PyYAML>=6.0.12
-types-requests>=2.32.0.20240622
-Notes:
-• Prefer poetry install or pip install -e . using pyproject.toml for canonical versions.
-• For CUDA wheels of torch/torchvision/torchaudio, follow https://pytorch.org/get-started/locally/
-• For torch-geometric, consult https://data.pyg.org/whl/ for the correct torch/CUDA match.
+# ======================================================================
+# Optional extras — uncomment the one you need for remote storage
+# ======================================================================
+# dvc[gdrive,gcs]>=3.50
+# dvc[s3,boto3]>=3.50
+# dvc[ssh]>=3.50
+# dvc[azure]>=3.50
+
+# ======================================================================
+# Dev tooling — optional; use with: pip install -r requirements.txt -r requirements-dev.txt
+# Or uncomment here for convenience.
+# ======================================================================
+# pytest>=7.4
+# pytest-cov>=4.1
+# ruff>=0.6.9
+# black>=24.8.0
+# isort>=5.13.2
+# pre-commit>=3.7.1
+# mypy>=1.10.0
+# types-PyYAML>=6.0.12
+# types-requests>=2.32.0.20240622
+
+# ======================================================================
+# Notes:
+#   • For CUDA-specific PyTorch wheels, follow https://pytorch.org/get-started/locally/
+#   • For torch-geometric wheels, consult: https://data.pyg.org/whl/
+#     Example (CPU only):
+#     pip install torch-geometric -f https://data.pyg.org/whl/torch-2.2.0+cpu.html
+# ======================================================================
