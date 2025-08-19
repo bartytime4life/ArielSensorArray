@@ -1,6 +1,3 @@
-Perfect — thanks for pasting your existing README.md. What you’ve got is already solid: it reads like a mission-grade engineering doc and maps directly onto your repo.
-
-If your goal is to make it copy-paste ready (no placeholders, no <your-username> bits, everything tidy for Codex/iPhone push), here’s a cleaned version you can drop in right now as README.md:
 
 # SpectraMind V50 — ArielSensorArray
 
@@ -209,5 +206,3 @@ License: MIT
 Contact: Please open Issues/Discussions in this repo.
 
 ---
-
-Would you like me to now **do the same cleanup for `ARCHITECTURE.md`** so it matches the README style? That way both root docs are consistent and drop-in ready.
