@@ -1,317 +1,201 @@
-# SpectraMind V50 — GUI Engineering Guide (Dashboard & Control Panel)
+# SpectraMind V50 — AI Design & Modeling Guide
 
-> Goal: add an **optional** GUI (diagnostics dashboard / control panel) that mirrors the CLI, preserves full reproducibility, and stays thin. The CLI remains the source of truth; the GUI consumes logged artifacts and commands the pipeline via the unified `spectramind` app.
-
----
-
-## 0) Principles
-
-1. **CLI-first, GUI-optional**
-
-   * Every operation must be runnable via `spectramind …` with Hydra configs; the GUI is a *client* that shells out or calls a thin API wrapper around the CLI.
-   * Avoid hidden state: write/read artifacts only via the pipeline’s standard outputs, logs, and DVC-tracked files.
-
-2. **Mirror, don’t fork**
-
-   * GUI buttons ≙ exact CLI invocations; help panels show the same flags/semantics as `--help`. UX reflects CLI UX guidelines (progress, helpful errors, visible reaction).
-
-3. **Testability & portability**
-
-   * Decouple rendering (View) from logic (Model); prefer **MVVM**/**MVC** patterns for clear seams and unit-testable view-models (no I/O in the View).
-
-4. **Thin, fast, accessible**
-
-   * Prioritize small, cross‑platform stacks; ensure keyboard navigation, high-contrast themes, and i18n hooks from day one.
+> Mission: finalize a challenge‑grade architecture that’s physics‑informed, uncertainty‑calibrated, and inference‑efficient for Ariel μ/σ prediction (283 bins), with airtight CLI/Hydra/DVC reproducibility.
 
 ---
 
-## 1) Architecture Patterns You’ll Use (in practice)
+## 0) Outcomes we optimize for
 
-* **MVC**: Controller transforms user actions into CLI calls; View renders artifact files (plots, HTML). Keeps UI passive when possible.
-* **MVVM**: View binds to a ViewModel that exposes `status`, `metrics`, `artifacts`, `run_commands()`; perfect if you pick frameworks with native binding (Qt/QML, SwiftUI, Jetpack Compose).
-* **Event-driven loop**: GUI reacts to file updates (e.g., new `outputs/diagnostics/report_v*.html`), streaming logs, and long-run tasks via async watchers.
-
----
-
-## 2) Framework Choices (trade-offs)
-
-**Pick one**; all can work for a thin, portable dashboard.
-
-### A) Qt (PySide/PyQt, C++ or Python)
-
-* **Pros**: Native performance, mature widgets, excellent MVVM/QML; great for desktop-only tools; Python bindings are solid.
-* **Cons**: Larger runtime than minimal web UIs; packaging considerations.
-* **Recommend**: PySide6 (Python) + QML for clean MVVM.
-
-### B) Electron (+ React)
-
-* **Pros**: Web skills, huge ecosystem, rapid dev, cross-platform; good for rich HTML diagnostics (embedding existing HTML reports).
-* **Cons**: Heavier footprint; ensure long-running tasks are backgrounded.
-* **Recommend**: Only if you want web tech and embedded Plotly/HTML artifacts.
-
-### C) Flutter (Dart)
-
-* **Pros**: One codebase for desktop+mobile, reactive UI model, good charts; nice for portable dashboard binaries.
-* **Cons**: New language for many; plugin surface still evolving for some OS features.
-
-> **Default path** for SpectraMind V50: **Qt (PySide6 + QML)** if you want a native feel and tight Python interop; **Electron+React** if you want to reuse web assets and embed HTML diagnostics.
+* **Accuracy & Physics**: robust μ estimates respecting spectral structure and transit physics.
+* **Honest σ**: well‑calibrated uncertainty (GLL score benefit).
+* **Throughput**: ≤ 9 hr end‑to‑end on \~1,100 planets (Kaggle budget).
+* **Reproducibility**: CLI-first runs with config hashing + data versioning.&#x20;
 
 ---
 
-## 3) Minimal, Working Examples
+## 1) Final model blueprint (FGS1 × AIRS → μ/σ)
 
-### 3.1 PySide6 (Qt) — MVVM skeleton
+### 1.1 Encoders
 
-```python
-# gui/app.py
-import sys, subprocess, json, threading
-from pathlib import Path
-from PySide6.QtWidgets import QApplication, QWidget, QVBoxLayout, QPushButton, QTextEdit, QLabel
+* **FGS1 (135k+ timesteps)** → **Mamba SSM** (linear‑time sequence model; selective state; long‑context SSM).
+  Rationale: avoids ViT quadratic attention and scales to ultra‑long curves, matching transformer accuracy at a fraction of cost.&#x20;
 
-REPO = Path(__file__).resolve().parents[1]
-CLI  = ["python", "-m", "spectramind"]  # unified Typer CLI
+* **AIRS (283 λ bins)** → **Graph Neural Network (GNN)** with edge types:
 
-def run_cli(args, on_line):
-    # Non-blocking CLI runner with streaming
-    proc = subprocess.Popen(args, cwd=REPO, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
-    for line in proc.stdout:
-        on_line(line.rstrip())
-    proc.wait()
-    on_line(f"[exit code {proc.returncode}]")
+  * wavelength adjacency (smoothness prior)
+  * molecule regions (e.g., H₂O/CO₂/CH₄ groups)
+  * detector region ties (shared systematics)
+    Use GAT/RGCN; message passing “in‑paints” noisy bins from physically related neighbors.&#x20;
 
-class MainWindow(QWidget):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("SpectraMind V50 — Dashboard")
-        layout = QVBoxLayout(self)
+* **Fusion**: concatenate latent summaries (FGS1 SSM pooled reps + AIRS GNN node/readout) → joint head(s).
 
-        self.status = QLabel("Idle")
-        self.log = QTextEdit(); self.log.setReadOnly(True)
-        self.btn_selftest = QPushButton("Run selftest")
-        self.btn_diagnose = QPushButton("Generate Diagnostics")
+### 1.2 Decoders
 
-        self.btn_selftest.clicked.connect(self.on_selftest)
-        self.btn_diagnose.clicked.connect(self.on_diagnose)
+* **μ head**: lightweight MLP; optional spectral regularizers (smoothness/FFT penalties inside loss).
+* **σ head**: parallel branch for per‑bin σ (heteroscedastic). Training via **Gaussian Log‑Likelihood (GLL)**.&#x20;
 
-        layout.addWidget(self.status); layout.addWidget(self.btn_selftest)
-        layout.addWidget(self.btn_diagnose); layout.addWidget(self.log)
+### 1.3 Symbolic / physics priors
 
-    def on_selftest(self):
-        self.status.setText("Running: spectramind selftest …")
-        threading.Thread(target=run_cli, args=([*CLI, "selftest"], self.log.append), daemon=True).start()
+* Loss add‑ons: smoothness (L2 of ΔΔμ), asymmetry guardrails, FFT noise suppression, non‑negativity if needed; all toggled via Hydra.&#x20;
 
-    def on_diagnose(self):
-        self.status.setText("Running: spectramind diagnose dashboard …")
-        # Example: generate dashboard with defaults; adapt Hydra overrides as needed
-        threading.Thread(target=run_cli, args=([*CLI, "diagnose", "dashboard"], self.log.append), daemon=True).start()
+---
 
-if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    w = MainWindow(); w.resize(900, 600); w.show()
-    sys.exit(app.exec())
+## 2) Uncertainty stack (multi‑tier)
+
+1. **Aleatoric**: predict per‑bin σ and train with GLL.&#x20;
+2. **Epistemic**: **ensembles** or **MC‑Dropout** variance across models/passes.&#x20;
+3. **Post‑hoc calibration**:
+
+   * global temperature scaling T for σ (optimize val GLL), and optionally per‑λ scaling vectors.&#x20;
+   * instance‑level adaptation (lightweight test‑time scale) where allowed.
+4. **COREL conformal GNN**: conformal intervals with graph‑aware residual correlation (coverage guarantees; lifts intervals on correlated bands like H₂O).&#x20;
+
+> Optional frontier: **diffusion decoder** for non‑Gaussian posteriors (sample many spectra → μ/var). Heavier; use selectively.&#x20;
+
+---
+
+## 3) Explainability & diagnostics loop
+
+* **GNNExplainer / edge importances** → which λ groups/relations drove predictions.&#x20;
+* **FGS1 SSM attributions** (integrated gradients over time) → ingress/egress vs baseline contributions.&#x20;
+* **Global SHAP overlays** for time and wavelength to spot biases;
+* **FFT of residuals** to verify jitter/systematic suppression.
+* **UMAP/t‑SNE latents** to visualize clusters (e.g., transit phases/metadata).
+* All exported via `spectramind diagnose dashboard` HTML and logs.&#x20;
+
+---
+
+## 4) Throughput & runtime engineering
+
+* **Calibration cache**: persist science‑ready tensors (NPY/Parquet) keyed by config hash; invalidate on setting changes (hash). Cuts hours off repeat runs.&#x20;
+* **Linear encoders** (SSM) + **sparse GNN** inference.
+* **Mixed precision** (AMP), pinned memory, overlap I/O.
+* **Batching & prefetch**, avoid Python hotspots; vectorize.
+* **DVC stages** ensure incremental recompute only when deps change.&#x20;
+
+---
+
+## 5) Training regimen
+
+* **Curriculum**: start with masked‑autoencoding / denoise (FGS1/AIRS) → contrastive (align time–spectrum) → supervised μ/σ fine‑tune.&#x20;
+* **Regularization**: spectral smoothness, label‑noise robust GLL clipping, dropout (and MC at test for epistemic).
+* **Hydra sweeps**: learning rates, σ‑loss weight, GNN layer/edge‑type configs, SSM depth/state size.&#x20;
+* **Reproducibility**: fixed seeds where feasible; record config & git SHA in logs + outputs.&#x20;
+
+---
+
+## 6) CLI/Hydra/DVC contract
+
+* **Run** everything via Typer CLI (`spectramind ...`), never bypass. **Every action logged** with config hash + dataset hash to `v50_debug_log.md`.&#x20;
+* **Hydra**: `configs/` groups (`data/`, `model/`, `training/`, `diagnostics/`, `calibration/`). Multirun for sweeps.&#x20;
+* **DVC**: `dvc.yaml` stages for calibrate→train→predict→diagnose; cache artifacts; pin data versions.&#x20;
+
+---
+
+## 7) Minimal config sketch (Hydra)
+
+```yaml
+# configs/model/v50.yaml
+encoders:
+  fgs1:
+    type: mamba
+    d_model: 256
+    n_layers: 8
+    dropout: 0.1
+  airs:
+    type: gnn
+    gnn_type: gat
+    hidden: 256
+    layers: 4
+    edge_types: [adjacent, molecule, detector]
+fusion:
+  type: concat
+decoders:
+  mu:
+    hidden: [256, 128]
+  sigma:
+    hidden: [256, 128]
+loss:
+  gll_weight: 1.0
+  smooth_l2_weight: 0.1
+  fft_suppress_weight: 0.05
+uq:
+  epistemic: ensemble   # or mc_dropout
+  temp_scale: true
+  corel: true
 ```
 
-* **Pattern**: The View (`MainWindow`) is thin; logic dispatches *exact* CLI commands (no hidden state).
-* Use QML (+ models) to evolve toward MVVM bindings (status, artifacts list, run history).
-
-### 3.2 Electron + React — thin shell around CLI
-
-```js
-// main.js (Electron main process)
-const { app, BrowserWindow, ipcMain } = require('electron');
-const { spawn } = require('child_process');
-const path = require('path');
-
-function createWindow() {
-  const win = new BrowserWindow({
-    width: 1100, height: 720,
-    webPreferences: { preload: path.join(__dirname, 'preload.js') }
-  });
-  win.loadFile('index.html');
-}
-
-ipcMain.handle('run-cli', async (_evt, args) => {
-  return await new Promise((resolve) => {
-    const child = spawn('python', ['-m', 'spectramind', ...args], { cwd: path.resolve(__dirname, '..') });
-    let output = '';
-    child.stdout.on('data', d => output += d.toString());
-    child.stderr.on('data', d => output += d.toString());
-    child.on('close', code => resolve({ code, output }));
-  });
-});
-
-app.whenReady().then(createWindow);
+```yaml
+# configs/training/default.yaml
+optimizer: adamw
+lr: 2.0e-4
+batch_size: 16
+epochs: 40
+amp: true
+seed: 1337
+early_stop_patience: 6
 ```
 
-```js
-// preload.js (safe bridge)
-const { contextBridge, ipcRenderer } = require('electron');
-contextBridge.exposeInMainWorld('spectramind', {
-  run: (args) => ipcRenderer.invoke('run-cli', args),
-});
+```yaml
+# configs/diagnostics/dashboard.yaml
+shap: true
+fft_residuals: true
+umap: true
+gnn_explain: true
+export_html: true
 ```
 
-```html
-<!-- index.html (quick UI; replace with React app) -->
-<!doctype html>
-<html>
-  <body>
-    <h1>SpectraMind V50 — Dashboard</h1>
-    <button onclick="runSelftest()">Run selftest</button>
-    <button onclick="runDiagnose()">Generate Diagnostics</button>
-    <pre id="log"></pre>
-    <script>
-      async function runSelftest() {
-        const res = await window.spectramind.run(['selftest']);
-        document.getElementById('log').textContent = res.output + `\n[exit ${res.code}]`;
-      }
-      async function runDiagnose() {
-        const res = await window.spectramind.run(['diagnose', 'dashboard']);
-        document.getElementById('log').textContent = res.output + `\n[exit ${res.code}]`;
-      }
-    </script>
-  </body>
-</html>
-```
-
-* **Pattern**: Electron main process spawns the exact CLI, renderer displays logs; scale up with React (components, routing, charts).
-
 ---
 
-## 4) What the GUI Should Show
-
-* **Run Controls**: buttons for `selftest`, `calibrate`, `train`, `predict`, `diagnose dashboard`, `submit`.
-* **Hydra Overrides Panel**: key/value inputs → `spectramind … key=value`; defaults pre-filled.
-* **Artifact Browser**: list latest `outputs/diagnostics/*.html`, plots, `v50_debug_log.md`; click to open.
-* **Live Log**: stream CLI output with progress; always show “visible reaction” to actions; format helpful errors.
-* **Status Cards**: last run time, config hash, Git SHA, DVC data hash, and links to artifacts.
-* **Accessibility**: keyboard shortcuts, high-contrast theme, reduced motion, alt text for images.
-
----
-
-## 5) How the GUI Calls the System (No Hidden State)
-
-1. Spawn the **Typer CLI** (`python -m spectramind …`) for every action; never bypass it.
-2. Read **Hydra-resolved** configs & outputs from `outputs/YYYY-MM-DD/HH-MM-SS/…` for display (not from memory).
-3. Show **DVC-tracked** artifacts by reading the working tree; no ad-hoc caches.
-4. Append CLI invocations to `v50_debug_log.md` (already standard); surface them in the GUI history.
-
----
-
-## 6) Testing & CI
-
-* **Unit**:
-
-  * ViewModel functions return the *exact* CLI arg lists for given options.
-  * Parsers that read metrics/artifacts from output dirs.
-* **Integration**:
-
-  * Headless smoke tests: launch GUI, trigger `selftest` and `diagnose dashboard`, assert artifacts exist.
-* **CI**:
-
-  * Build standalone app (Qt/Electron) on Linux runner; run smoke tests with a small toy config.
-  * Ensure failures display actionable messages (map stderr to friendly text).
-
----
-
-## 7) Performance & Packaging Notes
-
-* Qt/PySide: ship a single binary (PyInstaller/Briefcase) + Qt libs; MVVM with QML runs fast & native.
-* Electron: keep main process light; offload long tasks; bundle with `electron-builder`; beware size; cache HTML plots.&#x20;
-* Streaming logs: line-buffer the process; keep the UI responsive with async threads/workers.
-
----
-
-## 8) Roadmap (phased)
-
-* **v0 (MVP)**: Controls for `selftest`, `diagnose dashboard`; live log; artifact list & “Open in browser”.
-* **v1**: Hydra overrides panel; run history; “rerun with last config”.
-* **v2**: Live charts (tailing metrics JSON/CSV); UMAP/SHAP embeds via embedded web views.
-* **v3**: Remote mode (optional) — small HTTP sidecar that accepts *only* specific `spectramind` commands, still logging via CLI.
-
----
-
-## 9) Security & Safety
-
-* Never execute arbitrary shell from the GUI. Only allow predefined commands with sanitized overrides.
-* Keep read-only browsing of artifacts by default; writes happen only via CLI.
-* Log everything: command, config, start/end, exit code, artifact paths.
-
----
-
-## 10) Quick Start Recipes
-
-### A) Qt (PySide6) dev loop
+## 8) Example CLI runs
 
 ```bash
-pip install PySide6
-python gui/app.py
+# 1) Calibrate once with cache on
+python -m spectramind calibrate data=kaggle calibration.cache=true
+
+# 2) Train V50 with GNN+SSM and uncertainty head
+python -m spectramind train model=v50 training=default
+
+# 3) Predict μ/σ + conformalize
+python -m spectramind predict model=v50 uq.corel=true --out-csv outputs/submission.csv
+
+# 4) Calibrate uncertainties (temperature scaling on val)
+python -m spectramind calibrate-temp uq.temp_scale=true
+
+# 5) Diagnostics dashboard (SHAP/FFT/UMAP, explanations)
+python -m spectramind diagnose dashboard diagnostics=dashboard
+
+# 6) Sweep a few hypers
+python -m spectramind train -m training.lr=1e-4,2e-4 uq.epistemic=ensemble,mc_dropout
 ```
 
-* Package later with PyInstaller (`pyinstaller --onefile gui/app.py` + datas).
-
-### B) Electron dev loop
-
-```bash
-cd gui-electron
-npm install
-npm start
-# main.js, preload.js, index.html as above; replace index.html with React SPA later
-```
-
-* Package with `electron-builder`.
+All of the above auto‑log config+git SHA and produce versioned artifacts; DVC stages ensure minimal recompute.&#x20;
 
 ---
 
-## 11) Why this fits SpectraMind V50
+## 9) Acceptance checklist
 
-* Matches the **terminal-first** blueprint and keeps full auditability via logs and artifacts (no GUI-only paths).
-* Uses **MVVM/MVC** to ensure maintainable, testable UI layers.
-* Adheres to CLI UX best practices: clear help, progress, helpful errors, visible reaction.
-
----
-
-## References
-
-* CLI-first pipeline & audit logging: unified Typer app, Hydra configs, DVC, CI; saved HTML diagnostics.
-* GUI architecture & patterns (event-driven, MVC/MVVM, layout, reactive UIs), framework overviews (Qt/Electron/Flutter).
-* CLI UX best practices (help, flags, progress, error messaging, readability).
+* [ ] GLL improves after temp scaling on val.&#x20;
+* [ ] Conformal coverage within target; intervals expand on correlated bands (H₂O/CO₂) as expected.&#x20;
+* [ ] Residual FFT shows no persistent jitter peaks.
+* [ ] XAI panels indicate molecule bands, not confounders, drive predictions.&#x20;
+* [ ] End‑to‑end ≤ 9 hr on \~1,100 planets using cache + AMP + linear SSM.&#x20;
+* [ ] Reproducibility: config hash, DVC data hash, Git SHA recorded for every artifact.&#x20;
 
 ---
 
-## Appendix — “Glue Code” Stubs (ViewModel style)
+## 10) References (internal)
 
-**Python ViewModel (Qt path)**
+SSM for long FGS1; AIRS GNN edges; multi‑tier UQ (GLL, ensembles, temp scaling, COREL, diffusion); XAI & FFT diagnostics; caching & throughput; CLI/Hydra/DVC rigor:
 
-```python
-# gui/viewmodel.py
-from dataclasses import dataclass, field
-from typing import List
+*
 
-@dataclass
-class RunSpec:
-    command: List[str]  # e.g., ["selftest"] or ["diagnose","dashboard"]
-    overrides: List[str] = field(default_factory=list)  # e.g., ["data=toy","training.fast=true"]
+GUI optional (thin dashboard); CLI UX best practices:
 
-    def to_args(self) -> List[str]:
-        return ["-m", "spectramind"] + self.command + self.overrides
-```
+*
 
-**Electron Renderer (React hook)**
+Physics/spectroscopy background for rule design:
 
-```ts
-// useSpectramind.ts
-import { useState } from 'react';
+*
 
-export function useSpectramind() {
-  const [running, setRunning] = useState(false);
-  const [log, setLog] = useState('');
-
-  async function run(args: string[]) {
-    setRunning(true);
-    const res = await (window as any).spectramind.run(args);
-    setLog(res.output + `\n[exit ${res.code}]`);
-    setRunning(false);
-  }
-  return { running, log, run };
-}```
+---
