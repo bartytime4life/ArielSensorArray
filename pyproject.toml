@@ -117,24 +117,24 @@ namespaces = false
 [tool.setuptools.package-data]
 spectramind = ["py.typed"]
 
-# -----------------------
-# Ruff (lint + import sort + formatter alignment)
-# -----------------------
+# -------------------------
+# Formatting / Linting
+# -------------------------
+
 [tool.ruff]
 line-length = 100
 target-version = "py310"
 extend-select = ["E", "F", "I", "UP", "B", "C4", "SIM"]
 ignore = []
 exclude = [
-  ".git",
-  ".venv",
-  "venv",
-  "build",
-  "dist",
-  "data",
-  "outputs",
-  "logs",
-  "docs",
+  "docs/",
+  "build/",
+  "dist/",
+  ".venv/",
+  "venv/",
+  "outputs/",
+  "data/",
+  "logs/"
 ]
 
 [tool.ruff.lint.isort]
@@ -147,9 +147,6 @@ src-paths = ["src", "tests"]
 quote-style = "preserve"
 indent-style = "space"
 
-# -----------------------
-# Black
-# -----------------------
 [tool.black]
 line-length = 100
 target-version = ["py310"]
@@ -168,9 +165,6 @@ exclude = '''
 )/
 '''
 
-# -----------------------
-# isort (kept for parity; Ruff can sort imports too)
-# -----------------------
 [tool.isort]
 profile = "black"
 line_length = 100
@@ -178,9 +172,10 @@ known_first_party = ["spectramind", "asa"]
 src_paths = ["src", "tests"]
 skip = ["build", "dist", "data", "outputs", "logs", "docs", ".venv", "venv"]
 
-# -----------------------
-# pytest / coverage / mypy
-# -----------------------
+# -------------------------
+# Testing / Coverage / Mypy
+# -------------------------
+
 [tool.pytest.ini_options]
 minversion = "7.0"
 addopts = "-ra --maxfail=5 --strict-markers"
@@ -195,7 +190,10 @@ log_date_format = "%Y-%m-%d %H:%M:%S"
 [tool.coverage.run]
 branch = true
 source = ["src"]
-omit = ["tests/*", "docs/*"]
+omit = [
+  "tests/*",
+  "docs/*"
+]
 
 [tool.coverage.report]
 show_missing = true
