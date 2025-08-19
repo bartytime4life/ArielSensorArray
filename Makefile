@@ -1,221 +1,153 @@
-```makefile
-# SpectraMind V50 — Makefile (root)
-# CLI-first wrappers for common tasks (Poetry + Typer + Hydra + DVC)
-# Usage:
-#   make help
-#   make init
-#   make selftest
-#   make train DATA=toy CFG="model=v50 training=fast"
-#   make predict OUT=outputs/submission.csv
-#   make diagnose HTML=outputs/diagnostics/report.html
-#   make submit ZIP=outputs/submission_bundle.zip
-#   make docs
-#   make clean
+# SpectraMind V50 — Makefile
+# -----------------------------------------------------------------------------
+# Convenience targets to keep the repo reproducible and developer-friendly.
+# All heavy work is delegated to the unified Typer CLI: `python -m spectramind`.
+# Variables can be overridden on the command line, e.g.:
+#   make train OVERRIDES="data=toy training=default model=v50"
+# -----------------------------------------------------------------------------
 
-# ---------------------------------------------------------------------
-# Variables (override on CLI, e.g. `make train DATA=kaggle`)
-# ---------------------------------------------------------------------
-PY        := poetry run
-PYTHON    := poetry run python
-SPECTRA   := $(PYTHON) -m spectramind
+# Python entrypoint (can be changed to `spectramind` if installed as a console script)
+PY ?= python
+CLI ?= -m spectramind
 
-DATA      ?= toy
-CFG       ?=
-OUT       ?= outputs/submission.csv
-HTML      ?= outputs/diagnostics/report.html
-ZIP       ?= outputs/submission_bundle.zip
-N_JOBS    ?= 1
-
-# ---------------------------------------------------------------------
-# Default target
-# ---------------------------------------------------------------------
+# General settings
+SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
-# ---------------------------------------------------------------------
-# Phony targets
-# ---------------------------------------------------------------------
-.PHONY: help init lock env-update lint format test coverage \
-        selftest calibrate train predict calibrate-temp corel-train \
-        diagnose submit ablate analyze-log check-cli-map \
-        docs dvc-init dvc-repro clean deepclean
+# Colored echo
+YELLOW := \033[1;33m
+GREEN  := \033[1;32m
+BLUE   := \033[1;34m
+RESET  := \033[0m
 
-# ---------------------------------------------------------------------
-# Help
-# ---------------------------------------------------------------------
-help:
-	@echo ""
-	@echo "SpectraMind V50 — Makefile"
-	@echo ""
-	@echo "Targets:"
-	@echo "  init                 Install Poetry deps, pre-commit hooks, and DVC (optional)."
-	@echo "  lock                 Refresh poetry.lock from pyproject.toml."
-	@echo "  env-update           Reinstall deps using Poetry (no-root)."
-	@echo "  lint                 Run ruff + black --check + isort --check."
-	@echo "  format               Auto-format with black + isort; fix lint with ruff."
-	@echo "  test                 Run pytest."
-	@echo "  coverage             Run pytest with coverage report."
-	@echo "  selftest             Run spectramind selftest (deep)."
-	@echo "  calibrate            Run calibration kill chain (DATA=$(DATA))."
-	@echo "  train                Train model (DATA=$(DATA) CFG='$(CFG)')."
-	@echo "  predict              Run inference to CSV (OUT=$(OUT))."
-	@echo "  calibrate-temp       Temperature scaling for σ calibration."
-	@echo "  corel-train          Train COREL conformal/graph calibration."
-	@echo "  diagnose             Build diagnostics dashboard (HTML=$(HTML))."
-	@echo "  submit               End-to-end submission bundle (ZIP=$(ZIP))."
-	@echo "  ablate               Run ablation suite (Hydra multirun supported)."
-	@echo "  analyze-log          Summarize CLI calls from v50_debug_log.md."
-	@echo "  check-cli-map        Show command-to-file mapping integrity."
-	@echo "  docs                 Build docs site (MkDocs) if configured."
-	@echo "  dvc-init             Initialize DVC (remote optional)."
-	@echo "  dvc-repro            Reproduce DVC pipeline end-to-end."
-	@echo "  clean                Remove temp outputs and caches."
-	@echo "  deepclean            Remove venv caches, outputs, and DVC cache."
-	@echo ""
+# User-overridable Hydra overrides for train/predict/etc.
+# Example: make train OVERRIDES="data=kaggle training=fast model=v50 +training.seed=1337"
+OVERRIDES ?=
 
-# ---------------------------------------------------------------------
-# Install / Environment
-# ---------------------------------------------------------------------
-init:
-	@echo ">> Installing Poetry dependencies..."
-	poetry install --no-root
-	@echo ">> Installing pre-commit hooks..."
-	poetry run pre-commit install
-	@echo ">> (Optional) Initialize DVC if needed: make dvc-init"
-	@echo ">> Done."
+# Common paths
+OUTDIR := outputs
+LOGDIR := logs
+DIAGDIR := $(OUTDIR)/diagnostics
 
-lock:
-	@echo ">> Updating poetry.lock..."
-	poetry lock --no-update
-	@echo ">> Done."
+# -----------------------------------------------------------------------------
+# Meta
+# -----------------------------------------------------------------------------
 
-env-update:
-	@echo ">> Reinstalling env from lockfile..."
-	poetry install --no-root
-	@echo ">> Done."
+.PHONY: help
+help: ## Show this help message
+	@echo -e "$(BLUE)SpectraMind V50 — Makefile targets$(RESET)"
+	@echo
+	@grep -E '^[a-zA-Z0-9_\-]+:.*?## .+$$' $(MAKEFILE_LIST) \
+	| sed -E 's/:.*?## /: /' \
+	| sort \
+	| awk -F': ' '{ printf "  \033[1m%-18s\033[0m %s\n", $$1, $$2 }'
 
-# ---------------------------------------------------------------------
-# Quality: lint / format / tests / coverage
-# ---------------------------------------------------------------------
-lint:
-	@echo ">> Lint: ruff + black --check + isort --check..."
-	$(PY) ruff check .
-	$(PY) black --check .
-	$(PY) isort --check-only .
-	@echo ">> Lint OK."
-
-format:
-	@echo ">> Formatting with black + isort; autofix lint with ruff..."
-	$(PY) isort .
-	$(PY) black .
-	$(PY) ruff check . --fix
-	@echo ">> Format OK."
-
-test:
-	@echo ">> Running pytest..."
-	$(PY) pytest -q
-	@echo ">> Tests OK."
-
-coverage:
-	@echo ">> Running tests with coverage..."
-	$(PY) pytest --cov=src --cov-report=term-missing --cov-report=xml
-	@echo ">> Coverage report generated (coverage.xml)."
-
-# ---------------------------------------------------------------------
-# CLI Wrappers
-# ---------------------------------------------------------------------
-selftest:
-	@echo ">> Running SpectraMind selftest (deep)..."
-	$(SPECTRA) selftest --deep
-
-calibrate:
-	@echo ">> Calibrating dataset: $(DATA)"
-	$(SPECTRA) calibrate data=$(DATA) calibration.cache=true
-
-train:
-	@echo ">> Training on dataset: $(DATA) with overrides: $(CFG)"
-	$(SPECTRA) train data=$(DATA) $(CFG)
-
-predict:
-	@echo ">> Predicting μ/σ → $(OUT)"
-	mkdir -p $(dir $(OUT))
-	$(SPECTRA) predict data=$(DATA) --out-csv $(OUT)
-
-calibrate-temp:
-	@echo ">> Temperature scaling for σ calibration..."
-	$(SPECTRA) calibrate-temp data=$(DATA) $(CFG)
-
-corel-train:
-	@echo ">> Training COREL conformal/graph calibration..."
-	$(SPECTRA) corel-train data=$(DATA) $(CFG)
-
-diagnose:
-	@echo ">> Building diagnostics dashboard → $(HTML)"
-	mkdir -p $(dir $(HTML))
-	$(SPECTRA) diagnose dashboard $(CFG) --html-out $(HTML)
-
-submit:
-	@echo ">> End-to-end submission → $(ZIP)"
-	mkdir -p $(dir $(ZIP))
-	$(SPECTRA) submit $(CFG) --zip-out $(ZIP)
-
-ablate:
-	@echo ">> Running ablation suite (Hydra multirun enabled)..."
-	# Example: make ablate CFG="-m training.lr=1e-4,2e-4 uq.epistemic=ensemble,mc_dropout"
-	$(SPECTRA) ablate $(CFG)
-
-analyze-log:
-	@echo ">> Analyzing CLI logs..."
-	$(SPECTRA) analyze-log $(CFG)
-
-check-cli-map:
-	@echo ">> Checking command-to-file mapping..."
-	$(SPECTRA) check-cli-map $(CFG)
-
-# ---------------------------------------------------------------------
-# Docs / MkDocs
-# ---------------------------------------------------------------------
-docs:
-	@echo ">> Building docs site (MkDocs)..."
-	@if command -v mkdocs >/dev/null 2>&1; then \
-	  mkdocs build --clean; \
+.PHONY: init
+init: ## Initialize repo: create dirs, install pre-commit hooks (if present)
+	@mkdir -p $(OUTDIR) $(LOGDIR) $(DIAGDIR)
+	@if command -v pre-commit >/dev/null 2>&1; then \
+		echo -e "$(YELLOW)Installing pre-commit hooks...$(RESET)"; \
+		pre-commit install; \
 	else \
-	  echo "MkDocs not installed. Install with: poetry run pip install mkdocs mkdocs-material"; \
+		echo -e "$(YELLOW)pre-commit not found; skipping hook install$(RESET)"; \
 	fi
+	@echo -e "$(GREEN)Init done.$(RESET)"
 
-# ---------------------------------------------------------------------
-# DVC helpers
-# ---------------------------------------------------------------------
-dvc-init:
-	@echo ">> Initializing DVC..."
+.PHONY: clean
+clean: ## Remove transient outputs (keeps logs and checkpoints)
+	@echo -e "$(YELLOW)Cleaning outputs (except checkpoints/logs)...$(RESET)"
+	@find $(OUTDIR) -maxdepth 1 -type f -name "*.csv" -delete || true
+	@rm -rf $(DIAGDIR) || true
+	@rm -f $(OUTDIR)/temp_scaling.json || true
+	@echo -e "$(GREEN)Clean complete.$(RESET)"
+
+.PHONY: distclean
+distclean: ## Thorough cleanup (outputs/, logs/ diagnostics/); keeps data/
+	@echo -e "$(YELLOW)Deep cleaning outputs and logs...$(RESET)"
+	@rm -rf $(OUTDIR) || true
+	@rm -rf $(LOGDIR) || true
+	@mkdir -p $(OUTDIR) $(LOGDIR)
+	@echo -e "$(GREEN)Distclean complete.$(RESET)"
+
+# -----------------------------------------------------------------------------
+# Checks & QA
+# -----------------------------------------------------------------------------
+
+.PHONY: selftest
+selftest: ## Run CLI selftest (wiring & integrity)
+	$(PY) $(CLI) selftest
+
+.PHONY: selftest-deep
+selftest-deep: ## Run CLI selftest with Hydra compose smoke check
+	$(PY) $(CLI) selftest --deep
+
+.PHONY: lint
+lint: ## Run ruff + black --check + isort --check (if installed)
+	@if command -v ruff >/dev/null 2>&1; then ruff check .; else echo "ruff not installed"; fi
+	@if command -v black >/dev/null 2>&1; then black --check .; else echo "black not installed"; fi
+	@if command -v isort >/dev/null 2>&1; then isort --check-only .; else echo "isort not installed"; fi
+
+.PHONY: fmt
+fmt: ## Auto-format with black + isort (if installed)
+	@if command -v isort >/dev/null 2>&1; then isort .; else echo "isort not installed"; fi
+	@if command -v black >/dev/null 2>&1; then black .; else echo "black not installed"; fi
+
+.PHONY: test
+test: ## Run pytest (quiet)
+	@if command -v pytest >/dev/null 2>&1; then pytest -q; else echo "pytest not installed"; fi
+
+# -----------------------------------------------------------------------------
+# Pipeline shortcuts (thin wrappers around the CLI)
+# -----------------------------------------------------------------------------
+
+.PHONY: calibrate
+calibrate: ## Run calibration kill chain → outputs/calibrated
+	$(PY) $(CLI) calibrate $(OVERRIDES)
+
+.PHONY: train
+train: ## Train model (uses Hydra overrides via OVERRIDES)
+	$(PY) $(CLI) train $(OVERRIDES)
+
+.PHONY: predict
+predict: ## Predict μ/σ and write submission CSV
+	$(PY) $(CLI) predict $(OVERRIDES) --out-csv $(OUTDIR)/submission.csv
+
+.PHONY: temp-scale
+temp-scale: ## Temperature scaling for uncertainty calibration
+	$(PY) $(CLI) calibrate-temp $(OVERRIDES)
+
+.PHONY: corel-train
+corel-train: ## Train COREL conformal model
+	$(PY) $(CLI) corel-train $(OVERRIDES)
+
+.PHONY: diagnose
+diagnose: ## Build diagnostics dashboard HTML
+	$(PY) $(CLI) diagnose dashboard $(OVERRIDES) --html-out $(DIAGDIR)/report_v1.html
+
+.PHONY: submit
+submit: ## Create submission bundle ZIP from latest artifacts
+	$(PY) $(CLI) submit --zip-out $(OUTDIR)/submission_bundle.zip
+
+.PHONY: analyze-log
+analyze-log: ## Parse logs/v50_debug_log.md → markdown & csv tables
+	$(PY) $(CLI) analyze-log --md $(OUTDIR)/logs/log_table.md --csv $(OUTDIR)/logs/log_table.csv
+
+# -----------------------------------------------------------------------------
+# DVC helpers (optional; no-op if dvc not installed)
+# -----------------------------------------------------------------------------
+
+.PHONY: dvc-init
+dvc-init: ## Initialize DVC and create default remote (set URL via REMOTE=...)
 	@if command -v dvc >/dev/null 2>&1; then \
-	  dvc init -q || true; \
-	  echo "DVC initialized. Configure remote with: dvc remote add -d storage <url>"; \
-	else \
-	  echo "DVC not installed (pip install dvc)."; \
-	fi
+		dvc init -q || true; \
+		if [ -n "$(REMOTE)" ]; then dvc remote add -d storage "$(REMOTE)" || true; fi; \
+	else echo "dvc not installed"; fi
 
-dvc-repro:
-	@echo ">> Reproducing pipeline via DVC..."
-	@if command -v dvc >/dev/null 2>&1; then \
-	  dvc repro -j $(N_JOBS); \
-	else \
-	  echo "DVC not installed."; \
-	fi
+.PHONY: dvc-pull
+dvc-pull: ## Pull tracked data/artifacts
+	@if command -v dvc >/dev/null 2>&1; then dvc pull; else echo "dvc not installed"; fi
 
-# ---------------------------------------------------------------------
-# Cleaners
-# ---------------------------------------------------------------------
-clean:
-	@echo ">> Cleaning temporary artifacts..."
-	rm -rf outputs/diagnostics/*.tmp 2>/dev/null || true
-	rm -rf .pytest_cache .ruff_cache .mypy_cache 2>/dev/null || true
-	find . -type d -name "__pycache__" -prune -exec rm -rf {} \; 2>/dev/null || true
-	@echo ">> Clean OK."
-
-deepclean: clean
-	@echo ">> Deep cleaning (artifacts + caches + DVC cache)..."
-	rm -rf outputs/* 2>/dev/null || true
-	rm -rf logs/*.jsonl 2>/dev/null || true
-	rm -rf .dvc/tmp .dvc/cache 2>/dev/null || true
-	@echo ">> Deep clean OK."
+.PHONY: dvc-push
+dvc-push: ## Push artifacts to remote
+	@if command -v dvc >/dev/null 2>&1; then dvc push; else echo "dvc not installed"; fi
 ```
