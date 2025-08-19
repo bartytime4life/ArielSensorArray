@@ -1,123 +1,187 @@
-[build-system]
-requires = ["poetry-core>=1.9.0"]
-build-backend = "poetry.core.masonry.api"
+\[build-system]
+requires = \["setuptools>=68", "wheel"]
+build-backend = "setuptools.build\_meta"
 
-[tool.poetry]
-name = "arielsensorarray"
+\[project]
+name = "spectramindv50"
 version = "0.1.0"
-description = "NeurIPS 2025 Ariel Data Challenge — ArielSensorArray (CLI, Hydra, CI, DVC, pre-commit)"
-authors = ["SpectraMind <devnull@example.com>"]
-license = "MIT"
+description = "NeurIPS 2025 Ariel Data Challenge — SpectraMind V50: neuro-symbolic, physics‑informed exoplanet spectroscopy with a unified Typer CLI, Hydra configs, DVC, diagnostics, and CI."
 readme = "README.md"
-packages = [{ include = "asa", from = "src" }]
-homepage = "https://github.com/bartytime4life/SpectraMindV50"
-repository = "https://github.com/bartytime4life/SpectraMindV50"
-documentation = "https://bartytime4life.github.io/SpectraMindV50"
-keywords = ["exoplanet", "spectroscopy", "ariel", "neurips", "cli", "hydra", "diagnostics", "symbolic-ai"]
-classifiers = [
-  "Intended Audience :: Science/Research",
-  "License :: OSI Approved :: MIT License",
-  "Operating System :: POSIX :: Linux",
-  "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.11",
-  "Topic :: Scientific/Engineering :: Astronomy",
-  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = \[
+{ name = "SpectraMind Team" },
+{ name = "Andy Barta" }
+]
+keywords = \[
+"exoplanet", "spectroscopy", "Ariel", "ESA",
+"uncertainty", "conformal", "COREL",
+"symbolic-ai", "physics-informed",
+"hydra", "cli", "dvc", "diagnostics", "umap", "tsne"
+]
+classifiers = \[
+"Programming Language :: Python :: 3",
+"License :: OSI Approved :: MIT License",
+"Operating System :: OS Independent",
+"Topic :: Scientific/Engineering :: Astronomy",
+"Topic :: Scientific/Engineering :: Artificial Intelligence",
+"Framework :: Pydantic",
+"Framework :: Pytest"
 ]
 
-[tool.poetry.dependencies]
-python = "^3.11"
-hydra-core = "^1.3.2"
-typer = "^0.12.3"
-pydantic = "^2.7.0"
-jinja2 = "^3.1.2"
-psutil = "^5.9.8"
-pyyaml = "^6.0.2"
-dvc = "^3.51.3"
-rich = "^13.7.1"
-omegaconf = "^2.3.0"
+dependencies = \[
 
-# Optional/extra (install with: poetry install -E tracking -E viz)
-mlflow = { version = "^2.14.0", optional = true }
-wandb  = { version = "^0.17.0", optional = true }
-plotly = { version = "^5.23.0", optional = true }
+# Core configuration & CLI
 
-[tool.poetry.extras]
-tracking = ["mlflow", "wandb"]
-viz = ["plotly"]
+"hydra-core>=1.3.2",
+"typer>=0.12.3",
+"rich>=13.7.1",
+"pyyaml>=6.0",
+"pydantic>=2.5",
+"packaging>=24.0",
+"jinja2>=3.1",
+"click>=8.1",
 
-[tool.poetry.group.dev.dependencies]
-pytest = "^8.2.1"
-pytest-cov = "^5.0.0"
-ruff = "^0.6.9"
-black = "^24.8.0"
-isort = "^5.13.2"
-mypy = "^1.11.2"
-types-PyYAML = "*"
-pre-commit = "^3.8.0"
+# Numerics & ML
 
-[tool.poetry.group.docs.dependencies]
-mkdocs = "^1.6.1"
-mkdocs-material = "^9.5.39"
-pymdown-extensions = "^10.9"
+"numpy>=1.26",
+"scipy>=1.11",
+"pandas>=2.1",
+"scikit-learn>=1.3",
+"torch>=2.2",
+"torchvision>=0.17",
+"torchaudio>=2.2",
 
-[tool.poetry.scripts]
-asa = "asa.cli:app"
-spectramind = "asa.cli:app"
+# Graph/geom (AIRS GNN, optional CUDA wheels provided by PyTorch index)
 
-[tool.black]
+"networkx>=3.2",
+
+# If using torch-geometric, install via wheels in setup docs; keep light dep here:
+
+"torch-geometric>=2.5; platform\_system != 'Windows'",
+
+# Visualization & diagnostics
+
+"matplotlib>=3.8",
+"plotly>=5.22",
+"umap-learn>=0.5.6",
+"shap>=0.45.0",
+
+# I/O, tqdm, and misc
+
+"tqdm>=4.66",
+"joblib>=1.3",
+"psutil>=5.9",
+
+# DVC core (remote extras installed per user’s backend)
+
+"dvc>=3.50",
+
+# Optional experiment tracking (enabled when installed)
+
+"mlflow>=2.14.0",
+"wandb>=0.17.0",
+]
+
+\[project.optional-dependencies]
+dev = \[
+"pytest>=7.4",
+"pytest-cov>=4.1",
+"ruff>=0.6.9",
+"black>=24.8.0",
+"isort>=5.13.2",
+"pre-commit>=3.7.1",
+"mypy>=1.10.0",
+"types-PyYAML>=6.0.12",
+"types-requests>=2.32.0.20240622"
+]
+viz = \[
+"kaleido>=0.2.1",
+"seaborn>=0.13.2"   # never required by charts; matplotlib-only for CLI plots by default
+]
+gcs = \["dvc\[gdrive,gcs]>=3.50"]
+s3 = \["dvc\[s3,boto3]>=3.50"]
+ssh = \["dvc\[ssh]>=3.50"]
+azure = \["dvc\[azure]>=3.50"]
+
+\[project.scripts]
+spectramind = "spectramind\:app"
+
+\[tool.setuptools.packages.find]
+where = \["src"]
+include = \["spectramind\*", "asa\*"]
+namespaces = false
+
+\[tool.setuptools.package-data]
+spectramindv50 = \["py.typed"]
+
+\[tool.ruff]
 line-length = 100
-target-version = ["py311"]
+target-version = "py310"
+extend-select = \["E", "F", "I", "UP", "B", "C4", "SIM"]
+ignore = \[
+"E501",  # handled by Black’s wrap
+]
+exclude = \[
+"docs/",
+"build/",
+"dist/",
+".venv/",
+"outputs/",
+"data/",
+]
+
+\[tool.black]
+line-length = 100
+target-version = \["py310"]
 skip-string-normalization = true
+exclude = '''
+/(
+.venv
+|.git
+|build
+|dist
+|outputs
+|data
+)/
+'''
 
-[tool.isort]
+\[tool.isort]
 profile = "black"
-multi_line_output = 3
-src_paths = ["src"]
-force_sort_within_sections = true
-combine_as_imports = true
+line\_length = 100
+src\_paths = \["src", "tests"]
 
-[tool.ruff]
-line-length = 100
-target-version = "py311"
+\[tool.pytest.ini\_options]
+minversion = "7.0"
+addopts = "-ra --maxfail=5 --strict-markers"
+testpaths = \["tests"]
+log\_cli = true
+log\_cli\_level = "INFO"
+log\_file = "logs/test.log"
+log\_file\_level = "DEBUG"
+log\_format = "%(asctime)s \[%(levelname)s] %(name)s: %(message)s"
+log\_date\_format = "%Y-%m-%d %H:%M:%S"
 
-[tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM"]
-ignore = ["E203", "E501"]
-preview = false
-
-[tool.ruff.format]
-quote-style = "preserve"
-docstring-code-format = true
-
-[tool.mypy]
-python_version = "3.11"
-warn_unused_configs = true
-disallow_untyped_defs = true
-ignore_missing_imports = true
-pretty = true
-show_error_codes = true
-plugins = ["pydantic.mypy"]
-
-[tool.pytest.ini_options]
-minversion = "8.0"
-addopts = "-ra --maxfail=5 --strict-markers --color=yes --cov=asa --cov-report=term-missing"
-testpaths = ["tests"]
-xfail_strict = true
-log_cli = true
-log_cli_level = "INFO"
-filterwarnings = [
-  "ignore::DeprecationWarning",
-]
-
-[tool.coverage.run]
+\[tool.coverage.run]
 branch = true
-source = ["src/asa"]
-
-[tool.coverage.report]
-show_missing = true
-skip_covered = true
-precision = 2
-exclude_lines = [
-  "pragma: no cover",
-  "if __name__ == \"__main__\":",
+source = \["src"]
+omit = \[
+"tests/*",
+"docs/*",
 ]
+
+\[tool.coverage.report]
+show\_missing = true
+skip\_covered = true
+fail\_under = 70
+
+\[tool.mypy]
+python\_version = "3.10"
+strict = false
+warn\_return\_any = true
+warn\_unused\_ignores = true
+ignore\_missing\_imports = true
+plugins = \[]
+
+\[tool.hatch.build.targets.wheel]
+packages = \["src"]
