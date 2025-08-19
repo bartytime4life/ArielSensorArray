@@ -1,26 +1,29 @@
 # Ruff configuration for SpectraMind V50
 
-# Enable Ruff formatter (works with the ruff-format pre-commit hook)
 line-length = 100
-indent-width = 4
 target-version = "py311"
 
 [lint]
-select = [
-  "E",   # pycodestyle errors
-  "F",   # pyflakes
-  "I",   # isort (import ordering via Ruff)
-  "B",   # flake8-bugbear
-  "UP",  # pyupgrade
-  "C90"  # mccabe complexity
-]
-ignore = [
-  # add rule codes here to temporarily silence specific checks, if needed
+# Enable core rules + import sorting (so you can eventually drop isort)
+select = ["E", "F", "I", "B", "UP", "C90"]
+ignore = []
+
+# Exclude large/artifact dirs
+exclude = [
+  ".git",
+  ".venv",
+  "venv",
+  "data",
+  "outputs",
+  "logs",
+  "build",
+  "dist",
 ]
 
 [lint.isort]
-known-first-party = ["spectramind", "src"]
 profile = "black"
+line-length = 100
+known-first-party = ["spectramind", "src"]
 
 [format]
 quote-style = "double"
