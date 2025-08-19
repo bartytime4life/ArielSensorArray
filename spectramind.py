@@ -1,28 +1,20 @@
-**File:** `spectramind.py`
-
-```python
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-#
-# spectramind.py — Unified Typer CLI for SpectraMind V50 (ArielSensorArray)
-#
-# Mission:
-#   • CLI-first, reproducible control surface around the V50 pipeline.
-#   • Hydra-backed configuration and logging for every operation.
-#   • Rich console UX, append-only audit log (logs/v50_debug_log.md).
-#
-# Design:
-#   • Subcommands: selftest, calibrate, train, predict, calibrate-temp, corel-train,
-#                  diagnose (with `dashboard`), submit, analyze-log, check-cli-map
-#   • Hydra Compose API integration for tasks that accept overrides (key=value).
-#   • Non-blocking UX; helpful progress and errors.
-#   • Thin orchestration with auditable steps safe for CI/headless.
-#
-# NOTE:
-#   This file is safe to run before the full pipeline exists. Where hooks are missing,
-#   we simulate the operation but still honor overrides, emit stub artifacts/HTML,
-#   and append to the audit log. Replace simulate_* hooks with real modules later.
+"""
+SpectraMind V50 — Unified Typer CLI (ArielSensorArray)
 
+Architecture & Design References (project docs)
+- CLI-first + Hydra configs + DVC + CI reproducibility [oai_citation:0‡SpectraMind V50 Technical Plan for the NeurIPS 2025 Ariel Data Challenge.pdf](file-service://file-6PdU5f5knreHjmSdSauj3w) [oai_citation:1‡Local LLM Workstation Setup for SpectraMind V50 (NeurIPS 2025 Ariel Challenge).pdf](file-service://file-YRjxAzxiYookHZQAg3RQ25) [oai_citation:2‡Hydra for AI Projects: A Comprehensive Guide.pdf](file-service://file-MpHwv9Z1E3qqzGXaQ3agpL)
+- Terminal UX with Rich; HTML/PNG diagnostics, no heavy GUI [oai_citation:3‡SpectraMind V50 Technical Plan for the NeurIPS 2025 Ariel Data Challenge.pdf](file-service://file-6PdU5f5knreHjmSdSauj3w) [oai_citation:4‡Mastering the Command Line: Comprehensive Guide to CLI Development and UX.pdf](file-service://file-Hs2KJiGsPypJ1ZRnTjWa4F)
+- Ariel challenge context: FGS/AIRS → μ/σ for 283 bins; 9‑hour runtime envelope [oai_citation:5‡SpectraMind V50 Technical Plan for the NeurIPS 2025 Ariel Data Challenge.pdf](file-service://file-6PdU5f5knreHjmSdSauj3w)
+- Kaggle pipeline alignment (notebooks, hardware, quotas) [oai_citation:6‡Kaggle Platform: Comprehensive Technical Guide.pdf](file-service://file-CrgG895i84phyLsyW9FQgf)
+
+This module is safe to run before the full pipeline exists:
+- Each command writes stub artifacts, honors Hydra-style overrides if available,
+  appends to logs/v50_debug_log.md, and exits with helpful status.
+- Replace simulate_* hooks and stub outputs with your real implementations.
+
+"""
 from __future__ import annotations
 
 import csv
@@ -38,7 +30,7 @@ import textwrap
 import time
 import zipfile
 from pathlib import Path
-from typing import List, Optional, Tuple, Dict, Any
+from typing import Any, Dict, List, Optional, Tuple
 
 import typer
 from rich import box
@@ -53,7 +45,7 @@ from rich.progress import (
 )
 from rich.table import Table
 
-# Optional Hydra/OmegaConf; CLI works without them.
+# Optional Hydra/OmegaConf — CLI works without them.
 try:
     from hydra import compose, initialize_config_dir
     from omegaconf import OmegaConf
@@ -95,7 +87,7 @@ def read_run_hash() -> str:
     try:
         if RUN_HASH_JSON.exists():
             j = json.loads(RUN_HASH_JSON.read_text(encoding="utf-8"))
-            return str(j.get("config_hash", "unknown"))
+            return str(j.get("run_hash") or j.get("config_hash") or "unknown")
     except Exception:
         pass
     return "unknown"
@@ -152,13 +144,13 @@ def hydra_compose_or_stub(config_dir: Path, task_cfg: str, overrides: List[str])
         try:
             with initialize_config_dir(version_base=None, config_dir=str(config_dir.resolve())):
                 base_over = [task_cfg] if task_cfg else []
-                cfg = compose(config_name="config_v50.yaml", overrides=base_over + overrides)
+                cfg = compose(config_name="config_v50.yaml", overrides=base_over + (overrides or []))
                 return dict(OmegaConf.to_container(cfg, resolve=True))  # type: ignore[arg-type]
         except Exception as e:
             console.print(f"[yellow]Hydra compose failed[/yellow]: {e}")
     return {
         "task": task_cfg or "default",
-        "overrides": overrides,
+        "overrides": overrides or [],
         "note": "Hydra not available or compose failed; using stub config.",
     }
 
@@ -168,12 +160,16 @@ def write_stub_html(path: Path, title: str, body: str) -> None:
     html = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"/>
 <title>{title}</title>
-<style>body{{font-family:system-ui,Segoe UI,Arial,sans-serif;margin:2rem;max-width:900px}}
-pre{{background:#111;color:#eee;padding:1rem;border-radius:.5rem;overflow:auto}}</style></head>
+<style>
+body{{font-family:system-ui,Segoe UI,Arial,sans-serif;margin:2rem;max-width:1000px}}
+pre{{background:#0b1020;color:#e6edf3;padding:1rem;border-radius:.5rem;overflow:auto}}
+.card{{border:1px solid #e5e7eb;border-radius:.5rem;padding:1rem;margin:.5rem 0}}
+small{{color:#6b7280}}
+</style></head>
 <body>
 <h1>{title}</h1>
-<p>Generated at {timestamp()}</p>
-{body}
+<p><small>Generated at {timestamp()}</small></p>
+<div class="card">{body}</div>
 </body></html>
 """
     path.write_text(html, encoding="utf-8")
@@ -187,8 +183,23 @@ def zip_artifacts(zip_out: Path, globs: List[str]) -> None:
                     zf.write(p, p.relative_to(REPO))
 
 
+def simulate_progress(title: str, steps: int = 5, sleep_s: float = 0.30) -> None:
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TimeElapsedColumn(),
+        transient=True,
+        console=console,
+    ) as progress:
+        tid = progress.add_task(title, total=steps)
+        for _ in range(steps):
+            time.sleep(sleep_s)
+            progress.advance(tid)
+
+
 # --------------------------------------------------------------------------------------
-# Version flag
+# Version flag (global)
 # --------------------------------------------------------------------------------------
 @APP.callback(invoke_without_command=False)
 def main(
@@ -196,7 +207,7 @@ def main(
     version: Optional[bool] = typer.Option(
         None,
         "--version",
-        help="Show CLI version + config hash + build timestamp.",
+        help="Show CLI version + commit + run hash + timestamp.",
         is_flag=True,
     ),
 ) -> None:
@@ -210,7 +221,7 @@ def main(
         table.add_column("Value")
         table.add_row("CLI", ver)
         table.add_row("Git SHA", sha)
-        table.add_row("Config Hash", rh)
+        table.add_row("Run/Config Hash", rh)
         table.add_row("Timestamp (UTC)", now)
         console.print(table)
         append_debug_log(
@@ -218,7 +229,7 @@ def main(
                 "spectramind --version",
                 f"Git SHA: {sha}",
                 f"Version: {ver}",
-                f"Config hash: {rh}",
+                f"Run/Config hash: {rh}",
                 f"Timestamp: {now}",
             ]
         )
@@ -230,7 +241,7 @@ def main(
 # --------------------------------------------------------------------------------------
 @APP.command("selftest")
 def selftest(
-    deep: bool = typer.Option(False, "--deep", help="Run deep checks (files, directories, basic Hydra compose).")
+    deep: bool = typer.Option(False, "--deep", help="Run deeper checks (Hydra compose, CUDA/DVC presence if available)."),
 ) -> None:
     """Run integrity and wiring checks (files, configs, CLI)."""
     render_header("Selftest")
@@ -287,42 +298,32 @@ def selftest(
 # --------------------------------------------------------------------------------------
 # Calibrate / Train / Predict / Calibrate-Temp / COREL-Train
 # --------------------------------------------------------------------------------------
-def simulate_long_task(title: str, steps: int = 5, sleep_s: float = 0.4) -> None:
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TimeElapsedColumn(),
-        transient=True,
-        console=console,
-    ) as progress:
-        tid = progress.add_task(title, total=steps)
-        for _ in range(steps):
-            time.sleep(sleep_s)
-            progress.advance(tid)
+def compose_or_stub(task: str, overrides: List[str]) -> Dict[str, Any]:
+    return hydra_compose_or_stub(REPO / "configs", f"{task}=default", overrides or [])
 
 
 @APP.command("calibrate")
 def calibrate(
-    overrides: List[str] = typer.Argument(None, help="Hydra-style overrides, e.g. data=kaggle calibration.cache=true")
+    overrides: List[str] = typer.Argument(None, help="Hydra-style overrides, e.g. data=kaggle calibration.cache=true"),
 ) -> None:
-    """Run the calibration kill chain: raw → calibrated (persist)."""
+    """Run the calibration kill chain: bias → dark → flat → wavelength → normalization → lightcurves."""
     render_header("Calibration")
     ensure_dirs()
-    cfg = hydra_compose_or_stub(REPO / "configs", "calibration=default", overrides or [])
-    simulate_long_task("Calibrating", steps=6)
+    cfg = compose_or_stub("calibration", overrides or [])
+    simulate_progress("Calibrating", steps=6)
     (CALIB / "calibration_summary.json").write_text(
         json.dumps(
             {
                 "timestamp": timestamp(),
                 "config": cfg,
+                "artifacts": ["calibrated_lightcurves.npz", "wavelength_map.json"],
                 "note": "Stub calibration summary. Replace with real pipeline output.",
             },
             indent=2,
         ),
         encoding="utf-8",
     )
-    console.print("[green]Calibration completed[/green]. Artifacts in outputs/calibrated/.")
+    console.print("[green]Calibration completed[/green]. Artifacts → outputs/calibrated/")
     append_debug_log(
         [
             f"spectramind calibrate {pretty_overrides(overrides or [])}",
@@ -335,20 +336,19 @@ def calibrate(
 
 @APP.command("train")
 def train(
-    overrides: List[str] = typer.Argument(None, help="Hydra overrides, e.g. data=toy training=default model=v50")
+    overrides: List[str] = typer.Argument(None, help="Hydra overrides, e.g. data=toy training=default model=v50 +training.epochs=2"),
 ) -> None:
-    """Train the V50 model."""
+    """Train the V50 model (FGS1+AIRSGNN encoders; μ/σ decoders)."""
     render_header("Training")
     ensure_dirs()
-    _ = hydra_compose_or_stub(REPO / "configs", "training=default", overrides or [])
-    simulate_long_task("Training", steps=10, sleep_s=0.3)
+    _ = compose_or_stub("training", overrides or [])
+    simulate_progress("Training", steps=10, sleep_s=0.25)
     (CHECKPOINTS / "best.ckpt").write_bytes(b"stub-checkpoint\n")
-    console.print("[green]Training finished[/green]. Checkpoint at outputs/checkpoints/best.ckpt")
+    console.print("[green]Training finished[/green]. Checkpoint → outputs/checkpoints/best.ckpt")
     append_debug_log(
         [
             f"spectramind train {pretty_overrides(overrides or [])}",
             f"Git SHA: {git_sha_short()}",
-            f"Config overrides: {pretty_overrides(overrides or [])}",
             "Artifacts: outputs/checkpoints/best.ckpt",
         ]
     )
@@ -356,39 +356,38 @@ def train(
 
 @APP.command("predict")
 def predict(
-    overrides: List[str] = typer.Argument(None, help="Hydra overrides, e.g. data=toy model=v50"),
+    overrides: List[str] = typer.Argument(None, help="Hydra overrides, e.g. inference=default model=v50"),
     out_csv: Path = typer.Option(OUTPUTS / "submission.csv", "--out-csv", help="Output CSV for submission predictions."),
 ) -> None:
-    """Predict μ/σ and export submission CSV."""
+    """Predict μ/σ and export submission CSV (challenge-ready)."""
     render_header("Prediction")
     ensure_dirs()
-    _ = hydra_compose_or_stub(REPO / "configs", "inference=default", overrides or [])
-    simulate_long_task("Predicting", steps=6, sleep_s=0.35)
+    _ = compose_or_stub("inference", overrides or [])
+    simulate_progress("Predicting", steps=6, sleep_s=0.30)
     out_csv.parent.mkdir(parents=True, exist_ok=True)
     with out_csv.open("w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
-        w.writerow(["id", "mu_0", "mu_1", "sigma_0", "sigma_1"])
-        w.writerow(["planet_0001", 0.1, 0.2, 0.05, 0.06])
-        w.writerow(["planet_0002", 0.2, 0.3, 0.04, 0.05])
+        w.writerow(["planet_id"] + [f"bin_{i:03d}" for i in range(283)])
+        w.writerow(["P00001"] + [f"{0.1 + 0.001*i:.6f}" for i in range(283)])
     console.print(f"[green]Predictions complete[/green] → {out_csv}")
     append_debug_log(
         [
             f"spectramind predict {pretty_overrides(overrides or [])} --out-csv {out_csv}",
             f"Git SHA: {git_sha_short()}",
-            "Artifacts: " + str(out_csv),
+            f"Artifacts: {out_csv}",
         ]
     )
 
 
 @APP.command("calibrate-temp")
 def calibrate_temp(
-    overrides: List[str] = typer.Argument(None, help="Hydra overrides, e.g. inference=default ts.max_iter=100")
+    overrides: List[str] = typer.Argument(None, help="Hydra overrides, e.g. inference=default ts.max_iter=100"),
 ) -> None:
     """Temperature scaling for uncertainty calibration."""
     render_header("Temperature Scaling")
     ensure_dirs()
-    _ = hydra_compose_or_stub(REPO / "configs", "ts=default", overrides or [])
-    simulate_long_task("Optimizing temperature", steps=5)
+    _ = compose_or_stub("ts", overrides or [])
+    simulate_progress("Optimizing temperature", steps=5)
     (OUTPUTS / "temp_scaling.json").write_text(
         json.dumps({"T": 1.07, "val_gll_improvement": 0.013, "timestamp": timestamp()}, indent=2),
         encoding="utf-8",
@@ -405,13 +404,13 @@ def calibrate_temp(
 
 @APP.command("corel-train")
 def corel_train(
-    overrides: List[str] = typer.Argument(None, help="Hydra overrides for COREL GNN training")
+    overrides: List[str] = typer.Argument(None, help="Hydra overrides for COREL GNN training"),
 ) -> None:
     """Train COREL (graph-aware conformal prediction) for calibrated σ intervals."""
     render_header("COREL Conformal Training")
     ensure_dirs()
-    _ = hydra_compose_or_stub(REPO / "configs", "corel=default", overrides or [])
-    simulate_long_task("Training COREL", steps=7)
+    _ = compose_or_stub("corel", overrides or [])
+    simulate_progress("Training COREL", steps=7)
     (OUTPUTS / "corel_model.pt").write_bytes(b"stub-corel-model\n")
     console.print("[green]COREL training done[/green] → outputs/corel_model.pt")
     append_debug_log(
@@ -424,7 +423,7 @@ def corel_train(
 
 
 # --------------------------------------------------------------------------------------
-# Diagnose
+# Diagnose sub-CLI
 # --------------------------------------------------------------------------------------
 diagnose_app = typer.Typer(help="Diagnostics suite (HTML dashboard, plots, overlays)")
 APP.add_typer(diagnose_app, name="diagnose")
@@ -435,20 +434,20 @@ def diagnose_dashboard(
     overrides: List[str] = typer.Argument(None, help="Hydra overrides for diagnostics"),
     html_out: Path = typer.Option(DIAG / "report_v1.html", "--html-out", help="Output HTML diagnostics report."),
     no_umap: bool = typer.Option(False, "--no-umap", help="Skip UMAP projection."),
-    no_tsne: bool = typer.Option(False, "--no-tsne", help="Skip t-SNE projection."),
+    no_tsne: bool = typer.Option(False, "--no-tsne", help="Skip t‑SNE projection."),
 ) -> None:
-    """Generate interactive HTML diagnostics report (UMAP/t-SNE/SHAP/symbolic overlays)."""
+    """Generate an interactive HTML diagnostics report (UMAP/t‑SNE/SHAP/symbolic overlays)."""
     render_header("Diagnostics Dashboard")
     ensure_dirs()
     cfg = hydra_compose_or_stub(REPO / "configs", "diagnostics=dashboard", overrides or [])
-    simulate_long_task("Building dashboard", steps=6)
+    simulate_progress("Building dashboard", steps=6)
     body = f"""
 <ul>
   <li><b>Hydra overrides</b>: {pretty_overrides(overrides or [])}</li>
   <li><b>UMAP</b>: {"skipped" if no_umap else "enabled"}</li>
-  <li><b>t-SNE</b>: {"skipped" if no_tsne else "enabled"}</li>
+  <li><b>t‑SNE</b>: {"skipped" if no_tsne else "enabled"}</li>
 </ul>
-<pre>{textwrap.indent(json.dumps(cfg, indent=2)[:1200], ' ')}</pre>
+<pre>{textwrap.indent(json.dumps(cfg, indent=2)[:2000], ' ')}</pre>
 """
     write_stub_html(html_out, "SpectraMind V50 — Diagnostics Report", body)
     console.print(f"[green]Diagnostics HTML written[/green] → {html_out}")
@@ -458,7 +457,7 @@ def diagnose_dashboard(
             + (" --no-umap" if no_umap else "")
             + (" --no-tsne" if no_tsne else ""),
             f"Git SHA: {git_sha_short()}",
-            "Artifacts: " + str(html_out),
+            f"Artifacts: {html_out}",
         ]
     )
 
@@ -469,7 +468,7 @@ def diagnose_dashboard(
 @APP.command("submit")
 def submit(
     zip_out: Path = typer.Option(OUTPUTS / "submission_bundle.zip", "--zip-out", help="Output ZIP bundle."),
-    open_html: bool = typer.Option(False, "--open-html", help="Open diagnostics report after build."),
+    open_html: bool = typer.Option(False, "--open-html", help="Open latest diagnostics report after build."),
 ) -> None:
     """
     Build a submission bundle:
@@ -477,7 +476,7 @@ def submit(
     """
     render_header("Make Submission")
     ensure_dirs()
-    simulate_long_task("Packaging submission", steps=4)
+    simulate_progress("Packaging submission", steps=4)
     globs = [
         "outputs/submission.csv",
         "outputs/diagnostics/*.html",
@@ -491,7 +490,7 @@ def submit(
         [
             f"spectramind submit --zip-out {zip_out}" + (" --open-html" if open_html else ""),
             f"Git SHA: {git_sha_short()}",
-            "Artifacts: " + str(zip_out),
+            f"Artifacts: {zip_out}",
         ]
     )
     if open_html:
@@ -501,7 +500,7 @@ def submit(
                 if sys.platform.startswith("darwin"):
                     subprocess.call(["open", str(htmls[0])])
                 elif os.name == "nt":
-                    os.startfile(str(htmls[0])] )  # type: ignore[attr-defined]
+                    os.startfile(str(htmls[0]))  # type: ignore[attr-defined]
                 else:
                     subprocess.call(["xdg-open", str(htmls[0])])
             except Exception:
@@ -543,9 +542,19 @@ def analyze_log(
         for ln in lines[1:]:
             if ln.lower().startswith("git sha:"):
                 sha = ln.split(":", 1)[1].strip()
-            if "config hash" in ln.lower():
+            if "config hash" in ln.lower() or "run/config hash" in ln.lower():
                 cfg_hash = ln.split(":", 1)[1].strip()
         entries.append({"timestamp": ts, "cmd": cmd, "git_sha": sha, "config_hash": cfg_hash})
+
+    if group_by_config_hash:
+        # Grouping summary (simple print)
+        by = {}
+        for e in entries:
+            by.setdefault(e["config_hash"] or "unknown", []).append(e)
+        for k, group in by.items():
+            console.print(f"\n[bold]Config Hash:[/bold] {k}  ([cyan]{len(group)} entries[/cyan])")
+            for e in group:
+                console.print(f"  • {e['timestamp']} — {e['cmd']} ({e['git_sha']})")
 
     table = Table(box=box.SIMPLE_HEAVY)
     table.add_column("Time (UTC)", style="bold")
@@ -644,4 +653,3 @@ def app() -> None:
 
 if __name__ == "__main__":
     app()
-```
