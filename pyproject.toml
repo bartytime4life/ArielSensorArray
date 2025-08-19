@@ -90,7 +90,7 @@ dev = [
 ]
 viz = [
   "kaleido>=0.2.1",
-  "seaborn>=0.13.2"  # not required by CLI plots; matplotlib is default
+  "seaborn>=0.13.2"
 ]
 gcs = ["dvc[gdrive,gcs]>=3.50"]
 s3 = ["dvc[s3,boto3]>=3.50"]
@@ -117,42 +117,70 @@ namespaces = false
 [tool.setuptools.package-data]
 spectramind = ["py.typed"]
 
+# -----------------------
+# Ruff (lint + import sort + formatter alignment)
+# -----------------------
 [tool.ruff]
 line-length = 100
 target-version = "py310"
 extend-select = ["E", "F", "I", "UP", "B", "C4", "SIM"]
-ignore = [
-  "E501"
-]
+ignore = []
 exclude = [
-  "docs/",
-  "build/",
-  "dist/",
-  ".venv/",
-  "outputs/",
-  "data/"
+  ".git",
+  ".venv",
+  "venv",
+  "build",
+  "dist",
+  "data",
+  "outputs",
+  "logs",
+  "docs",
 ]
 
+[tool.ruff.lint.isort]
+profile = "black"
+line-length = 100
+known-first-party = ["spectramind", "asa"]
+src-paths = ["src", "tests"]
+
+[tool.ruff.format]
+quote-style = "preserve"
+indent-style = "space"
+
+# -----------------------
+# Black
+# -----------------------
 [tool.black]
 line-length = 100
 target-version = ["py310"]
 skip-string-normalization = true
 exclude = '''
 /(
-.venv
-|.git
-|build
-|dist
-|outputs
-|data
+  \.git
+ | \.venv
+ | venv
+ | build
+ | dist
+ | data
+ | outputs
+ | logs
+ | docs
 )/
 '''
 
+# -----------------------
+# isort (kept for parity; Ruff can sort imports too)
+# -----------------------
 [tool.isort]
 profile = "black"
 line_length = 100
+known_first_party = ["spectramind", "asa"]
 src_paths = ["src", "tests"]
+skip = ["build", "dist", "data", "outputs", "logs", "docs", ".venv", "venv"]
 
+# -----------------------
+# pytest / coverage / mypy
+# -----------------------
 [tool.pytest.ini_options]
 minversion = "7.0"
 addopts = "-ra --maxfail=5 --strict-markers"
@@ -167,10 +195,7 @@ log_date_format = "%Y-%m-%d %H:%M:%S"
 [tool.coverage.run]
 branch = true
 source = ["src"]
-omit = [
-  "tests/*",
-  "docs/*"
-]
+omit = ["tests/*", "docs/*"]
 
 [tool.coverage.report]
 show_missing = true
