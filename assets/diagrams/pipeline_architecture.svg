@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="240">
+  <rect x="20" y="80" width="140" height="60" fill="#2196f3" stroke="#000"/>
+  <text x="90" y="115" text-anchor="middle" fill="#fff">FGS1 Encoder</text>
+  <rect x="200" y="80" width="140" height="60" fill="#4caf50" stroke="#000"/>
+  <text x="270" y="115" text-anchor="middle" fill="#fff">AIRS GNN</text>
+  <rect x="380" y="80" width="140" height="60" fill="#ff9800" stroke="#000"/>
+  <text x="450" y="115" text-anchor="middle" fill="#fff">Decoder μ/σ</text>
+  <line x1="160" y1="110" x2="200" y2="110" stroke="#000" stroke-width="2"/>
+  <line x1="340" y1="110" x2="380" y2="110" stroke="#000" stroke-width="2"/>
+</svg>
