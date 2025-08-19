@@ -1,0 +1,137 @@
+# ==============================================================================
+# CONDA_ENV.yml — SpectraMind V50 (ArielSensorArray)
+# ------------------------------------------------------------------------------
+# Purpose:
+#   • Optional Conda-based environment (parallel to Poetry) for contributors,
+#     CI runners, or Kaggle images that prefer conda/mamba.
+#   • Includes GPU-ready PyTorch (CUDA 12.1). Switch to CPU-only notes below.
+#
+# Usage:
+#   mamba env create -f CONDA_ENV.yml         # or: conda env create -f CONDA_ENV.yml
+#   conda activate spectramindv50
+#
+# CPU-ONLY SWITCH:
+#   • Replace `pytorch-cuda=12.1` with `cpuonly` (from conda-forge) and remove `cudnn`.
+#     Example:
+#       - cpuonly
+#       # - pytorch-cuda=12.1     (remove)
+#       # - cudnn                 (remove)
+#
+# Install Local Project (editable):
+#   • This file installs the repo via pip editable `-e .` (PEP 517/518) so the
+#     `spectramind` package/CLI resolves without Poetry.
+# ==============================================================================
+
+name: spectramindv50
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+dependencies:
+  # --- Core Python toolchain ---
+  - python=3.11
+  - pip>=24
+  - git
+  - pkg-config
+
+  # --- Numerical / Data ---
+  - numpy
+  - pandas
+  - scipy
+  - pyarrow                 # fast parquet/arrow IO
+  - fastparquet
+
+  # --- Visualization ---
+  - matplotlib
+  - seaborn
+  - graphviz
+  - python-graphviz
+  - tqdm
+
+  # --- ML / Graph / Utils ---
+  - scikit-learn
+  - networkx
+
+  # --- Jupyter / Notebooks ---
+  - jupyterlab
+  - notebook
+  - ipykernel
+  - ipywidgets
+
+  # --- PyTorch (GPU by default) ---
+  - pytorch::pytorch
+  - pytorch::torchvision
+  - pytorch::torchaudio
+  - pytorch-cuda=12.1       # GPU toolchain; change to `cpuonly` (see header) for CPU envs
+  - cudnn
+
+  # --- Lint / QA / Test ---
+  - pre-commit
+  - black
+  - isort
+  - ruff
+  - mypy
+  - pytest
+  - pytest-cov
+
+  # --- Docs toolchain (optional; used by docs.yml) ---
+  - mkdocs
+  - pip:
+      - mkdocs-material
+      - mkdocs-awesome-pages-plugin
+      - mkdocs-git-revision-date-localized-plugin
+      - mkdocs-section-index
+      - mkdocs-glightbox
+      - mkdocs-mermaid2-plugin
+      - mkdocs-minify-plugin
+      - mkdocs-redirects
+      - mkdocs-include-markdown-plugin
+
+  # --- Hydra / CLI / Logging ---
+  - pip:
+      - omegaconf
+      - hydra-core
+      - hydra-colorlog
+      - hydra-joblib-launcher
+      - typer[all]
+      - rich
+
+  # --- DVC & Storage backends ---
+  - pip:
+      - dvc[ssh,s3,gdrive]
+      - dvc-s3
+      - dvc-gdrive
+
+  # --- Experiment tracking (optional) ---
+  - pip:
+      - wandb
+      - mlflow
+
+  # --- Kaggle API (optional) ---
+  - pip:
+      - kaggle
+
+  # --- SHAP / UMAP / Plotly (diagnostics) ---
+  - pip:
+      - shap
+      - umap-learn
+      - plotly
+
+  # --- Install local project in editable mode (PEP 517) ---
+  - pip:
+      - -e .
+
+# --- Environment variables on activation (Optional convenience) ---
+variables:
+  HYDRA_FULL_ERROR: "1"
+  TRANSFORMERS_CACHE: "/workspace/.hf_cache"
+  HF_HOME: "/workspace/.hf_cache"
+  MPLBACKEND: "Agg"               # safe headless matplotlib default
+
+# --- Notes --------------------------------------------------------------------
+# • If your driver/toolkit is different, align `pytorch-cuda` to the installed CUDA runtime.
+# • For CI/Kaggle CPU images, prefer the CPU-ONLY SWITCH in the header.
+# • After activation:
+#     pre-commit install -t pre-commit -t pre-push
+#     pytest -q
+#     spectramind --help
