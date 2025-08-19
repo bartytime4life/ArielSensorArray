@@ -55,6 +55,11 @@ logs/
 outputs/
 !outputs/.gitkeep
 
+# Explicitly ignore submissions & bundles
+outputs/submission.csv
+outputs/submission*.zip
+outputs/submission_bundle.zip
+
 # Common local scratch dirs
 .tmp/
 tmp/
@@ -107,9 +112,9 @@ outputs_hydra/
 # -----------------------
 # Poetry / pip / cache
 # -----------------------
-poetry.lock
-# If you want to commit the lockfile, comment the line above.
-# (For libs, often ignored; for apps, you may commit. Team preference.)
+# Keep poetry.lock in version control for reproducibility
+# (uncomment below if you prefer ignoring it)
+# poetry.lock
 
 .poetry-cache/
 pip-cache/
@@ -178,6 +183,13 @@ docker-volume/
 
 # Keep a template for environment variables
 !.env.example
+
+
+# -----------------------
+# Kaggle cache / credentials
+# -----------------------
+.kaggle/
+kaggle.json
 
 
 # -----------------------
