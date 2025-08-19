@@ -1,24 +1,24 @@
 # ==============================================================================
-# SpectraMind V50 — Master Makefile
-# Neuro-Symbolic, Physics-Informed AI Pipeline
-# NeurIPS 2025 Ariel Data Challenge
+# SpectraMind V50 — Local Developer Makefile
+# Neuro‑Symbolic, Physics‑Informed AI Pipeline (Dev Workflows)
 #
 # Philosophy:
 #   • CLI-first → all tasks routed through Typer CLI (`spectramind`)
 #   • Hydra-backed configs → reproducibility, override via OVERRIDES
-#   • CI/Kaggle parity → same commands locally, in CI, and on Kaggle
+#   • CI/Kaggle parity helpers (local benchmark + kaggle-run)
 #   • Scientific rigor → calibration, training, diagnostics, ablations
+#   • Dev ergonomics → fmt/lint/test/analyze
 #
 # Quickstart:
 #   make selftest            # verify wiring
 #   make calibrate           # raw → calibrated
 #   make train               # train model
-#   make predict             # run inference
+#   make predict             # run inference (writes submission.csv)
 #   make diagnose            # build diagnostics dashboard
-#   make submit              # bundle outputs
+#   make submit              # bundle submission artifacts
 #   make benchmark           # local Kaggle-like run
 #
-# Variables override examples:
+# Examples:
 #   make train DEVICE=gpu EPOCHS=2 OVERRIDES='+data.split=toy'
 #   make diagnose EXTRA_ARGS='--open' OVERRIDES='+diagnostics.light=true'
 # ==============================================================================
@@ -67,7 +67,7 @@ help:
 	@echo "make diagnose          # diagnostics dashboard"
 	@echo "make submit            # package submission"
 	@echo "make benchmark         # simulate Kaggle run"
-	@echo "make kaggle-run        # run inside Kaggle env"
+	@echo "make kaggle-run        # run inside Kaggle env (single-epoch GPU)"
 	@echo "make kaggle-submit     # push to Kaggle competition"
 	@echo "make dvc-pull/push     # sync DVC artifacts"
 	@echo "make clean/realclean   # remove artifacts/caches"
@@ -114,16 +114,20 @@ train: init
 	$(CLI) train +training.epochs=$(EPOCHS) $(OVERRIDES) --device $(DEVICE) $(EXTRA_ARGS)
 
 predict: init
+	mkdir -p "$(PRED_DIR)"
 	$(CLI) predict --out-csv "$(PRED_DIR)/submission.csv" $(OVERRIDES) $(EXTRA_ARGS)
 
 diagnose: init
 	$(CLI) diagnose smoothness --outdir "$(DIAG_DIR)" $(EXTRA_ARGS)
-	$(CLI) diagnose dashboard --outdir "$(DIAG_DIR)" $(EXTRA_ARGS)
+	# try light/no-embed first, then full
+	$(CLI) diagnose dashboard --no-umap --no-tsne --outdir "$(DIAG_DIR)" $(EXTRA_ARGS) || \
+	$(CLI) diagnose dashboard --outdir "$(DIAG_DIR)" $(EXTRA_ARGS) || true
 
 ablate: init
 	$(CLI) ablate $(OVERRIDES) $(EXTRA_ARGS)
 
 submit: init
+	mkdir -p "$(SUBMIT_DIR)"
 	$(CLI) submit --zip-out "$(SUBMIT_ZIP)" $(EXTRA_ARGS)
 
 analyze-log: init
@@ -144,21 +148,22 @@ bench-selftest:
 	$(CLI) selftest --fast
 
 benchmark: bench-selftest
-	@$(MAKE) --no-print-directory benchmark-run DEVICE=$(DEVICE)
+	@$(MAKE) --no-print-directory benchmark-run DEVICE=$(DEVICE) EPOCHS=$(EPOCHS) OVERRIDES='$(OVERRIDES)' EXTRA_ARGS='$(EXTRA_ARGS)'
 
 benchmark-cpu:
-	@$(MAKE) --no-print-directory benchmark-run DEVICE=cpu
+	@$(MAKE) --no-print-directory benchmark-run DEVICE=cpu EPOCHS=$(EPOCHS) OVERRIDES='$(OVERRIDES)' EXTRA_ARGS='$(EXTRA_ARGS)'
 
 benchmark-gpu:
-	@$(MAKE) --no-print-directory benchmark-run DEVICE=gpu
+	@$(MAKE) --no-print-directory benchmark-run DEVICE=gpu EPOCHS=$(EPOCHS) OVERRIDES='$(OVERRIDES)' EXTRA_ARGS='$(EXTRA_ARGS)'
 
 benchmark-run:
 	OUTDIR="benchmarks/$(TS)_$(DEVICE)"
 	mkdir -p "$$OUTDIR"
-	$(CLI) train +training.epochs=$(EPOCHS) --device $(DEVICE) --outdir "$$OUTDIR" $(OVERRIDES)
-	$(CLI) diagnose smoothness --outdir "$$OUTDIR"
-	$(CLI) diagnose dashboard --outdir "$$OUTDIR" || true
-	@echo "Benchmark complete → $$OUTDIR/summary.txt"
+	$(CLI) train +training.epochs=$(EPOCHS) $(OVERRIDES) --device $(DEVICE) --outdir "$$OUTDIR" $(EXTRA_ARGS)
+	$(CLI) diagnose smoothness --outdir "$$OUTDIR" $(EXTRA_ARGS)
+	$(CLI) diagnose dashboard --no-umap --no-tsne --outdir "$$OUTDIR" $(EXTRA_ARGS) || \
+	$(CLI) diagnose dashboard --outdir "$$OUTDIR" $(EXTRA_ARGS) || true
+	@echo "Benchmark complete → $$OUTDIR/summary.txt" | tee "$$OUTDIR/summary.txt"
 
 benchmark-report:
 	mkdir -p aggregated
