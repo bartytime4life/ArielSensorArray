@@ -1,148 +1,129 @@
+
 # Contributing to SpectraMind V50 — ArielSensorArray
 
 Welcome, and thank you for considering a contribution to the **SpectraMind V50** project for the NeurIPS 2025 Ariel Data Challenge.  
-This guide outlines the standards, workflows, and expectations that ensure all contributions maintain the project’s goals of **reproducibility, scientific rigor, and engineering excellence**.
+This guide sets the standards, workflows, and expectations to keep contributions aligned with the project’s goals of **reproducibility, scientific rigor, and engineering excellence**.
 
 ---
 
-## 1. Project Principles
+## 1) Project Principles
 
 - **Reproducibility First** — All code, configs, and data flows must be deterministic, Hydra-configurable, and version-controlled.  
 - **Scientific Integrity** — Physics-informed modeling and symbolic rules are mandatory; shortcuts that violate astrophysical realism will not be accepted.  
-- **CLI-First Design** — All functions must be callable via the unified `spectramind` CLI.  
-- **Auditability** — Every run must log to `v50_debug_log.md` and record config hash + Git SHA.  
-- **Open Collaboration** — Code, documentation, and configs should be clear and accessible to all team members and the broader scientific community.  
+- **CLI-First Design** — Every function must be callable via the unified `spectramind` CLI.  
+- **Auditability** — Every run must log to `logs/v50_debug_log.md` with config hash + Git SHA.  
+- **Open Collaboration** — Code, docs, and configs must be clear and accessible to teammates and the scientific community.  
 
 ---
 
-## 2. Repository Layout
+## 2) Repository Layout
 
-Key directories and files you will interact with:
-
-```
+Key directories:
 
 ArielSensorArray/
 ├── configs/        # Hydra YAML configs (data, model, training, diagnostics, calibration, logging)
 ├── src/            # Core source code (pipeline, calibration, diagnostics, CLI)
 ├── data/           # Raw and processed data (DVC-tracked, not committed directly)
-├── outputs/        # Model checkpoints, diagnostics, predictions (gitignored, tracked via DVC)
+├── outputs/        # Checkpoints, diagnostics, predictions (gitignored/DVC)
 ├── logs/           # Debug and event logs
 ├── docs/           # Documentation and MkDocs site
 └── tests/          # Unit and integration tests
 
-````
-
 ---
 
-## 3. How to Contribute
+## 3) How to Contribute
 
 ### Step 1 — Fork and Branch
-1. Fork the repository to your GitHub account.  
-2. Clone your fork locally.  
-3. Create a new branch:  
-   ```bash
-   git checkout -b feat/<short-description>
-````
+```bash
+git checkout -b feat/<short-description>
 
-### Step 2 — Code Standards
+Step 2 — Code Standards
+	•	Python 3.10+ with strict type hints
+	•	PEP8 + Black formatting
+	•	ruff + isort before committing
+	•	Full NumPy/SciPy-style docstrings
+	•	All features exposed via CLI (spectramind.py)
+	•	No hardcoded constants — everything must live in Hydra configs
 
-* Use **Python 3.10+** with strict type hints.
-* Follow **PEP8 + Black** formatting.
-* Run **ruff** and **isort** before committing.
-* Include full **docstrings** (NumPy/SciPy style).
-* Every new feature must be exposed via the **CLI** (Typer app in `spectramind.py`).
-* No hardcoded constants — all parameters belong in Hydra configs.
+Step 3 — Logging & Reproducibility
+	•	Every CLI call must append to logs/v50_debug_log.md
+	•	Always log: Git SHA, config hash, seed, dataset version
+	•	Use deterministic seeds for toy/CI configs
 
-### Step 3 — Logging and Reproducibility
+Step 4 — Tests
+	•	Add unit tests in tests/
+	•	Run:
 
-* Ensure every CLI call appends an entry to `logs/v50_debug_log.md`.
-* Always log: Git SHA, config hash, seed, dataset version.
-* Use deterministic seeds for toy/CI configs.
+pytest -q
 
-### Step 4 — Tests
 
-* Add unit tests in `tests/`.
-* Run all tests before submitting:
+	•	Cover new modules with CLI-integrated tests
+	•	CI will reject contributions that break reproducibility or tests
 
-  ```bash
-  pytest -q
-  ```
-* Ensure new modules are covered by **CLI-integrated tests**.
-* CI will reject contributions that break reproducibility or fail tests.
+Step 5 — Documentation
+	•	Update docs/ and ARCHITECTURE.md
+	•	New CLI commands must be documented in docs/cli.md
+	•	Update CHANGELOG.md if functionality changes
 
-### Step 5 — Documentation
+Step 6 — Commit and Push
+	•	Follow Conventional Commits:
+	•	feat(model): add symbolic influence map
+	•	fix(cli): correct config hash logging
+	•	docs: update calibration step in architecture
+	•	Push and open a Pull Request (PR) against main
 
-* Update relevant docs in `docs/` and `ARCHITECTURE.md`.
-* If you add a new CLI command, document it in `docs/cli.md`.
-* Update `CHANGELOG.md` if functionality changes.
+⸻
 
-### Step 6 — Commit and Push
+4) Review Process
 
-* Use conventional commit messages (examples below).
+All PRs must pass:
+	•	spectramind selftest
+	•	GitHub Actions CI (.github/workflows/ci.yml)
+	•	Pre-commit hooks (ruff, black, isort, YAML)
 
-  * `feat(model): add symbolic influence map module`
-  * `fix(cli): correct logging of config hash`
-  * `docs: update architecture with new calibration step`
-* Push your branch and open a **Pull Request (PR)** to `main`.
+Maintainers may request:
+	•	Benchmark evidence (≤ 9 hrs runtime on Kaggle full dataset)
+	•	Reproducibility demo (re-run via config hash + Git SHA)
+	•	Extra tests or documentation
 
----
+⸻
 
-## 4. Review Process
+5) Contribution Etiquette
+	•	Be respectful and collaborative — we’re building a mission-grade scientific system.
+	•	Write explicit comments/docstrings; no “magic” code.
+	•	Open an Issue before large changes.
+	•	Use exp/ branches and [Draft] PRs for experiments.
 
-* PRs require **at least one approving review** from a maintainer.
-* All PRs must pass:
+⸻
 
-  * `spectramind selftest`
-  * CI workflows (`.github/workflows/ci.yml`)
-  * Pre-commit hooks (ruff, black, isort, YAML checks)
-* Maintainers may request:
+6) Adding New Features
 
-  * Benchmark evidence (runtime ≤ 9 hrs for full dataset).
-  * Reproducibility demo (re-run using config hash + Git SHA).
-  * Additional tests or documentation.
+Ask first:
+	1.	Is it physics-informed, symbolic, reproducible?
+	2.	Can it be expressed as a Hydra config or CLI flag?
+	3.	Is it testable, loggable, diagnosable?
 
----
+If yes, proceed. If not, propose in an Issue first.
 
-## 5. Contribution Etiquette
+⸻
 
-* Be respectful and collaborative — we are building a **mission-grade scientific system**.
-* Write clear, explicit comments and docstrings; **no “magic” code**.
-* When in doubt, open an **Issue** before starting large changes.
-* For experimental work, prefix branch names with `exp/` and PR titles with `[Draft]`.
+7) License & Attribution
+	•	Contributions are licensed under MIT License
+	•	Cite via CITATION.cff if used in research
 
----
+⸻
 
-## 6. Adding New Features
+8) Pre-PR Checklist
+	•	Code formatted (black, ruff, isort)
+	•	Configs updated & tested
+	•	spectramind selftest passes
+	•	Tests added & passing (pytest)
+	•	Documentation updated
+	•	Commit message follows convention
 
-Before adding a feature, ask:
+⸻
 
-1. Does it align with **physics-informed, symbolic, reproducible AI**?
-2. Can it be expressed as a Hydra config or CLI option?
-3. Is it testable, loggable, and diagnosable?
-
-If **yes**, proceed; if not, propose first in an Issue.
-
----
-
-## 7. License and Attribution
-
-* All contributions are licensed under the **MIT License** (same as project).
-* Cite the project via `CITATION.cff` if you use it in research.
-
----
-
-## 8. Quick Checklist Before PR
-
-* [ ] Code formatted (black, ruff, isort).
-* [ ] All configs updated and tested.
-* [ ] `spectramind selftest` passes.
-* [ ] Tests added and passing (`pytest`).
-* [ ] Documentation updated.
-* [ ] Commit message follows convention.
+Maintainers: SpectraMind Core Team
+Contact: Use GitHub Issues or Discussions
 
 ---
-
-**Maintainers:** SpectraMind Core Team
-**Contact:** Use GitHub Issues or Discussions for support.
-
-```
