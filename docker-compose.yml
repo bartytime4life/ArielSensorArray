@@ -1,0 +1,117 @@
+# ------------------------------------------------------------------------------
+# docker-compose.yml — SpectraMind V50 (ArielSensorArray)
+# One-command dev/runtime with GPU (or CPU), docs, and tensorboard profiles.
+#   - GPU:   docker compose --profile gpu up -d
+#   - CPU:   docker compose --profile cpu up -d
+#   - Docs:  docker compose --profile docs up
+#   - TB:    docker compose --profile viz up
+#
+# Notes:
+#  • Build image once:  docker compose build
+#  • Drop into shell:    docker compose exec spectramind bash
+#  • All services mount repo at /workspace (Poetry + Typer CLI ready).
+# ------------------------------------------------------------------------------
+
+version: "3.9"
+
+x-common-env: &common-env
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  PIP_NO_PYTHON_VERSION_WARNING: "1"
+  PYTHONUNBUFFERED: "1"
+  POETRY_VIRTUALENVS_CREATE: "false"
+  TRANSFORMERS_CACHE: /workspace/.hf_cache
+  HF_HOME: /workspace/.hf_cache
+
+x-common-volumes: &common-volumes
+  - ./:/workspace
+  - spectramind-cache:/root/.cache
+  - hf-cache:/workspace/.hf_cache
+
+services:
+  # ----------------------------------------------------------------
+  # GPU-enabled dev shell (default profile: gpu)
+  # ----------------------------------------------------------------
+  spectramind:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: spectramindv50:dev
+    container_name: spectramind
+    working_dir: /workspace
+    tty: true
+    stdin_open: true
+    command: bash
+    volumes: *common-volumes
+    environment:
+      <<: *common-env
+      # The following variables cooperate with NVIDIA Container Toolkit.
+      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    # Best-effort GPU reservation (ignored by classic compose; used by swarm).
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: ["gpu"]
+    # For new Compose (v2), 'device_requests' can be used alternatively:
+    # device_requests:
+    #   - driver: "nvidia"
+    #     count: -1
+    #     capabilities: ["gpu"]
+    shm_size: "16gb"
+    profiles: ["gpu"]
+
+  # ----------------------------------------------------------------
+  # CPU-only dev shell (profile: cpu)
+  # ----------------------------------------------------------------
+  spectramind-cpu:
+    image: spectramindv50:dev
+    container_name: spectramind-cpu
+    working_dir: /workspace
+    tty: true
+    stdin_open: true
+    command: bash
+    volumes: *common-volumes
+    environment: *common-env
+    shm_size: "8gb"
+    profiles: ["cpu"]
+
+  # ----------------------------------------------------------------
+  # Live docs server (MkDocs) — http://localhost:8000 (profile: docs)
+  # ----------------------------------------------------------------
+  docs:
+    image: spectramindv50:dev
+    container_name: spectramind-docs
+    working_dir: /workspace
+    depends_on:
+      - spectramind
+    command: bash -lc "poetry run mkdocs serve -a 0.0.0.0:8000"
+    ports:
+      - "8000:8000"
+    volumes: *common-volumes
+    environment: *common-env
+    profiles: ["docs"]
+
+  # ----------------------------------------------------------------
+  # TensorBoard — http://localhost:6006 (profile: viz)
+  # ----------------------------------------------------------------
+  tensorboard:
+    image: spectramindv50:dev
+    container_name: spectramind-tb
+    working_dir: /workspace
+    depends_on:
+      - spectramind
+    command: bash -lc "poetry run tensorboard --logdir logs --host 0.0.0.0 --port 6006"
+    ports:
+      - "6006:6006"
+    volumes:
+      - ./:/workspace
+      - spectramind-cache:/root/.cache
+      - tb-logs:/workspace/logs
+    environment: *common-env
+    profiles: ["viz"]
+
+volumes:
+  spectramind-cache:
+  hf-cache:
+  tb-logs:
