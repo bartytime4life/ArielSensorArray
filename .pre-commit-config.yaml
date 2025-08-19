@@ -1,7 +1,7 @@
 # -----------------------------------------------------------------------------
 # .pre-commit-config.yaml — SpectraMind V50
-# Purpose: Ensure code style, lint, security, and config integrity
-# ----------------------------------------------------------------------------- 
+# Purpose: enforce style, lint, security, and notebook hygiene consistently
+# -----------------------------------------------------------------------------
 
 repos:
   # -----------------------
@@ -33,9 +33,14 @@ repos:
     hooks:
       - id: check-yaml
       - id: check-json
+      - id: check-toml
       - id: end-of-file-fixer
       - id: trailing-whitespace
-      - id: check-toml
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      - id: check-merge-conflict
+      - id: forbid-new-submodules
+      - id: check-added-large-files
 
   # -----------------------
   # Security & secrets scanning
