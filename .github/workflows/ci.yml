@@ -1,446 +1,472 @@
-name: SpectraMind V50 — CI (Lint • Test • Unit • Smoke • GPU • Docs • Release • Scan)
+
+name: SpectraMind V50 — CI (Lint • Test • Smoke • GPU • Docs • Release • Scan)
 
 on:
-push:
-branches: [””]
-tags: [“v*..”]
-pull_request:
-branches: [””]
-workflow_dispatch:
-schedule:
-# Weekly safety run (Sundays 07:00 America/Chicago)
-- cron: “0 12 * * 0”
+  push:
+    branches: [ "main" ]
+    tags:     [ "v*" ]
+  pull_request:
+    branches: [ "**" ]
+  workflow_dispatch: {}
+  schedule:
+    # Weekly safety run (Sundays 07:00 America/Chicago = 12:00 UTC)
+    - cron: "0 12 * * 0"
 
 concurrency:
-group: ci-${{ github.workflow }}-${{ github.ref }}
-cancel-in-progress: true
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
-contents: read
+  contents: read
 
 env:
-PYTHONUNBUFFERED: “1”
-PIP_DISABLE_PIP_VERSION_CHECK: “1”
-PIP_NO_PYTHON_VERSION_WARNING: “1”
-POETRY_VIRTUALENVS_IN_PROJECT: “true”
-POETRY_NO_INTERACTION: “1”
-HYDRA_FULL_ERROR: “1”
-DEFAULT_PY: “3.11”
-POETRY_VERSION: “1.8.3”
-ARTIFACT_DIR: “artifacts”
-DIAG_DIR: “outputs/diagnostics”
-LOGS_DIR: “logs”
+  PYTHONUNBUFFERED: "1"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  PIP_NO_PYTHON_VERSION_WARNING: "1"
+  POETRY_VIRTUALENVS_IN_PROJECT: "true"
+  POETRY_NO_INTERACTION: "1"
+  HYDRA_FULL_ERROR: "1"
+  DEFAULT_PY: "3.11"
+  POETRY_VERSION: "1.8.3"
+  ARTIFACT_DIR: "artifacts"
+  DIAG_DIR: "outputs/diagnostics"
+  LOGS_DIR: "logs"
 
 jobs:
-pre-commit:
-name: Lint & Static Checks (pre-commit • ruff • black • isort • yaml)
-runs-on: ubuntu-latest
-timeout-minutes: 20
-steps:
-- uses: actions/checkout@v4
-with: { fetch-depth: 0 }
+  pre-commit:
+    name: Lint & Static Checks (pre-commit • ruff • black • isort • yaml)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-  - name: Set up Python
-    uses: actions/setup-python@v5
-    with:
-      python-version: ${{ env.DEFAULT_PY }}
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.DEFAULT_PY }}
 
-  - name: Install pre-commit + common hooks
-    run: |
-      python -m pip install --upgrade pip
-      pip install pre-commit ruff black isort pyyaml
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-${{ env.DEFAULT_PY }}-${{ hashFiles('**/pyproject.toml') }}
+          restore-keys: |
+            pip-${{ runner.os }}-${{ env.DEFAULT_PY }}-
 
-  - name: Run pre-commit
-    uses: pre-commit/action@v3.0.1
+      - name: Install pre-commit + common hooks
+        run: |
+          python -m pip install --upgrade pip
+          pip install pre-commit ruff black isort pyyaml
 
-  - name: Cache Ruff
-    uses: actions/cache@v4
-    with:
-      path: ~/.cache/ruff
-      key: ruff-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+      - name: Run pre-commit
+        uses: pre-commit/action@v3.0.1
 
-unit:
-name: Unit Tests • Python ${{ matrix.python-version }}
-needs: pre-commit
-runs-on: ubuntu-latest
-timeout-minutes: 35
-strategy:
-fail-fast: false
-matrix:
-python-version: [“3.10”, “3.11”, “3.12”]
-steps:
-- uses: actions/checkout@v4
-with: { fetch-depth: 0 }
+      - name: Cache Ruff
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ruff
+          key: ruff-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
 
-  - name: Set up Python ${{ matrix.python-version }}
-    id: setup-python
-    uses: actions/setup-python@v5
-    with:
-      python-version: ${{ matrix.python-version }}
+  unit:
+    name: Unit Tests • Python ${{ matrix.python-version }}
+    needs: pre-commit
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: [ "3.10", "3.11", "3.12" ]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-  - name: Install Poetry via pipx
-    uses: pipxproject/action-install-pipx@v1
-  - run: pipx install poetry==${{ env.POETRY_VERSION }}
+      - name: Set up Python ${{ matrix.python-version }}
+        id: setup-python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
 
-  - name: Cache Poetry & Venv
-    uses: actions/cache@v4
-    with:
-      path: |
-        .venv
-        ~/.cache/pypoetry
-      key: poetry-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('poetry.lock') }}
-      restore-keys: |
-        poetry-${{ runner.os }}-${{ matrix.python-version }}-
+      - name: Install Poetry via pipx
+        uses: pipxproject/action-install-pipx@v1
+      - run: pipx install poetry==${{ env.POETRY_VERSION }}
 
-  - name: Install dependencies (Poetry)
-    run: |
-      poetry env use ${{ steps.setup-python.outputs.python-path }}
-      poetry install --no-root
+      - name: Cache Poetry & venv
+        uses: actions/cache@v4
+        with:
+          path: |
+            .venv
+            ~/.cache/pypoetry
+          key: poetry-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('poetry.lock') }}
+          restore-keys: |
+            poetry-${{ runner.os }}-${{ matrix.python-version }}-
 
-  - name: Versions
-    run: |
-      python --version
-      poetry --version
+      - name: Install dependencies (Poetry)
+        run: |
+          poetry env use ${{ steps.setup-python.outputs.python-path }}
+          poetry install --no-root
 
-  - name: Run pytest
-    run: |
-      mkdir -p $ARTIFACT_DIR
-      poetry run pytest -q --disable-warnings --maxfail=1 --durations=25 --cov --cov-report=xml || (echo "::error::Unit tests failed"; exit 1)
+      - name: Versions
+        run: |
+          python --version
+          poetry --version
 
-  - name: Upload unit artifacts
+      - name: Run pytest (XML coverage)
+        run: |
+          mkdir -p $ARTIFACT_DIR
+          poetry run pytest -q --disable-warnings --maxfail=1 --durations=25 --cov --cov-report=xml || (echo "::error::Unit tests failed"; exit 1)
+
+      - name: Upload unit artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-${{ matrix.python-version }}
+          path: |
+            coverage.xml
+            .pytest_cache/
+            ${{ env.ARTIFACT_DIR }}/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  smoke-cpu:
+    name: Pipeline Smoke (selftest • toy train/predict • diagnostics) — CPU
+    needs: unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        id: setup-python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.DEFAULT_PY }}
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-${{ env.DEFAULT_PY }}-${{ hashFiles('**/pyproject.toml') }}
+
+      - name: Install Poetry
+        run: |
+          python -m pip install --upgrade pip
+          pip install poetry==${{ env.POETRY_VERSION }}
+
+      - name: Cache Poetry & venv
+        uses: actions/cache@v4
+        with:
+          path: |
+            .venv
+            ~/.cache/pypoetry
+          key: poetry-${{ runner.os }}-${{ env.DEFAULT_PY }}-${{ hashFiles('poetry.lock') }}
+          restore-keys: |
+            poetry-${{ runner.os }}-${{ env.DEFAULT_PY }}-
+
+      - name: Install dependencies
+        run: |
+          poetry env use ${{ steps.setup-python.outputs.python-path }}
+          poetry install --no-root
+
+      - name: DVC setup
+        run: |
+          python -m pip install --upgrade "dvc[s3]==3.*" || python -m pip install --upgrade dvc==3.*
+          dvc --version || true
+
+      - name: Pull DVC sample (if available)
+        run: dvc pull -q || true
+
+      - name: Print CLI version & run hash
+        run: |
+          mkdir -p $LOGS_DIR $DIAG_DIR $ARTIFACT_DIR
+          if poetry run spectramind --version >/dev/null 2>&1; then
+            poetry run spectramind --version | tee -a $LOGS_DIR/ci_version.txt
+          else
+            echo "spectramind CLI not found; ensure entrypoint is installed." | tee -a $LOGS_DIR/ci_version.txt
+          fi
+
+      - name: Fast selftest
+        run: |
+          if poetry run spectramind --help >/dev/null 2>&1; then
+            poetry run spectramind selftest --fast
+          else
+            echo "::warning::spectramind CLI not wired; skipping selftest."
+          fi
+
+      - name: Deep selftest (non-fatal)
+        continue-on-error: true
+        run: |
+          if poetry run spectramind --help >/dev/null 2>&1; then
+            poetry run spectramind selftest --deep
+          fi
+
+      - name: Toy train → predict → diagnose
+        run: |
+          if poetry run spectramind --help >/dev/null 2>&1; then
+            OVERRIDES="+data.split=toy +data.batch_size=4 +data.num_workers=0 +training.max_steps=25 training.mixed_precision=false +diagnostics.light=true"
+            poetry run spectramind train --config-name=config_v50 ${OVERRIDES}
+            poetry run spectramind predict --out-csv outputs/submission.csv ${OVERRIDES}
+            poetry run spectramind diagnose dashboard --no-umap --no-tsne || poetry run spectramind diagnose dashboard || true
+          fi
+
+      - name: Collect artifacts
+        if: always()
+        run: |
+          [ -f logs/v50_debug_log.md ] && cp logs/v50_debug_log.md $ARTIFACT_DIR/ || true
+          [ -f logs/v50_event_log.jsonl ] && cp logs/v50_event_log.jsonl $ARTIFACT_DIR/ || true
+          [ -f run_hash_summary_v50.json ] && cp run_hash_summary_v50.json $ARTIFACT_DIR/ || true
+          [ -f outputs/submission.csv ] && cp outputs/submission.csv $ARTIFACT_DIR/ || true
+          if [ -d "$DIAG_DIR" ]; then
+            tar -czf $ARTIFACT_DIR/diagnostics.tar.gz -C outputs diagnostics || true
+          fi
+
+      - name: Upload smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-cpu
+          path: artifacts/
+          if-no-files-found: warn
+          retention-days: 7
+
+  gpu-smoke:
+    name: GPU Smoke (self-hosted CUDA container)
+    needs: unit
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: [ self-hosted, linux, x64, gpu ]
+    timeout-minutes: 50
+    container:
+      image: nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
+      options: --gpus all
+    steps:
+      - name: Verify GPU (nvidia-smi)
+        run: nvidia-smi
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install OS deps
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            git curl ca-certificates python3 python3-venv python3-pip build-essential
+          rm -rf /var/lib/apt/lists/*
+
+      - name: Install Poetry
+        run: python3 -m pip install --no-cache-dir poetry==${{ env.POETRY_VERSION }}
+
+      - name: Install project deps
+        run: |
+          poetry config virtualenvs.create true
+          poetry install --no-root
+
+      - name: Install PyTorch CUDA (fallbacks to CPU wheels)
+        run: |
+          python3 - <<'PY'
+          import sys, subprocess
+          for idx in ("cu124","cu122","cu121","cpu"):
+              url = "https://download.pytorch.org/whl/" + idx
+              pkgs = ["torch","torchvision","torchaudio"]
+              try:
+                  subprocess.check_call([sys.executable, "-m", "pip", "install", "--no-cache-dir", "-U", *pkgs, "--index-url", url])
+                  break
+              except subprocess.CalledProcessError:
+                  continue
+          PY
+
+      - name: Torch CUDA check
+        run: |
+          python3 - <<'PY'
+          import torch
+          print("Torch:", torch.__version__)
+          print("CUDA available:", torch.cuda.is_available())
+          if torch.cuda.is_available():
+              print("CUDA device count:", torch.cuda.device_count())
+              print("Device 0:", torch.cuda.get_device_name(0))
+          PY
+
+      - name: DVC setup & pull sample
+        run: |
+          python3 -m pip install --no-cache-dir "dvc[s3]==3.*" || python3 -m pip install --no-cache-dir dvc==3.*
+          dvc pull -q || true
+
+      - name: GPU toy pipeline
+        env:
+          CUDA_VISIBLE_DEVICES: "0"
+        run: |
+          poetry run spectramind calibrate --sample 2 || true
+          poetry run spectramind train --config-name=config_v50 \
+            +data.split=toy +training.epochs=1 +training.mixed_precision=true +training.device=cuda
+          poetry run spectramind diagnose --fast || true
+
+      - name: Upload GPU artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-gpu
+          path: |
+            logs/
+            outputs/diagnostics/
+            artifacts/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  docs:
+    name: Build & Publish Docs (MkDocs Material)
+    needs: unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.DEFAULT_PY }}
+
+      - name: Install MkDocs & plugins
+        run: |
+          python -m pip install --upgrade pip
+          pip install mkdocs mkdocs-material mkdocs-awesome-pages-plugin mkdocs-git-revision-date-localized-plugin
+
+      - name: Build docs (if mkdocs.yml present)
+        run: |
+          if [ -f mkdocs.yml ]; then
+            mkdocs build --strict
+          else
+            echo "mkdocs.yml not found — skipping docs build."
+          fi
+
+      - name: Upload Pages artifact
+        if: ${{ github.ref == 'refs/heads/main' && hashFiles('mkdocs.yml') != '' }}
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Deploy to GitHub Pages
+        if: ${{ github.ref == 'refs/heads/main' && hashFiles('mkdocs.yml') != '' }}
+        uses: actions/deploy-pages@v4
+
+  docker:
+    name: Docker Build & Push (GHCR) on Main/Tags
+    needs: [ pre-commit, unit ]
+    if: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=sha
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+
+      - name: Build & Push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  release:
+    name: GitHub Release (sdist & wheel)
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [ pre-commit, unit ]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.DEFAULT_PY }}
+
+      - name: Install Poetry
+        run: |
+          python -m pip install --upgrade pip
+          pip install poetry==${{ env.POETRY_VERSION }}
+
+      - name: Build wheel & sdist
+        run: |
+          poetry build
+          ls -lah dist/
+
+      - name: Create release & upload dists
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  codeql:
+    name: CodeQL (Python)
+    needs: pre-commit
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: python
+      - uses: github/codeql-action/analyze@v3
+
+  status:
+    name: CI Summary
     if: always()
-    uses: actions/upload-artifact@v4
-    with:
-      name: unit-${{ matrix.python-version }}
-      path: |
-        coverage.xml
-        .pytest_cache/
-        ${{ env.ARTIFACT_DIR }}/
-      if-no-files-found: ignore
-      retention-days: 7
+    needs: [ pre-commit, unit, smoke-cpu ]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Job conclusions
+        run: |
+          echo "pre-commit: ${{ needs.pre-commit.result }}"
+          echo "unit:       ${{ needs.unit.result }}"
+          echo "smoke-cpu:  ${{ needs.smoke-cpu.result }}"
+          echo "Done."
 
-smoke-cpu:
-name: Pipeline Smoke (selftest • toy train/predict • diagnostics) — CPU
-needs: unit
-runs-on: ubuntu-latest
-timeout-minutes: 60
-steps:
-- uses: actions/checkout@v4
-with: { fetch-depth: 0 }
-
-  - name: Set up Python
-    id: setup-python
-    uses: actions/setup-python@v5
-    with:
-      python-version: ${{ env.DEFAULT_PY }}
-
-  - name: Install Poetry
-    run: |
-      python -m pip install --upgrade pip
-      pip install poetry==${{ env.POETRY_VERSION }}
-
-  - name: Cache Poetry & Venv
-    uses: actions/cache@v4
-    with:
-      path: |
-        .venv
-        ~/.cache/pypoetry
-      key: poetry-${{ runner.os }}-${{ env.DEFAULT_PY }}-${{ hashFiles('poetry.lock') }}
-      restore-keys: |
-        poetry-${{ runner.os }}-${{ env.DEFAULT_PY }}-
-
-  - name: Install dependencies
-    run: |
-      poetry env use ${{ steps.setup-python.outputs.python-path }}
-      poetry install --no-root
-
-  - name: DVC setup
-    run: |
-      python -m pip install --upgrade dvc[s3]==3.* || python -m pip install --upgrade dvc==3.*
-      dvc --version || true
-
-  - name: Pull DVC sample (if available)
-    run: dvc pull -q || true
-
-  - name: Print CLI version & run hash
-    run: |
-      mkdir -p $LOGS_DIR $DIAG_DIR $ARTIFACT_DIR
-      if poetry run spectramind --version >/dev/null 2>&1; then
-        poetry run spectramind --version | tee -a $LOGS_DIR/ci_version.txt
-      else
-        echo "spectramind CLI not found; ensure entrypoint is installed." | tee -a $LOGS_DIR/ci_version.txt
-      fi
-
-  - name: Fast selftest
-    run: |
-      if poetry run spectramind --help >/dev/null 2>&1; then
-        poetry run spectramind selftest --fast
-      else
-        echo "::warning::spectramind CLI not wired; skipping selftest."
-      fi
-
-  - name: Deep selftest (non-fatal)
-    continue-on-error: true
-    run: |
-      if poetry run spectramind --help >/dev/null 2>&1; then
-        poetry run spectramind selftest --deep
-      fi
-
-  - name: Toy train → predict → diagnose
-    run: |
-      if poetry run spectramind --help >/dev/null 2>&1; then
-        OVERRIDES="+data.split=toy +data.batch_size=4 +data.num_workers=0 +training.max_steps=25 training.mixed_precision=false +diagnostics.light=true"
-        poetry run spectramind train --config-name=config_v50 ${OVERRIDES}
-        poetry run spectramind predict --out-csv outputs/submission.csv ${OVERRIDES}
-        poetry run spectramind diagnose dashboard --no-umap --no-tsne || poetry run spectramind diagnose dashboard || true
-      fi
-
-  - name: Collect artifacts
-    if: always()
-    run: |
-      [ -f logs/v50_debug_log.md ] && cp logs/v50_debug_log.md $ARTIFACT_DIR/ || true
-      [ -f logs/v50_event_log.jsonl ] && cp logs/v50_event_log.jsonl $ARTIFACT_DIR/ || true
-      [ -f run_hash_summary_v50.json ] && cp run_hash_summary_v50.json $ARTIFACT_DIR/ || true
-      [ -f outputs/submission.csv ] && cp outputs/submission.csv $ARTIFACT_DIR/ || true
-      if [ -d "$DIAG_DIR" ]; then
-        tar -czf $ARTIFACT_DIR/diagnostics.tar.gz -C outputs diagnostics || true
-      fi
-
-  - name: Upload smoke artifacts
-    if: always()
-    uses: actions/upload-artifact@v4
-    with:
-      name: smoke-cpu
-      path: artifacts/
-      if-no-files-found: warn
-      retention-days: 7
-
-gpu-smoke:
-name: GPU Smoke (self-hosted CUDA container)
-needs: unit
-if: ${{ github.event_name != ‘pull_request’ }}  # typically restricted to trusted contexts
-runs-on: [self-hosted, linux, x64, gpu]
-timeout-minutes: 50
-container:
-image: nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
-options: –gpus all
-steps:
-- name: Verify GPU (nvidia-smi)
-run: nvidia-smi
-
-  - uses: actions/checkout@v4
-    with: { fetch-depth: 0 }
-
-  - name: Install OS deps
-    run: |
-      apt-get update
-      DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        git curl ca-certificates python3 python3-venv python3-pip build-essential
-      rm -rf /var/lib/apt/lists/*
-
-  - name: Install Poetry
-    run: python3 -m pip install --no-cache-dir poetry==${{ env.POETRY_VERSION }}
-
-  - name: Install project deps
-    run: |
-      poetry config virtualenvs.create true
-      poetry install --no-root
-
-  - name: Install PyTorch CUDA (fallbacks to CPU wheels)
-    run: |
-      python3 - <<'PY'
-      import sys, subprocess
-      for idx in ("cu124","cu122","cu121","cpu"):
-          url = "https://download.pytorch.org/whl/" + idx
-          pkgs = ["torch","torchvision","torchaudio"]
-          try:
-              subprocess.check_call([sys.executable, "-m", "pip", "install", "--no-cache-dir", "-U", *pkgs, "--index-url", url])
-              break
-          except subprocess.CalledProcessError:
-              continue
-      PY
-
-  - name: Torch CUDA check
-    run: |
-      python3 - <<'PY'
-      import torch
-      print("Torch:", torch.__version__)
-      print("CUDA available:", torch.cuda.is_available())
-      if torch.cuda.is_available():
-          print("CUDA device count:", torch.cuda.device_count())
-          print("Device 0:", torch.cuda.get_device_name(0))
-      PY
-
-  - name: DVC setup & pull sample
-    run: |
-      python3 -m pip install --no-cache-dir dvc[s3]==3.* || python3 -m pip install --no-cache-dir dvc==3.*
-      dvc pull -q || true
-
-  - name: GPU toy pipeline
-    env:
-      CUDA_VISIBLE_DEVICES: "0"
-    run: |
-      poetry run spectramind calibrate --sample 2 || true
-      poetry run spectramind train --config-name=config_v50 \
-        +data.split=toy +training.epochs=1 +training.mixed_precision=true +training.device=cuda
-      poetry run spectramind diagnose --fast || true
-
-  - name: Upload GPU artifacts
-    if: always()
-    uses: actions/upload-artifact@v4
-    with:
-      name: smoke-gpu
-      path: |
-        logs/
-        outputs/diagnostics/
-        artifacts/
-      if-no-files-found: ignore
-      retention-days: 7
-
-docs:
-name: Build & Publish Docs (MkDocs Material)
-needs: unit
-runs-on: ubuntu-latest
-timeout-minutes: 20
-permissions:
-contents: read
-pages: write
-id-token: write
-steps:
-- uses: actions/checkout@v4
-with: { fetch-depth: 0 }
-
-  - uses: actions/setup-python@v5
-    with:
-      python-version: ${{ env.DEFAULT_PY }}
-
-  - name: Install MkDocs & plugins
-    run: |
-      python -m pip install --upgrade pip
-      pip install mkdocs mkdocs-material mkdocs-awesome-pages-plugin mkdocs-git-revision-date-localized-plugin
-
-  - name: Build docs (if mkdocs.yml present)
-    run: |
-      if [ -f mkdocs.yml ]; then
-        mkdocs build --strict
-      else
-        echo "mkdocs.yml not found — skipping docs build."
-      fi
-
-  - name: Upload Pages artifact
-    if: ${{ github.ref == 'refs/heads/main' && hashFiles('mkdocs.yml') != '' }}
-    uses: actions/upload-pages-artifact@v3
-    with:
-      path: site
-
-  - name: Deploy to GitHub Pages
-    if: ${{ github.ref == 'refs/heads/main' && hashFiles('mkdocs.yml') != '' }}
-    uses: actions/deploy-pages@v4
-
-docker:
-name: Docker Build & Push (GHCR) on Main/Tags
-needs: [pre-commit, unit]
-if: ${{ github.ref == ‘refs/heads/main’ || startsWith(github.ref, ‘refs/tags/v’) }}
-runs-on: ubuntu-latest
-timeout-minutes: 25
-permissions:
-contents: read
-packages: write
-steps:
-- uses: actions/checkout@v4
-
-  - name: Set up Buildx
-    uses: docker/setup-buildx-action@v3
-
-  - name: Login to GHCR
-    uses: docker/login-action@v3
-    with:
-      registry: ghcr.io
-      username: ${{ github.actor }}
-      password: ${{ secrets.GITHUB_TOKEN }}
-
-  - name: Docker metadata
-    id: meta
-    uses: docker/metadata-action@v5
-    with:
-      images: ghcr.io/${{ github.repository }}
-      tags: |
-        type=sha
-        type=ref,event=branch
-        type=semver,pattern={{version}}
-
-  - name: Build & Push
-    uses: docker/build-push-action@v6
-    with:
-      context: .
-      push: true
-      platforms: linux/amd64
-      tags: ${{ steps.meta.outputs.tags }}
-      labels: ${{ steps.meta.outputs.labels }}
-      cache-from: type=gha
-      cache-to: type=gha,mode=max
-
-release:
-name: GitHub Release (sdist & wheel)
-if: startsWith(github.ref, ‘refs/tags/’)
-needs: [pre-commit, unit]
-runs-on: ubuntu-latest
-timeout-minutes: 20
-permissions:
-contents: write
-steps:
-- uses: actions/checkout@v4
-with: { fetch-depth: 0 }
-
-  - uses: actions/setup-python@v5
-    with:
-      python-version: ${{ env.DEFAULT_PY }}
-
-  - name: Install Poetry
-    run: |
-      python -m pip install --upgrade pip
-      pip install poetry==${{ env.POETRY_VERSION }}
-
-  - name: Build wheel & sdist
-    run: |
-      poetry build
-      ls -lah dist/
-
-  - name: Create release & upload dists
-    uses: softprops/action-gh-release@v2
-    with:
-      files: |
-        dist/*.whl
-        dist/*.tar.gz
-    env:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-codeql:
-name: CodeQL (Python)
-needs: pre-commit
-runs-on: ubuntu-latest
-timeout-minutes: 45
-permissions:
-actions: read
-contents: read
-security-events: write
-steps:
-- uses: actions/checkout@v4
-- uses: github/codeql-action/init@v3
-with:
-languages: python
-- uses: github/codeql-action/analyze@v3
-
-status:
-name: CI Summary
-needs: [pre-commit, unit, smoke-cpu]
-if: always()
-runs-on: ubuntu-latest
-steps:
-- name: Job conclusions
-run: |
-echo “pre-commit: ${{ needs.pre-commit.result }}”
-echo “unit:       ${{ needs.unit.result }}”
-echo “smoke-cpu:  ${{ needs.smoke-cpu.result }}”
-# gpu, docs, docker, release, codeql are optional/conditional
-echo “Done.”
+Notes & rationale (abridged)
+	•	Single Typer‑based CLI as the automation entrypoint (the smoke steps exercise it end‑to‑end), which keeps runs reproducible and auditable.
+	•	Hydra configs + DVC are assumed; the pipeline records config hashes and logs for traceability (the smoke job copies v50_debug_log.md and run_hash_summary_v50.json).
+	•	CI includes a tiny, time‑boxed “toy” run to detect wiring regressions without burning compute.
+	•	The weekly scheduled run is your “safety net” to catch environmental drift and keep artifacts fresh.
