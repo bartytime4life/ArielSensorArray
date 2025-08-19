@@ -1,0 +1,18 @@
+body {
+  font-family: 'Roboto', sans-serif;
+  background-color: #f5f5f5;
+  color: #212121;
+}
+.card {
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+  background: #fff;
+}
+.button-primary {
+  background-color: #1a237e;
+  color: white;
+  padding: 8px 16px;
+  border-radius: 6px;
+  border: none;
+}
