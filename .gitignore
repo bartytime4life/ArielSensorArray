@@ -1,110 +1,198 @@
-# =====================================================================
-# SpectraMind V50 — .gitignore (NeurIPS Ariel Data Challenge 2025)
-# =====================================================================
+# -----------------------------------------------------------------------------
+# SpectraMind V50 — .gitignore (ArielSensorArray)
+# Purpose: keep repo clean, reproducible, and free of local/secret artifacts.
+# -----------------------------------------------------------------------------
 
-# Python caches
+
+# -----------------------
+# Python bytecode / cache
+# -----------------------
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
+*$py.class
+
+
+# -----------------------
+# Virtual environments
+# -----------------------
+.venv/
+venv/
+env/
+.python-version
+
+
+# -----------------------
+# Build / packaging
+# -----------------------
+build/
+dist/
 *.egg-info/
 .eggs/
-
-# Virtual environments
-.env
-.venv
-venv/
-ENV/
-env/
-env.bak/
-
-# Build / dist
-dist/
-build/
-wheels/
-*.whl
-*.tar.gz
+*.egg
 pip-wheel-metadata/
 
-# Coverage / test
-.coverage
-htmlcov/
-.mypy_cache/
-.pytest_cache/
-.dmypy.json
-.pyre/
-.pytype/
+
+# -----------------------
+# Jupyter / notebooks
+# -----------------------
+.ipynb_checkpoints/
+*.ipynb~
+
+
+# -----------------------
+# Logs / telemetry
+# -----------------------
+logs/
+!logs/.gitkeep
+*.log
+*.jsonl
+*.csv.tmp
+
+
+# -----------------------
+# Outputs / artifacts
+# -----------------------
+outputs/
+!outputs/.gitkeep
+
+# Common local scratch dirs
+.tmp/
+tmp/
+cache/
+.cache/
+wandb/
+mlruns/
+mlartifacts/
+tensorboard/
+tb_logs/
+lightning_logs/
+
+
+# -----------------------
+# Data (tracked via DVC or external)
+# -----------------------
+data/
+!data/.gitkeep
+*.parquet
+*.feather
+*.h5
+*.hdf5
+*.npz
+*.npy
+*.csv
+*.tsv
+
+# Allow small config/meta files if needed
+!data/*.md
+!data/*.txt
+
+
+# -----------------------
+# DVC
+# -----------------------
+.dvc/
+*.dvc
+!.dvc/config
+.dvcignore
+
+
+# -----------------------
+# Hydra run directories
+# -----------------------
+multirun/
+outputs_hydra/
+**/.hydra/
+
+
+# -----------------------
+# Poetry / pip / cache
+# -----------------------
+poetry.lock
+# If you want to commit the lockfile, comment the line above.
+# (For libs, often ignored; for apps, you may commit. Team preference.)
+
+.poetry-cache/
+pip-cache/
 __pypackages__/
 
-# Logs and outputs
-logs/
-outputs/
-results/
-runs/
-*.out
-*.err
-*.log
-v50_debug_log.md
-v50_event_log.jsonl
 
-# Checkpoints / models
-checkpoints/
-models/
-*.pt
-*.pth
-*.ckpt
-*.ckpt.*
-
-# Jupyter
-.ipynb_checkpoints/
-.ipython/
-profile_default/
-
-# IDEs / Editors
+# -----------------------
+# Editors / IDEs
+# -----------------------
 .vscode/
+.vscode-test/
+*.code-workspace
 .idea/
-*.swp
-*.swo
-*.bak
-*.tmp
-*.DS_Store
+*.iml
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw*
+.DS_Store
+Thumbs.db
 
-# Kaggle
-submission.csv
-submission*.zip
-kaggle.json
 
-# DVC / Hydra
-.dvc/
-.dvcignore
-.dvc/tmp/
-.dvc/cache/
-hydra/
-multirun/
-*.hydra/
-outputs/.hydra/
+# -----------------------
+# Testing / coverage
+# -----------------------
+htmlcov/
+.coverage
+.coverage.*
+.cache/
+.pytest_cache/
+.tox/
+.nox/
 
-# Docs build
+
+# -----------------------
+# Docs build artifacts
+# -----------------------
 site/
 mkdocs-site/
 docs/_build/
+docs/_autosummary/
+*.doctree
+*.pickle
 
-# Data (keep .gitkeep if needed)
-data/
-datasets/
-!data/.gitkeep
-!datasets/.gitkeep
 
-# System cruft
-Thumbs.db
-Desktop.ini
-$RECYCLE.BIN/
-*.stackdump
+# -----------------------
+# OS / misc
+# -----------------------
+*.bak
+*.tmp
+~$*
 *.orig
 *.rej
-.AppleDouble
-.Spotlight-V100
-.Trash-*
 
-# Optional: CI/CD local artifacts
-ci-artifacts/
+
+# -----------------------
+# Docker / Compose
+# -----------------------
+*.pid
+docker-data/
+docker-volume/
+.env
+.env.*.local
+.env.local
+
+# Keep a template for environment variables
+!.env.example
+
+
+# -----------------------
+# Security: prevent accidental secrets
+# -----------------------
+*.key
+*.pem
+*.crt
+*.p12
+*.der
+*.asc
+*.gpg
+secrets/
+**/secrets.*
+**/*secret*.*
+**/*credentials*.*
+**/*token*.*
+**/*apikey*.*
