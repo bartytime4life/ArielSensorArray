@@ -1,16 +1,16 @@
 \[build-system]
-requires = \["setuptools>=68", "wheel"]
+requires = \["setuptools>=69", "wheel"]
 build-backend = "setuptools.build\_meta"
 
 \[project]
 name = "spectramindv50"
-version = "0.1.0"
+version = "0.1.1"  # bump when you tag a release; keep in sync with VERSION
 description = "NeurIPS 2025 Ariel Data Challenge — SpectraMind V50: neuro-symbolic, physics‑informed exoplanet spectroscopy with a unified Typer CLI, Hydra configs, DVC, diagnostics, and CI."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 
-# Primary authors
+# Primary authors/owners
 
 authors = \[
 { name = "SpectraMind Team" },
@@ -26,7 +26,7 @@ keywords = \[
 "hydra", "cli", "dvc", "diagnostics", "umap", "tsne"
 ]
 
-# Trove classifiers for PyPI metadata
+# Trove classifiers for packaging metadata
 
 classifiers = \[
 "Programming Language :: Python :: 3",
@@ -38,11 +38,11 @@ classifiers = \[
 "Framework :: Pytest"
 ]
 
-# -----------------------
+# =======================
 
 # Runtime dependencies
 
-# -----------------------
+# =======================
 
 dependencies = \[
 
@@ -67,13 +67,11 @@ dependencies = \[
 "torchvision>=0.17",
 "torchaudio>=2.2",
 
-# Graph/geom (AIRS GNN, optional CUDA wheels provided by PyTorch index)
+# Graph / geometry (AIRS GNN)
 
 "networkx>=3.2",
 
-# If using torch-geometric, install via wheels in setup docs; keep light dep here
-
-# Note: official wheels are not published for Windows on all CUDA combos; skip on Windows by default
+# Note: torch-geometric wheels are platform/CUDA-specific; avoid breaking Windows installs by skipping there.
 
 "torch-geometric>=2.5; platform\_system != 'Windows'",
 
@@ -84,17 +82,17 @@ dependencies = \[
 "umap-learn>=0.5.6",
 "shap>=0.45.0",
 
-# I/O, tqdm, and misc
+# I/O, progress, system
 
 "tqdm>=4.66",
 "joblib>=1.3",
 "psutil>=5.9",
 
-# DVC core (remote extras installed via optional-dependencies below)
+# DVC core (storage backends via extras below)
 
 "dvc>=3.50",
 
-# Optional experiment tracking (used if installed)
+# Optional experiment tracking (used if present)
 
 "mlflow>=2.14.0",
 "wandb>=0.17.0"
@@ -114,7 +112,7 @@ dev = \[
 ]
 viz = \[
 "kaleido>=0.2.1",
-"seaborn>=0.13.2"   # not required for CLI charts (matplotlib-only by default)
+"seaborn>=0.13.2"  # not required by CLI charts (we use matplotlib by default)
 ]
 gcs = \["dvc\[gdrive,gcs]>=3.50"]
 s3 = \["dvc\[s3,boto3]>=3.50"]
@@ -123,12 +121,10 @@ azure = \["dvc\[azure]>=3.50"]
 
 # Console entry point for the unified Typer CLI.
 
-# This expects a callable named `app` (Typer instance) in the top-level module `spectramind`.
+# This expects a callable named `app` (Typer instance) in module `spectramind`.
 
 \[project.scripts]
 spectramind = "spectramind\:app"
-
-# Helpful links for packaging metadata and docs pointers
 
 \[project.urls]
 Homepage = "[https://github.com/bartytime4life/ArielSensorArray](https://github.com/bartytime4life/ArielSensorArray)"
@@ -136,11 +132,11 @@ Repository = "[https://github.com/bartytime4life/ArielSensorArray](https://githu
 Issues = "[https://github.com/bartytime4life/ArielSensorArray/issues](https://github.com/bartytime4life/ArielSensorArray/issues)"
 Documentation = "[https://github.com/bartytime4life/ArielSensorArray/tree/main/docs](https://github.com/bartytime4life/ArielSensorArray/tree/main/docs)"
 
-# -----------------------
+# =======================
 
 # Packaging configuration
 
-# -----------------------
+# =======================
 
 # Use a src/ layout; this is the canonical, tooling-friendly structure.
 
@@ -157,18 +153,18 @@ namespaces = false
 \[tool.setuptools.package-data]
 spectramindv50 = \["py.typed"]
 
-# -----------------------
+# =======================
 
 # Tooling: Ruff (lint)
 
-# -----------------------
+# =======================
 
 \[tool.ruff]
 line-length = 100
 target-version = "py310"
 extend-select = \["E", "F", "I", "UP", "B", "C4", "SIM"]
 ignore = \[
-"E501"  # handled by Black’s wrapping
+"E501"  # line length handled by Black’s wrapping
 ]
 exclude = \[
 "docs/",
@@ -179,11 +175,11 @@ exclude = \[
 "data/"
 ]
 
-# -----------------------
+# =======================
 
 # Tooling: Black (format)
 
-# -----------------------
+# =======================
 
 \[tool.black]
 line-length = 100
@@ -200,22 +196,22 @@ exclude = '''
 )/
 '''
 
-# -----------------------
+# =======================
 
 # Tooling: isort
 
-# -----------------------
+# =======================
 
 \[tool.isort]
 profile = "black"
 line\_length = 100
 src\_paths = \["src", "tests"]
 
-# -----------------------
+# =======================
 
 # Tooling: Pytest
 
-# -----------------------
+# =======================
 
 \[tool.pytest.ini\_options]
 minversion = "7.0"
@@ -228,11 +224,11 @@ log\_file\_level = "DEBUG"
 log\_format = "%(asctime)s \[%(levelname)s] %(name)s: %(message)s"
 log\_date\_format = "%Y-%m-%d %H:%M:%S"
 
-# -----------------------
+# =======================
 
 # Tooling: Coverage.py
 
-# -----------------------
+# =======================
 
 \[tool.coverage.run]
 branch = true
@@ -247,7 +243,7 @@ show\_missing = true
 skip\_covered = true
 fail\_under = 70
 
-# Normalize coverage paths for local/CI equivalence
+# Normalize paths so local vs CI coverage merges cleanly
 
 \[tool.coverage.paths]
 source = \[
@@ -255,11 +251,11 @@ source = \[
 "\*/site-packages"
 ]
 
-# -----------------------
+# =======================
 
 # Tooling: MyPy
 
-# -----------------------
+# =======================
 
 \[tool.mypy]
 python\_version = "3.10"
@@ -269,11 +265,11 @@ warn\_unused\_ignores = true
 ignore\_missing\_imports = true
 plugins = \[]
 
-# -----------------------
+# =======================
 
 # Tooling: Hatch build
 
-# -----------------------
+# =======================
 
 \[tool.hatch.build.targets.wheel]
 packages = \["src"]
