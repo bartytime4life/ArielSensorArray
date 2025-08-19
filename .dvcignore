@@ -1,0 +1,75 @@
+# .dvcignore — SpectraMind V50 (NeurIPS 2025 Ariel Data Challenge)
+# This file tells DVC which files/directories to skip when tracking data artifacts.
+# It is complementary to .gitignore but applies to DVC pipeline stages.
+
+# ----------------------------------------------------------------------
+# Python build & cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+*.egg
+*.whl
+
+# ----------------------------------------------------------------------
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# ----------------------------------------------------------------------
+# IDE/editor settings
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ----------------------------------------------------------------------
+# System/OS files
+.DS_Store
+Thumbs.db
+
+# ----------------------------------------------------------------------
+# Logs & temp files
+logs/
+*.log
+*.tmp
+*.bak
+*.old
+
+# ----------------------------------------------------------------------
+# Model artifacts & checkpoints (tracked selectively in pipeline)
+outputs/checkpoints/
+outputs/intermediate/
+outputs/temp/
+
+# ----------------------------------------------------------------------
+# Kaggle / competition specifics
+.kaggle/
+kaggle.json
+
+# ----------------------------------------------------------------------
+# Jupyter notebook checkpoints
+.ipynb_checkpoints/
+
+# ----------------------------------------------------------------------
+# DVC cache directory (managed by DVC, not Git)
+.dvc/cache/
+
+# ----------------------------------------------------------------------
+# Diagnostics & reports (can be regenerated)
+outputs/diagnostics/
+*.html
+*.png
+*.svg
+*.csv
+*.json
+
+# ----------------------------------------------------------------------
+# Submission bundles (reproducible via pipeline)
+outputs/submission.csv
+outputs/submission.zip
+outputs/submission_bundle.zip
