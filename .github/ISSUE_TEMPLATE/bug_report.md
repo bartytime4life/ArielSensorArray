@@ -1,3 +1,5 @@
+____
+
 🛰️ SpectraMind V50 — Bug Report
 
 Fill out every section. If something doesn’t apply, write N/A and explain why. This template enforces our NASA‑grade reproducibility, physics‑informed modeling, and CLI‑first standards.
