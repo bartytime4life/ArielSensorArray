@@ -1,0 +1,132 @@
+# .github/workflows/benchmark.yml
+# Benchmark workflow for SpectraMind V50 — NeurIPS 2025 Ariel Data Challenge
+# Runs controlled benchmark jobs (timing, throughput, GLL) across configs.
+# Includes CPU + GPU matrix, Hydra overrides, and artifact exports.
+
+name: benchmark
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 1" # Weekly benchmarks (Mondays at 06:00 UTC)
+  push:
+    branches: [ "main" ]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: benchmark-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  bench:
+    name: Benchmarks • py${{ matrix.python-version }} • ${{ matrix.device }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11"]
+        device: ["cpu", "gpu"]
+
+    env:
+      POETRY_VIRTUALENVS_IN_PROJECT: "true"
+      POETRY_NO_INTERACTION: "1"
+      TRANSFORMERS_OFFLINE: "1"
+      HYDRA_FULL_ERROR: "1"
+      BENCH_RESULTS_DIR: "benchmarks/${{ matrix.python-version }}_${{ matrix.device }}"
+      CUDA_VISIBLE_DEVICES: ${{ matrix.device == 'gpu' && '0' || '' }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python ${{ matrix.python-version }}
+        id: setup-py
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install pipx
+        uses: pipxproject/action-install-pipx@v1
+
+      - name: Install Poetry
+        run: pipx install poetry==1.8.3
+
+      - name: Cache Poetry venv
+        uses: actions/cache@v4
+        with:
+          path: |
+            .venv
+            ~/.cache/pypoetry
+          key: poetry-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('poetry.lock') }}
+
+      - name: Install dependencies
+        run: |
+          poetry env use "${{ steps.setup-py.outputs.python-path }}"
+          poetry install --no-interaction
+
+      - name: Show versions
+        run: |
+          python --version
+          poetry --version
+          poetry run python -c "import torch, platform; print('torch:', torch.__version__); print('cuda:', torch.cuda.is_available()); print('platform:', platform.platform())"
+
+      - name: Run pipeline selftest (smoke check)
+        run: |
+          poetry run spectramind test --fast || exit 1
+
+      - name: Run benchmark suite
+        run: |
+          mkdir -p $BENCH_RESULTS_DIR
+          poetry run spectramind train +training.epochs=1 +benchmark=true --device ${{ matrix.device }} --outdir $BENCH_RESULTS_DIR
+          poetry run spectramind diagnose smoothness --outdir $BENCH_RESULTS_DIR
+          poetry run spectramind diagnose dashboard --outdir $BENCH_RESULTS_DIR
+
+      - name: Capture timing + metrics
+        run: |
+          echo "Benchmark summary for py${{ matrix.python-version }} / ${{ matrix.device }}" > $BENCH_RESULTS_DIR/summary.txt
+          date >> $BENCH_RESULTS_DIR/summary.txt
+          nvidia-smi || true
+          ls -lh $BENCH_RESULTS_DIR >> $BENCH_RESULTS_DIR/summary.txt
+
+      - name: Upload benchmark artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-${{ matrix.python-version }}-${{ matrix.device }}
+          path: ${{ env.BENCH_RESULTS_DIR }}
+          retention-days: 14
+
+  aggregate:
+    name: Aggregate Benchmark Reports
+    needs: bench
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Download all benchmark artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: benchmark-*
+          merge-multiple: true
+
+      - name: Build aggregated report
+        run: |
+          mkdir -p aggregated
+          echo "# SpectraMind V50 Benchmark Report" > aggregated/report.md
+          echo "" >> aggregated/report.md
+          for f in benchmarks/*/summary.txt; do
+            echo "## $(basename $(dirname $f))" >> aggregated/report.md
+            cat $f >> aggregated/report.md
+            echo "" >> aggregated/report.md
+          done
+
+      - name: Upload aggregated report
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-aggregated
+          path: aggregated/report.md
+          retention-days: 30
