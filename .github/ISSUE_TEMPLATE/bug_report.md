@@ -1,12 +1,6 @@
 
 ⸻
 
-name: Bug report
-about: Report a defect in the SpectraMind V50 pipeline (NeurIPS 2025 Ariel Data Challenge)
-title: “[BUG] <short, imperative summary>”
-labels: [“bug”]
-assignees: []
-
 🛰️ SpectraMind V50 — Bug Report
 
 Fill out every section. If something doesn’t apply, write N/A and explain why. This template enforces our NASA‑grade reproducibility, physics‑informed modeling, and CLI‑first standards.
