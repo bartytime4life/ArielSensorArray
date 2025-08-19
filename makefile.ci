@@ -4,41 +4,57 @@
 #
 # Pipeline stages:
 #   • validate → selftest → train(1 epoch, cpu) → diagnose → analyze
+#   • (optional) validate-env, predict
 #   • artifacts end up under outputs/ and logs/
 # ==============================================================================
 
 # ========= Shell =========
-SHELL         := /usr/bin/env bash
+SHELL       := /usr/bin/env bash
 .ONESHELL:
-.SHELLFLAGS   := -euo pipefail -c
+.SHELLFLAGS := -euo pipefail -c
 
 # ========= Tooling =========
-PYTHON        ?= python3
-POETRY        ?= poetry
-CLI           ?= $(POETRY) run spectramind
+PYTHON      ?= python3
+POETRY      ?= poetry
+CLI         ?= $(POETRY) run spectramind
 
 # ========= Paths / artifacts =========
-OUT_DIR       ?= outputs
-LOGS_DIR      ?= logs
-DIAG_DIR      ?= $(OUT_DIR)/diagnostics
-PRED_DIR      ?= $(OUT_DIR)/predictions
+OUT_DIR     ?= outputs
+LOGS_DIR    ?= logs
+DIAG_DIR    ?= $(OUT_DIR)/diagnostics
+PRED_DIR    ?= $(OUT_DIR)/predictions
 
 # ========= Fixed knobs for CI =========
-DEVICE        ?= cpu
-EPOCHS        ?= 1
-OVERRIDES     ?=
-EXTRA_ARGS    ?=
+DEVICE      ?= cpu
+EPOCHS      ?= 1
+OVERRIDES   ?=
+EXTRA_ARGS  ?=
 
 # ========= PHONY =========
-.PHONY: ci validate selftest train diagnose analyze dvc-pull dvc-push clean
+.PHONY: help ci validate validate-env selftest train diagnose analyze predict dvc-pull dvc-push clean
+
+help:
+	@echo "make ci            # validate → selftest → train → diagnose → analyze"
+	@echo "make predict       # optional: write submission.csv"
+	@echo "make dvc-pull/push # sync DVC artifacts"
+	@echo "make clean         # cleanup CI artifacts"
 
 # Default target
-ci: validate selftest train diagnose analyze
+ci: validate validate-env selftest train diagnose analyze
 
-# Minimal validation (init dirs or add env validation hook here)
+# Minimal validation (init dirs; add other quick checks here)
 validate:
 	mkdir -p "$(OUT_DIR)" "$(LOGS_DIR)" "$(DIAG_DIR)" "$(PRED_DIR)"
 	@echo ">>> Validation complete (env/init)."
+
+# Optional .env schema validator (safe no-op if missing)
+validate-env:
+	@if [ -x scripts/validate_env.py ] || [ -f scripts/validate_env.py ]; then \
+	  echo ">>> Validating .env against schema"; \
+	  $(PYTHON) scripts/validate_env.py || exit 1; \
+	else \
+	  echo ">>> Skipping validate-env (scripts/validate_env.py not found)"; \
+	fi
 
 selftest:
 	@echo ">>> Selftest (fast, CI)"
@@ -58,6 +74,12 @@ diagnose:
 analyze:
 	@echo ">>> Analyze CLI logs (CI)"
 	$(CLI) analyze-log --md "$(OUT_DIR)/log_table.md" --csv "$(OUT_DIR)/log_table.csv"
+
+# Optional: ensure E2E path produces a submission artifact (kept deterministic)
+predict:
+	@echo ">>> Predict (CI optional)"
+	$(CLI) predict --out-csv "$(PRED_DIR)/submission.csv" $(EXTRA_ARGS)
+	@ls -lh "$(PRED_DIR)" || true
 
 # Optional DVC pulls in CI
 dvc-pull:
