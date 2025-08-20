@@ -1,5 +1,3 @@
-Got it — your current `contributing.md` is already strong, but it’s missing integration of the **latest project-wide standards** we’ve been baking into README and architecture:
-
 * **Kaggle-specific rules** (daily submission limits, 9-hour GPU budget, leaderboard etiquette).
 * **Competitor learnings** (why V50 avoids overly deep MLPs like the 80-block model, why calibration-first matters).
 * **Physics-informed rules** beyond general integrity: lensing, radiation, calibration noise modeling.
