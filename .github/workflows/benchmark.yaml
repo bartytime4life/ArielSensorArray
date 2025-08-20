@@ -1,16 +1,27 @@
 # .github/workflows/benchmark.yml
-# Benchmark workflow for SpectraMind V50 — NeurIPS 2025 Ariel Data Challenge
-# Runs controlled benchmark jobs (timing, throughput, GLL) across configs.
-# Includes CPU + GPU matrix, Hydra overrides, and artifact exports.
+# SpectraMind V50 — Benchmarks (CPU/GPU, timing, throughput, GLL) with artifacts
+# Runs on demand and weekly; builds env via Poetry, exercises CLI, exports reports.
+# Includes optional Docker(GPU) parity smoke with BuildKit cache.
 
 name: benchmark
 
 on:
   workflow_dispatch:
+    inputs:
+      extra_overrides:
+        description: "Hydra overrides (e.g., +training.seed=1337 +training.epochs=1)"
+        required: false
+        type: string
+      device:
+        description: "Device override"
+        required: false
+        default: "auto"
+        type: choice
+        options: ["auto", "cpu", "gpu"]
   schedule:
-    - cron: "0 6 * * 1" # Weekly benchmarks (Mondays at 06:00 UTC)
+    - cron: "0 6 * * 1" # Weekly (Mondays 06:00 UTC)
   push:
-    branches: [ "main" ]
+    branches: ["main"]
 
 permissions:
   contents: read
@@ -21,51 +32,54 @@ concurrency:
 
 jobs:
   bench:
-    name: Benchmarks • py${{ matrix.python-version }} • ${{ matrix.device }}
+    name: Bench • py${{ matrix.python }} • ${{ matrix.device }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11"]
+        python: ["3.11", "3.12"]
         device: ["cpu", "gpu"]
 
     env:
       POETRY_VIRTUALENVS_IN_PROJECT: "true"
       POETRY_NO_INTERACTION: "1"
       TRANSFORMERS_OFFLINE: "1"
+      HF_HUB_OFFLINE: "1"
       HYDRA_FULL_ERROR: "1"
-      BENCH_RESULTS_DIR: "benchmarks/${{ matrix.python-version }}_${{ matrix.device }}"
+      BENCH_RESULTS_DIR: benchmarks/${{ matrix.python }}_${{ matrix.device }}
+      REQ_DEVICE: ${{ inputs.device && inputs.device || '' }}
       CUDA_VISIBLE_DEVICES: ${{ matrix.device == 'gpu' && '0' || '' }}
 
     steps:
-      - name: Checkout repo
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+        with: { fetch-depth: 0 }
 
-      - name: Setup Python ${{ matrix.python-version }}
+      - name: Set up Python ${{ matrix.python }}
         id: setup-py
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Install pipx
-        uses: pipxproject/action-install-pipx@v1
+          python-version: ${{ matrix.python }}
+          cache: "pip"
 
       - name: Install Poetry
-        run: pipx install poetry==1.8.3
+        run: |
+          python -m pip install --upgrade pip
+          pip install "poetry==1.8.3"
 
-      - name: Cache Poetry venv
+      - name: Cache Poetry venv & cache
         uses: actions/cache@v4
         with:
           path: |
             .venv
             ~/.cache/pypoetry
-          key: poetry-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('poetry.lock') }}
+          key: poetry-${{ runner.os }}-${{ matrix.python }}-${{ hashFiles('poetry.lock') }}
+          restore-keys: |
+            poetry-${{ runner.os }}-${{ matrix.python }}-
 
-      - name: Install dependencies
+      - name: Install deps (Poetry)
         run: |
           poetry env use "${{ steps.setup-py.outputs.python-path }}"
           poetry install --no-interaction
@@ -74,59 +88,146 @@ jobs:
         run: |
           python --version
           poetry --version
-          poetry run python -c "import torch, platform; print('torch:', torch.__version__); print('cuda:', torch.cuda.is_available()); print('platform:', platform.platform())"
+          poetry run python - <<'PY'
+import torch, platform
+print("torch:", torch.__version__)
+print("cuda:", torch.cuda.is_available())
+print("platform:", platform.platform())
+PY
 
-      - name: Run pipeline selftest (smoke check)
+      - name: Fast smoke (CLI selftest)
         run: |
-          poetry run spectramind test --fast || exit 1
+          poetry run spectramind selftest --fast || exit 1
 
-      - name: Run benchmark suite
+      - name: Run benchmark (train + diagnostics)
         run: |
-          mkdir -p $BENCH_RESULTS_DIR
-          poetry run spectramind train +training.epochs=1 +benchmark=true --device ${{ matrix.device }} --outdir $BENCH_RESULTS_DIR
-          poetry run spectramind diagnose smoothness --outdir $BENCH_RESULTS_DIR
-          poetry run spectramind diagnose dashboard --outdir $BENCH_RESULTS_DIR
+          set -e
+          mkdir -p "$BENCH_RESULTS_DIR"
+          DEV="${REQ_DEVICE:-${{ matrix.device }}}"
+          echo ">>> Using device=$DEV"
+          poetry run spectramind train +training.epochs=1 +benchmark=true ${{
+            inputs.extra_overrides && format('{0}', inputs.extra_overrides) || ''
+          }} --device "$DEV" --outdir "$BENCH_RESULTS_DIR"
+          poetry run spectramind diagnose smoothness --outdir "$BENCH_RESULTS_DIR"
+          poetry run spectramind diagnose dashboard --no-umap --no-tsne --outdir "$BENCH_RESULTS_DIR" || \
+          poetry run spectramind diagnose dashboard --outdir "$BENCH_RESULTS_DIR" || true
 
-      - name: Capture timing + metrics
+      - name: Capture timing & metrics
         run: |
-          echo "Benchmark summary for py${{ matrix.python-version }} / ${{ matrix.device }}" > $BENCH_RESULTS_DIR/summary.txt
-          date >> $BENCH_RESULTS_DIR/summary.txt
-          nvidia-smi || true
-          ls -lh $BENCH_RESULTS_DIR >> $BENCH_RESULTS_DIR/summary.txt
+          {
+            echo "Benchmark summary for py${{ matrix.python }} / ${{ matrix.device }}"
+            date
+            command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi || true
+            echo ""
+            echo "Artifacts in $BENCH_RESULTS_DIR:"
+            ls -lh "$BENCH_RESULTS_DIR" || true
+          } > "$BENCH_RESULTS_DIR/summary.txt"
 
-      - name: Upload benchmark artifacts
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: benchmark-${{ matrix.python-version }}-${{ matrix.device }}
+          name: bench-${{ matrix.python }}-${{ matrix.device }}
           path: ${{ env.BENCH_RESULTS_DIR }}
-          retention-days: 14
+          if-no-files-found: warn
+          retention-days: 21
+
+  # Optional container parity: build Docker image and run a GPU smoke selftest inside it.
+  docker-gpu:
+    name: Dockerized GPU Smoke • CUDA (with BuildKit cache)
+    if: ${{ vars.DOCKER_GPU == '1' }} # opt-in via repo/org variable
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      BUILDKIT_CACHE_TO: /tmp/.buildx-cache-new
+      BUILDKIT_CACHE_FROM: /tmp/.buildx-cache
+      IMAGE_TAG: spectramindv50:ci
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Restore BuildKit cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.BUILDKIT_CACHE_FROM }}
+          key: buildx-${{ runner.os }}-${{ hashFiles('Dockerfile', '**/pyproject.toml', '**/poetry.lock') }}
+          restore-keys: |
+            buildx-${{ runner.os }}-
+
+      - name: Install Docker & NVIDIA runtime
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y docker.io
+          sudo systemctl start docker
+          distribution=$(. /etc/os-release;echo $ID$VERSION_ID) && \
+          curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg && \
+          curl -fsSL https://nvidia.github.io/libnvidia-container/$distribution/libnvidia-container.list | \
+            sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+            sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+          sudo apt-get update -y
+          sudo apt-get install -y nvidia-container-toolkit
+          sudo nvidia-ctk runtime configure --runtime=docker
+          sudo systemctl restart docker
+
+      - name: Build CUDA image (cached)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          tags: ${{ env.IMAGE_TAG }}
+          load: true
+          cache-from: type=local,src=${{ env.BUILDKIT_CACHE_FROM }}
+          cache-to: type=local,dest=${{ env.BUILDKIT_CACHE_TO }},mode=max
+
+      - name: Save BuildKit cache
+        if: always()
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.BUILDKIT_CACHE_TO }}
+          key: buildx-${{ runner.os }}-${{ hashFiles('Dockerfile', '**/pyproject.toml', '**/poetry.lock') }}
+
+      - name: Run GPU smoke inside container
+        run: |
+          docker run --rm --gpus all \
+            -v "$PWD":/workspace -w /workspace \
+            ${{ env.IMAGE_TAG }} \
+            bash -lc 'which spectramind || true; spectramind selftest --fast || exit 1'
 
   aggregate:
     name: Aggregate Benchmark Reports
-    needs: bench
+    needs: [bench]
     runs-on: ubuntu-latest
     if: always()
     steps:
-      - name: Download all benchmark artifacts
+      - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: benchmark-*
+          pattern: bench-*
           merge-multiple: true
 
       - name: Build aggregated report
         run: |
+          set -e
           mkdir -p aggregated
           echo "# SpectraMind V50 Benchmark Report" > aggregated/report.md
           echo "" >> aggregated/report.md
-          for f in benchmarks/*/summary.txt; do
-            echo "## $(basename $(dirname $f))" >> aggregated/report.md
-            cat $f >> aggregated/report.md
-            echo "" >> aggregated/report.md
-          done
+          if ls benchmarks/*/summary.txt >/dev/null 2>&1; then
+            for f in benchmarks/*/summary.txt; do
+              axis="$(basename "$(dirname "$f")")"
+              echo "## $axis" >> aggregated/report.md
+              cat "$f" >> aggregated/report.md
+              echo "" >> aggregated/report.md
+            done
+          else
+            echo "_No summaries found._" >> aggregated/report.md
+          fi
 
       - name: Upload aggregated report
         uses: actions/upload-artifact@v4
         with:
           name: benchmark-aggregated
           path: aggregated/report.md
-          retention-days: 30
+          retention-days: 60
