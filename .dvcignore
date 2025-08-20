@@ -1,12 +1,11 @@
 # .dvcignore — SpectraMind V50 (NeurIPS 2025 Ariel Data Challenge)
-# This file tells DVC which files/directories to skip when tracking data artifacts.
-# It is complementary to .gitignore but applies to DVC pipeline stages.
+# Purpose: Prevent DVC from tracking files that are ephemeral, reproducible, or managed elsewhere.
+# Complements .gitignore — DVC still respects Git versioning rules.
 
 # ----------------------------------------------------------------------
-# Python build & cache files
+# Python build & cache
 __pycache__/
-*.pyc
-*.pyo
+*.py[cod]
 *.pyd
 *.so
 *.egg-info/
@@ -14,11 +13,14 @@ __pycache__/
 *.whl
 
 # ----------------------------------------------------------------------
-# Virtual environments
+# Virtual environments & package managers
 .venv/
 venv/
 env/
 ENV/
+.poetry/
+pip-wheel-metadata/
+site-packages/
 
 # ----------------------------------------------------------------------
 # IDE/editor settings
@@ -28,48 +30,93 @@ ENV/
 *.swo
 
 # ----------------------------------------------------------------------
-# System/OS files
+# OS / system junk
 .DS_Store
 Thumbs.db
+Desktop.ini
 
 # ----------------------------------------------------------------------
-# Logs & temp files
+# Logs & temporary artifacts
 logs/
 *.log
 *.tmp
 *.bak
 *.old
+*.pid
+*.lock
 
 # ----------------------------------------------------------------------
-# Model artifacts & checkpoints (tracked selectively in pipeline)
+# Intermediate & scratch outputs
 outputs/checkpoints/
 outputs/intermediate/
 outputs/temp/
+outputs/cache/
+outputs/debug/
+
+# ----------------------------------------------------------------------
+# Model bundles & artifacts (tracked selectively by pipeline)
+*.ckpt
+*.pth
+*.pt
+*.onnx
+*.h5
 
 # ----------------------------------------------------------------------
 # Kaggle / competition specifics
 .kaggle/
 kaggle.json
+*.ipynb  # Kaggle-synced notebooks (use notebooks/ dir instead)
 
 # ----------------------------------------------------------------------
-# Jupyter notebook checkpoints
+# Jupyter / notebooks
 .ipynb_checkpoints/
+notebooks/.ipynb_checkpoints/
 
 # ----------------------------------------------------------------------
-# DVC cache directory (managed by DVC, not Git)
+# DVC internal
 .dvc/cache/
+.dvc/tmp/
+.dvc/plots/
 
 # ----------------------------------------------------------------------
-# Diagnostics & reports (can be regenerated)
+# Diagnostics, reports & dashboards (regenerable)
 outputs/diagnostics/
 *.html
+*.htm
 *.png
 *.svg
+*.jpg
+*.jpeg
+*.gif
+*.pdf
 *.csv
 *.json
+*.md
 
 # ----------------------------------------------------------------------
 # Submission bundles (reproducible via pipeline)
 outputs/submission.csv
 outputs/submission.zip
 outputs/submission_bundle.zip
+
+# ----------------------------------------------------------------------
+# Generated configs & manifests
+hydra_outputs/
+multirun/
+run_logs/
+manifest.json
+diagnostic_summary.json
+run_hash_summary_v50.json
+
+# ----------------------------------------------------------------------
+# Local GUI/UX assets (regenerable)
+assets/screenshots/
+assets/plots/
+assets/tmp/
+
+# ----------------------------------------------------------------------
+# Hugging Face / MLflow / W&B caches
+.huggingface/
+wandb/
+mlruns/
+*.mlmodel
