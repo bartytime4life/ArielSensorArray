@@ -1,42 +1,47 @@
+# SpectraMind V50 — ArielSensorArray
 
-⸻
+**Neuro-symbolic, physics-informed AI pipeline for the NeurIPS 2025 Ariel Data Challenge**
 
-SpectraMind V50 — ArielSensorArray
+> **North Star:** From raw Ariel **FGS1/AIRS frames** → **calibrated light curves** → **μ/σ spectra across 283 bins** → **diagnostics & symbolic overlays** → **leaderboard-ready submission** — **fully reproducible** via CLI, Hydra configs, DVC, CI, and Kaggle integration.
 
-Neuro-symbolic, physics-informed AI pipeline for the NeurIPS 2025 Ariel Data Challenge
+---
 
-North Star: From raw Ariel FGS1/AIRS frames → calibrated light curves → μ/σ spectra across 283 bins → diagnostics & symbolic overlays → leaderboard-ready submission — fully reproducible via CLI, Hydra configs, DVC, CI, and Kaggle integration ￼ ￼.
+[![Build](https://img.shields.io/badge/CI-GitHub_Actions-blue.svg)](./.github/workflows/ci.yml)
+![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)
+![License](https://img.shields.io/badge/license-MIT-green)
+![Hydra](https://img.shields.io/badge/config-Hydra_1.3-blueviolet)
+![DVC](https://img.shields.io/badge/data-DVC_3.x-945DD6)
+![GPU](https://img.shields.io/badge/CUDA-12.x-76B900)
+![Kaggle](https://img.shields.io/badge/platform-Kaggle-20BEFF)
 
-⸻
+---
 
+## 0) What is this?
 
+**ArielSensorArray** is the root repository for **SpectraMind V50**, our end-to-end **NASA-grade** pipeline for the **NeurIPS 2025 Ariel Data Challenge**.
 
-⸻
+It provides a **CLI-first, reproducible, physics-informed workflow** with:
 
-0) What is this?
+* **Calibration Kill Chain** — ADC, bias, dark, flat, nonlinearity, dead-pixel masking, CDS, wavelength alignment, jitter correction.
+* **Dual-encoder modeling**:
+  - **FGS1 → Mamba SSM** for long-sequence transit curves.
+  - **AIRS → Graph Neural Network** (edges = wavelength adjacency, molecules, detector regions).
+* **Decoders**: μ (mean spectrum), σ (uncertainty), with quantile/diffusion options.
+* **Uncertainty calibration**: temperature scaling + **COREL conformal GNN**.
+* **Diagnostics**: GLL/entropy maps, SHAP overlays, symbolic rule scoring, FFT/UMAP/t-SNE, HTML dashboards.
+* **Symbolic physics layer**: smoothness, positivity, FFT suppression, asymmetry, radiative transfer, gravitational/micro-lensing corrections.
+* **Reproducibility**: Hydra configs, DVC/lakeFS, deterministic seeds, Git SHA + config hashes, CI pipelines.
+* **Unified Typer CLI**: `spectramind` orchestrates all (train, predict, calibrate, diagnose, ablate, submit, selftest, analyze-log, check-cli-map).
 
-ArielSensorArray is the root repository for SpectraMind V50, our end-to-end NASA-grade pipeline for the NeurIPS 2025 Ariel Data Challenge ￼.
+The pipeline is **Kaggle-ready**: optimized for **≤9 hr runtime** on ~1,100 planets using A100 GPUs.
 
-It provides a CLI-first, reproducible, physics-informed workflow with:
-	•	Calibration Kill Chain — ADC, bias, dark, flat, nonlinearity, dead-pixel masking, CDS, wavelength alignment, jitter correction ￼.
-	•	Dual-encoder modeling:
-	•	FGS1 → Mamba SSM for long-sequence transit curves.
-	•	AIRS → Graph Neural Network (edges = wavelength adjacency, molecules, detector regions).
-	•	Decoders: μ (mean spectrum), σ (uncertainty), with quantile/diffusion options.
-	•	Uncertainty calibration: temperature scaling + COREL conformal GNN ￼.
-	•	Diagnostics: GLL/entropy maps, SHAP overlays, symbolic rule scoring, FFT/UMAP/t-SNE, HTML dashboards ￼.
-	•	Symbolic physics layer: smoothness, positivity, FFT suppression, asymmetry, radiative transfer, gravitational/micro-lensing corrections ￼.
-	•	Reproducibility: Hydra configs, DVC/lakeFS, deterministic seeds, Git SHA + config hashes, CI pipelines ￼ ￼.
-	•	Unified Typer CLI: spectramind orchestrates all (train, predict, calibrate, diagnose, ablate, submit, selftest, analyze-log, check-cli-map).
+---
 
-The pipeline is Kaggle-ready: optimized for ≤9 hr runtime on ~1,100 planets using A100 GPUs ￼.
+## 1) Quickstart
 
-⸻
+### Clone
 
-1) Quickstart
-
-Clone
-
+```bash
 git clone https://github.com/bartytime4life/ArielSensorArray.git
 cd ArielSensorArray
 
@@ -87,7 +92,7 @@ Key commands:
 	•	ablate — automated ablation sweeps
 	•	submit — full selftest → predict → validate → ZIP bundle
 	•	analyze-log — parse CLI logs → CSV/heatmap
-	•	check-cli-map — validate CLI ↔ file mapping ￼
+	•	check-cli-map — validate CLI ↔ file mapping
 
 ⸻
 
@@ -99,7 +104,7 @@ Example:
 
 python -m spectramind train data=kaggle model=v50 training=default +training.seed=1337
 
-Hydra snapshots + hashes ensure exact reproducibility ￼.
+Hydra snapshots + hashes ensure exact reproducibility.
 
 ⸻
 
@@ -119,44 +124,44 @@ outputs/
 logs/
   v50_debug_log.md  # append-only CLI log
 
-All artifacts tracked by DVC ￼.
+All artifacts tracked by DVC.
 
 ⸻
 
 5) Scientific Background
-	•	Spectroscopy: spectral “fingerprints” from molecular absorption (H₂O, CO₂, CH₄, Na, K) ￼.
-	•	Radiation physics: photon quantization, Planck law, blackbody radiation, spectral lines ￼.
-	•	Gravitational lensing: mass-induced deflection distorts exoplanetary transit light curves ￼.
-	•	Noise/systematics: spacecraft jitter, cosmic rays, detector nonlinearity ￼.
-	•	Symbolic priors: smoothness, asymmetry, positivity, FFT suppression ￼.
+	•	Spectroscopy: spectral “fingerprints” from molecular absorption (H₂O, CO₂, CH₄, Na, K).
+	•	Radiation physics: photon quantization, Planck law, blackbody radiation, spectral lines.
+	•	Gravitational lensing: mass-induced deflection distorts exoplanetary transit light curves.
+	•	Noise/systematics: spacecraft jitter, cosmic rays, detector nonlinearity.
+	•	Symbolic priors: smoothness, asymmetry, positivity, FFT suppression.
 
 ⸻
 
 6) Kaggle Integration
-	•	Kaggle competitions run on restricted hardware/time ￼.
-	•	Pipeline optimized for 9 hr budget on A100 GPUs ￼.
+	•	Kaggle competitions run on restricted hardware/time.
+	•	Pipeline optimized for 9 hr budget on A100 GPUs.
 	•	Benchmarked against public Kaggle baselines:
-	•	Thang Do Duc — 0.329 LB baseline ￼
-	•	V1ctorious3010 — deep residual 80-block model ￼
-	•	Fawad Awan — Spectrum Regressor ￼
+	•	Thang Do Duc — 0.329 LB baseline
+	•	V1ctorious3010 — deep residual 80-block model
+	•	Fawad Awan — Spectrum Regressor
 
 ⸻
 
 7) Reproducibility
-	•	Deterministic seeds + config hashes ￼
-	•	DVC-tracked datasets and checkpoints ￼
-	•	GitHub CI pre-flight checks (unit + smoke tests) ￼
-	•	Poetry + Docker environment parity ￼
-	•	Hydra YAML overrides logged per run ￼
+	•	Deterministic seeds + config hashes
+	•	DVC-tracked datasets and checkpoints
+	•	GitHub CI pre-flight checks (unit + smoke tests)
+	•	Poetry + Docker environment parity
+	•	Hydra YAML overrides logged per run
 
 ⸻
 
 8) Roadmap
 	•	TorchScript/JIT for fast inference
 	•	Expanded symbolic overlays in HTML
-	•	GUI dashboard (React + FastAPI) ￼
+	•	GUI dashboard (React + FastAPI)
 	•	Kaggle leaderboard automation
-	•	Micro-lensing & non-Gaussian noise calibration ￼
+	•	Micro-lensing & non-Gaussian noise calibration
 
 ⸻
 
@@ -176,4 +181,3 @@ All artifacts tracked by DVC ￼.
 
 MIT — see LICENSE.
 
-⸻
