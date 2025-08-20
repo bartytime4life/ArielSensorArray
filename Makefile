@@ -46,13 +46,14 @@ EXTRA_ARGS  ?=
 # ========= PHONY =========
 .PHONY: help init env info \
         fmt lint test \
-        selftest selftest-deep \
+        selftest selftest-deep validate-env \
         calibrate calibrate-temp corel-train \
-        train predict diagnose ablate submit \
-        analyze-log check-cli-map \
+        train predict predict-e2e diagnose ablate submit \
+        analyze-log check-cli-map open-report \
         dvc-pull dvc-push \
         benchmark bench-selftest benchmark-cpu benchmark-gpu benchmark-run benchmark-report benchmark-clean \
         kaggle-run kaggle-submit \
+        ablate-light ablate-heavy ablate-grid ablate-optuna \
         clean realclean
 
 # ========= Help =========
@@ -60,7 +61,8 @@ help:
 	@echo "SpectraMind V50 — Make targets"
 	@echo "  selftest | calibrate | train | predict | diagnose | submit"
 	@echo "  benchmark | kaggle-run | kaggle-submit"
-	@echo "  fmt | lint | test | analyze-log"
+	@echo "  fmt | lint | test | analyze-log | validate-env | open-report"
+	@echo "  ablate-light | ablate-heavy | ablate-grid | ablate-optuna"
 	@echo "Vars: DEVICE=$(DEVICE) EPOCHS=$(EPOCHS) OUT_DIR=$(OUT_DIR) OVERRIDES='$(OVERRIDES)' EXTRA_ARGS='$(EXTRA_ARGS)'"
 
 # ========= Init =========
@@ -85,6 +87,15 @@ lint:
 test: init
 	$(POETRY) run pytest -q || $(POETRY) run pytest -q -x
 
+# ========= Env validation (safe no-op if script missing) =========
+validate-env:
+	@if [ -x scripts/validate_env.py ] || [ -f scripts/validate_env.py ]; then \
+	  echo ">>> Validating .env schema"; \
+	  $(PYTHON) scripts/validate_env.py || exit 1; \
+	else \
+	  echo ">>> Skipping validate-env (scripts/validate_env.py not found)"; \
+	fi
+
 # ========= Pipeline =========
 selftest: init
 	$(CLI) selftest
@@ -108,14 +119,48 @@ predict: init
 	mkdir -p "$(PRED_DIR)"
 	$(CLI) predict --out-csv "$(PRED_DIR)/submission.csv" $(OVERRIDES) $(EXTRA_ARGS)
 
+# convenience: ensure we actually produced a csv (CI smoke)
+predict-e2e: predict
+	@test -f "$(PRED_DIR)/submission.csv" && echo "OK: $(PRED_DIR)/submission.csv" || (echo "Missing submission.csv"; exit 1)
+
 diagnose: init
 	$(CLI) diagnose smoothness --outdir "$(DIAG_DIR)" $(EXTRA_ARGS)
 	# try lightweight dashboard first (no UMAP/TSNE), fall back to full
 	$(CLI) diagnose dashboard --no-umap --no-tsne --outdir "$(DIAG_DIR)" $(EXTRA_ARGS) || \
 	$(CLI) diagnose dashboard --outdir "$(DIAG_DIR)" $(EXTRA_ARGS) || true
 
+# tries to open latest diagnostics report (no-op on headless CI)
+open-report:
+	@latest=$$(ls -t $(DIAG_DIR)/*.html 2>/dev/null | head -n1 || true); \
+	if [ -n "$$latest" ]; then \
+	  echo "Opening $$latest"; \
+	  if command -v xdg-open >/dev/null 2>&1; then xdg-open "$$latest" || true; \
+	  elif command -v open >/dev/null 2>&1; then open "$$latest" || true; \
+	  else echo "No opener found (CI/headless)"; fi; \
+	else echo "No diagnostics HTML found."; fi
+
 ablate: init
 	$(CLI) ablate $(OVERRIDES) $(EXTRA_ARGS)
+
+# ========= Ablation shortcuts (profiles & sweep styles) =========
+# Profiles assume you’ve added:
+#   configs/ablation/ablation_light.yaml
+#   configs/ablation/ablation_heavy.yaml
+# Sweep styles assume upgraded ablation.yml with search_spaces.
+
+ablate-light: init
+	$(CLI) ablate ablation=ablation_light $(EXTRA_ARGS)
+
+ablate-heavy: init
+	$(CLI) ablate ablation=ablation_heavy $(EXTRA_ARGS)
+
+# quick grid across v50_fast_grid, using 'light' profile for speed
+ablate-grid: init
+	$(CLI) ablate -m ablate.sweeper=basic +ablate.search=v50_fast_grid ablation=ablation_light $(EXTRA_ARGS)
+
+# optuna TPE across v50_symbolic_core (deeper search), heavy profile
+ablate-optuna: init
+	$(CLI) ablate -m ablate.sweeper=optuna +ablate.search=v50_symbolic_core ablation=ablation_heavy $(EXTRA_ARGS)
 
 submit: init
 	mkdir -p "$(SUBMIT_DIR)"
@@ -193,7 +238,7 @@ kaggle-run: init
 
 kaggle-submit: kaggle-run
 	@echo ">>> Submitting to Kaggle competition"
-	kaggle competitions submit -c neurips-2025-ariel -f "$(PRED_DIR)/submission.csv" -m "SpectraMind V50 auto-submit"
+	kaggle competitions submit -c neurips-2025-ariel -f "$(PRED_DIR)/submission.csv" -m "Spectramind V50 auto-submit"
 
 # ========= Cleanup =========
 clean:
