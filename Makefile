@@ -2,21 +2,6 @@
 # SpectraMind V50 — Master Makefile (Dev/Local)
 # Neuro‑Symbolic, Physics‑Informed AI Pipeline
 # ==============================================================================
-# Philosophy:
-#   • CLI-first → all tasks through Typer CLI (`spectramind`)
-#   • Hydra-backed overrides via OVERRIDES
-#   • Parity helpers → local benchmark + Kaggle shims
-#   • Dev ergonomics → fmt / lint / test / analyze-log
-#
-# Quickstart:
-#   make selftest
-#   make calibrate
-#   make train DEVICE=gpu EPOCHS=2
-#   make predict
-#   make diagnose
-#   make submit
-#   make benchmark DEVICE=gpu
-# ==============================================================================
 
 # ========= Shell =========
 SHELL       := /usr/bin/env bash
@@ -48,21 +33,23 @@ EXTRA_ARGS  ?=
         fmt lint test \
         selftest selftest-deep validate-env \
         calibrate calibrate-temp corel-train \
-        train predict predict-e2e diagnose ablate submit \
-        analyze-log check-cli-map open-report \
+        train predict predict-e2e diagnose submit \
+        ablate ablate-light ablate-heavy ablate-grid ablate-optuna \
+        analyze-log analyze-log-short check-cli-map open-report \
         dvc-pull dvc-push \
-        benchmark bench-selftest benchmark-cpu benchmark-gpu benchmark-run benchmark-report benchmark-clean \
+        bench-selftest benchmark benchmark-cpu benchmark-gpu benchmark-run benchmark-report benchmark-clean \
         kaggle-run kaggle-submit \
-        ablate-light ablate-heavy ablate-grid ablate-optuna \
-        clean realclean
+        clean realclean distclean
 
 # ========= Help =========
 help:
 	@echo "SpectraMind V50 — Make targets"
 	@echo "  selftest | calibrate | train | predict | diagnose | submit"
+	@echo "  ablate(-light|-heavy|-grid|-optuna)"
+	@echo "  analyze-log | analyze-log-short | open-report"
 	@echo "  benchmark | kaggle-run | kaggle-submit"
-	@echo "  fmt | lint | test | analyze-log | validate-env | open-report"
-	@echo "  ablate-light | ablate-heavy | ablate-grid | ablate-optuna"
+	@echo "  fmt | lint | test | validate-env"
+	@echo "  clean | realclean | distclean"
 	@echo "Vars: DEVICE=$(DEVICE) EPOCHS=$(EPOCHS) OUT_DIR=$(OUT_DIR) OVERRIDES='$(OVERRIDES)' EXTRA_ARGS='$(EXTRA_ARGS)'"
 
 # ========= Init =========
@@ -119,17 +106,15 @@ predict: init
 	mkdir -p "$(PRED_DIR)"
 	$(CLI) predict --out-csv "$(PRED_DIR)/submission.csv" $(OVERRIDES) $(EXTRA_ARGS)
 
-# convenience: ensure we actually produced a csv (CI smoke)
+# ensure CSV exists (e2e smoke)
 predict-e2e: predict
 	@test -f "$(PRED_DIR)/submission.csv" && echo "OK: $(PRED_DIR)/submission.csv" || (echo "Missing submission.csv"; exit 1)
 
 diagnose: init
 	$(CLI) diagnose smoothness --outdir "$(DIAG_DIR)" $(EXTRA_ARGS)
-	# try lightweight dashboard first (no UMAP/TSNE), fall back to full
 	$(CLI) diagnose dashboard --no-umap --no-tsne --outdir "$(DIAG_DIR)" $(EXTRA_ARGS) || \
 	$(CLI) diagnose dashboard --outdir "$(DIAG_DIR)" $(EXTRA_ARGS) || true
 
-# tries to open latest diagnostics report (no-op on headless CI)
 open-report:
 	@latest=$$(ls -t $(DIAG_DIR)/*.html 2>/dev/null | head -n1 || true); \
 	if [ -n "$$latest" ]; then \
@@ -139,14 +124,13 @@ open-report:
 	  else echo "No opener found (CI/headless)"; fi; \
 	else echo "No diagnostics HTML found."; fi
 
+submit: init
+	mkdir -p "$(SUBMIT_DIR)"
+	$(CLI) submit --zip-out "$(SUBMIT_ZIP)" $(EXTRA_ARGS)
+
+# ========= Ablation (profiles & sweep styles) =========
 ablate: init
 	$(CLI) ablate $(OVERRIDES) $(EXTRA_ARGS)
-
-# ========= Ablation shortcuts (profiles & sweep styles) =========
-# Profiles assume you’ve added:
-#   configs/ablation/ablation_light.yaml
-#   configs/ablation/ablation_heavy.yaml
-# Sweep styles assume upgraded ablation.yml with search_spaces.
 
 ablate-light: init
 	$(CLI) ablate ablation=ablation_light $(EXTRA_ARGS)
@@ -154,20 +138,29 @@ ablate-light: init
 ablate-heavy: init
 	$(CLI) ablate ablation=ablation_heavy $(EXTRA_ARGS)
 
-# quick grid across v50_fast_grid, using 'light' profile for speed
 ablate-grid: init
 	$(CLI) ablate -m ablate.sweeper=basic +ablate.search=v50_fast_grid ablation=ablation_light $(EXTRA_ARGS)
 
-# optuna TPE across v50_symbolic_core (deeper search), heavy profile
 ablate-optuna: init
 	$(CLI) ablate -m ablate.sweeper=optuna +ablate.search=v50_symbolic_core ablation=ablation_heavy $(EXTRA_ARGS)
 
-submit: init
-	mkdir -p "$(SUBMIT_DIR)"
-	$(CLI) submit --zip-out "$(SUBMIT_ZIP)" $(EXTRA_ARGS)
-
+# ========= Log analysis =========
 analyze-log: init
 	$(CLI) analyze-log --md "$(OUT_DIR)/log_table.md" --csv "$(OUT_DIR)/log_table.csv" $(EXTRA_ARGS)
+
+# Short CI-friendly summary: last 5 entries from CSV (auto-runs analyze-log if CSV missing)
+analyze-log-short: init
+	@if [ ! -f "$(OUT_DIR)/log_table.csv" ]; then \
+	  echo ">>> Generating log CSV via analyze-log"; \
+	  $(CLI) analyze-log --md "$(OUT_DIR)/log_table.md" --csv "$(OUT_DIR)/log_table.csv" $(EXTRA_ARGS); \
+	fi; \
+	if [ -f "$(OUT_DIR)/log_table.csv" ]; then \
+	  echo "=== Last 5 CLI invocations ==="; \
+	  tail -n +2 "$(OUT_DIR)/log_table.csv" | tail -n 5 | \
+	    awk -F',' 'BEGIN{OFS=" | "} {print "time="$${1}, "cmd="$${2}, "git_sha="$${3}, "cfg="$${4}}'; \
+	else \
+	  echo "::warning::No log_table.csv to summarize"; \
+	fi
 
 check-cli-map:
 	$(CLI) check-cli-map
@@ -246,3 +239,10 @@ clean:
 
 realclean: clean
 	rm -rf .pytest_cache .ruff_cache .mypy_cache .dvc/tmp .dvc/cache
+
+# Full reset: artifacts + caches + Poetry envs (LOCAL USE ONLY)
+distclean: realclean
+	@echo ">>> Removing Poetry caches and local venv (this is a full reset)"
+	rm -rf .venv
+	rm -rf ~/.cache/pypoetry || true
+	rm -rf ~/.cache/pip || true
