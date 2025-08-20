@@ -1,259 +1,186 @@
+# SpectraMind V50 — ArielSensorArray
+
+**Neuro-symbolic, physics-informed AI pipeline for the NeurIPS 2025 Ariel Data Challenge**
+
+> **North Star:** From raw Ariel **FGS1/AIRS frames** → **calibrated light curves** → **μ/σ spectra across 283 bins** → **diagnostics & symbolic overlays** → **leaderboard-ready submission** — **fully reproducible** via CLI, Hydra configs, DVC, CI, and Kaggle integration.
 
 ---
 
-# SpectraMind V50 — Master Architecture & Scientific Design
-
-**Neuro‑symbolic, physics‑informed AI pipeline for the NeurIPS 2025 Ariel Data Challenge**
-
-> **North Star:** Deliver a reproducible, explainable, physics‑informed system that ingests Ariel FGS1/AIRS cubes, outputs μ and σ for 283 bins, applies calibration and diagnostics (including **microlensing** corrections), and packages a competition‑valid submission — all within Kaggle’s \~9‑hour runtime envelope.
-
----
-
-## 0) Purpose & Scope
-
-* **Engineers:** modules, contracts, workflows, budgets, acceptance criteria
-* **Scientists:** transit physics, radiative transfer, microlensing handling
-* **Ops/MLOps:** CLI‑first, Hydra config, DVC, CI/CD, audit logging
+[![Build](https://img.shields.io/badge/CI-GitHub_Actions-blue.svg)](./.github/workflows/ci.yml)
+![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)
+![License](https://img.shields.io/badge/license-MIT-green)
+![Hydra](https://img.shields.io/badge/config-Hydra_1.3-blueviolet)
+![DVC](https://img.shields.io/badge/data-DVC_3.x-945DD6)
+![GPU](https://img.shields.io/badge/CUDA-12.x-76B900)
+![Kaggle](https://img.shields.io/badge/platform-Kaggle-20BEFF)
 
 ---
 
-## 1) System Overview (Components)
+## 0) Overview
 
-```mermaid
-flowchart LR
-  subgraph Ingest["Data Ingest"]
-    RAW[FGS1/AIRS raw cubes]
-  end
+**ArielSensorArray** is the root repository for **SpectraMind V50**, a **NASA-grade, mission-critical pipeline** designed for the **NeurIPS 2025 Ariel Data Challenge**.
 
-  subgraph Calib["Calibration Kill Chain"]
-    A1[ADC/Bias/Dark]
-    A2[Dead-Pixel Map]
-    A3[Flat / Nonlinearity]
-    A4[Trace Extraction]
-    A5[Wavelength Alignment]
-    A6[Normalization]
-    ML[Microlensing Pre-Check<br/>• Detect achromatic lift<br/>• Fit Paczyński-like curve<br/>• Divide-out correction<br/>• Chromaticity tests]
-  end
+It integrates **astrophysical calibration**, **symbolic physics-informed modeling**, and **deep learning architectures** into a fully automated, CLI-first pipeline.
 
-  subgraph Model["Modeling Core"]
-    FGS1[FGS1 Encoder: Mamba SSM]
-    AIRS[AIRS Encoder: GNN<br/>Edges: λ-adjacency, molecules, detector region, achromatic factor node]
-    DEC1[μ Head]
-    DEC2[σ Head (Temp Scaling + COREL)]
-  end
+Core highlights:
 
-  subgraph Symb["Symbolic Physics Layer"]
-    S1[Smoothness (λ)]
-    S2[Nonnegativity]
-    S3[Limb-Darkening Consistency]
-    S4[FFT Jitter Suppression]
-    S5[Achromatic vs Chromatic<br/>(Microlens Guard)]
-    S6[Radiative Transfer Alignment]
-  end
+- **Calibration Kill Chain** — ADC, bias, dark, flat, nonlinearity, dead-pixel masking, CDS, wavelength alignment, jitter correction.  
+- **Dual Encoders**:
+  - **FGS1 → Mamba SSM** for long-sequence transit modeling.
+  - **AIRS → Graph Neural Network** with edge definitions (wavelength adjacency, molecule priors, detector regions).  
+- **Decoders**: μ (mean spectrum) and σ (uncertainty), with support for quantile/diffusion heads.  
+- **Uncertainty Calibration**: temperature scaling + **COREL conformal GNN**.  
+- **Diagnostics**: GLL/entropy heatmaps, SHAP overlays, symbolic violation maps, FFT/UMAP/t-SNE, HTML dashboards.  
+- **Symbolic Physics Layer**: smoothness, positivity, asymmetry, FFT suppression, radiative transfer, gravitational & micro-lensing corrections.  
+- **Reproducibility**: Hydra configs, DVC/lakeFS, deterministic seeds, Git SHA + config hashes, CI pipelines.  
+- **Unified CLI**: `spectramind` orchestrates everything (train, predict, calibrate, diagnose, ablate, submit, selftest, analyze-log, check-cli-map).  
 
-  subgraph Diag["Diagnostics & Explainability"]
-    D1[GLL/Entropy/ RMSE]
-    D2[SHAP (FGS1 time / AIRS λ)]
-    D3[UMAP / t‑SNE Latents]
-    D4[FFT Residual Spectra]
-    D5[Microlens Audit Panel]
-    HTML[Versioned HTML Dashboard]
-  end
-
-  subgraph Ops["CLI + Config + Logging"]
-    CLI[Typer CLI]
-    HYD[Hydra Configs]
-    DVC[(DVC/lakeFS)]
-    LOG[v50_debug_log.md<br/>JSONL Event Log]
-    CI[GitHub Actions CI]
-  end
-
-  RAW --> A1 --> A2 --> A3 --> A4 --> A5 --> A6
-  A6 --> ML --> FGS1
-  A6 --> AIRS
-  FGS1 --> DEC1
-  FGS1 --> DEC2
-  AIRS --> DEC1
-  AIRS --> DEC2
-  DEC1 -->|losses + penalties| Symb
-  DEC2 -->|calibration feedback| Symb
-  DEC1 --> D1
-  DEC2 --> D1
-  DEC1 --> D2
-  FGS1 --> D2
-  AIRS --> D2
-  DEC1 --> D3
-  D1 --> D4
-  A6 --> D5
-  D1 --> HTML
-  D2 --> HTML
-  D3 --> HTML
-  D4 --> HTML
-  D5 --> HTML
-
-  CLI --- HYD --- DVC --- LOG --- CI
-  CLI --> Ingest
-  CLI --> Calib
-  CLI --> Model
-  CLI --> Symb
-  CLI --> Diag
-```
+The system is **Kaggle-ready**, optimized for **≤9 hr runtime** on ~1,100 planets with A100 GPUs.
 
 ---
 
-## 2) Calibration Kill Chain (with Microlensing)
+## 1) Quickstart
 
-```mermaid
-flowchart TD
-  R[Raw FGS1/AIRS] --> B[ADC/Bias/Dark]
-  B --> DPM[Dead‑Pixel Map/Repair]
-  DPM --> FLAT[Flat‑Field / Nonlinearity]
-  FLAT --> TRACE[Trace Extraction]
-  TRACE --> WALIGN[Wavelength Alignment]
-  WALIGN --> NORM[Normalization]
-  
-  NORM -->|FGS1 Baseline + AIRS Continua| ML[Microlensing Pre‑Check]
-  ML -->|Achromatic Detected?| CHK{Achromatic?}
-  CHK -- "Yes" --> FIT[Fit Paczyński‑like Magnification μ(t)]
-  FIT --> DIV[Divide Out μ(t)]
-  DIV --> CHROM[Chromaticity Tests on Bands]
-  CHROM --> OK{Pass?}
-  OK -- "Yes" --> OUT1[Calibrated Lightcurves/Spectra]
-  OK -- "No" --> FLAG[Flag for Review<br/>/Robust fitter variant]
+### Clone
 
-  CHK -- "No" --> OUT1
-```
+```bash
+git clone https://github.com/bartytime4life/ArielSensorArray.git
+cd ArielSensorArray
 
-*Outputs feed modeling; microlens audit stores fit parameters & QA plots for diagnostics.*
+Environment Setup
 
----
+Poetry (recommended):
 
-## 3) Modeling Core (Encoders & Decoders)
+pipx install poetry
+poetry install --no-root
+poetry run pre-commit install
 
-```mermaid
-flowchart LR
-  subgraph Encoders
-    F[FGS1 Sequence<br/>(Long time series)] --> Mamba[Mamba SSM]
-    A[AIRS Spectrum (283 bins)] --> GNN[GNN Encoder<br/>λ-adjacency + molecular + region + achromatic factor]
-  end
+Pip/venv:
 
-  subgraph Decoders
-    Mamba --> MU[μ Head]
-    GNN --> MU
-    Mamba --> SIG[σ Head (Temp Scaling)]
-    GNN --> SIG
-    SIG --> COREL[COREL Conformal Calibrator]
-  end
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
 
-  MU -.-> LOSS[Gaussian Log-Likelihood]
-  SIG -.-> LOSS
-  LOSS --> PEN[Symbolic Penalties]
+Docker (GPU-ready):
 
-  classDef enc fill:#eef,stroke:#557;
-  classDef dec fill:#efe,stroke:#575;
-  class Mamba,GNN enc
-  class MU,SIG,COREL dec
-```
+docker build -t spectramindv50:dev .
+docker run --gpus all -it --rm -v "$PWD":/workspace spectramindv50:dev bash
 
----
+DVC Setup
 
-## 4) Symbolic Physics Layer (Constraint Routing)
+dvc init
+dvc remote add -d storage <remote-url>
+dvc pull
 
-```mermaid
-flowchart TB
-  MU[Predicted μ] --> SMOOTH[Smoothness(λ)]
-  MU --> POS[Nonnegativity]
-  MU --> LD[Limb-Darkening Consistency]
-  MU --> RT[RT Alignment (Voigt-like)]
-  MU --> ACHR[Microlensing Guard<br/>(Achromatic vs Chromatic)]
-  FGS1[FGS1 Residuals] --> FFTS[FFT Jitter Suppression]
+Sanity Check
 
-  SMOOTH --> PEN[Weighted Penalty Sum]
-  POS --> PEN
-  LD --> PEN
-  RT --> PEN
-  ACHR --> PEN
-  FFTS --> PEN
+python -m spectramind selftest
 
-  PEN --> BACK[Backprop to Encoders/Decoders]
-```
 
----
+⸻
 
-## 5) Diagnostics & HTML Dashboard
+2) Unified CLI
 
-```mermaid
-flowchart LR
-  MU[μ] --> GLL[GLL/Entropy/RMSE Maps]
-  SIG[σ] --> GLL
-  ENC[Encoder Latents] --> UMAP[UMAP/t‑SNE Plots]
-  SHAPF[SHAP (FGS1 time)] --> HTML
-  SHAPA[SHAP (AIRS λ)] --> HTML
-  FFT[FFT of Residuals] --> HTML
-  MLC[Microlens Audit: fits, residuals, chromaticity] --> HTML
-  GLL --> HTML
-  UMAP --> HTML
-```
+python -m spectramind --help
 
----
+Key Commands:
+	•	selftest — pipeline integrity
+	•	calibrate — run full FGS1/AIRS calibration
+	•	train — train the V50 model
+	•	predict — μ/σ inference + submission artifacts
+	•	calibrate-temp — temperature scaling
+	•	corel-train — conformal calibration
+	•	diagnose — symbolic + SHAP diagnostics
+	•	dashboard — generate HTML diagnostics
+	•	ablate — automated ablation sweeps
+	•	submit — selftest → predict → validate → ZIP
+	•	analyze-log — parse CLI logs → CSV/heatmap
+	•	check-cli-map — validate CLI ↔ file mapping
 
-## 6) Reproducibility & CI
+⸻
 
-```mermaid
-flowchart LR
-  DEV[Developer CLI Call] --> HYD[Hydra Compose]
-  HYD --> RUN[Run with Resolved Config]
-  RUN --> LOG[v50_debug_log.md + JSONL]
-  RUN --> ART[Artifacts (DVC)]
-  ART --> DVC[(DVC/lakeFS Remote)]
-  LOG -. includes .-> HASH[Git SHA + Config Hash]
-  CI[GitHub Actions] --> TEST[Selftest + Smoke Pipelines]
-  TEST --> OK{Pass?}
-  OK -- Yes --> MERGE[Merge to main]
-  OK -- No --> FIX[Iterate & Fix]
-```
+3) Configs (Hydra 1.3)
 
----
+All parameters live in configs/:
+	•	data/, model/, training/, diagnostics/, calibration/, logging/.
 
-## 7) Data Flow (Summary)
+Example:
 
-```mermaid
-flowchart LR
-  RAW[Raw Cubes] --> CAL[Calibration + Microlens]
-  CAL --> ENC[Encoders (Mamba/GNN)]
-  ENC --> DEC[μ/σ Heads + COREL]
-  DEC --> SUB[Submission CSV/NPZ/ZIP]
-  DEC --> DIAG[Diagnostics]
-  DIAG --> HTML[HTML Dashboard]
-```
+python -m spectramind train data=kaggle model=v50 training=default +training.seed=1337
 
----
+Hydra generates snapshots + hashes for exact reproducibility.
 
-## 8) Acceptance Criteria
+⸻
 
-* **Scientific:** physically plausible μ/σ; uncertainty coverage calibrated; microlensing explicitly handled
-* **Reproducibility:** submissions tied to Git SHA + config hash + DVC dataset
-* **Explainability:** SHAP + symbolic overlays + microlens audit in reports
-* **Efficiency:** ≤9 h runtime; diagnostics ≤1 h
-* **Quality Gate:** `spectramind selftest` + CI must pass
+4) Data & Artifacts
 
----
+data/
+  raw/         # raw FGS1/AIRS frames
+  processed/   # calibrated spectra
+  meta/        # metadata
 
-## 9) Roadmap
+outputs/
+  checkpoints/ # model weights
+  predictions/ # μ/σ spectra
+  diagnostics/ # HTML/PNG/JSON reports
+  calibrated/  # post-calibration cubes
 
-* TorchScript/JIT inference
-* Expanded symbolic influence maps
-* GUI Dashboard (React + FastAPI)
-* Automated ablations & leaderboard export
-* Bayesian joint transit + microlens fit (hard cases)
+logs/
+  v50_debug_log.md  # append-only CLI log
 
----
+All artifacts tracked with DVC.
 
-**Status:** V50 architecture frozen for NeurIPS 2025 competition.
+⸻
 
----
+5) Scientific Background
+	•	Spectroscopy: spectral “fingerprints” from molecular absorption (H₂O, CO₂, CH₄, Na, K).
+	•	Radiation physics: Planck law, blackbody emission, quantized photon energy.
+	•	Gravitational lensing: mass-induced deflection distorts exoplanetary transit curves.
+	•	Noise/systematics: spacecraft jitter, detector nonlinearity, cosmic rays.
+	•	Symbolic priors: smoothness, asymmetry, positivity, FFT suppression.
 
-### Notes
+⸻
 
-* These Mermaid blocks render on GitHub, GitLab, and modern Markdown viewers.
-* If you want **SVG exports** for reports, I can add a tiny script to auto‑render diagrams to `docs/` during CI.
+6) Kaggle Integration
+	•	Competition hardware/runtime constraints enforced.
+	•	Pipeline tuned for 9 hr budget on A100 GPUs.
+	•	Benchmarked against Kaggle baselines:
+	•	Thang Do Duc — 0.329 LB baseline
+	•	V1ctorious3010 — 80-block deep residual model
+	•	Fawad Awan — Spectrum Regressor
+
+⸻
+
+7) Reproducibility
+	•	Deterministic seeds + config hashes
+	•	DVC-tracked datasets + checkpoints
+	•	GitHub CI pre-flight checks
+	•	Poetry + Docker environment parity
+	•	Hydra YAML overrides logged per run
+
+⸻
+
+8) Roadmap
+	•	TorchScript/JIT for fast inference
+	•	Expanded symbolic overlays in HTML dashboards
+	•	GUI dashboard (React + FastAPI)
+	•	Kaggle leaderboard automation
+	•	Micro-lensing & non-Gaussian noise calibration
+
+⸻
+
+9) Citation
+
+@software{spectramind_v50_2025,
+  title   = {SpectraMind V50 — Neuro-symbolic, Physics-informed Exoplanet Spectroscopy},
+  author  = {SpectraMind Team and Andy Barta},
+  year    = {2025},
+  url     = {https://github.com/bartytime4life/ArielSensorArray}
+}
+
+
+⸻
+
+10) License
+
+MIT — see LICENSE.
+
