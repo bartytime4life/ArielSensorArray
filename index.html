@@ -3,32 +3,226 @@
 <head>
   <meta charset="utf-8" />
   <title>SpectraMind V50 — Diagnostics</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light dark" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27%3E%3Cg fill=%27%230b5fff%27%3E%3Ccircle cx=%2750%27 cy=%2750%27 r=%2738%27/%3E%3C/g%3E%3C/svg%3E">
   <style>
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin: 2rem; }
-    .thumbs img { max-width: 320px; margin: 0 1rem 1rem 0; border: 1px solid #ddd; border-radius: 8px; }
-    .grid { display: flex; flex-wrap: wrap; gap: 1rem; }
-    a.button { display:inline-block; padding:.6rem 1rem; border-radius:.5rem; background:#0b5fff; color:#fff; text-decoration:none }
+    :root{
+      --bg: #fff;
+      --fg: #0e1116;
+      --muted:#6b7280;
+      --card:#f8fafc;
+      --border:#e5e7eb;
+      --brand:#0b5fff;
+      --brand-700:#0a4ee0;
+      --ok:#10b981;
+      --warn:#f59e0b;
+      --err:#ef4444;
+      --shadow: 0 8px 20px rgba(2,6,23,.08);
+      --radius: 14px;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    }
+    @media (prefers-color-scheme: dark){
+      :root{
+        --bg:#0b1220;
+        --fg:#eef2ff;
+        --muted:#9aa8c7;
+        --card:#0e182b;
+        --border:#1f2a44;
+        --shadow: 0 12px 28px rgba(0,0,0,.35);
+      }
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0;
+      background:var(--bg);
+      color:var(--fg);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      line-height:1.55;
+    }
+    .wrap{
+      max-width:1200px;
+      margin:0 auto;
+      padding:2rem 1.25rem 4rem;
+    }
+    header{
+      position:sticky;
+      top:0;
+      z-index:30;
+      backdrop-filter: saturate(120%) blur(6px);
+      background: color-mix(in oklab, var(--bg) 85%, transparent);
+      border-bottom:1px solid var(--border);
+    }
+    header .wrap{display:flex;align-items:center;gap:.75rem;padding:1rem 1.25rem}
+    .logo{
+      width:40px;height:40px;border-radius:50%;
+      background: radial-gradient(120% 120% at 30% 20%, #7dd3fc 0%, #3b82f6 35%, #0b5fff 65%, #1d4ed8 100%);
+      box-shadow: inset 0 0 0 2px rgba(255,255,255,.15);
+    }
+    h1{font-size:clamp(1.35rem, 1rem + 1.3vw, 1.9rem);margin:0}
+    .sub{color:var(--muted);font-size:.95rem}
+    .toolbar{
+      margin-left:auto; display:flex; gap:.5rem; flex-wrap:wrap;
+    }
+    .btn{
+      display:inline-flex; align-items:center; gap:.5rem;
+      padding:.6rem .9rem; border-radius:.65rem;
+      text-decoration:none; color:#fff; background:var(--brand);
+      box-shadow: var(--shadow); transition:.18s transform ease, .18s background ease;
+      border:1px solid color-mix(in oklab, var(--brand) 70%, #fff 30%);
+      white-space:nowrap;
+    }
+    .btn:hover{background:var(--brand-700); transform: translateY(-1px)}
+    .btn.neutral{color:var(--fg); background:var(--card); border:1px solid var(--border)}
+    .btn.neutral:hover{transform: translateY(-1px)}
+    main{padding-top:1.25rem}
+    section{margin-top:2rem}
+    h2{font-size:1.15rem; margin:.25rem 0 1rem}
+    .grid{
+      display:grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap:1rem;
+    }
+    .card{
+      background:var(--card); border:1px solid var(--border);
+      border-radius:var(--radius); overflow:hidden; box-shadow: var(--shadow);
+    }
+    .thumb{
+      aspect-ratio: 16/10;
+      display:block; width:100%; object-fit:cover; background:linear-gradient(135deg,#0b5fff11,transparent);
+    }
+    figure{margin:0}
+    figcaption{
+      padding:.75rem .9rem .8rem; border-top:1px solid var(--border);
+      display:flex; align-items:center; justify-content:space-between; gap:.5rem;
+    }
+    figcaption .meta{color:var(--muted); font-size:.85rem}
+    .list{
+      background:var(--card); border:1px solid var(--border);
+      border-radius:var(--radius); overflow:hidden; box-shadow: var(--shadow);
+    }
+    .row{
+      display:flex; align-items:center; justify-content:space-between; gap:1rem;
+      padding:.85rem 1rem; border-top:1px solid var(--border);
+    }
+    .row:first-child{border-top:0}
+    .row a{color:inherit; text-decoration:none}
+    .mono{font-family:var(--mono); font-size:.85rem}
+    .pill{
+      font-size:.75rem; padding:.22rem .5rem; border-radius:999px;
+      border:1px solid var(--border); background:color-mix(in oklab, var(--card) 70%, transparent);
+      color:var(--muted);
+    }
+    .bad{color:var(--err)}
+    footer{
+      margin-top:2.5rem; padding-top:1rem; border-top:1px solid var(--border);
+      color:var(--muted); font-size:.9rem;
+      display:flex; align-items:center; gap:.6rem; flex-wrap:wrap;
+    }
+    .kbd{font-family:var(--mono); border:1px solid var(--border); border-bottom-width:2px; border-radius:6px; padding:.05rem .35rem; background:var(--card); color:var(--fg)}
+    .hint{color:var(--muted); font-size:.9rem}
+    .sr-only{position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0}
   </style>
 </head>
 <body>
-  <h1>SpectraMind V50 — Diagnostics</h1>
-  <p><a class="button" href="../outputs/diagnostics/v50_report_v1.html">Open Full HTML Dashboard</a></p>
+  <header>
+    <div class="wrap">
+      <div class="logo" aria-hidden="true"></div>
+      <div>
+        <h1>SpectraMind V50 — Diagnostics</h1>
+        <div class="sub">Unified quick-look landing page for HTML dashboards, static plots, and manifests.</div>
+      </div>
+      <nav class="toolbar" aria-label="Primary">
+        <a class="btn" id="openDashboard" href="../outputs/diagnostics/v50_report_v1.html" target="_blank" rel="noopener">Open Full Dashboard</a>
+        <a class="btn neutral" href="#manifests">Manifests</a>
+      </nav>
+    </div>
+  </header>
 
-  <h2>Static Thumbnails</h2>
-  <div class="grid thumbs">
-    <div><img src="../outputs/diagnostics/umap.png" alt="UMAP"></div>
-    <div><img src="../outputs/diagnostics/tsne.png" alt="t-SNE"></div>
-    <div><img src="../outputs/diagnostics/shap_overlay.png" alt="SHAP overlay"></div>
-    <div><img src="../outputs/diagnostics/gll_heatmap.png" alt="GLL heatmap"></div>
-    <div><img src="../outputs/diagnostics/fft_residuals.png" alt="FFT residuals"></div>
-    <div><img src="../outputs/diagnostics/symbolic_violations.png" alt="Symbolic violations"></div>
-  </div>
+  <main class="wrap">
+    <section aria-labelledby="thumbs-title">
+      <h2 id="thumbs-title">Static Thumbnails</h2>
+      <div id="thumbGrid" class="grid" role="list"></div>
+      <div class="hint" style="margin-top:.6rem">Images are lazy‑loaded. Broken or missing assets are hidden automatically.</div>
+    </section>
 
-  <h2>Manifests</h2>
-  <ul>
-    <li><a href="../outputs/diagnostics/diagnostic_summary.json">diagnostic_summary.json</a></li>
-    <li><a href="../outputs/diagnostics/manifest.json">manifest.json</a></li>
-  </ul>
-</body>
-</html>
+    <section id="manifests" aria-labelledby="manifests-title">
+      <h2 id="manifests-title">Manifests & Summaries</h2>
+      <div class="list" id="manifestList">
+        <div class="row">
+          <div>
+            <a class="mono" href="../outputs/diagnostics/diagnostic_summary.json" target="_blank" rel="noopener">diagnostic_summary.json</a>
+            <span class="pill" id="sumMeta">…</span>
+          </div>
+          <div class="hint" id="sumSize">size —</div>
+        </div>
+        <div class="row">
+          <div>
+            <a class="mono" href="../outputs/diagnostics/manifest.json" target="_blank" rel="noopener">manifest.json</a>
+            <span class="pill" id="manMeta">…</span>
+          </div>
+          <div class="hint" id="manSize">size —</div>
+        </div>
+      </div>
+      <div class="hint" style="margin-top:.75rem">Tip: press <span class="kbd">O</span> to open the dashboard, <span class="kbd">G</span> to jump here.</div>
+    </section>
+
+    <footer>
+      <span id="versionPill" class="pill">V50</span>
+      <span>Build:</span>
+      <span id="buildTime" class="mono">—</span>
+      <span>•</span>
+      <span>Report:</span>
+      <a class="mono" id="reportLink" href="../outputs/diagnostics/v50_report_v1.html" target="_blank" rel="noopener">v50_report_v1.html</a>
+    </footer>
+  </main>
+
+  <script>
+    // ---------- Configuration ----------
+    const DASHBOARD_PATH = "../outputs/diagnostics/v50_report_v1.html";
+    const THUMBNAILS = [
+      { file: "umap.png",                label: "UMAP Embedding" },
+      { file: "tsne.png",                label: "t‑SNE Projection" },
+      { file: "shap_overlay.png",        label: "SHAP Overlay" },
+      { file: "gll_heatmap.png",         label: "GLL Heatmap" },
+      { file: "fft_residuals.png",       label: "FFT Residuals" },
+      { file: "symbolic_violations.png", label: "Symbolic Violations" }
+    ].map(x => ({ ...x, href: `../outputs/diagnostics/${x.file}` }));
+
+    const MANIFESTS = [
+      { idMeta:"sumMeta", idSize:"sumSize", url:"../outputs/diagnostics/diagnostic_summary.json" },
+      { idMeta:"manMeta", idSize:"manSize", url:"../outputs/diagnostics/manifest.json" }
+    ];
+
+    // ---------- Utilities ----------
+    const fmtBytes = n => {
+      if (!Number.isFinite(n) || n <= 0) return "—";
+      const u = ["B","KB","MB","GB","TB"]; let i = 0;
+      while (n >= 1024 && i < u.length-1) { n/=1024; i++; }
+      return `${n.toFixed(n<10?1:0)} ${u[i]}`;
+    };
+    const fmtDate = s => s ? new Date(s).toLocaleString() : "—";
+
+    async function headMeta(url) {
+      try {
+        const res = await fetch(url, { method: "HEAD" });
+        if (!res.ok) throw new Error(res.status);
+        return {
+          size: +res.headers.get("Content-Length") || null,
+          date: res.headers.get("Last-Modified")
+        };
+      } catch { return { size: null, date: null }; }
+    }
+
+    // ---------- Render Thumbnails ----------
+    const grid = document.getElementById("thumbGrid");
+    for (const t of THUMBNAILS) {
+      const card = document.createElement("figure");
+      card.className = "card";
+      card.setAttribute("role","listitem");
+
+      const img = document.createElement("img");
+      img.loading = "lazy";
+      img.className = "thumb";
+     
