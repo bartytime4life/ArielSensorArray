@@ -1,5 +1,5 @@
 # ==============================================================================
-# SpectraMind V50 — Master Makefile (Dev/Local, CI‑Safe, Kaggle‑Ready)
+# SpectraMind V50 — Master Makefile (Dev/Local, CI‑Safe, Kaggle‑Ready, Docker‑Ready)
 # Neuro‑Symbolic, Physics‑Informed AI Pipeline
 # ==============================================================================
 
@@ -17,6 +17,19 @@ NODE         ?= node
 NPM          ?= npm
 KAGGLE       ?= kaggle
 PIP          ?= $(PYTHON) -m pip
+DVC          ?= dvc
+GIT          ?= git
+
+# ========= Docker =========
+DOCKER           ?= docker
+DOCKERFILE       ?= Dockerfile
+DOCKER_IMAGE     ?= spectramindv50
+DOCKER_TAG       ?= dev
+DOCKER_FULL      := $(DOCKER_IMAGE):$(DOCKER_TAG)
+DOCKER_BUILD_ARGS?=
+# Allow GPU when present; fall back cleanly if not
+HAS_NVIDIA       := $(shell command -v nvidia-smi >/dev/null 2>&1 && echo 1 || echo 0)
+DOCKER_GPU_FLAG  := $(if $(filter 1,$(HAS_NVIDIA)),--gpus all,)
 
 # ========= Defaults (override at CLI) =========
 DEVICE       ?= cpu
@@ -59,23 +72,24 @@ CYN  := \033[36m
 RST  := \033[0m
 
 # ========= PHONY =========
-.PHONY: help init env info doctor versions \
+.PHONY: help init env info doctor versions guards \
         fmt lint mypy test pre-commit hooks \
         selftest selftest-deep validate-env \
         calibrate calibrate-temp corel-train \
         train predict predict-e2e diagnose submit \
         ablate ablate-light ablate-heavy ablate-grid ablate-optuna \
         analyze-log analyze-log-short check-cli-map open-report \
-        dvc-pull dvc-push \
+        dvc-pull dvc-push dvc-status \
         bench-selftest benchmark benchmark-cpu benchmark-gpu benchmark-run benchmark-report benchmark-clean \
-        kaggle-run kaggle-submit \
+        kaggle-run kaggle-submit kaggle-verify \
         mermaid-init diagrams diagrams-png mermaid-export mermaid-clean \
         ci quickstart clean realclean distclean cache-clean \
         export-reqs export-reqs-dev export-kaggle-reqs export-freeze \
         install-core install-extras install-dev install-kaggle \
-        env-capture hash-config \
+        env-capture hash-config git-clean-check git-status \
         pip-audit audit docs-serve docs-build \
-        pyg-install kaggle-pyg-index
+        pyg-install kaggle-pyg-index \
+        docker-build docker-run docker-shell docker-test docker-clean docker-print
 
 # ========= Default Goal =========
 .DEFAULT_GOAL := help
@@ -97,15 +111,18 @@ help:
 	@echo "  $(CYN)diagrams$(RST)         : render Mermaid in $(MERMAID_FILES) → $(DIAGRAMS_DIR)"
 	@echo "  $(CYN)benchmark-*$(RST)      : small benchmark runs (cpu/gpu)"
 	@echo "  $(CYN)kaggle-*$(RST)         : Kaggle run+submit (requires Kaggle CLI login)"
+	@echo "  $(CYN)docker-build/run/shell$(RST) : Dockerized workflow (GPU=$(HAS_NVIDIA))"
 	@echo "  $(CYN)fmt | lint | mypy | test | pre-commit$(RST) : code quality"
 	@echo "  $(CYN)env-capture | hash-config$(RST) : reproducibility utilities"
 	@echo "  $(CYN)export-reqs* | install-*(RST)  : requirements export/install helpers"
 	@echo "  $(CYN)docs-serve | docs-build$(RST)  : MkDocs docs helpers (optional)"
 	@echo "  $(CYN)pip-audit$(RST)                : CVE scan for installed packages"
+	@echo "  $(CYN)dvc-*(RST)                     : DVC pull/push/status helpers"
 	@echo "  $(CYN)cache-clean$(RST)              : wipe caches/__pycache__/logs"
 	@echo "  $(CYN)clean | realclean | distclean$(RST)"
 	@echo ""
 	@echo "$(DIM)Vars: DEVICE=$(DEVICE) EPOCHS=$(EPOCHS) OUT_DIR=$(OUT_DIR) OVERRIDES='$(OVERRIDES)' EXTRA_ARGS='$(EXTRA_ARGS)'$(RST)"
+	@echo "$(DIM)Docker: IMAGE=$(DOCKER_IMAGE) TAG=$(DOCKER_TAG) GPU=$(HAS_NVIDIA) $(RST)"
 	@echo "$(DIM)Mermaid: MERMAID_FILES='$(MERMAID_FILES)' DIAGRAMS_DIR='$(DIAGRAMS_DIR)' THEME='$(MERMAID_THEME)' PNG=$(MERMAID_EXPORT_PNG)$(RST)"
 	@echo ""
 
@@ -283,10 +300,11 @@ ci: validate-env selftest train diagnose analyze-log-short
 
 # ========= DVC =========
 dvc-pull:
-	dvc pull || true
-
+	$(DVC) pull || true
 dvc-push:
-	dvc push || true
+	$(DVC) push || true
+dvc-status:
+	$(DVC) status || true
 
 # ========= Benchmarks =========
 bench-selftest:
@@ -339,13 +357,18 @@ benchmark-clean:
 	rm -rf benchmarks aggregated
 
 # ========= Kaggle Helpers =========
+kaggle-verify:
+	@command -v $(KAGGLE) >/dev/null 2>&1 || { echo "$(RED)Kaggle CLI missing$(RST)"; exit 1; }
+	@$(KAGGLE) competitions list >/dev/null 2>&1 || { echo "$(RED)Kaggle CLI not logged in$(RST)"; exit 1; }
+	@echo "$(GRN)Kaggle CLI OK$(RST)"
+
 kaggle-run: init
 	@echo ">>> Running single-epoch GPU run (Kaggle-like)"
 	$(CLI) selftest
 	$(CLI) train +training.epochs=1 --device gpu --outdir "$(OUT_DIR)"
 	$(CLI) predict --out-csv "$(PRED_DIR)/submission.csv"
 
-kaggle-submit: kaggle-run
+kaggle-submit: kaggle-verify kaggle-run
 	@echo ">>> Submitting to Kaggle competition"
 	$(KAGGLE) competitions submit -c neurips-2025-ariel -f "$(PRED_DIR)/submission.csv" -m "Spectramind V50 auto-submit"
 
@@ -390,6 +413,13 @@ env-capture:
 hash-config:
 	$(CLI) hash-config
 
+git-clean-check:
+	@dirty=$$($(GIT) status --porcelain); \
+	if [ -n "$$dirty" ]; then echo "::warning::Git working tree dirty"; echo "$$dirty"; else echo "$(GRN)Git clean$(RST)"; fi
+
+git-status:
+	$(GIT) status --short --branch
+
 # ========= Security / Docs (optional) =========
 pip-audit:
 	@echo ">>> pip-audit (CVE scan)"
@@ -421,6 +451,46 @@ pyg-install:
 	@PYG_INDEX="$$( $(MAKE) --no-print-directory kaggle-pyg-index )"; \
 	echo "Using index: $$PYG_INDEX"; \
 	$(PIP) install torch-geometric==2.5.3 -f "$$PYG_INDEX"
+
+# ========= Docker targets (aligned with .dockerignore) =========
+docker-print:
+	@echo "Image : $(DOCKER_FULL)"
+	@echo "GPU   : $(HAS_NVIDIA)"
+	@echo "File  : $(DOCKERFILE)"
+	@echo "Args  : $(DOCKER_BUILD_ARGS)"
+
+docker-build: docker-print
+	$(DOCKER) build \
+		-f $(DOCKERFILE) \
+		-t $(DOCKER_FULL) \
+		$(DOCKER_BUILD_ARGS) \
+		.
+
+docker-run: init
+	$(DOCKER) run --rm -it $(DOCKER_GPU_FLAG) \
+		-v "$$(pwd):/workspace" \
+		-w /workspace \
+		-e DEVICE=$(DEVICE) \
+		-e EPOCHS=$(EPOCHS) \
+		$(DOCKER_FULL) \
+		bash -lc 'make ci || true'
+
+docker-shell: init
+	$(DOCKER) run --rm -it $(DOCKER_GPU_FLAG) \
+		-v "$$(pwd):/workspace" \
+		-w /workspace \
+		$(DOCKER_FULL) \
+		bash
+
+docker-test: init
+	$(DOCKER) run --rm $(DOCKER_GPU_FLAG) \
+		-v "$$(pwd):/workspace" \
+		-w /workspace \
+		$(DOCKER_FULL) \
+		bash -lc 'make selftest && make test'
+
+docker-clean:
+	-$(DOCKER) image rm $(DOCKER_FULL) 2>/dev/null || true
 
 # ========= Cleanup =========
 clean:
