@@ -45,18 +45,17 @@ SUBMIT_ZIP   ?= $(SUBMIT_DIR)/bundle.zip
 
 RUN_HASH_FILE ?= run_hash_summary_v50.json
 
-# Requirements files
+# Requirements files (export helpers)
 REQ_CORE          ?= requirements.txt
 REQ_EXTRAS        ?= requirements-extras.txt
 REQ_DEV           ?= requirements-dev.txt
 REQ_KAGGLE        ?= requirements-kaggle.txt
 REQ_FREEZE        ?= requirements.freeze.txt
 
-# Mermaid export defaults
-DIAGRAMS_DIR       ?= docs/diagrams
-MERMAID_FILES      ?= ARCHITECTURE.md README.md
-MERMAID_THEME      ?=
-MERMAID_EXPORT_PNG ?= 0   # 1 to export PNG alongside SVG
+# Mermaid / diagrams
+DIAGRAMS_SRC_DIR  ?= diagrams
+DIAGRAMS_OUT_DIR  ?= outputs/diagrams
+MMD_MAIN          ?= $(DIAGRAMS_SRC_DIR)/main.mmd
 
 # Hydra overrides and passthrough args for the CLI
 OVERRIDES    ?=
@@ -82,7 +81,8 @@ RST  := \033[0m
         dvc-pull dvc-push dvc-status \
         bench-selftest benchmark benchmark-cpu benchmark-gpu benchmark-run benchmark-report benchmark-clean \
         kaggle-run kaggle-submit kaggle-verify \
-        mermaid-init diagrams diagrams-png mermaid-export mermaid-clean \
+        node-info mmd-version diagrams diagrams-png diagrams-watch diagrams-lint diagrams-format diagrams-clean \
+        node-ci node-diagrams \
         ci quickstart clean realclean distclean cache-clean \
         export-reqs export-reqs-dev export-kaggle-reqs export-freeze \
         install-core install-extras install-dev install-kaggle \
@@ -108,7 +108,7 @@ help:
 	@echo "  $(CYN)submit$(RST)           : package submission ZIP ($(SUBMIT_ZIP))"
 	@echo "  $(CYN)ablate*$(RST)          : ablation sweeps (light/heavy/grid/optuna)"
 	@echo "  $(CYN)analyze-log$(RST)      : parse logs → $(OUT_DIR)/log_table.{md,csv}"
-	@echo "  $(CYN)diagrams$(RST)         : render Mermaid in $(MERMAID_FILES) → $(DIAGRAMS_DIR)"
+	@echo "  $(CYN)diagrams$(RST)         : render Mermaid via npm → $(DIAGRAMS_OUT_DIR)"
 	@echo "  $(CYN)benchmark-*$(RST)      : small benchmark runs (cpu/gpu)"
 	@echo "  $(CYN)kaggle-*$(RST)         : Kaggle run+submit (requires Kaggle CLI login)"
 	@echo "  $(CYN)docker-build/run/shell$(RST) : Dockerized workflow (GPU=$(HAS_NVIDIA))"
@@ -123,13 +123,13 @@ help:
 	@echo ""
 	@echo "$(DIM)Vars: DEVICE=$(DEVICE) EPOCHS=$(EPOCHS) OUT_DIR=$(OUT_DIR) OVERRIDES='$(OVERRIDES)' EXTRA_ARGS='$(EXTRA_ARGS)'$(RST)"
 	@echo "$(DIM)Docker: IMAGE=$(DOCKER_IMAGE) TAG=$(DOCKER_TAG) GPU=$(HAS_NVIDIA) $(RST)"
-	@echo "$(DIM)Mermaid: MERMAID_FILES='$(MERMAID_FILES)' DIAGRAMS_DIR='$(DIAGRAMS_DIR)' THEME='$(MERMAID_THEME)' PNG=$(MERMAID_EXPORT_PNG)$(RST)"
+	@echo "$(DIM)Diagrams: SRC=$(DIAGRAMS_SRC_DIR) OUT=$(DIAGRAMS_OUT_DIR) MAIN=$(MMD_MAIN)$(RST)"
 	@echo ""
 
 # ========= Init / Env =========
 init: env
 env:
-	mkdir -p "$(OUT_DIR)" "$(LOGS_DIR)" "$(DIAG_DIR)" "$(PRED_DIR)" "$(SUBMIT_DIR)"
+	mkdir -p "$(OUT_DIR)" "$(LOGS_DIR)" "$(DIAG_DIR)" "$(PRED_DIR)" "$(SUBMIT_DIR)" "$(DIAGRAMS_OUT_DIR)"
 
 versions:
 	@echo "$(BOLD)Versions$(RST)"
@@ -272,28 +272,66 @@ analyze-log-short: init
 check-cli-map:
 	$(CLI) check-cli-map
 
-# ========= Mermaid / Diagrams =========
-mermaid-init:
+# ========= Mermaid / Diagrams (npm) =========
+node-info:
+	@echo "node: $$($(NODE) --version 2>/dev/null || echo 'missing')"
+	@echo "npm : $$($(NPM) --version 2>/dev/null || echo 'missing')"
+
+mmd-version:
+	@$(NPM) exec mmdc -V || (echo "$(YLW)mermaid-cli (mmdc) not available; run 'npm install'$(RST)"; exit 1)
+
+diagrams: init
+	@if ! command -v $(NPM) >/dev/null 2>&1; then echo "$(RED)ERROR: npm not found. Install Node.js/npm.$(RST)"; exit 1; fi
+	@if [ ! -f package.json ]; then echo "$(RED)ERROR: package.json not found$(RST)"; exit 1; fi
+	@echo ">>> Rendering $(MMD_MAIN) → $(DIAGRAMS_OUT_DIR)"
+	@mkdir -p "$(DIAGRAMS_OUT_DIR)"
+	@$(NPM) run mmd:render
+
+diagrams-png: init
+	@if ! command -v $(NPM) >/dev/null 2>&1; then echo "$(RED)ERROR: npm not found. Install Node.js/npm.$(RST)"; exit 1; fi
+	@mkdir -p "$(DIAGRAMS_OUT_DIR)"
+	@$(NPM) run mmd:render:png
+
+diagrams-watch: init
+	@if ! command -v $(NPM) >/dev/null 2>&1; then echo "$(RED)ERROR: npm not found. Install Node.js/npm.$(RST)"; exit 1; fi
+	@echo ">>> Watching $(DIAGRAMS_SRC_DIR) for .mmd changes…"
+	@$(NPM) run mmd:watch
+
+diagrams-lint:
+	@if ! command -v $(NPM) >/dev/null 2>&1; then echo "$(RED)ERROR: npm not found. Install Node.js/npm.$(RST)"; exit 1; fi
+	@$(NPM) run lint || true
+
+diagrams-format:
+	@if ! command -v $(NPM) >/dev/null 2>&1; then echo "$(RED)ERROR: npm not found. Install Node.js/npm.$(RST)"; exit 1; fi
+	@$(NPM) run format || true
+
+diagrams-clean:
+	rm -rf "$(DIAGRAMS_OUT_DIR)"
+
+# ========= Node / Mermaid CI helpers =========
+node-ci:
 	@if ! command -v $(NPM) >/dev/null 2>&1; then \
-	  echo "$(RED)ERROR: npm not found. Please install Node.js/npm.$(RST)"; exit 1; \
+		echo "$(RED)ERROR: npm not found. Install Node.js/npm.$(RST)"; exit 1; \
 	fi
-	$(NPM) ci
-	mkdir -p "$(DIAGRAMS_DIR)"
+	@echo ">>> Node.js / npm versions"
+	@$(NODE) --version && $(NPM) --version
+	@echo ">>> npm ci (clean install)"
+	@$(NPM) ci
+	@echo ">>> Installed devDependencies:"
+	@$(NPM) ls --depth=0 || true
+	@echo ">>> mermaid-cli version:"
+	@$(NPM) run mmd:version || true
 
-diagrams: mermaid-init
-	@echo ">>> Rendering Mermaid diagrams (SVG; PNG=$(MERMAID_EXPORT_PNG))"
-	EXPORT_PNG=$(MERMAID_EXPORT_PNG) THEME="$(MERMAID_THEME)" \
-	$(PYTHON) scripts/export_mermaid.py $(MERMAID_FILES)
-	@echo ">>> Output → $(DIAGRAMS_DIR)"
-
-diagrams-png:
-	@$(MAKE) --no-print-directory diagrams MERMAID_EXPORT_PNG=1
-
-mermaid-export:
-	@$(MAKE) --no-print-directory diagrams
-
-mermaid-clean:
-	rm -rf "$(DIAGRAMS_DIR)" .mermaid_tmp
+node-diagrams: init
+	@if ! command -v $(NPM) >/dev/null 2>&1; then \
+		echo "$(RED)ERROR: npm not found. Install Node.js/npm.$(RST)"; exit 1; \
+	fi
+	@mkdir -p "$(DIAGRAMS_OUT_DIR)"
+	@echo ">>> Render SVG"
+	@$(NPM) run mmd:render
+	@echo ">>> Render PNG"
+	@$(NPM) run mmd:render:png
+	@echo ">>> Diagrams → $(DIAGRAMS_OUT_DIR)"
 
 # ========= CI convenience (dev/local reuse) =========
 ci: validate-env selftest train diagnose analyze-log-short
