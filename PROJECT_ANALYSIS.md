@@ -1,8 +1,9 @@
+
 # SpectraMind V50 — Project Analysis  
 *(NeurIPS 2025 Ariel Data Challenge)*
 
 > **Purpose**: This file is a *living audit* of the ArielSensorArray / SpectraMind V50 repository.  
-> It compares actual repo contents against the **engineering plan** and **external references**, identifying what is implemented, validated, or pending.
+> It compares actual repo contents against the **engineering plan** and **external references** (Kaggle platform mechanics, competitor models), identifying what is implemented, validated, or pending.
 
 ---
 
@@ -12,6 +13,8 @@
 - **Reproducibility**: Hydra configs, DVC data/artifacts, config + dataset hash logging.  
 - **Scientific rigor**: NASA-grade calibration and physics-informed modeling.  
 - **Automation**: CI/CD with self-tests and smoke pipelines on every push.  
+- **Competitive fit**: designed to respect Kaggle’s runtime envelope (~9h GPU limit, quotas) [oai_citation:2‡Kaggle Platform: Comprehensive Technical Guide.pdf](file-service://file-CrgG895i84phyLsyW9FQgf).  
+- **Adaptability**: learns from competitor model archetypes (MLP baselines, deep residual nets, spectrum regressors) [oai_citation:3‡Comparison of Kaggle Models from NeurIPS 2025 Ariel Data Challenge.pdf](file-service://file-CG661XRZ48CnBj69Lf5vTy).
 
 ---
 
@@ -24,7 +27,7 @@
 | `data/`         | ⚠️ DVC  | Versioned via DVC, placeholders present (`.gitkeep`).                 |
 | `outputs/`      | ✅      | Model checkpoints, predictions, diagnostics, logs.                    |
 | `logs/`         | ✅      | `v50_debug_log.md`, JSONL streams, pytest logs.                       |
-| `docs/`         | ✅      | Markdown docs, MkDocs config.                                         |
+| `docs/`         | ✅      | Markdown docs, MkDocs config, diagrams (Mermaid + SVG export).        |
 | `.github/`      | ✅      | CI workflow with smoke pipeline + tests.                              |
 
 ---
@@ -34,151 +37,137 @@
 - Hydra v1.3 used for all runs.  
 - Overrides supported via CLI:  
   ```bash
-  python -m spectramind train data=kaggle model=v50 training=default
-````
+  spectramind train data=kaggle model=v50 training=default
 
-* DVC v3.x integrated: `dvc.yaml` defines calibrate→train→predict→diagnose stages.
-* Config + dataset + git SHA appended to `v50_debug_log.md` for every run.
-* Dockerfile + Poetry lock guarantee environment reproducibility.
+	•	DVC v3.x integrated: dvc.yaml defines calibrate→train→predict→diagnose stages.
+	•	Config + dataset + git SHA appended to v50_debug_log.md for every run.
+	•	Dockerfile + Poetry lock guarantee environment reproducibility.
 
-✅ **Implemented fully**.
+✅ Implemented fully.
 
----
+⸻
 
-## 3) CLI Design
+3) CLI Design
+	•	Unified entrypoint: spectramind --help.
+	•	Subcommands include: selftest, calibrate, train, predict, calibrate-temp, corel-train, diagnose, submit, analyze-log, check-cli-map.
+	•	Rich UX: tables, progress bars, CI-friendly error visibility.
+	•	Append-only log: logs/v50_debug_log.md.
 
-* Unified entrypoint:
+✅ Strong, production-grade CLI layer.
 
-  ```bash
-  spectramind --help
-  ```
+⸻
 
-* Subcommands:
+4) Calibration Chain
 
-  * `selftest` — fast wiring checks.
-  * `calibrate` — full calibration kill chain.
-  * `train` — train V50 model.
-  * `predict` — output μ/σ predictions.
-  * `calibrate-temp` — uncertainty temperature scaling.
-  * `corel-train` — conformal calibration with graph priors.
-  * `diagnose` — diagnostics suite (FFT, SHAP, UMAP/t-SNE, symbolic).
-  * `submit` — end-to-end submission bundle.
-  * `analyze-log` — parse CLI logs.
-  * `check-cli-map` — map CLI commands to files.
+Implements full kill chain:
+	•	Bias/dark subtraction
+	•	Flat-fielding
+	•	Nonlinearity & ADC corrections
+	•	Wavelength alignment
+	•	Normalization
 
-* **UX**: Rich formatting for tables, progress bars, error visibility.
+Artifacts persisted in outputs/calibrated/.
 
-* **Logging**: every invocation appended to `logs/v50_debug_log.md`.
+✅ Physics-grade calibration present.
 
-✅ **Strong, production-grade CLI layer.**
+⸻
 
----
+5) Modeling Architecture
+	•	FGS1: Mamba SSM encoder for long lightcurve sequences.
+	•	AIRS: Graph Neural Network with edge types: λ-adjacency, molecule groups, detector regions.
+	•	Fusion: latent concatenation.
+	•	Decoders:
+	•	μ: MLP with smoothness + FFT penalties.
+	•	σ: heteroscedastic head, calibrated via Temp Scaling + COREL.
 
-## 4) Calibration Chain
+✅ Implemented per design.
 
-Implements full **kill chain**:
+⸻
 
-* Bias/dark subtraction.
-* Flat-fielding.
-* Nonlinearity & ADC corrections.
-* Wavelength alignment.
-* Normalization.
+6) Uncertainty Quantification
+	•	Aleatoric: σ predictions via GLL.
+	•	Epistemic: ensemble & dropout-ready.
+	•	Calibration: Temp scaling; COREL graph-based conformal.
+	•	Coverage logs: JSON + plots.
 
-Artifacts persisted in `outputs/calibrated/`.
+⚠️ COREL symbolic weighting and temporal edges not yet fully integrated.
 
-✅ **Physics-grade calibration present.**
+⸻
 
----
+7) Diagnostics & Explainability
+	•	UMAP & t-SNE latent visualizations.
+	•	SHAP overlays (FGS1 temporal, AIRS spectral).
+	•	FFT of residuals.
+	•	Symbolic constraints: smoothness, nonnegativity, asymmetry, alignment.
+	•	HTML dashboard: aggregates plots, overlays, logs.
 
-## 5) Modeling Architecture
+✅ Implemented; symbolic overlays expanding.
 
-* **FGS1**: Structured State-Space Model (Mamba SSM) for long sequences.
-* **AIRS**: Graph Neural Network (GNN with edge types: adjacency, molecule groups, detector regions).
-* **Fusion**: latent concatenation.
-* **Decoders**:
+⸻
 
-  * μ: MLP with spectral regularizers (smoothness, FFT).
-  * σ: parallel heteroscedastic head.
+8) Kaggle Platform Integration
+	•	Runtime: 9h GPU/CPU sessions, ~30 GPU hrs/week ￼.
+	•	Notebooks: Kaggle-API compatibility (datasets, predictions, submissions).
+	•	Leaderboards: public LB (partial test split) vs private LB (final eval). Risk of “shake-up” mitigated by symbolic guardrails ￼.
+	•	Submission: spectramind submit packages CSV + ZIP for Kaggle competition rules.
 
-Losses: Gaussian Log-Likelihood + optional symbolic constraints.
+✅ Aligned to Kaggle infra.
 
-✅ **Implemented as per design.**
+⸻
 
----
+9) Competitive Benchmarking (vs Kaggle Models)
 
-## 6) Uncertainty Quantification
+Model	Strengths	Weaknesses	Lessons for V50
+Thang Do Duc — 0.329 LB ￼	Simple residual MLP, fast, reproducible baseline	No uncertainty, weak domain priors	Good reference baseline; we exceed by adding physics/symbolics.
+V1ctorious3010 — 80bl-128hd ￼	Very deep (~80-layer) residual MLP, high capacity	Overfit risk, heavy compute	Our Mamba/GNN fusion is leaner, physics-aligned, avoids brute-force depth.
+Fawad Awan — Spectrum Regressor ￼	Multi-output PyTorch regressor, structured outputs	Limited explainability, no physics priors	V50 adds symbolic physics and uncertainty to surpass.
 
-* **Aleatoric**: σ predictions trained via GLL.
-* **Epistemic**: ensembles / MC dropout.
-* **Calibration**: temperature scaling, conformal COREL GNN.
-* **Coverage logs** exported to JSON + plots.
+✅ V50 goes beyond Kaggle baselines by integrating symbolic constraints, physics priors, and calibrated uncertainty.
 
-⚠️ **COREL partially integrated; expand symbolic-weighted calibration.**
+⸻
 
----
+10) Automation & CI/CD
+	•	GitHub Actions runs selftest, toy smoke pipeline.
+	•	Pre-commit: ruff, black, isort, yaml, whitespace.
+	•	Artifacts hashed and logged for audit.
 
-## 7) Diagnostics & Explainability
+✅ Robust CI/CD pipeline.
 
-* **Latent visualization**: UMAP, t-SNE.
-* **Attributions**: SHAP overlays, GNNExplainer, FGS1 integrated gradients.
-* **Spectral checks**: FFT of residuals, smoothness penalties.
-* **Symbolic rules**: smoothness, non-negativity, asymmetry, alignment.
-* **HTML Dashboard**: unify plots, overlays, and logs.
+⸻
 
-✅ **Implemented; symbolic overlays still expanding.**
+11) Pending / Roadmap
+	•	GUI dashboard (React/FastAPI).
+	•	Expanded symbolic overlays + violation heatmaps.
+	•	COREL calibration expansion (temporal edges, symbolic weighting).
+	•	Coverage heatmaps per-bin.
+	•	Kaggle leaderboard automation with artifact gates.
 
----
+⸻
 
-## 8) Automation & CI/CD
+12) Status Matrix
 
-* GitHub Actions workflow:
+Area	Status	Notes
+Repo structure	✅ Solid	Hydra/DVC clean.
+CLI	✅ Complete	Typer unified, Rich UX.
+Calibration	✅ Strong	Kill chain implemented.
+Modeling	✅ Physics	Mamba SSM + GNN fusion.
+Uncertainty	⚠️ Partial	COREL symbolic/temporal pending.
+Diagnostics	✅ Active	SHAP, FFT, UMAP, symbolic overlays.
+CI/CD	✅ Robust	Selftest + smoke pipelines.
+Kaggle fit	✅ Aligned	Runtime & submission ready.
+GUI	🚧 Planned	Thin dashboard mirror.
 
-  * Installs env via Poetry.
-  * Runs `spectramind selftest`.
-  * Executes smoke pipeline (toy data: calibrate→train→predict→diagnose).
-* Fails fast on config/hash mismatches.
-* Pre-commit hooks (ruff, black, isort, yaml, whitespace).
 
-✅ **CI/CD strong.**
+⸻
 
----
+13) Action Items
+	•	Harden COREL with symbolic priors + temporal edges.
+	•	Expand symbolic overlays & violation heatmaps.
+	•	Build GUI dashboard.
+	•	Add Kaggle leaderboard automation job.
+	•	Deepen calibration validation (coverage heatmaps).
 
-## 9) Pending / Roadmap
+⸻
 
-* GUI dashboard (Qt/Electron/Flutter) mirroring CLI diagnostics.
-* Expanded symbolic overlay diagnostics (more rule classes, rule violation ranking).
-* Deeper calibration validation (per-bin coverage heatmaps, symbolic-aware calibration).
-* COREL calibration expansion (temporal bin correlations, edge feature integration).
-* Leaderboard automation job with artifact promotion gates.
-
----
-
-## 10) Status Matrix
-
-| Area           | Status     | Notes                                |
-| -------------- | ---------- | ------------------------------------ |
-| Repo structure | ✅ Solid    | Hydra/DVC integrated cleanly.        |
-| CLI            | ✅ Complete | Typer unified, Rich UX.              |
-| Calibration    | ✅ Strong   | Kill chain implemented.              |
-| Modeling       | ✅ Physics  | Mamba SSM + GNN.                     |
-| Uncertainty    | ⚠️ Partial | COREL/symbolic extensions pending.   |
-| Diagnostics    | ✅ Active   | SHAP, UMAP, FFT; symbolic expanding. |
-| CI/CD          | ✅ Robust   | Selftest + smoke pipeline.           |
-| GUI            | 🚧 Planned | Thin mirror, not yet built.          |
-
----
-
-## 11) Action Items
-
-* [ ] Finalize COREL calibration integration (symbolic + temporal edges).
-* [ ] Expand symbolic rule overlays + violation heatmaps.
-* [ ] Implement GUI dashboard (thin, CLI-backed).
-* [ ] Add leaderboard job to CI/CD.
-* [ ] Harden uncertainty calibration with symbolic priors.
-
----
-
-**Maintainers**: SpectraMind Team
-**Contact**: open an Issue on [GitHub](https://github.com/bartytime4life/ArielSensorArray/issues)
-
-```
+Maintainers: SpectraMind Team
+Contact: GitHub Issues
