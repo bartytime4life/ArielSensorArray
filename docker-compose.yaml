@@ -1,69 +1,99 @@
 # ------------------------------------------------------------------------------
 # docker-compose.yml — SpectraMind V50 (ArielSensorArray)
-# One-command dev/runtime with GPU (or CPU), docs, and tensorboard profiles.
-#   - GPU:   docker compose --profile gpu up -d
-#   - CPU:   docker compose --profile cpu up -d
-#   - Docs:  docker compose --profile docs up
-#   - TB:    docker compose --profile viz up
+# One‑command dev/runtime with GPU or CPU profiles, docs, TB, and CI runners.
+#
+#  Build image:         docker compose build
+#  GPU shell:           docker compose --profile gpu up -d && docker compose exec spectramind bash
+#  CPU shell:           docker compose --profile cpu up -d && docker compose exec spectramind-cpu bash
+#  Docs:                docker compose --profile docs up
+#  TensorBoard:         docker compose --profile viz up
+#  CI (headless):       docker compose --profile ci up --abort-on-container-exit
 #
 # Notes:
-#  • Build image once:  docker compose build
-#  • Drop into shell:    docker compose exec spectramind bash
 #  • All services mount repo at /workspace (Poetry + Typer CLI ready).
+#  • GPU detected via NVIDIA toolkit; CPU services run without it.
+#  • Caches (HF, pip/poetry) are persisted in named volumes.
+#  • Aligns with .dockerignore / .gitignore / .dvcignore to keep images lean.
 # ------------------------------------------------------------------------------
 
 version: "3.9"
 
+# ---------- Reusable snippets --------------------------------------------------
 x-common-env: &common-env
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
   PIP_NO_PYTHON_VERSION_WARNING: "1"
   PYTHONUNBUFFERED: "1"
   POETRY_VIRTUALENVS_CREATE: "false"
+  # Hugging Face cache (aligned with .dockerignore)
   TRANSFORMERS_CACHE: /workspace/.hf_cache
   HF_HOME: /workspace/.hf_cache
+  # Non-interactive / CI-friendly matplotlib
+  MPLBACKEND: Agg
+
+# NOTE: If you maintain an .env (e.g., API keys), uncomment the following:
+# env_file: &common-envfiles
+#   - .env
 
 x-common-volumes: &common-volumes
   - ./:/workspace
   - spectramind-cache:/root/.cache
   - hf-cache:/workspace/.hf_cache
 
+x-common-logging: &common-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+x-common-healthcheck: &hc-poetry
+  interval: 10s
+  timeout: 5s
+  retries: 10
+  start_period: 10s
+  test:
+    - "CMD-SHELL"
+    - "poetry --version >/dev/null 2>&1 || exit 1"
+
+# ---------- Services -----------------------------------------------------------
 services:
   # ----------------------------------------------------------------
-  # GPU-enabled dev shell (default profile: gpu)
+  # Build once; used by all other services
   # ----------------------------------------------------------------
-  spectramind:
+  spectramind:  # GPU‑enabled dev shell (profile: gpu)
     build:
       context: .
       dockerfile: Dockerfile
+      # Optionally pass build args (e.g., CUDA version) from environment:
+      # args:
+      #   CUDA_VERSION: "${CUDA_VERSION:-12.1.1}"
     image: spectramindv50:dev
     container_name: spectramind
     working_dir: /workspace
     tty: true
     stdin_open: true
     command: bash
-    volumes: *common-volumes
+    shm_size: "16gb"
     environment:
       <<: *common-env
-      # The following variables cooperate with NVIDIA Container Toolkit.
       NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
       NVIDIA_DRIVER_CAPABILITIES: compute,utility
-    # Best-effort GPU reservation (ignored by classic compose; used by swarm).
+    volumes: *common-volumes
+    # device_requests is preferred with Compose v2; commented deploy fallback retained
+    # device_requests:
+    #   - driver: "nvidia"
+    #     count: -1
+    #     capabilities: ["gpu"]
     deploy:
       resources:
         reservations:
           devices:
             - capabilities: ["gpu"]
-    # For new Compose (v2), 'device_requests' can be used alternatively:
-    # device_requests:
-    #   - driver: "nvidia"
-    #     count: -1
-    #     capabilities: ["gpu"]
-    shm_size: "16gb"
+    healthcheck: *hc-poetry
+    logging: *common-logging
+    # user: "${UID:-1000}:${GID:-1000}"  # uncomment to avoid root-owned files on host
     profiles: ["gpu"]
 
-  # ----------------------------------------------------------------
-  # CPU-only dev shell (profile: cpu)
-  # ----------------------------------------------------------------
+  # CPU-only dev shell
   spectramind-cpu:
     image: spectramindv50:dev
     container_name: spectramind-cpu
@@ -71,46 +101,82 @@ services:
     tty: true
     stdin_open: true
     command: bash
-    volumes: *common-volumes
-    environment: *common-env
     shm_size: "8gb"
+    environment: *common-env
+    volumes: *common-volumes
+    depends_on:
+      spectramind:
+        condition: service_started
+    healthcheck: *hc-poetry
+    logging: *common-logging
     profiles: ["cpu"]
 
-  # ----------------------------------------------------------------
-  # Live docs server (MkDocs) — http://localhost:8000 (profile: docs)
-  # ----------------------------------------------------------------
+  # Live docs server (MkDocs) — http://localhost:8000
   docs:
     image: spectramindv50:dev
     container_name: spectramind-docs
     working_dir: /workspace
-    depends_on:
-      - spectramind
     command: bash -lc "poetry run mkdocs serve -a 0.0.0.0:8000"
     ports:
       - "8000:8000"
-    volumes: *common-volumes
     environment: *common-env
+    volumes: *common-volumes
+    depends_on:
+      spectramind:
+        condition: service_started
+    healthcheck:
+      <<: *hc-poetry
+      # quick check: docs page served?
+      test: ["CMD-SHELL","curl -fsS http://localhost:8000/ >/dev/null || exit 1"]
+    logging: *common-logging
     profiles: ["docs"]
 
-  # ----------------------------------------------------------------
-  # TensorBoard — http://localhost:6006 (profile: viz)
-  # ----------------------------------------------------------------
+  # TensorBoard — http://localhost:6006
   tensorboard:
     image: spectramindv50:dev
     container_name: spectramind-tb
     working_dir: /workspace
-    depends_on:
-      - spectramind
     command: bash -lc "poetry run tensorboard --logdir logs --host 0.0.0.0 --port 6006"
     ports:
       - "6006:6006"
+    environment: *common-env
     volumes:
       - ./:/workspace
       - spectramind-cache:/root/.cache
       - tb-logs:/workspace/logs
-    environment: *common-env
+    depends_on:
+      spectramind:
+        condition: service_started
+    healthcheck:
+      <<: *hc-poetry
+      test: ["CMD-SHELL","curl -fsS http://localhost:6006/ >/dev/null || exit 1"]
+    logging: *common-logging
     profiles: ["viz"]
 
+  # Headless CI runner (deterministic, non‑interactive)
+  ci:
+    image: spectramindv50:dev
+    container_name: spectramind-ci
+    working_dir: /workspace
+    # If you keep a separate makefile.ci, use that; otherwise 'make ci'
+    command: bash -lc 'if [ -f makefile.ci ] || [ -f Makefile.ci ]; then make -f makefile.ci ci || make -f Makefile.ci ci; else make ci; fi'
+    environment:
+      <<: *common-env
+      SPECTRAMIND_CI: "1"
+      PYTHONHASHSEED: "0"
+      DEVICE: "${DEVICE:-cpu}"
+      EPOCHS: "${EPOCHS:-1}"
+    volumes: *common-volumes
+    depends_on:
+      spectramind:
+        condition: service_started
+    healthcheck: *hc-poetry
+    logging: *common-logging
+    profiles: ["ci"]
+    # Abort the whole compose run if CI exits (useful in pipelines)
+    restart: "no"
+
+# ---------- Volumes ------------------------------------------------------------
 volumes:
   spectramind-cache:
   hf-cache:
