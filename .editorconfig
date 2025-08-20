@@ -1,13 +1,74 @@
-# EditorConfig helps keep coding styles consistent
+# ==============================================================================
+# .editorconfig — SpectraMind V50 (ArielSensorArray)
+# Purpose: Enforce consistent style across IDEs, CI, Kaggle, and Docker builds.
+# Reference: https://editorconfig.org/
+# ==============================================================================
+
 root = true
 
+# ========= Global defaults =========
 [*]
 charset = utf-8
 end_of_line = lf
 insert_final_newline = true
+trim_trailing_whitespace = true
 indent_style = space
 indent_size = 4
-trim_trailing_whitespace = true
 
+# ========= Markdown / Docs =========
 [*.md]
+indent_size = 2
+trim_trailing_whitespace = false   # preserve intentional spaces in Markdown
+
+[*.rst]
+indent_size = 2
 trim_trailing_whitespace = false
+
+# ========= YAML / Hydra Configs =========
+[*.{yml,yaml}]
+indent_size = 2
+indent_style = space
+
+# ========= JSON / TOML =========
+[*.json]
+indent_size = 2
+quote_type = double
+
+[*.toml]
+indent_size = 2
+
+# ========= Python =========
+[*.py]
+indent_size = 4
+max_line_length = 88     # Black default
+insert_final_newline = true
+
+# ========= Jupyter Notebooks =========
+[*.ipynb]
+indent_size = 2
+trim_trailing_whitespace = false   # don't break notebooks
+
+# ========= Docker / Compose =========
+[Dockerfile]
+indent_size = 2
+
+[docker-compose*.{yml,yaml}]
+indent_size = 2
+
+# ========= Makefiles =========
+[Makefile]
+indent_style = tab
+indent_size = 4
+trim_trailing_whitespace = false   # Makefile tabs are required
+
+# ========= Logs / Generated =========
+[*.log]
+insert_final_newline = false
+trim_trailing_whitespace = false
+
+# ========= Special files =========
+[*.csv]
+insert_final_newline = false
+
+[*.txt]
+indent_size = 2
