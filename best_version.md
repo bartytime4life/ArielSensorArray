@@ -1,4 +1,3 @@
-# bestversion.md
 
 # SpectraMind V50 — Best Version Notes (Changelog, Benchmarks, Comparisons)
 
