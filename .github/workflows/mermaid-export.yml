@@ -1,0 +1,71 @@
+name: Mermaid Export
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "ARCHITECTURE.md"
+      - "README.md"
+      - "docs/**/*.md"
+      - "scripts/export_mermaid.py"
+      - ".mermaidrc.json"
+      - "package.json"
+  workflow_dispatch:
+    inputs:
+      files:
+        description: "Space-separated list of markdown files (default: ARCHITECTURE.md README.md)"
+        required: false
+        default: "ARCHITECTURE.md README.md"
+
+permissions:
+  contents: write  # needed for auto-commit
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Mermaid CLI
+        run: npm ci
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Ensure output dirs
+        run: mkdir -p docs/diagrams
+
+      - name: Render diagrams (SVG; set EXPORT_PNG=1 to also output PNG)
+        env:
+          EXPORT_PNG: "0"
+          THEME: ""
+        run: |
+          FILES="${{ github.event.inputs.files }}"
+          if [ -z "$FILES" ]; then
+            FILES="ARCHITECTURE.md README.md"
+          fi
+          python scripts/export_mermaid.py $FILES
+
+      - name: Upload diagrams artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mermaid-diagrams
+          path: docs/diagrams
+
+      - name: Auto-commit diagrams (optional)
+        if: ${{ github.ref == 'refs/heads/main' }}
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "ci(diagrams): export Mermaid diagrams"
+          file_pattern: docs/diagrams/**/*.svg docs/diagrams/**/*.png
+          branch: main
