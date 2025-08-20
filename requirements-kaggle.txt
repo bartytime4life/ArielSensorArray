@@ -14,18 +14,7 @@ scipy==1.13.1
 pandas==2.2.2
 scikit-learn==1.4.2
 
-# torch/torchvision/torchaudio: use preinstalled Kaggle wheels; do NOT reinstall here.
-
-# Install torch-geometric in a separate cell via the PyG index matching torch/CUDA.
-# Example:
-# !python - << 'PY'
-# import torch, sys
-# ver = torch.__version__.split('+')[0]
-# cu  = (torch.version.cuda or 'cpu').replace('.','')
-# base = f"https://data.pyg.org/whl/torch-{ver}+{'cu'+cu if torch.version.cuda else 'cpu'}.html"
-# print("PyG index:", base)
-# PY
-# !pip install torch-geometric==2.5.3 -f "$PYG_INDEX"
+# Torch is preinstalled on Kaggle. Install PyG separately (see cell snippet below).
 
 matplotlib==3.8.4
 plotly==5.22.0
