@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>SpectraMind V50 — Ablation Leaderboard</title>
+<style>
+  :root{
+    --bg:#0b1020; --fg:#e6edf3; --muted:#9aa4b2; --panel:#111729; --acc:#2dd4bf; --warn:#f97316; --bad:#ef4444; --good:#22c55e;
+    --row:#121a31; --row2:#0f162a; --chip:#1f2937; --hl:#1b2440; --link:#60a5fa;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--fg);font-family: ui-sans-serif,system-ui,Segoe UI,Roboto,Helvetica,Arial,"Apple Color Emoji","Segoe UI Emoji";}
+
+  header{padding:24px 16px;background:linear-gradient(180deg,#0f1530,#0b1020 60%);}
+  .wrap{max-width:1200px;margin:0 auto;padding:0 12px;}
+  h1{margin:0 0 8px 0;font-size:22px;letter-spacing:.3px}
+  .sub{color:var(--muted);font-size:13px}
+  .panel{background:var(--panel);border:1px solid #1f2942;border-radius:12px;padding:14px;margin:12px 0;box-shadow:0 10px 30px rgba(0,0,0,.15);}
+  .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+  .row > *{flex:0 1 auto}
+  input[type="text"], select{
+    background:#0d1426;color:var(--fg);border:1px solid #213055;border-radius:8px;padding:8px 10px;font-size:14px;min-width:180px;outline:none;
+  }
+  button{
+    background:var(--hl);border:1px solid #223257;color:var(--fg);padding:8px 12px;border-radius:8px;cursor:pointer;font-size:14px;
+  }
+  button:hover{background:#223257}
+  .badge{background:var(--chip);border:1px solid #2a3a5f;border-radius:999px;padding:4px 10px;font-size:12px;color:var(--muted)}
+  .tblwrap{overflow:auto;border-radius:12px;border:1px solid #1f2942}
+  table{border-collapse:separate;border-spacing:0;width:100%;}
+  thead th{position:sticky;top:0;background:#121a31;color:#cbd5e1;border-bottom:1px solid #1f2942;padding:10px 8px;font-size:13px;white-space:nowrap;cursor:pointer}
+  tbody td{padding:10px 8px;border-bottom:1px solid #121a31;font-size:13px;vertical-align:top}
+  tbody tr:nth-child(odd){background:var(--row)}
+  tbody tr:nth-child(even){background:var(--row2)}
+  .num{text-align:right;font-variant-numeric:tabular-nums}
+  .good{color:var(--good)} .bad{color:var(--bad)} .warn{color:var(--warn)}
+  a{color:var(--link);text-decoration:none} a:hover{text-decoration:underline}
+  footer{color:var(--muted);font-size:12px;padding:24px 16px}
+  .hidden{display:none}
+  .pill{display:inline-block;padding:2px 8px;border-radius:999px;background:#18223f;border:1px solid #27365c;font-size:12px;color:#c9d4e5}
+</style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <h1>SpectraMind V50 — Ablation Leaderboard</h1>
+      <div class="sub">Sortable, filterable leaderboard. Auto‑loads <code>leaderboard.csv</code> from this folder; or choose a file if blocked by your browser.</div>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <div class="panel">
+      <div class="row" style="gap:10px">
+        <input id="search" type="text" placeholder="🔎 filter (e.g. trial_id:12, overrides:lr=1e-3, gll<0.25)"/>
+        <label class="badge"><input id="topnToggle" type="checkbox" style="vertical-align:-2px;margin-right:6px">Top‑N only</label>
+        <select id="metric">
+          <option value="gll" selected>Sort by gll (asc)</option>
+          <option value="gll_calibrated">Sort by gll_calibrated (asc)</option>
+          <option value="coverage">Sort by coverage (desc)</option>
+          <option value="smoothness">Sort by smoothness (asc)</option>
+          <option value="runtime_sec">Sort by runtime_sec (asc)</option>
+        </select>
+        <button id="reloadBtn">↻ Reload CSV</button>
+        <label class="badge"><input id="fileInput" type="file" accept=".csv" class="hidden">Manual CSV…</label>
+        <button id="exportMd">⇩ Export view → Markdown</button>
+        <span id="meta" class="pill">—</span>
+      </div>
+    </div>
+
+    <div class="panel tblwrap">
+      <table id="tbl">
+        <thead id="thead"></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+  </main>
+
+  <footer class="wrap">
+    Generated offline. Columns expected (flexible): <code>trial_id,overrides,gll,gll_calibrated,coverage,smoothness,runtime_sec,commit,config_hash</code>.
+  </footer>
+
+<script>
+(function(){
+  const csvPath = 'leaderboard.csv';     // expected relative path
+  const thead = document.getElementById('thead');
+  const tbody = document.getElementById('tbody');
+  const search = document.getElementById('search');
+  const metricSel = document.getElementById('metric');
+  const topnToggle = document.getElementById('topnToggle');
+  const fileInput = document.getElementById('fileInput');
+  const reloadBtn = document.getElementById('reloadBtn');
+  const exportMd = document.getElementById('exportMd');
+  const meta = document.getElementById('meta');
+
+  let rows = [];          // raw parsed rows (objects)
+  let view = [];          // filtered/sorted view
+  let columns = [];       // header names
+  let sort = { key: 'gll', dir: 'asc' };
+  let topN = 0;           // computed from CSV if provided, else 0
+
+  // --- CSV parsing with quoted fields (minimal RFC4180 support) ---
+  function parseCSV(text){
+    const out = [];
+    const re = /(?:\s*)(?:"((?:[^"]|"")*)"|([^,\r\n]*))(?:\s*)(?:,|$)|\r?\n/g;
+    let m, row = [];
+    let i = 0;
+    function addCell(s){ row.push((s||'').replace(/""/g,'"')); }
+    while ((m = re.exec(text)) !== null){
+      if (m[0] === '\n' || m[0] === '\r\n'){ // newline finalized by prior match
+        continue;
+      }
+      const quoted = m[1]; const naked = m[2];
+      if (quoted !== undefined) addCell(quoted);
+      else if (naked !== undefined) addCell(naked);
+      // if next char is newline, end row
+      const next = text[re.lastIndex];
+      if (next === '\n' || next === '\r' || re.lastIndex === text.length){
+        if (row.length && !(row.length === 1 && row[0] === '')) out.push(row);
+        row = [];
+      }
+    }
+    if (row.length) out.push(row);
+    return out;
+  }
+
+  // --- Render table ---
+  function renderHeader(){
+    thead.innerHTML = '';
+    const tr = document.createElement('tr');
+    columns.forEach(col => {
+      const th = document.createElement('th');
+      th.textContent = col;
+      th.title = 'Click to sort';
+      th.onclick = () => {
+        if (sort.key === col) sort.dir = (sort.dir === 'asc' ? 'desc' : 'asc');
+        else { sort.key = col; sort.dir = (col === 'coverage') ? 'desc' : 'asc'; }
+        metricSel.value = sort.key;
+        sortAndRender();
+      };
+      tr.appendChild(th);
+    });
+    thead.appendChild(tr);
+  }
+
+  function fmtNum(v){
+    if (v === '' || v === null || v === undefined) return '';
+    const n = Number(v);
+    if (!Number.isFinite(n)) return v;
+    if (Math.abs(n) >= 1000) return n.toLocaleString();
+    if (Math.abs(n) >= 1) return n.toFixed(4).replace(/\.?0+$/,'');
+    if (Math.abs(n) >= 1e-3) return n.toFixed(6).replace(/\.?0+$/,'');
+    return n.toExponential(2);
+  }
+
+  function decorate(val, key){
+    if (key === 'gll' || key === 'gll_calibrated'){
+      const n = Number(val); if (!Number.isFinite(n)) return val;
+      return `<span class="${n <= 0.25 ? 'good' : (n <= 0.35 ? 'warn' : 'bad')}">${fmtNum(n)}</span>`;
+    }
+    if (key === 'coverage'){
+      const n = Number(val); if (!Number.isFinite(n)) return val;
+      return `<span class="${n >= 0.9 ? 'good' : (n >= 0.8 ? 'warn' : 'bad')}">${fmtNum(n)}</span>`;
+    }
+    if (key === 'runtime_sec'){
+      const n = Number(val); if (!Number.isFinite(n)) return val;
+      return `<span>${fmtNum(n)}</span>`;
+    }
+    if (key === 'overrides'){
+      const s = String(val||'').replaceAll(',', ', ');
+      return `<code>${s}</code>`;
+    }
+    if (key === 'commit'){
+      const s = String(val||'');
+      return s ? `<span class="pill">${s.slice(0,7)}</span>` : '';
+    }
+    return String(val ?? '');
+  }
+
+  function renderBody(){
+    tbody.innerHTML = '';
+    const q = search.value.trim().toLowerCase();
+    let filtered = view;
+    if (q){
+      // simple query: key:value and math ops e.g., gll<0.25
+      filtered = view.filter(r => matchRow(r, q));
+    }
+    const limit = (topnToggle.checked && topN > 0) ? topN : filtered.length;
+
+    for (let i = 0; i < limit; i++){
+      const r = filtered[i];
+      const tr = document.createElement('tr');
+      columns.forEach(c => {
+        const td = document.createElement('td');
+        const v = r[c];
+        td.innerHTML = decorate(v, c);
+        if (isFinite(Number(v))) td.classList.add('num');
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    }
+    meta.textContent = `${filtered.length} rows • showing ${Math.min(limit, filtered.length)} • sort=${sort.key}(${sort.dir})`;
+  }
+
+  function matchRow(row, q){
+    // Supports: "key:value", "key<0.25", "plain substr"
+    const parts = q.split(/\s+/).filter(Boolean);
+    return parts.every(p => {
+      if (p.includes(':')){
+        const [k,v] = p.split(':');
+        return String(row[k] ?? '').toLowerCase().includes(String(v).toLowerCase());
+      }
+      const opMatch = p.match(/^([a-zA-Z0-9_]+)([<>]=?|==)([\-\d\.eE]+)$/);
+      if (opMatch){
+        const [,k,op,num] = opMatch;
+        const x = Number(row[k]); const y = Number(num);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+        if (op === '<') return x < y;
+        if (op === '<=') return x <= y;
+        if (op === '>') return x > y;
+        if (op === '>=') return x >= y;
+        if (op === '==') return x === y;
+        return false;
+      }
+      // plain substring over all values
+      return Object.values(row).some(v => String(v ?? '').toLowerCase().includes(p));
+    });
+  }
+
+  function sortAndRender(){
+    const dir = (sort.dir === 'asc') ? 1 : -1;
+    view.sort((a,b)=>{
+      const av = a[sort.key], bv = b[sort.key];
+      const an = Number(av), bn = Number(bv);
+      if (Number.isFinite(an) && Number.isFinite(bn)) return (an - bn)*dir;
+      return String(av ?? '').localeCompare(String(bv ?? ''))*dir;
+    });
+    renderBody();
+  }
+
+  function rowsFromCSV(matrix){
+    columns = (matrix[0] || []).map(h => h.trim());
+    const idxTopN = columns.findIndex(h => h.toLowerCase() === 'leaderboard_top_n');
+    topN = 0;
+    if (idxTopN >= 0 && matrix.length > 1){
+      const v = Number(matrix[1][idxTopN]);
+      if (Number.isFinite(v) && v > 0) topN = v|0;
+    }
+    const arr = [];
+    for (let i=1;i<matrix.length;i++){
+      const row = matrix[i]; if (!row || row.length === 0) continue;
+      const obj = {};
+      columns.forEach((h, j)=>{ obj[h] = (row[j] ?? '').trim(); });
+      arr.push(obj);
+    }
+    return arr;
+  }
+
+  async function tryFetchCSV(){
+    try{
+      const resp = await fetch(csvPath, {cache:'no-store'});
+      if (!resp.ok) throw new Error('fetch failed');
+      const text = await resp.text();
+      const m = parseCSV(text);
+      rows = rowsFromCSV(m);
+      view = rows.slice(0);
+      if (!columns.length){ columns = ['trial_id','overrides','gll','gll_calibrated','coverage','smoothness','runtime_sec','commit','config_hash']; }
+      renderHeader();
+      // set metric sort default
+      sort.key = (columns.includes('gll')) ? 'gll' : columns[0];
+      sort.dir = (sort.key === 'coverage') ? 'desc' : 'asc';
+      metricSel.value = sort.key;
+      sortAndRender();
+      return true;
+    }catch(e){
+      console.warn('Auto‑load failed; use Manual CSV button.', e);
+      return false;
+    }
+  }
+
+  // --- Events ---
+  search.addEventListener('input', renderBody);
+  metricSel.addEventListener('change', ()=>{
+    sort.key = metricSel.value;
+    sort.dir = (sort.key === 'coverage') ? 'desc' : 'asc';
+    sortAndRender();
+  });
+  topnToggle.addEventListener('change', renderBody);
+  reloadBtn.addEventListener('click', ()=> tryFetchCSV().then(ok=>{
+    if (!ok) fileInput.click();
+  }));
+  exportMd.addEventListener('click', ()=>{
+    // export current view to Markdown table
+    const q = search.value.trim().toLowerCase();
+    const filtered = view.filter(r => !q || matchRow(r,q));
+    const limit = (topnToggle.checked && topN > 0) ? topN : filtered.length;
+    const cols = columns.slice(0);
+    const lines = [];
+    lines.push(`| ${cols.join(' | ')} |`);
+    lines.push(`| ${cols.map(()=> '---').join(' | ')} |`);
+    for (let i=0;i<limit;i++){
+      const r = filtered[i];
+      lines.push(`| ${cols.map(c => String(r[c] ?? '').replace(/\|/g,'\\|')).join(' | ')} |`);
+    }
+    const blob = new Blob([lines.join('\n')], {type:'text/markdown'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'leaderboard_view.md';
+    a.click(); URL.revokeObjectURL(a.href);
+  });
+
+  fileInput.addEventListener('change', (e)=>{
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    const r = new FileReader();
+    r.onload = ev => {
+      const text = ev.target.result;
+      const m = parseCSV(String(text));
+      rows = rowsFromCSV(m);
+      view = rows.slice(0);
+      if (!columns.length){ columns = Object.keys(rows[0]||{}); }
+      renderHeader();
+      sort.key = (columns.includes('gll')) ? 'gll' : columns[0];
+      sort.dir = (sort.key === 'coverage') ? 'desc' : 'asc';
+      metricSel.value = sort.key;
+      sortAndRender();
+    };
+    r.readAsText(f);
+  });
+
+  // --- Initial load ---
+  tryFetchCSV().then(ok=>{
+    if (!ok){ fileInput.classList.remove('hidden'); }
+  });
+})();
+</script>
+</body>
+</html>
