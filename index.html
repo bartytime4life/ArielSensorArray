@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>SpectraMind V50 — Diagnostics</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin: 2rem; }
+    .thumbs img { max-width: 320px; margin: 0 1rem 1rem 0; border: 1px solid #ddd; border-radius: 8px; }
+    .grid { display: flex; flex-wrap: wrap; gap: 1rem; }
+    a.button { display:inline-block; padding:.6rem 1rem; border-radius:.5rem; background:#0b5fff; color:#fff; text-decoration:none }
+  </style>
+</head>
+<body>
+  <h1>SpectraMind V50 — Diagnostics</h1>
+  <p><a class="button" href="../outputs/diagnostics/v50_report_v1.html">Open Full HTML Dashboard</a></p>
+
+  <h2>Static Thumbnails</h2>
+  <div class="grid thumbs">
+    <div><img src="../outputs/diagnostics/umap.png" alt="UMAP"></div>
+    <div><img src="../outputs/diagnostics/tsne.png" alt="t-SNE"></div>
+    <div><img src="../outputs/diagnostics/shap_overlay.png" alt="SHAP overlay"></div>
+    <div><img src="../outputs/diagnostics/gll_heatmap.png" alt="GLL heatmap"></div>
+    <div><img src="../outputs/diagnostics/fft_residuals.png" alt="FFT residuals"></div>
+    <div><img src="../outputs/diagnostics/symbolic_violations.png" alt="Symbolic violations"></div>
+  </div>
+
+  <h2>Manifests</h2>
+  <ul>
+    <li><a href="../outputs/diagnostics/diagnostic_summary.json">diagnostic_summary.json</a></li>
+    <li><a href="../outputs/diagnostics/manifest.json">manifest.json</a></li>
+  </ul>
+</body>
+</html>
