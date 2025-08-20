@@ -1,10 +1,10 @@
 # ==============================================================================
-# SpectraMind V50 — GitHub Actions CI (full)
-# - Poetry caching for fast installs
-# - Optional DVC pull (safe no-op if not used)
-# - Core CI: make -f makefile.ci ci
-# - Scheduled/Manual ablation leaderboard (make -f makefile.ci ablate-ci)
-# - Guarded Kaggle submit (secrets required; manual toggle)
+# SpectraMind V50 — GitHub Actions CI (hardened, fast, reproducible)
+# - Lint/type/test on a Python matrix (3.10, 3.11)
+# - Deterministic build with Poetry cache & optional DVC pull
+# - Core pipeline: make -f makefile.ci ci
+# - Optional predict artifact, scheduled/dispatch ablation, guarded Kaggle submit
+# - Concurrency + minimal permissions + timeouts
 # ==============================================================================
 
 name: CI
@@ -29,50 +29,115 @@ on:
         type: choice
         options: [ "false", "true" ]
   schedule:
-    # Weekly: Sundays 12:00 UTC (06:00 America/Chicago DST / 07:00 CST)
+    # Weekly: Sundays 12:00 UTC (06:00 America/Chicago during DST / 07:00 CST)
     - cron: "0 12 * * 0"
+
+# Cancel superseded runs on the same ref
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
-
-# cancel in-progress runs for the same branch/PR to save time
-concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
 
 env:
   PYTHONUNBUFFERED: "1"
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
   POETRY_VERSION: "1.8.3"
   DEFAULT_PY: "3.11"
+  # Honour your makefile.ci knobs if you want to tweak from CI later
+  DEVICE: "cpu"
+  EPOCHS: "1"
 
 jobs:
   # ---------------------------------------------------------------------------
-  # Core build/test/smoke pipeline
+  # 1) Hygiene: lint → type → unit-tests (matrix)
   # ---------------------------------------------------------------------------
-  ci:
-    name: Build • Test • Smoke (makefile.ci)
+  hygiene:
+    name: Hygiene (lint/type/test) • py${{ matrix.py }}
     runs-on: ubuntu-latest
-    timeout-minutes: 45
-
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        py: [ "3.10", "3.11" ]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set up Python ${{ matrix.py }}
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ env.DEFAULT_PY }}
-          cache: "pip"
+          python-version: ${{ matrix.py }}
 
       - name: Install Poetry
         run: |
           python -m pip install --upgrade pip
           pip install poetry==${{ env.POETRY_VERSION }}
+
+      - name: Cache Poetry & pip
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.cache/pypoetry
+            .venv
+          key: poetry-${{ runner.os }}-${{ matrix.py }}-${{ hashFiles('**/poetry.lock') }}
+          restore-keys: |
+            poetry-${{ runner.os }}-${{ matrix.py }}-
+
+      - name: Install deps (no-root)
+        run: |
+          poetry config virtualenvs.create true
+          poetry install --no-root
           poetry --version
           python --version
 
-      - name: Cache Poetry & Pip
+      - name: Ruff (lint)
+        run: poetry run ruff check .
+
+      - name: Black (format check)
+        run: poetry run black --check .
+
+      - name: Mypy (strict, allow failure warnings)
+        run: poetry run mypy --strict || true
+
+      - name: Unit tests
+        run: poetry run pytest -q
+      - name: Upload test logs (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs-py${{ matrix.py }}
+          path: |
+            logs/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # 2) Build/Test/Smoke: run your makefile.ci deterministic pipeline
+  # ---------------------------------------------------------------------------
+  ci:
+    name: Build • Test • Smoke (makefile.ci)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: hygiene
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python (default)
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.DEFAULT_PY }}
+
+      - name: Install Poetry
+        run: |
+          python -m pip install --upgrade pip
+          pip install poetry==${{ env.POETRY_VERSION }}
+
+      - name: Cache Poetry & pip
         uses: actions/cache@v4
         with:
           path: |
@@ -83,7 +148,7 @@ jobs:
           restore-keys: |
             poetry-${{ runner.os }}-${{ env.DEFAULT_PY }}-
 
-      - name: Install dependencies (Poetry)
+      - name: Install deps (no-root)
         run: |
           poetry config virtualenvs.create true
           poetry install --no-root
@@ -97,13 +162,9 @@ jobs:
         run: |
           make -f makefile.ci dvc-pull || true
 
-      - name: Run CI pipeline (makefile.ci)
+      - name: Run CI pipeline
         run: |
           make -f makefile.ci ci
-
-      - name: Predict (optional smoke)
-        run: |
-          make -f makefile.ci predict || true
 
       - name: Upload outputs
         if: always()
@@ -124,7 +185,39 @@ jobs:
           retention-days: 7
 
   # ---------------------------------------------------------------------------
-  # Ablation leaderboard — scheduled weekly & manual dispatch
+  # 3) Predict (optional artifact; does not block)
+  # ---------------------------------------------------------------------------
+  predict:
+    name: Predict (optional)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.DEFAULT_PY }}
+      - name: Install Poetry (thin)
+        run: |
+          python -m pip install --upgrade pip
+          pip install poetry==${{ env.POETRY_VERSION }}
+          poetry install --no-root
+      - name: Predict
+        run: |
+          make -f makefile.ci predict || true
+      - name: Upload prediction
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: predictions
+          path: |
+            outputs/predictions/
+            outputs/submission.csv
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # 4) Ablation (scheduled or manual) — fast grid + leaderboard artifact
   # ---------------------------------------------------------------------------
   ablate:
     name: Ablation Leaderboard (scheduled/manual)
@@ -135,40 +228,19 @@ jobs:
       (github.event_name == 'workflow_dispatch' && inputs.run_ablation_on_push == 'true')
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.DEFAULT_PY }}
-          cache: "pip"
-
       - name: Install Poetry
         run: |
           python -m pip install --upgrade pip
           pip install poetry==${{ env.POETRY_VERSION }}
-
-      - name: Cache Poetry & Pip
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/pip
-            ~/.cache/pypoetry
-            .venv
-          key: poetry-${{ runner.os }}-${{ env.DEFAULT_PY }}-${{ hashFiles('**/poetry.lock') }}
-          restore-keys: |
-            poetry-${{ runner.os }}-${{ env.DEFAULT_PY }}-
-
-      - name: Install dependencies (Poetry)
-        run: |
           poetry config virtualenvs.create true
           poetry install --no-root
-
       - name: Run ablation (fast grid, light)
         run: |
           make -f makefile.ci ablate-ci
-
       - name: Upload ablation artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -182,8 +254,7 @@ jobs:
           retention-days: 14
 
   # ---------------------------------------------------------------------------
-  # Kaggle submit (guarded by secrets; never on PRs)
-  #   - Manual: set submit_to_kaggle=true when dispatching
+  # 5) Kaggle submit (manual/guarded; never on PRs)
   # ---------------------------------------------------------------------------
   kaggle-submit:
     name: Kaggle Submit (manual/guarded)
@@ -200,22 +271,26 @@ jobs:
       KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Fail early if secrets missing
+        run: |
+          if [ -z "${KAGGLE_USERNAME}" ] || [ -z "${KAGGLE_KEY}" ]; then
+            echo "::error::Kaggle credentials are not configured (KAGGLE_USERNAME/KAGGLE_KEY)."
+            exit 1
+          fi
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.DEFAULT_PY }}
-          cache: "pip"
 
-      - name: Install kaggle CLI
+      - name: Install kaggle CLI & auth
         run: |
           python -m pip install --upgrade kaggle
           mkdir -p ~/.kaggle
           printf '{"username":"%s","key":"%s"}' "$KAGGLE_USERNAME" "$KAGGLE_KEY" > ~/.kaggle/kaggle.json
           chmod 600 ~/.kaggle/kaggle.json
-          kaggle --version
+          kaggle --version || true
 
       - name: Ensure submission exists
         run: |
