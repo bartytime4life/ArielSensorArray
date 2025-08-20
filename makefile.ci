@@ -1,146 +1,203 @@
-# ==============================================================================
-# SpectraMind V50 — CI/Kaggle Makefile (Deterministic, Non‑Interactive)
-# Use this in GitHub Actions / Kaggle to run a minimal, reproducible pipeline.
-#
-# Stages (default `ci`):
-#   • validate → validate-env (optional) → selftest → train(1 epoch, cpu) → diagnose → analyze
-# Optional helpers:
-#   • predict         — write submission.csv (E2E smoke)
-#   • ablate-ci       — fast grid ablation + post-process (HTML leaderboard)
-#   • dvc-pull/push   — sync DVC artifacts
-# Artifact roots:
-#   • outputs/        — predictions + diagnostics
-#   • logs/           — v50_debug_log.md, etc.
-# ==============================================================================
+==============================================================================
 
-# ========= Shell =========
-SHELL       := /usr/bin/env bash
+SpectraMind V50 — CI/Kaggle Makefile (Deterministic, Non‑Interactive)
+
+Purpose: minimal, reproducible pipeline for CI runners and Kaggle kernels
+
+==============================================================================
+
+========= Shell (strict) =========
+
+SHELL        := /usr/bin/env bash
 .ONESHELL:
-.SHELLFLAGS := -euo pipefail -c
+.SHELLFLAGS  := -euo pipefail -c
 
-# ========= Tooling =========
-PYTHON      ?= python3
-POETRY      ?= poetry
-CLI         ?= $(POETRY) run spectramind
+========= Environment (lean CI) =========
 
-# ========= Paths / artifacts =========
-OUT_DIR     ?= outputs
-LOGS_DIR    ?= logs
-DIAG_DIR    ?= $(OUT_DIR)/diagnostics
-PRED_DIR    ?= $(OUT_DIR)/predictions
-ABLATE_DIR  ?= $(OUT_DIR)/ablate
+export PIP_DISABLE_PIP_VERSION_CHECK := 1
+export PYTHONUNBUFFERED              := 1
+export SPECTRAMIND_CI                := 1
 
-# ========= Fixed knobs for CI =========
-DEVICE      ?= cpu
-EPOCHS      ?= 1
-OVERRIDES   ?=
-EXTRA_ARGS  ?=
+========= Tooling =========
 
-# ========= PHONY =========
-.PHONY: help ci validate validate-env selftest train diagnose analyze analyze-short predict \
-        ablate-ci ablate-post dvc-pull dvc-push clean
+PYTHON       ?= python3
+POETRY       ?= poetry
+CLI          ?= $(POETRY) run spectramind
+
+========= Paths / Artifacts =========
+
+OUT_DIR      ?= outputs
+LOGS_DIR     ?= logs
+DIAG_DIR     ?= $(OUT_DIR)/diagnostics
+PRED_DIR     ?= $(OUT_DIR)/predictions
+ABLATE_DIR   ?= $(OUT_DIR)/ablate
+
+========= Fixed knobs for CI =========
+
+DEVICE       ?= cpu
+EPOCHS       ?= 1
+OVERRIDES    ?=
+EXTRA_ARGS   ?=
+
+========= Kaggle Submit Guard (off by default) =========
+
+Enable with: make kaggle-submit ALLOW_KAGGLE_SUBMIT=1 COMPETITION=neurips-2025-ariel
+
+ALLOW_KAGGLE_SUBMIT ?= 0
+COMPETITION          ?= neurips-2025-ariel
+KAGGLE_CLI           ?= kaggle
+
+========= PHONY =========
+
+.PHONY: help ci 
+validate validate-env selftest selftest-deep versions 
+train diagnose analyze analyze-short predict 
+ablate-ci ablate-post 
+dvc-pull dvc-push 
+kaggle-submit 
+clean
+
+========= Default =========
+
+.DEFAULT_GOAL := help
+
+========= Help =========
 
 help:
-	@echo "make ci            # validate → validate-env → selftest → train → diagnose → analyze"
-	@echo "make predict       # optional end-to-end smoke (writes submission.csv)"
-	@echo "make ablate-ci     # fast grid ablation + auto leaderboard.html"
-	@echo "make dvc-pull/push # optional DVC operations"
-	@echo "make clean         # remove CI artifacts"
+@echo “SpectraMind V50 — CI/Kaggle Makefile”
+@echo “Targets:”
+@echo “  ci                : validate → validate-env → selftest → train → diagnose → analyze-short”
+@echo “  validate          : create dirs and perform quick pre-flight”
+@echo “  validate-env      : run .env schema validator if present”
+@echo “  selftest          : fast integrity checks (CLI/files)”
+@echo “  selftest-deep     : deeper checks (Hydra/DVC/GPU visibility)”
+@echo “  versions          : print tool versions (python/poetry/cli)”
+@echo “  train             : 1-epoch CPU training to $(OUT_DIR)”
+@echo “  diagnose          : smoothness + lightweight dashboard → $(DIAG_DIR)”
+@echo “  analyze           : parse CLI logs to CSV/MD”
+@echo “  analyze-short     : print last 5 CLI calls (generates CSV if missing)”
+@echo “  predict           : write submission.csv → $(PRED_DIR)”
+@echo “  ablate-ci         : fast grid ablation (light profile) + post-process”
+@echo “  dvc-pull|dvc-push : sync DVC artifacts (no-fail)”
+@echo “  kaggle-submit     : guarded Kaggle submission (set ALLOW_KAGGLE_SUBMIT=1)”
+@echo “  clean             : remove CI artifacts (outputs/, diagnostics/, predictions/)”
+@echo “”
+@echo “Vars: DEVICE=$(DEVICE) EPOCHS=$(EPOCHS) OVERRIDES=’$(OVERRIDES)’ EXTRA_ARGS=’$(EXTRA_ARGS)’”
 
-# ---------------------------------------------------------------------------
-# Default CI pipeline
-# ---------------------------------------------------------------------------
-ci: validate validate-env selftest train diagnose analyze
+========= CI Pipeline =========
 
-# Minimal validation (create dirs, quick pre-flight)
+ci: validate validate-env selftest train diagnose analyze-short
+
+========= Validation =========
+
 validate:
-	mkdir -p "$(OUT_DIR)" "$(LOGS_DIR)" "$(DIAG_DIR)" "$(PRED_DIR)" "$(ABLATE_DIR)"
-	@echo ">>> Validation complete (env/init)."
+mkdir -p “$(OUT_DIR)” “$(LOGS_DIR)” “$(DIAG_DIR)” “$(PRED_DIR)” “$(ABLATE_DIR)”
+@echo “>>> Validation complete (dirs ready).”
 
-# .env schema validator (safe no-op if script is missing)
 validate-env:
-	@if [ -x scripts/validate_env.py ] || [ -f scripts/validate_env.py ]; then \
-	  echo ">>> Validating .env against schema"; \
-	  $(PYTHON) scripts/validate_env.py || exit 1; \
-	else \
-	  echo ">>> Skipping validate-env (scripts/validate_env.py not found)"; \
-	fi
+@if [ -x scripts/validate_env.py ] || [ -f scripts/validate_env.py ]; then 
+echo “>>> Validating .env against schema”; 
+$(PYTHON) scripts/validate_env.py || exit 1; 
+else 
+echo “>>> Skipping validate-env (scripts/validate_env.py not found)”; 
+fi
 
-# Fast integrity checks
+========= Versions & Selftest =========
+
+versions:
+@echo “python : $$($(PYTHON) –version 2>&1 || true)”
+@echo “poetry : $$($(POETRY) –version 2>&1 || true)”
+@echo “cli    : $(CLI) –version”
+
 selftest:
-	@echo ">>> Selftest (fast, CI)"
-	$(CLI) selftest --fast
+$(CLI) selftest
 
-# Deterministic short train (CPU)
+selftest-deep:
+$(CLI) selftest –deep
+
+========= Train / Diagnose / Analyze =========
+
 train:
-	@echo ">>> Train (CI deterministic: EPOCHS=$(EPOCHS), DEVICE=$(DEVICE))"
-	$(CLI) train +training.epochs=$(EPOCHS) $(OVERRIDES) --device $(DEVICE) --outdir "$(OUT_DIR)" $(EXTRA_ARGS)
+@echo “>>> Train (CI deterministic: EPOCHS=$(EPOCHS), DEVICE=$(DEVICE))”
+$(CLI) train +training.epochs=$(EPOCHS) $(OVERRIDES) –device $(DEVICE) –outdir “$(OUT_DIR)” $(EXTRA_ARGS)
 
-# Diagnostics: smoothness + dashboard (lightweight first, fall back to full)
 diagnose:
-	@echo ">>> Diagnostics (CI)"
-	$(CLI) diagnose smoothness --outdir "$(DIAG_DIR)" $(EXTRA_ARGS)
-	$(CLI) diagnose dashboard --no-umap --no-tsne --outdir "$(DIAG_DIR)" $(EXTRA_ARGS) || \
-	$(CLI) diagnose dashboard --outdir "$(DIAG_DIR)" $(EXTRA_ARGS) || true
+@echo “>>> Diagnostics (CI lightweight)”
+$(CLI) diagnose smoothness –outdir “$(DIAG_DIR)” $(EXTRA_ARGS)
+$(CLI) diagnose dashboard –no-umap –no-tsne –outdir “$(DIAG_DIR)” $(EXTRA_ARGS) || 
+$(CLI) diagnose dashboard –outdir “$(DIAG_DIR)” $(EXTRA_ARGS) || true
 
-# Analyze CLI log to CSV/MD
 analyze:
-	@echo ">>> Analyze CLI logs (CI)"
-	$(CLI) analyze-log --md "$(OUT_DIR)/log_table.md" --csv "$(OUT_DIR)/log_table.csv"
+@echo “>>> Analyze CLI logs (CI)”
+$(CLI) analyze-log –md “$(OUT_DIR)/log_table.md” –csv “$(OUT_DIR)/log_table.csv”
 
-# Short analyzer (last 5 rows) — useful for job summary logs
 analyze-short:
-	@if [ ! -f "$(OUT_DIR)/log_table.csv" ]; then \
-	  $(CLI) analyze-log --md "$(OUT_DIR)/log_table.md" --csv "$(OUT_DIR)/log_table.csv" $(EXTRA_ARGS); \
-	fi; \
-	if [ -f "$(OUT_DIR)/log_table.csv" ]; then \
-	  echo "=== Last 5 CLI invocations ==="; \
-	  tail -n +2 "$(OUT_DIR)/log_table.csv" | tail -n 5 | \
-	    awk -F',' 'BEGIN{OFS=" | "} {print "time="$${1}, "cmd="$${2}, "git_sha="$${3}, "cfg="$${4}}'; \
-	else \
-	  echo "::warning::No log_table.csv to summarize"; \
-	fi
+@if [ ! -f “$(OUT_DIR)/log_table.csv” ]; then 
+echo “>>> Generating log CSV via analyze-log”; 
+$(CLI) analyze-log –md “$(OUT_DIR)/log_table.md” –csv “$(OUT_DIR)/log_table.csv” $(EXTRA_ARGS); 
+fi; 
+if [ -f “$(OUT_DIR)/log_table.csv” ]; then 
+echo “=== Last 5 CLI invocations ===”; 
+tail -n +2 “$(OUT_DIR)/log_table.csv” | tail -n 5 | 
+awk -F’,’ ‘BEGIN{OFS=” | “} {print “time=”$${1}, “cmd=”$${2}, “git_sha=”$${3}, “cfg=”$${4}}’; 
+else 
+echo “::warning::No log_table.csv to summarize”; 
+fi
 
-# Optional predict stage (kept deterministic)
+========= Predict (optional E2E smoke) =========
+
 predict:
-	@echo ">>> Predict (CI optional)"
-	$(CLI) predict --out-csv "$(PRED_DIR)/submission.csv" $(EXTRA_ARGS)
-	@ls -lh "$(PRED_DIR)" || true
+@echo “>>> Predict (CI optional)”
+$(CLI) predict –out-csv “$(PRED_DIR)/submission.csv” $(EXTRA_ARGS)
+@ls -lh “$(PRED_DIR)” || true
 
-# ---------------------------------------------------------------------------
-# CI ablation (fast grid) + leaderboard HTML (optional; safe no-op if CLI unset)
-# Requires: configs/ablation/ablation.yml (+ v50_fast_grid space), ablation_light profile.
-# ---------------------------------------------------------------------------
+========= Ablation (fast CI grid) =========
+
 ablate-ci:
-	@echo ">>> Ablation (fast grid, light profile)"
-	$(CLI) ablate -m ablate.sweeper=basic +ablate.search=v50_fast_grid ablation=ablation_light $(EXTRA_ARGS) || true
-	$(MAKE) ablate-post || true
+@echo “>>> Ablation (fast grid, light profile)”
+$(CLI) ablate -m ablate.sweeper=basic +ablate.search=v50_fast_grid ablation=ablation_light $(EXTRA_ARGS) || true
+$(MAKE) ablate-post || true
 
-# Post-process ablation CSV → add rank/top_N and write leaderboard.html
 ablate-post:
-	@if [ -f "tools/ablation_post.py" ]; then \
-	  echo ">>> Post-processing ablation leaderboard"; \
-	  $(PYTHON) tools/ablation_post.py \
-	    --csv "$(ABLATE_DIR)/leaderboard.csv" \
-	    --metric gll --ascending \
-	    --top-n 5 --outdir "$(ABLATE_DIR)" \
-	    --html-template tools/leaderboard_template.html || true; \
-	else \
-	  echo ">>> Skipping ablation_post (tools/ablation_post.py not found)"; \
-	fi
+@if [ -f “tools/ablation_post.py” ]; then 
+echo “>>> Post-processing ablation leaderboard”; 
+$(PYTHON) tools/ablation_post.py 
+–csv “$(ABLATE_DIR)/leaderboard.csv” 
+–metric gll –ascending 
+–top-n 5 –outdir “$(ABLATE_DIR)” 
+–html-template tools/leaderboard_template.html || true; 
+else 
+echo “>>> Skipping ablation_post (tools/ablation_post.py not found)”; 
+fi
 
-# ---------------------------------------------------------------------------
-# Optional DVC ops
-# ---------------------------------------------------------------------------
+========= DVC Helpers =========
+
 dvc-pull:
-	dvc pull || true
+dvc pull || true
 
 dvc-push:
-	dvc push || true
+dvc push || true
 
-# ---------------------------------------------------------------------------
-# Cleanup
-# ---------------------------------------------------------------------------
+========= Kaggle Submit (guarded) =========
+
+kaggle-submit:
+@if [ “$(ALLOW_KAGGLE_SUBMIT)” != “1” ]; then 
+echo “::warning::Kaggle submit is disabled. Re-run with ALLOW_KAGGLE_SUBMIT=1 to enable.”; 
+exit 0; 
+fi
+@if ! command -v $(KAGGLE_CLI) >/dev/null 2>&1; then 
+echo “::error::kaggle CLI not found. Install and authenticate before submitting.”; 
+exit 1; 
+fi
+@if [ ! -f “$(PRED_DIR)/submission.csv” ]; then 
+echo “::error::Missing $(PRED_DIR)/submission.csv. Run ‘make predict’ first.”; 
+exit 1; 
+fi
+@echo “>>> Submitting to Kaggle competition ‘$(COMPETITION)’”
+$(KAGGLE_CLI) competitions submit -c “$(COMPETITION)” -f “$(PRED_DIR)/submission.csv” -m “SpectraMind V50 CI submit” || true
+
+========= Cleanup =========
+
 clean:
-	rm -rf "$(OUT_DIR)" "$(DIAG_DIR)" "$(PRED_DIR)"
-	rm -rf .pytest_cache .ruff_cache .mypy_cache
+rm -rf “$(OUT_DIR)” “$(DIAG_DIR)” “$(PRED_DIR)”
+rm -rf .pytest_cache .ruff_cache .mypy_cache || tru
