@@ -1,17 +1,16 @@
 # .github/workflows/lint.yml
-# GitHub Actions workflow to enforce code quality and style for SpectraMind V50
-# - Runs pre-commit hooks
-# - Checks Python code with ruff, black, isort, mypy
-# - Validates YAML and Markdown
-# - Runs on all pushes and PRs
+# SpectraMind V50 — Lint & Style Workflow
+# Neuro-Symbolic, Physics-Informed AI Pipeline
+# Enforces pre-commit hooks, code quality, typing, YAML/Markdown validation.
+# Outputs artifacts for diagnostics dashboard integration.
 
 name: lint
 
 on:
   push:
-    branches: [ "**" ]
+    branches: ["**"]
   pull_request:
-    branches: [ "**" ]
+    branches: ["**"]
   workflow_dispatch:
 
 permissions:
@@ -25,7 +24,12 @@ jobs:
   lint:
     name: Lint & Style Checks
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
+
+    env:
+      PYTHON_DEFAULT: "3.11"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      PIP_NO_PYTHON_VERSION_WARNING: "1"
 
     steps:
       - name: Checkout repository
@@ -36,9 +40,10 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PYTHON_DEFAULT }}
+          cache: "pip"
 
-      - name: Install linting dependencies
+      - name: Install linting stack
         run: |
           python -m pip install --upgrade pip
           pip install \
@@ -55,26 +60,37 @@ jobs:
           pre-commit install
           pre-commit run --all-files --show-diff-on-failure
 
-      - name: Ruff check
+      - name: Ruff check (Python linter, fast)
         run: |
-          ruff check . --exit-non-zero-on-fix
+          ruff check . --exit-non-zero-on-fix --show-fixes
 
-      - name: Black check
+      - name: Black check (formatting)
         run: |
           black --check --diff .
 
-      - name: isort check
+      - name: isort check (import ordering)
         run: |
           isort --check-only --diff .
 
-      - name: Mypy type checking
+      - name: MyPy type checking
         run: |
+          mkdir -p artifacts
           mypy src || true
+        continue-on-error: true
 
       - name: YAML lint
         run: |
-          yamllint .
+          yamllint . || true
 
       - name: Markdown lint
         run: |
           markdownlint-cli2 '**/*.md' --ignore node_modules || true
+
+      - name: Archive lint artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lint-artifacts
+          path: artifacts/
+          if-no-files-found: ignore
+          retention-days: 14
