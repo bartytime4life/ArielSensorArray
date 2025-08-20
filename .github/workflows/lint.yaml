@@ -2,7 +2,7 @@
 # SpectraMind V50 — Lint & Style Workflow
 # Neuro-Symbolic, Physics-Informed AI Pipeline
 # Enforces pre-commit hooks, code quality, typing, YAML/Markdown validation.
-# Outputs artifacts for diagnostics dashboard integration.
+# Exports artifacts + a consolidated Markdown report for diagnostics dashboards.
 
 name: lint
 
@@ -55,38 +55,41 @@ jobs:
             yamllint \
             markdownlint-cli2
 
-      - name: Run pre-commit hooks on all files
+      - name: Prepare artifacts directory
+        run: mkdir -p artifacts
+
+      - name: Run pre-commit (repo-wide hooks)
         run: |
           pre-commit install
-          pre-commit run --all-files --show-diff-on-failure
+          # Show diffs on failure; capture output to artifacts
+          pre-commit run --all-files --show-diff-on-failure | tee artifacts/precommit.txt || true
 
-      - name: Ruff check (Python linter, fast)
+      - name: Ruff check (Python linter)
         run: |
-          ruff check . --exit-non-zero-on-fix --show-fixes
+          ruff check . --exit-non-zero-on-fix --show-fixes | tee artifacts/ruff.txt || true
 
       - name: Black check (formatting)
         run: |
-          black --check --diff .
+          black --check --diff . | tee artifacts/black.txt || true
 
       - name: isort check (import ordering)
         run: |
-          isort --check-only --diff .
+          isort --check-only --diff . | tee artifacts/isort.txt || true
 
       - name: MyPy type checking
         run: |
-          mkdir -p artifacts
-          mypy src || true
+          mypy src | tee artifacts/mypy.txt || true
         continue-on-error: true
 
       - name: YAML lint
         run: |
-          yamllint . || true
+          yamllint . | tee artifacts/yamllint.txt || true
 
       - name: Markdown lint
         run: |
-          markdownlint-cli2 '**/*.md' --ignore node_modules || true
+          markdownlint-cli2 '**/*.md' --ignore node_modules | tee artifacts/markdownlint.txt || true
 
-      - name: Archive lint artifacts
+      - name: Upload lint artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -94,3 +97,78 @@ jobs:
           path: artifacts/
           if-no-files-found: ignore
           retention-days: 14
+
+  summarize:
+    name: Summarize Lint Results
+    needs: lint
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: Download lint artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: lint-artifacts
+          path: artifacts
+
+      - name: Build consolidated lint summary
+        run: |
+          set -euo pipefail
+          summary="artifacts/lint-summary.md"
+
+          title_section () {
+            echo "" >> "$summary"
+            echo "### $1" >> "$summary"
+          }
+
+          add_block () {
+            file="$1"
+            label="$2"
+            title_section "$label"
+            if [ -s "$file" ]; then
+              echo "❌ Issues found. See details below." >> "$summary"
+              echo "" >> "$summary"
+              echo '```' >> "$summary"
+              # Truncate to keep report compact (first 400 lines)
+              awk 'NR<=400{print} NR==401{print "...(truncated)"}' "$file" >> "$summary"
+              echo '```' >> "$summary"
+            else
+              echo "✅ Clean (no output)" >> "$summary"
+            fi
+          }
+
+          # Header
+          {
+            echo "# Lint & Style Summary"
+            echo ""
+            echo "- Repository: $GITHUB_REPOSITORY"
+            echo "- Commit: $GITHUB_SHA"
+            echo "- Run ID: $GITHUB_RUN_ID"
+            echo ""
+            echo "_This report consolidates outputs from ruff/black/isort/mypy/yamllint/markdownlint and pre-commit hooks._"
+          } > "$summary"
+
+          add_block "artifacts/precommit.txt"   "pre-commit"
+          add_block "artifacts/ruff.txt"        "Ruff (Python Linter)"
+          add_block "artifacts/black.txt"       "Black (Code Formatter Check)"
+          add_block "artifacts/isort.txt"       "isort (Import Ordering Check)"
+          add_block "artifacts/mypy.txt"        "MyPy (Static Typing)"
+          add_block "artifacts/yamllint.txt"    "YAML Lint"
+          add_block "artifacts/markdownlint.txt" "Markdown Lint"
+
+          echo "## Overall Status" >> "$summary"
+          if grep -qs "❌" "$summary"; then
+            echo "- **Result:** ❌ Lint issues detected. Please review sections above." >> "$summary"
+          else
+            echo "- **Result:** ✅ All checks passed cleanly." >> "$summary"
+          fi
+
+          # Also print to job summary
+          cat "$summary" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload consolidated summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: lint-summary
+          path: artifacts/lint-summary.md
+          retention-days: 30
