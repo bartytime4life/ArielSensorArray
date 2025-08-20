@@ -2,10 +2,15 @@
 # SpectraMind V50 — CI/Kaggle Makefile (Deterministic, Non‑Interactive)
 # Use this in GitHub Actions / Kaggle to run a minimal, reproducible pipeline.
 #
-# Pipeline stages:
-#   • validate → selftest → train(1 epoch, cpu) → diagnose → analyze
-#   • (optional) validate-env, predict
-#   • artifacts end up under outputs/ and logs/
+# Stages (default `ci`):
+#   • validate → validate-env (optional) → selftest → train(1 epoch, cpu) → diagnose → analyze
+# Optional helpers:
+#   • predict         — write submission.csv (E2E smoke)
+#   • ablate-ci       — fast grid ablation + post-process (HTML leaderboard)
+#   • dvc-pull/push   — sync DVC artifacts
+# Artifact roots:
+#   • outputs/        — predictions + diagnostics
+#   • logs/           — v50_debug_log.md, etc.
 # ==============================================================================
 
 # ========= Shell =========
@@ -23,6 +28,7 @@ OUT_DIR     ?= outputs
 LOGS_DIR    ?= logs
 DIAG_DIR    ?= $(OUT_DIR)/diagnostics
 PRED_DIR    ?= $(OUT_DIR)/predictions
+ABLATE_DIR  ?= $(OUT_DIR)/ablate
 
 # ========= Fixed knobs for CI =========
 DEVICE      ?= cpu
@@ -31,23 +37,27 @@ OVERRIDES   ?=
 EXTRA_ARGS  ?=
 
 # ========= PHONY =========
-.PHONY: help ci validate validate-env selftest train diagnose analyze predict dvc-pull dvc-push clean
+.PHONY: help ci validate validate-env selftest train diagnose analyze analyze-short predict \
+        ablate-ci ablate-post dvc-pull dvc-push clean
 
 help:
-	@echo "make ci            # validate → selftest → train → diagnose → analyze"
-	@echo "make predict       # optional: write submission.csv"
-	@echo "make dvc-pull/push # sync DVC artifacts"
-	@echo "make clean         # cleanup CI artifacts"
+	@echo "make ci            # validate → validate-env → selftest → train → diagnose → analyze"
+	@echo "make predict       # optional end-to-end smoke (writes submission.csv)"
+	@echo "make ablate-ci     # fast grid ablation + auto leaderboard.html"
+	@echo "make dvc-pull/push # optional DVC operations"
+	@echo "make clean         # remove CI artifacts"
 
-# Default target
+# ---------------------------------------------------------------------------
+# Default CI pipeline
+# ---------------------------------------------------------------------------
 ci: validate validate-env selftest train diagnose analyze
 
-# Minimal validation (init dirs; add other quick checks here)
+# Minimal validation (create dirs, quick pre-flight)
 validate:
-	mkdir -p "$(OUT_DIR)" "$(LOGS_DIR)" "$(DIAG_DIR)" "$(PRED_DIR)"
+	mkdir -p "$(OUT_DIR)" "$(LOGS_DIR)" "$(DIAG_DIR)" "$(PRED_DIR)" "$(ABLATE_DIR)"
 	@echo ">>> Validation complete (env/init)."
 
-# Optional .env schema validator (safe no-op if missing)
+# .env schema validator (safe no-op if script is missing)
 validate-env:
 	@if [ -x scripts/validate_env.py ] || [ -f scripts/validate_env.py ]; then \
 	  echo ">>> Validating .env against schema"; \
@@ -56,38 +66,81 @@ validate-env:
 	  echo ">>> Skipping validate-env (scripts/validate_env.py not found)"; \
 	fi
 
+# Fast integrity checks
 selftest:
 	@echo ">>> Selftest (fast, CI)"
 	$(CLI) selftest --fast
 
+# Deterministic short train (CPU)
 train:
 	@echo ">>> Train (CI deterministic: EPOCHS=$(EPOCHS), DEVICE=$(DEVICE))"
 	$(CLI) train +training.epochs=$(EPOCHS) $(OVERRIDES) --device $(DEVICE) --outdir "$(OUT_DIR)" $(EXTRA_ARGS)
 
+# Diagnostics: smoothness + dashboard (lightweight first, fall back to full)
 diagnose:
 	@echo ">>> Diagnostics (CI)"
 	$(CLI) diagnose smoothness --outdir "$(DIAG_DIR)" $(EXTRA_ARGS)
-	# try a lightweight dashboard first, then full if needed
 	$(CLI) diagnose dashboard --no-umap --no-tsne --outdir "$(DIAG_DIR)" $(EXTRA_ARGS) || \
 	$(CLI) diagnose dashboard --outdir "$(DIAG_DIR)" $(EXTRA_ARGS) || true
 
+# Analyze CLI log to CSV/MD
 analyze:
 	@echo ">>> Analyze CLI logs (CI)"
 	$(CLI) analyze-log --md "$(OUT_DIR)/log_table.md" --csv "$(OUT_DIR)/log_table.csv"
 
-# Optional: ensure E2E path produces a submission artifact (kept deterministic)
+# Short analyzer (last 5 rows) — useful for job summary logs
+analyze-short:
+	@if [ ! -f "$(OUT_DIR)/log_table.csv" ]; then \
+	  $(CLI) analyze-log --md "$(OUT_DIR)/log_table.md" --csv "$(OUT_DIR)/log_table.csv" $(EXTRA_ARGS); \
+	fi; \
+	if [ -f "$(OUT_DIR)/log_table.csv" ]; then \
+	  echo "=== Last 5 CLI invocations ==="; \
+	  tail -n +2 "$(OUT_DIR)/log_table.csv" | tail -n 5 | \
+	    awk -F',' 'BEGIN{OFS=" | "} {print "time="$${1}, "cmd="$${2}, "git_sha="$${3}, "cfg="$${4}}'; \
+	else \
+	  echo "::warning::No log_table.csv to summarize"; \
+	fi
+
+# Optional predict stage (kept deterministic)
 predict:
 	@echo ">>> Predict (CI optional)"
 	$(CLI) predict --out-csv "$(PRED_DIR)/submission.csv" $(EXTRA_ARGS)
 	@ls -lh "$(PRED_DIR)" || true
 
-# Optional DVC pulls in CI
+# ---------------------------------------------------------------------------
+# CI ablation (fast grid) + leaderboard HTML (optional; safe no-op if CLI unset)
+# Requires: configs/ablation/ablation.yml (+ v50_fast_grid space), ablation_light profile.
+# ---------------------------------------------------------------------------
+ablate-ci:
+	@echo ">>> Ablation (fast grid, light profile)"
+	$(CLI) ablate -m ablate.sweeper=basic +ablate.search=v50_fast_grid ablation=ablation_light $(EXTRA_ARGS) || true
+	$(MAKE) ablate-post || true
+
+# Post-process ablation CSV → add rank/top_N and write leaderboard.html
+ablate-post:
+	@if [ -f "tools/ablation_post.py" ]; then \
+	  echo ">>> Post-processing ablation leaderboard"; \
+	  $(PYTHON) tools/ablation_post.py \
+	    --csv "$(ABLATE_DIR)/leaderboard.csv" \
+	    --metric gll --ascending \
+	    --top-n 5 --outdir "$(ABLATE_DIR)" \
+	    --html-template tools/leaderboard_template.html || true; \
+	else \
+	  echo ">>> Skipping ablation_post (tools/ablation_post.py not found)"; \
+	fi
+
+# ---------------------------------------------------------------------------
+# Optional DVC ops
+# ---------------------------------------------------------------------------
 dvc-pull:
 	dvc pull || true
 
 dvc-push:
 	dvc push || true
 
+# ---------------------------------------------------------------------------
+# Cleanup
+# ---------------------------------------------------------------------------
 clean:
 	rm -rf "$(OUT_DIR)" "$(DIAG_DIR)" "$(PRED_DIR)"
 	rm -rf .pytest_cache .ruff_cache .mypy_cache
