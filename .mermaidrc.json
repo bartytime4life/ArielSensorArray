@@ -1,0 +1,12 @@
+{
+  "theme": "default",
+  "fontFamily": "Inter, Roboto, Segoe UI, Helvetica Neue, Arial, sans-serif",
+  "flowchart": {
+    "diagramPadding": 10,
+    "htmlLabels": true,
+    "useMaxWidth": true,
+    "curve": "basis"
+  },
+  "sequence": { "mirrorActors": false },
+  "er": { "useMaxWidth": true }
+}
