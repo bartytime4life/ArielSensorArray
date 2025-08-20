@@ -29,11 +29,16 @@ on:
         type: choice
         options: [ "false", "true" ]
   schedule:
-    # Weekly: Sundays 12:00 UTC (06:00 America/Chicago in DST / 07:00 CST)
+    # Weekly: Sundays 12:00 UTC (06:00 America/Chicago DST / 07:00 CST)
     - cron: "0 12 * * 0"
 
 permissions:
   contents: read
+
+# cancel in-progress runs for the same branch/PR to save time
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   PYTHONUNBUFFERED: "1"
@@ -58,13 +63,16 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.DEFAULT_PY }}
+          cache: "pip"
 
       - name: Install Poetry
         run: |
           python -m pip install --upgrade pip
           pip install poetry==${{ env.POETRY_VERSION }}
+          poetry --version
+          python --version
 
-      - name: Cache Poetry
+      - name: Cache Poetry & Pip
         uses: actions/cache@v4
         with:
           path: |
@@ -75,12 +83,10 @@ jobs:
           restore-keys: |
             poetry-${{ runner.os }}-${{ env.DEFAULT_PY }}-
 
-      - name: Install dependencies
+      - name: Install dependencies (Poetry)
         run: |
           poetry config virtualenvs.create true
           poetry install --no-root
-          poetry --version
-          python --version
 
       - name: Setup DVC (optional)
         run: |
@@ -95,7 +101,7 @@ jobs:
         run: |
           make -f makefile.ci ci
 
-      - name: Predict (optional)
+      - name: Predict (optional smoke)
         run: |
           make -f makefile.ci predict || true
 
@@ -119,7 +125,6 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # Ablation leaderboard — scheduled weekly & manual dispatch
-  #   - Also supports opt-in on dispatch via input run_ablation_on_push=true
   # ---------------------------------------------------------------------------
   ablate:
     name: Ablation Leaderboard (scheduled/manual)
@@ -137,13 +142,14 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.DEFAULT_PY }}
+          cache: "pip"
 
       - name: Install Poetry
         run: |
           python -m pip install --upgrade pip
           pip install poetry==${{ env.POETRY_VERSION }}
 
-      - name: Cache Poetry
+      - name: Cache Poetry & Pip
         uses: actions/cache@v4
         with:
           path: |
@@ -154,7 +160,7 @@ jobs:
           restore-keys: |
             poetry-${{ runner.os }}-${{ env.DEFAULT_PY }}-
 
-      - name: Install dependencies
+      - name: Install dependencies (Poetry)
         run: |
           poetry config virtualenvs.create true
           poetry install --no-root
@@ -178,7 +184,6 @@ jobs:
   # ---------------------------------------------------------------------------
   # Kaggle submit (guarded by secrets; never on PRs)
   #   - Manual: set submit_to_kaggle=true when dispatching
-  #   - You can add an 'on push to main' branch rule if desired
   # ---------------------------------------------------------------------------
   kaggle-submit:
     name: Kaggle Submit (manual/guarded)
@@ -202,6 +207,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.DEFAULT_PY }}
+          cache: "pip"
 
       - name: Install kaggle CLI
         run: |
@@ -209,6 +215,7 @@ jobs:
           mkdir -p ~/.kaggle
           printf '{"username":"%s","key":"%s"}' "$KAGGLE_USERNAME" "$KAGGLE_KEY" > ~/.kaggle/kaggle.json
           chmod 600 ~/.kaggle/kaggle.json
+          kaggle --version
 
       - name: Ensure submission exists
         run: |
