@@ -9,6 +9,23 @@ default_language_version:
   python: python3.11
 
 repos:
+  # ── EditorConfig enforcement ─────────────────────────────────────────────────
+  - repo: https://github.com/editorconfig-checker/editorconfig-checker.python
+    rev: 3.3.0
+    hooks:
+      - id: editorconfig-checker
+        name: editorconfig-checker
+        alias: ec
+        args: [--config=.editorconfig]
+        exclude: |
+          (?x)^(
+            outputs/|
+            logs/|
+            .dvc/|
+            .*\.ipynb_checkpoints/|
+            .*\.log$
+          )
+
   # ── Python lint/format ──────────────────────────────────────────────────────
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.6.9
@@ -21,13 +38,14 @@ repos:
     rev: 24.8.0
     hooks:
       - id: black
-        args: ["--line-length=100"]
+        # Change to 100 if you want wider lines
+        args: ["--line-length=88"]
 
   - repo: https://github.com/pycqa/isort
     rev: 5.13.2
     hooks:
       - id: isort
-        args: ["--profile", "black", "--line-length=100"]
+        args: ["--profile", "black", "--line-length=88"]
 
   # Upgrade Python syntax to current targets (safe fixes, complements Ruff)
   - repo: https://github.com/asottile/pyupgrade
@@ -55,15 +73,15 @@ repos:
       - id: nbqa-ruff
         args: [--fix]
       - id: nbqa-black
-        args: ["--line-length=100"]
+        args: ["--line-length=88"]
       - id: nbqa-isort
-        args: ["--profile", "black", "--line-length=100"]
-      # Optional: mypy on notebooks (comment in if notebooks use types)
+        args: ["--profile", "black", "--line-length=88"]
+      # Optional: mypy on notebooks (enable if notebooks use types)
       # - id: nbqa-mypy
       #   args: [--strict, --ignore-missing-imports]
 
   - repo: https://github.com/kynan/nbstripout
-    rev: 0.6.1
+    rev: 0.7.1
     hooks:
       - id: nbstripout
         name: strip-notebook-outputs
@@ -90,6 +108,7 @@ repos:
       - id: name-tests-test
         args: ["--pytest"]       # nudge test naming
       - id: trailing-whitespace
+        exclude: \.md$           # keep Markdown spacing when needed
 
   # Spell-check identifiers & docs (keeps false positives low)
   - repo: https://github.com/codespell-project/codespell
@@ -144,7 +163,6 @@ repos:
     hooks:
       - id: pip-audit
         args: ["--require-hashes=false", "--progress-spinner=off"]
-        # Note: runs against the resolver view of your env; use in CI for lockfiles, too.
 
   # Grep-based safety/sanity checks (eval, blanket except, etc.)
   - repo: https://github.com/pre-commit/pygrep-hooks
@@ -153,6 +171,21 @@ repos:
       - id: python-no-eval
       - id: python-no-log-warn
       - id: python-use-type-annotations
+
+  # ── Infrastructure linters (Dockerfiles & GitHub Actions) ───────────────────
+  - repo: https://github.com/hadolint/hadolint
+    rev: v2.12.0
+    hooks:
+      - id: hadolint
+        name: hadolint (Dockerfile linter)
+        files: (?i)^(Dockerfile|.*Dockerfile.*)$
+
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.3
+    hooks:
+      - id: actionlint
+        name: actionlint (GitHub Actions linter)
+        files: ^\.github/workflows/.*\.ya?ml$
 
 ci:
   autofix_prs: true
