@@ -26,9 +26,3 @@ typing-extensions==4.12.2
 mypy-extensions==1.0.0
 types-PyYAML==6.0.12.20240808
 types-requests==2.32.0.20240712
-
-# Optional security / lock tools (uncomment in CI if desired)
-# pip-audit==2.7.3
-# safety==3.2.6
-# pip-tools==7.4.1
-# nox==2024.4.15
