@@ -1,0 +1,11 @@
+{
+  "name": "spectramind-v50-mermaid-export",
+  "private": true,
+  "devDependencies": {
+    "@mermaid-js/mermaid-cli": "^10.9.0"
+  },
+  "scripts": {
+    "mmd:render": "node ./node_modules/.bin/mmdc",
+    "mmd:version": "node ./node_modules/.bin/mmdc -V"
+  }
+}
