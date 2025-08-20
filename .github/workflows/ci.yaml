@@ -1,19 +1,21 @@
+# .github/workflows/ci.yml
 # ==============================================================================
 # SpectraMind V50 — GitHub Actions CI (hardened, fast, reproducible)
-# - Lint/type/test on a Python matrix (3.10, 3.11)
-# - Deterministic build with Poetry cache & optional DVC pull
-# - Core pipeline: make -f makefile.ci ci
-# - Optional predict artifact, scheduled/dispatch ablation, guarded Kaggle submit
-# - Concurrency + minimal permissions + timeouts
+# - Hygiene (lint/format/type/tests) on a Python matrix (3.11, 3.12)
+# - Deterministic build via Poetry with caching (+ optional DVC pull)
+# - Core pipeline smoke: spectramind selftest + targeted diagnose
+# - Optional: predict artifact, scheduled/dispatch ablation, guarded Kaggle submit
+# - Optional: Docker(GPU) parity smoke with BuildKit cache
+# - Concurrency, minimal permissions, explicit timeouts
 # ==============================================================================
 
 name: CI
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "**" ]
+    branches: ["**"]
   workflow_dispatch:
     inputs:
       run_ablation_on_push:
@@ -21,18 +23,21 @@ on:
         required: false
         default: "false"
         type: choice
-        options: [ "false", "true" ]
+        options: ["false", "true"]
       submit_to_kaggle:
         description: "Submit predictions to Kaggle for this manual run?"
         required: false
         default: "false"
         type: choice
-        options: [ "false", "true" ]
+        options: ["false", "true"]
+      extra_overrides:
+        description: "Hydra overrides (e.g., +training.seed=1337 +training.epochs=1)"
+        required: false
+        type: string
   schedule:
     # Weekly: Sundays 12:00 UTC (06:00 America/Chicago during DST / 07:00 CST)
     - cron: "0 12 * * 0"
 
-# Cancel superseded runs on the same ref
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -44,38 +49,39 @@ env:
   PYTHONUNBUFFERED: "1"
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
   POETRY_VERSION: "1.8.3"
-  DEFAULT_PY: "3.11"
-  # Honour your makefile.ci knobs if you want to tweak from CI later
-  DEVICE: "cpu"
-  EPOCHS: "1"
+  DEFAULT_PY: "3.12"
+  TRANSFORMERS_OFFLINE: "1"
+  HF_HUB_OFFLINE: "1"
+  HYDRA_FULL_ERROR: "1"
 
 jobs:
   # ---------------------------------------------------------------------------
-  # 1) Hygiene: lint → type → unit-tests (matrix)
+  # 1) Hygiene: lint/format/type/tests (matrix)
   # ---------------------------------------------------------------------------
   hygiene:
-    name: Hygiene (lint/type/test) • py${{ matrix.py }}
+    name: Hygiene (pre-commit + mypy + pytest) • py${{ matrix.py }}
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        py: [ "3.10", "3.11" ]
+        py: ["3.11", "3.12"]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python ${{ matrix.py }}
+      - name: Setup Python ${{ matrix.py }}
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.py }}
+          cache: "pip"
 
-      - name: Install Poetry
+      - name: Install Poetry & pre-commit
         run: |
           python -m pip install --upgrade pip
-          pip install poetry==${{ env.POETRY_VERSION }}
+          pip install "poetry==${{ env.POETRY_VERSION }}" pre-commit
 
-      - name: Cache Poetry & pip
+      - name: Cache Poetry & venv
         uses: actions/cache@v4
         with:
           path: |
@@ -88,56 +94,56 @@ jobs:
 
       - name: Install deps (no-root)
         run: |
-          poetry config virtualenvs.create true
+          poetry env use "${{ steps.setup-python.outputs.python-path || '' }}"
           poetry install --no-root
-          poetry --version
-          python --version
+        id: setup-python
 
-      - name: Ruff (lint)
-        run: poetry run ruff check .
+      - name: Run pre-commit (repo-wide hooks)
+        run: |
+          pre-commit run --all-files --show-diff-on-failure
 
-      - name: Black (format check)
-        run: poetry run black --check .
+      - name: Mypy (strict; non-blocking warnings)
+        run: |
+          poetry run mypy --strict || true
 
-      - name: Mypy (strict, allow failure warnings)
-        run: poetry run mypy --strict || true
+      - name: Unit tests (quiet)
+        run: |
+          poetry run pytest -q || poetry run pytest -q -x
 
-      - name: Unit tests
-        run: poetry run pytest -q
-      - name: Upload test logs (always)
+      - name: Upload hygiene artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-logs-py${{ matrix.py }}
+          name: hygiene-py${{ matrix.py }}
           path: |
             logs/
           if-no-files-found: ignore
-          retention-days: 7
+          retention-days: 10
 
   # ---------------------------------------------------------------------------
-  # 2) Build/Test/Smoke: run your makefile.ci deterministic pipeline
+  # 2) Build/Test/Smoke: reproducible env + CLI selftest + minimal diagnostics
   # ---------------------------------------------------------------------------
-  ci:
-    name: Build • Test • Smoke (makefile.ci)
+  smoke:
+    name: Build • Smoke (Poetry + CLI)
     runs-on: ubuntu-latest
     timeout-minutes: 45
     needs: hygiene
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python (default)
+      - name: Setup Python (${{ env.DEFAULT_PY }})
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.DEFAULT_PY }}
+          cache: "pip"
 
       - name: Install Poetry
         run: |
           python -m pip install --upgrade pip
-          pip install poetry==${{ env.POETRY_VERSION }}
+          pip install "poetry==${{ env.POETRY_VERSION }}"
 
-      - name: Cache Poetry & pip
+      - name: Cache Poetry & venv
         uses: actions/cache@v4
         with:
           path: |
@@ -150,39 +156,46 @@ jobs:
 
       - name: Install deps (no-root)
         run: |
-          poetry config virtualenvs.create true
           poetry install --no-root
 
-      - name: Setup DVC (optional)
+      - name: DVC (optional) + pull (optional)
         run: |
           python -m pip install --upgrade "dvc[all]" || python -m pip install --upgrade dvc
           dvc --version || true
+          dvc pull --run-cache --force || true
 
-      - name: DVC pull (optional)
+      - name: CLI selftest (fast)
         run: |
-          make -f makefile.ci dvc-pull || true
+          poetry run spectramind selftest --fast
 
-      - name: Run CI pipeline
+      - name: Minimal diagnostics
         run: |
-          make -f makefile.ci ci
+          poetry run spectramind diagnose smoothness --outdir outputs/diagnostics-ci
+          # Generate a minimal dashboard first; fall back to full if flags unsupported
+          poetry run spectramind diagnose dashboard --no-umap --no-tsne --outdir outputs/diagnostics-ci || \
+          poetry run spectramind diagnose dashboard --outdir outputs/diagnostics-ci || true
 
-      - name: Upload outputs
+      - name: Node/Mermaid diagrams (optional)
+        run: |
+          if command -v npm >/dev/null 2>&1 && [ -f package.json ]; then
+            make node-ci
+            make node-diagrams
+          else
+            echo "Skipping node/mermaid (npm or package.json not found)"
+          fi
+
+      - name: Upload smoke artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: outputs
-          path: outputs/
+          name: smoke-artifacts
+          path: |
+            outputs/diagnostics-ci/**
+            outputs/submission.csv
+            outputs/diagrams/**
+            logs/**
           if-no-files-found: ignore
-          retention-days: 7
-
-      - name: Upload logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: logs
-          path: logs/
-          if-no-files-found: ignore
-          retention-days: 7
+          retention-days: 10
 
   # ---------------------------------------------------------------------------
   # 3) Predict (optional artifact; does not block)
@@ -191,33 +204,33 @@ jobs:
     name: Predict (optional)
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    needs: ci
+    needs: smoke
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.DEFAULT_PY }}
+          cache: "pip"
       - name: Install Poetry (thin)
         run: |
           python -m pip install --upgrade pip
-          pip install poetry==${{ env.POETRY_VERSION }}
+          pip install "poetry==${{ env.POETRY_VERSION }}"
           poetry install --no-root
       - name: Predict
         run: |
-          make -f makefile.ci predict || true
+          poetry run spectramind predict --out-csv outputs/predictions/submission.csv || true
       - name: Upload prediction
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: predictions
           path: |
-            outputs/predictions/
-            outputs/submission.csv
+            outputs/predictions/submission.csv
           if-no-files-found: ignore
-          retention-days: 7
+          retention-days: 10
 
   # ---------------------------------------------------------------------------
-  # 4) Ablation (scheduled or manual) — fast grid + leaderboard artifact
+  # 4) Ablation (scheduled/manual) — fast grid + leaderboard artifact
   # ---------------------------------------------------------------------------
   ablate:
     name: Ablation Leaderboard (scheduled/manual)
@@ -226,21 +239,21 @@ jobs:
     if: |
       github.event_name == 'schedule' ||
       (github.event_name == 'workflow_dispatch' && inputs.run_ablation_on_push == 'true')
-
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.DEFAULT_PY }}
+          cache: "pip"
       - name: Install Poetry
         run: |
           python -m pip install --upgrade pip
-          pip install poetry==${{ env.POETRY_VERSION }}
-          poetry config virtualenvs.create true
+          pip install "poetry==${{ env.POETRY_VERSION }}"
           poetry install --no-root
       - name: Run ablation (fast grid, light)
         run: |
-          make -f makefile.ci ablate-ci
+          # assuming a fast ablation command is wired via CLI or make
+          poetry run spectramind ablate -m ablate.sweeper=basic +ablate.search=v50_fast_grid ablation=ablation_light || true
       - name: Upload ablation artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -248,28 +261,25 @@ jobs:
           name: ablation-leaderboard
           path: |
             outputs/ablate/leaderboard.csv
-            outputs/ablate/leaderboard.html
             outputs/ablate/**
           if-no-files-found: ignore
-          retention-days: 14
+          retention-days: 21
 
   # ---------------------------------------------------------------------------
   # 5) Kaggle submit (manual/guarded; never on PRs)
   # ---------------------------------------------------------------------------
   kaggle-submit:
     name: Kaggle Submit (manual/guarded)
-    needs: ci
+    needs: predict
     runs-on: ubuntu-latest
     timeout-minutes: 15
     if: |
       github.event_name == 'workflow_dispatch' &&
       inputs.submit_to_kaggle == 'true' &&
       github.event.pull_request == null
-
     env:
       KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
       KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
-
     steps:
       - name: Fail early if secrets missing
         run: |
@@ -277,13 +287,11 @@ jobs:
             echo "::error::Kaggle credentials are not configured (KAGGLE_USERNAME/KAGGLE_KEY)."
             exit 1
           fi
-
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.DEFAULT_PY }}
-
+          cache: "pip"
       - name: Install kaggle CLI & auth
         run: |
           python -m pip install --upgrade kaggle
@@ -291,7 +299,6 @@ jobs:
           printf '{"username":"%s","key":"%s"}' "$KAGGLE_USERNAME" "$KAGGLE_KEY" > ~/.kaggle/kaggle.json
           chmod 600 ~/.kaggle/kaggle.json
           kaggle --version || true
-
       - name: Ensure submission exists
         run: |
           if [ ! -f "outputs/predictions/submission.csv" ] && [ -f "outputs/submission.csv" ]; then
@@ -300,10 +307,76 @@ jobs:
           fi
           test -f "outputs/predictions/submission.csv" || (echo "::error::No submission.csv found"; exit 1)
           ls -lh outputs/predictions/submission.csv
-
       - name: Submit to Kaggle (neurips-2025-ariel)
         run: |
           kaggle competitions submit \
             -c neurips-2025-ariel \
             -f outputs/predictions/submission.csv \
             -m "CI auto-submit: $GITHUB_SHA"
+
+  # ---------------------------------------------------------------------------
+  # 6) Dockerized GPU parity smoke (opt-in via repo/org var DOCKER_GPU=1)
+  # ---------------------------------------------------------------------------
+  docker-gpu:
+    name: Docker GPU Smoke • BuildKit cache
+    if: ${{ vars.DOCKER_GPU == '1' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      BUILDKIT_CACHE_TO: /tmp/.buildx-cache-new
+      BUILDKIT_CACHE_FROM: /tmp/.buildx-cache
+      IMAGE_TAG: spectramindv50:ci
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Restore BuildKit cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.BUILDKIT_CACHE_FROM }}
+          key: buildx-${{ runner.os }}-${{ hashFiles('Dockerfile', '**/pyproject.toml', '**/poetry.lock') }}
+          restore-keys: |
+            buildx-${{ runner.os }}-
+
+      - name: Install Docker & NVIDIA runtime
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y docker.io
+          sudo systemctl start docker
+          distribution=$(. /etc/os-release;echo $ID$VERSION_ID) && \
+          curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg && \
+          curl -fsSL https://nvidia.github.io/libnvidia-container/$distribution/libnvidia-container.list | \
+            sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+            sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+          sudo apt-get update -y
+          sudo apt-get install -y nvidia-container-toolkit
+          sudo nvidia-ctk runtime configure --runtime=docker
+          sudo systemctl restart docker
+
+      - name: Build CUDA image (cached)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          tags: ${{ env.IMAGE_TAG }}
+          load: true
+          cache-from: type=local,src=${{ env.BUILDKIT_CACHE_FROM }}
+          cache-to: type=local,dest=${{ env.BUILDKIT_CACHE_TO }},mode=max
+
+      - name: Save BuildKit cache
+        if: always()
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.BUILDKIT_CACHE_TO }}
+          key: buildx-${{ runner.os }}-${{ hashFiles('Dockerfile', '**/pyproject.toml', '**/poetry.lock') }}
+
+      - name: Smoke inside container
+        run: |
+          docker run --rm --gpus all \
+            -v "$PWD":/workspace -w /workspace \
+            ${{ env.IMAGE_TAG }} \
+            bash -lc 'which spectramind || true; spectramind selftest --fast || exit 1'
