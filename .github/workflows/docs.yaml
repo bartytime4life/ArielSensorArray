@@ -1,18 +1,19 @@
 # .github/workflows/docs.yml
-# GitHub Actions workflow for building and deploying SpectraMind V50 documentation
-# - Uses MkDocs with Material theme
-# - Publishes to GitHub Pages
-# - Runs on pushes to main and on PRs for validation
-# - Ensures links and syntax are valid
+# ==============================================================================
+# SpectraMind V50 — Docs (MkDocs Material) • build, validate, and deploy to Pages
+# - Fast & reproducible: pip cache, pinned Python
+# - Validates build (--strict), checks links (lychee), optional Mermaid diagrams
+# - Deploys to GitHub Pages on main; PRs build + validate only
+# ==============================================================================
 
 name: docs
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
-  workflow_dispatch:
+    branches: ["**"]
+  workflow_dispatch: {}
 
 permissions:
   contents: read
@@ -25,65 +26,116 @@ concurrency:
 
 jobs:
   build:
-    name: Build Documentation
+    name: Build & Validate Docs
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
+    env:
+      PYTHONUNBUFFERED: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      PY: "3.12"
+      SITE_DIR: "site"
+
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Setup Python ${{ env.PY }}
+        id: setup-python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PY }}
+          cache: "pip"
 
       - name: Install MkDocs & plugins
         run: |
           python -m pip install --upgrade pip
-          pip install \
-            mkdocs \
-            mkdocs-material \
-            mkdocs-awesome-pages-plugin \
-            mkdocs-git-revision-date-localized-plugin \
-            mkdocs-section-index \
-            mkdocs-glightbox \
-            mkdocs-mermaid2-plugin \
-            mkdocs-minify-plugin \
-            mkdocs-redirects \
-            mkdocs-include-markdown-plugin \
-            linkchecker
-
-      - name: Build site
-        run: |
-          if [ -f mkdocs.yml ]; then
-            mkdocs build --strict --site-dir site
+          if [ -f requirements-docs.txt ]; then
+            pip install -r requirements-docs.txt
           else
-            echo "mkdocs.yml not found — skipping docs build." && exit 1
+            pip install \
+              mkdocs \
+              mkdocs-material \
+              mkdocs-awesome-pages-plugin \
+              mkdocs-git-revision-date-localized-plugin \
+              mkdocs-section-index \
+              mkdocs-glightbox \
+              mkdocs-mermaid2-plugin \
+              mkdocs-minify-plugin \
+              mkdocs-redirects \
+              mkdocs-include-markdown-plugin
           fi
 
-      - name: Link check
+      - name: Optional Mermaid diagrams (npm)
         run: |
-          linkchecker --ignore-url "https://fonts.gstatic.com" site/index.html || true
+          if command -v npm >/dev/null 2>&1 && [ -f package.json ]; then
+            echo ">>> Rendering Mermaid diagrams via npm"
+            make node-ci || true
+            make node-diagrams || true
+          else
+            echo "Skipping node/mermaid (npm or package.json not found)"
+          fi
 
-      - name: Upload Pages artifact
+      - name: Build site (strict)
+        run: |
+          if [ ! -f mkdocs.yml ]; then
+            echo "::error::mkdocs.yml not found at repo root."
+            exit 1
+          fi
+          mkdocs build --strict --site-dir "${SITE_DIR}"
+
+      - name: Link check (lychee)
+        id: lychee
+        uses: lycheeverse/lychee-action@v1
+        with:
+          # Check built site + Markdown sources (fast skip known noisy hosts)
+          args: >-
+            --accept 200,206,429
+            --max-cache-age 1d
+            --exclude "https://fonts.gstatic.com"
+            --exclude "https://fonts.googleapis.com"
+            --exclude "mailto:*"
+            --exclude "tel:*"
+            --verbose
+            "${{ env.SITE_DIR }}/**/*.html"
+            docs/**/*.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+
+      - name: Summarize
+        run: |
+          echo "MkDocs site built to: $SITE_DIR"
+          echo "Lychee status: ${{ steps.lychee.outcome }}"
+          echo "Tip: Review lychee reports in the job logs for any transient 429s."
+
+      - name: Upload Pages artifact (only main)
         if: github.ref == 'refs/heads/main'
         uses: actions/upload-pages-artifact@v3
         with:
-          path: site
+          path: ${{ env.SITE_DIR }}
+
+      - name: Upload site artifact (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: docs-site
+          path: ${{ env.SITE_DIR }}
+          if-no-files-found: warn
+          retention-days: 14
 
   deploy:
-    name: Deploy Documentation
+    name: Deploy to GitHub Pages
     needs: build
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
-    permissions:
-      pages: write
-      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      pages: write
+      id-token: write
     steps:
-      - name: Deploy to GitHub Pages
+      - name: Deploy
         id: deployment
         uses: actions/deploy-pages@v4
