@@ -1,29 +1,51 @@
 # ==============================================================================
+# configs/ablation/ablation_v50.yaml
 # SpectraMind V50 — Ablation Config (Hydra-safe, Full-spectrum)
-# Neuro-Symbolic, Physics-Informed AI Pipeline
-# NeurIPS 2025 Ariel Data Challenge
+# Neuro‑Symbolic, Physics‑Informed AI Pipeline — NeurIPS 2025 Ariel Data Challenge
 #
 # Purpose:
-#   Defines structured ablation toggles for curriculum, loss weights,
-#   uncertainty calibration, symbolic rules, runtime diagnostics, and exports.
-#   Used by auto_ablate_v50.py and cli_ablate.py.
+#   Structured ablation toggles for curriculum, losses, uncertainty calibration,
+#   symbolic rules, runtime diagnostics, exports, and sweep grids.
+#   Used by: auto_ablate_v50.py, cli_ablate.py, spectramind ablate
 #
 # Usage:
 #   poetry run spectramind ablate ablation=default
 #   poetry run spectramind ablate ablation=light --multirun
+#   poetry run spectramind ablate ablation=grid --multirun +grid.enable=true
 # ==============================================================================
 
+# -------------------------
+# Compose from project groups
+# -------------------------
 defaults:
+  - model: v50                    # configs/model/v50.yaml
+  - data: nominal                 # configs/data/nominal.yaml
+  - training: default             # configs/training/default.yaml
+  - optimizer: adamw              # configs/optimizer/adamw.yaml
+  - logger: default               # configs/logging/default.yaml
   - override hydra/job_logging: colorlog
   - override hydra/hydra_logging: colorlog
   - _self_
 
 # -------------------------
-# Global Reproducibility
+# Global Reproducibility & Environment
 # -------------------------
-seed: 1337
-deterministic: true
-num_workers: 4
+repro:
+  seed: 1337
+  deterministic: true
+  cudnn_benchmark: false
+  num_workers: 4
+  numpy_seed_offset: 100
+  torch_seed_offset: 200
+  # Git/Env fingerprints (captured to logs/manifests)
+  git_commit: ${env:GITHUB_SHA,${env:CI_COMMIT_SHA,unknown}}
+  git_branch: ${env:GITHUB_REF_NAME,unknown}
+  build_ts: ${now:%Y-%m-%d_%H-%M-%S}
+  run_host: ${env:RUNNER_NAME,${env:HOSTNAME,local}}
+  # Cache & DVC toggles
+  cache_enabled: true
+  dvc_pull_inputs: false
+  dvc_push_outputs: false
 
 # -------------------------
 # Curriculum Toggles
@@ -33,12 +55,23 @@ curriculum:
   contrastive: true               # Contrastive fine-tuning
   gll_finetune: true              # Gaussian log-likelihood final phase
   symbolic_finetune: true         # Symbolic rule integration
+  # Phase scheduling (epochs in each phase if enabled)
+  schedule:
+    mae_epochs: 2
+    contrastive_epochs: 1
+    gll_epochs: 2
+    symbolic_epochs: 1
 
 masking:
   random: true
   block: false
   molecule_aware: true
   snr_aware: true
+  # Additional controls for MAE dataset
+  ratio: 0.3
+  block_size_bins: 12
+  dual_view: true
+  temporal_dropout_p: 0.1
 
 # -------------------------
 # Loss Weights (per-task)
@@ -51,6 +84,9 @@ loss:
   photonic_alignment: 0.3
   symbolic: 0.5
   entropy_reg: 0.1
+  # Training-time guards
+  clip_grad_norm: 1.0
+  label_smoothing: 0.0
 
 # -------------------------
 # Uncertainty Calibration
@@ -61,6 +97,19 @@ uncertainty:
   quantile: false
   conformal_prediction: true
   per_bin_eval: true
+  # COREL / calibration detail
+  corel_cfg:
+    enable_edge_features: true
+    use_positional_encoding: true
+    coverage_target: 0.9
+    max_epochs: 3
+  temperature_cfg:
+    shared_T: true
+    per_bin_T: false
+  conformal_cfg:
+    method: jackknife_plus
+    alpha: 0.1
+    group_by_molecule: true
 
 # -------------------------
 # Symbolic Ablations
@@ -73,21 +122,52 @@ symbolic:
   violation_weight: 1.0
   normalize_losses: true
   trace_outputs: true
+  # Rule sets / profiles (switch via +symbolic.profile=name)
+  profile: default
+  profiles:
+    default:
+      weights:
+        nonnegativity: 1.0
+        fft_smoothness: 0.5
+        asymmetry: 0.4
+        photonic_alignment: 0.8
+    strict:
+      weights:
+        nonnegativity: 1.2
+        fft_smoothness: 0.8
+        asymmetry: 0.6
+        photonic_alignment: 1.0
+    relaxed:
+      weights:
+        nonnegativity: 0.6
+        fft_smoothness: 0.3
+        asymmetry: 0.2
+        photonic_alignment: 0.5
 
 # -------------------------
 # Runtime & Training
 # -------------------------
 runtime:
   device: auto                   # cpu | cuda | mps | auto
-  epochs: 3
+  epochs: 3                      # total epochs (across phases if unified loop)
   batch_size: 16
   mixed_precision: true
+  grad_accum_steps: 1
   checkpoint_interval: 1
   log_interval: 50
   max_runtime_hours: 9
+  save_best_only: true
+  early_stop:
+    enabled: true
+    metric: valid/gll
+    mode: min
+    patience: 3
+  ckpt:
+    dir: outputs/checkpoints
+    keep_last: 3
 
 # -------------------------
-# Diagnostics Hooks
+# Diagnostics Hooks (Dashboard/Exports)
 # -------------------------
 diagnostics:
   enable_umap: true
@@ -99,6 +179,10 @@ diagnostics:
   zscore_hist: true
   export_json: true
   export_png: true
+  # Extra artifacts
+  include_cli_map: true
+  include_run_manifest: true
+  include_config_dump: true
 
 # -------------------------
 # Export / Leaderboard
@@ -110,13 +194,143 @@ export:
   leaderboard_top_n: 5
   open_browser: false
   outdir: outputs/ablations
+  manifest: true
+  include_logs: true
+  include_config_yaml: true
+  include_html_dashboard: true
+  # Kaggle/CI friendly bundle toggles
+  kaggle_bundle:
+    enabled: true
+    compress_level: 6
 
 # -------------------------
-# Hydra Overrides (sweeps)
+# Profiles (pre-baked ablations)
+# -------------------------
+ablation:
+  name: default
+  # Named presets (select with `ablation=<key>`)
+  presets:
+    default:
+      curriculum:
+        mae_pretrain: true
+        contrastive: true
+        gll_finetune: true
+        symbolic_finetune: true
+      loss:
+        fft_smoothness: 0.2
+        photonic_alignment: 0.3
+        symbolic: 0.5
+      uncertainty:
+        temperature_scaling: true
+        corel: true
+        conformal_prediction: true
+      runtime:
+        epochs: 3
+        batch_size: 16
+
+    light:
+      curriculum:
+        mae_pretrain: false
+        contrastive: true
+        gll_finetune: true
+        symbolic_finetune: false
+      loss:
+        fft_smoothness: 0.1
+        photonic_alignment: 0.2
+        symbolic: 0.2
+      uncertainty:
+        temperature_scaling: true
+        corel: false
+        conformal_prediction: false
+      runtime:
+        epochs: 2
+        batch_size: 32
+
+    strict_symbolic:
+      curriculum:
+        mae_pretrain: true
+        contrastive: true
+        gll_finetune: true
+        symbolic_finetune: true
+      loss:
+        fft_smoothness: 0.6
+        photonic_alignment: 0.8
+        symbolic: 0.9
+      uncertainty:
+        temperature_scaling: true
+        corel: true
+        conformal_prediction: true
+      runtime:
+        epochs: 4
+        batch_size: 12
+      symbolic:
+        violation_weight: 1.2
+        normalize_losses: true
+        trace_outputs: true
+        profile: strict
+
+# -------------------------
+# Multirun Grid (Hydra basic sweeper) — opt-in via grid.enable=true
+# -------------------------
+grid:
+  enable: false
+  # Axis definitions: when --multirun +grid.enable=true hydra sweeps across cartesian product
+  axes:
+    curriculum.mae_pretrain: [true, false]
+    curriculum.contrastive: [true]
+    curriculum.symbolic_finetune: [true, false]
+    masking.molecule_aware: [true, false]
+    loss.fft_smoothness: [0.1, 0.2, 0.4]
+    loss.photonic_alignment: [0.2, 0.3, 0.6]
+    symbolic.profile: [default, strict, relaxed]
+    uncertainty.temperature_scaling: [true, false]
+    uncertainty.corel: [true, false]
+    runtime.batch_size: [12, 16, 24]
+
+# -------------------------
+# Guardrails / Runtime Safety
+# -------------------------
+guards:
+  enforce_kaggle_timebox: true
+  kill_on_oom: true
+  min_vram_gb_for_cuda: 6
+  fail_if_no_cuda_when_requested: true
+  assert_bins: 283
+  assert_runtime_lt_hours: ${runtime.max_runtime_hours}
+
+# -------------------------
+# Paths & Manifests
+# -------------------------
+paths:
+  outputs_root: outputs
+  diagnostics_dir: ${export.outdir}/diagnostics
+  html_report: ${export.outdir}/report.html
+  run_manifest: ${export.outdir}/run_manifest.json
+  config_dump: ${export.outdir}/config_v50_dump.yaml
+  cli_map_json: ${export.outdir}/cli_map.json
+
+# -------------------------
+# Hydra Overrides (sweeps, logging dirs)
 # -------------------------
 hydra:
+  run:
+    dir: outputs/singlerun/${now:%Y-%m-%d_%H-%M-%S}
   sweep:
     dir: outputs/multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
     subdir: ${hydra.job.num}
-  run:
-    dir: outputs/singlerun/${now:%Y-%m-%d_%H-%M-%S}
+  # Basic sweeper picks up `+grid.enable=true` and expands `grid.axes` below.
+  # If you have hydra-optuna installed, you can swap to that sweeper in a higher-level config.
+  sweeper:
+    params: |
+      ${oc.select: grid.enable,false}==true
+      ${oc.dict.keys: grid.axes}
+  job:
+    chdir: true
+
+# -------------------------
+# Notes (inline documentation for CLI helpers)
+# -------------------------
+__notes__:
+  - "Select preset: `poetry run spectramind ablate ablation=light` or `... ablation=strict_symbolic`"
+  - "Enable grid sweep: `poetry run spectramind ablate ablation=grid --multirun +grid.enable=true`"
+  - "All artifacts & manifests written to ${export.outdir}; single/multirun folders controlled by hydra.run/sweep."
