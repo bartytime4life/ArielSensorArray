@@ -1,4 +1,4 @@
-name: lint
+name: Lint & Static Analysis
 
 on:
   push:
@@ -7,35 +7,37 @@ on:
       - "data/**"
       - "outputs/**"
       - "logs/**"
-      - "**/*.ipynb_checkpoints/**"
+      - "**/.ipynb_checkpoints/**"
   pull_request:
     branches: ["**"]
     paths-ignore:
       - "data/**"
       - "outputs/**"
       - "logs/**"
-      - "**/*.ipynb_checkpoints/**"
+      - "**/.ipynb_checkpoints/**"
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# prevent piling up jobs on the same ref
 concurrency:
   group: lint-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   lint:
-    name: Lint & Style (pre-commit)
+    name: pre-commit (ruff/black/isort/mypy/nbqa/yamllint/prettier/etc.)
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
 
     env:
       PYTHONDONTWRITEBYTECODE: "1"
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
       PIP_NO_PYTHON_VERSION_WARNING: "1"
-      # keep output readable in CI
       PRE_COMMIT_COLOR: "always"
+      # many tools honor NO_COLOR; allow users to disable color in logs if they wish
+      NO_COLOR: ${{ vars.NO_COLOR || '' }}
 
     steps:
       - name: Checkout
@@ -44,21 +46,31 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Python
+        id: setup-python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
           cache: "pip"
 
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('**/pyproject.toml', '**/poetry.lock', '**/requirements*.txt') }}
+          restore-keys: |
+            pip-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-
+            pip-${{ runner.os }}-
+
       - name: Cache pre-commit env
-        id: cache-precommit
         uses: actions/cache@v4
         with:
           path: ~/.cache/pre-commit
-          key: precommit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+          key: precommit-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('.pre-commit-config.yaml') }}
           restore-keys: |
+            precommit-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-
             precommit-${{ runner.os }}-
 
-      - name: Install pre-commit
+      - name: Install pre-commit (and minimal extras for hooks)
         run: |
           python -m pip install --upgrade pip
           pip install pre-commit
@@ -66,44 +78,65 @@ jobs:
       - name: Prepare artifacts dir
         run: mkdir -p artifacts
 
-      - name: Run pre-commit (all hooks)
-        # Run once, capture logs for summary & artifacts; don't fail the job yet
+      # First pass: allow autofixes; do not fail the job on this pass
+      - name: pre-commit (autofix pass)
         run: |
           set -o pipefail
           pre-commit install
-          pre-commit run --all-files --show-diff-on-failure | tee artifacts/precommit.txt || echo "::warning::pre-commit found issues"
-      
-      - name: Rerun to fail on remaining issues
-        # Second run ensures the job fails if issues remain (idempotent hooks may fix on first pass)
-        run: |
-          pre-commit run --all-files --show-diff-on-failure
+          pre-commit run --all-files --show-diff-on-failure | tee artifacts/precommit.txt || echo "::warning::pre-commit found fixable issues"
 
-      - name: Build lint summary
+      # Second pass: enforce clean state (fail if anything remains)
+      - name: pre-commit (enforce clean)
+        run: pre-commit run --all-files --show-diff-on-failure
+
+      # Optional quick signal jobs (leave non-blocking); useful when some hooks are optional in pre-commit
+      - name: Ruff (summary)
+        if: always()
+        run: |
+          python -m pip install ruff || true
+          ruff --version | tee -a artifacts/ruff.txt || true
+          ruff check . --exit-non-zero-on-fix --show-fixes | tee -a artifacts/ruff.txt || true
+
+      - name: MyPy (summary)
+        if: always()
+        run: |
+          python -m pip install mypy || true
+          mypy --version | tee artifacts/mypy.txt || true
+          mypy --pretty --show-error-codes src || true
+
+      - name: Build CI summary
         if: always()
         run: |
           SUMMARY="artifacts/lint-summary.md"
-          echo "# Lint & Style Summary" > "$SUMMARY"
-          echo "" >> "$SUMMARY"
-          echo "- Repo: $GITHUB_REPOSITORY" >> "$SUMMARY"
-          echo "- Commit: $GITHUB_SHA" >> "$SUMMARY"
-          echo "- Run ID: $GITHUB_RUN_ID" >> "$SUMMARY"
-          echo "" >> "$SUMMARY"
-          echo "### pre-commit (consolidated output)" >> "$SUMMARY"
-          if [ -s artifacts/precommit.txt ]; then
-            echo "" >> "$SUMMARY"
-            echo '```' >> "$SUMMARY"
-            awk 'NR<=400{print} NR==401{print "...(truncated)"}' artifacts/precommit.txt >> "$SUMMARY"
-            echo '```' >> "$SUMMARY"
-          else
-            echo "✅ Clean (no output)" >> "$SUMMARY"
-          fi
-          echo "" >> "$SUMMARY"
-          echo "## Overall Status" >> "$SUMMARY"
-          if grep -qsE "Failed|^fail|❌|error|failing" artifacts/precommit.txt; then
-            echo "- **Result:** ❌ Lint issues detected. See details above." >> "$SUMMARY"
-          else
-            echo "- **Result:** ✅ All checks passed." >> "$SUMMARY"
-          fi
+          {
+            echo "# Lint & Static Analysis Summary"
+            echo
+            echo "- Repo: $GITHUB_REPOSITORY"
+            echo "- Commit: $GITHUB_SHA"
+            echo "- Run ID: $GITHUB_RUN_ID"
+            echo
+            echo "## pre-commit (truncated output)"
+            echo '```'
+            awk 'NR<=400{print} NR==401{print "...(truncated)"}' artifacts/precommit.txt 2>/dev/null || echo "No output"
+            echo '```'
+            echo
+            echo "## Ruff (optional signal)"
+            echo '```'
+            awk 'NR<=200{print} NR==201{print "...(truncated)"}' artifacts/ruff.txt 2>/dev/null || echo "No output"
+            echo '```'
+            echo
+            echo "## MyPy (optional signal)"
+            echo '```'
+            awk 'NR<=200{print} NR==201{print "...(truncated)"}' artifacts/mypy.txt 2>/dev/null || echo "No output"
+            echo '```'
+            echo
+            echo "## Overall Status"
+            if grep -qsE "(Failed|^fail|❌|error|failing)" artifacts/precommit.txt 2>/dev/null; then
+              echo "- **Result:** ❌ Issues detected by pre-commit. See artifacts."
+            else
+              echo "- **Result:** ✅ All pre-commit hooks passed."
+            fi
+          } > "$SUMMARY"
           cat "$SUMMARY" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload artifacts
