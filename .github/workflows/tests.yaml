@@ -1,5 +1,12 @@
 # .github/workflows/tests.yml
+# ==============================================================================
 # SpectraMind V50 — CI: Lint ✦ Unit ✦ E2E ✦ Coverage ✦ Docker(GPU) Smoke (+ BuildKit cache)
+# - Pre-commit lint with cache
+# - Unit tests across Python 3.10/3.11/3.12 with coverage + JUnit
+# - Fast CLI self-test and tiny diagnostics
+# - Optional Dockerized GPU smoke (opt-in via repo/org variable DOCKER_GPU=1)
+# - Codecov upload if token present
+# ==============================================================================
 
 name: tests
 
@@ -25,6 +32,7 @@ env:
   HF_HOME: ${{ github.workspace }}/.cache/huggingface
   TRANSFORMERS_OFFLINE: "1"
   MPLBACKEND: "Agg"
+  SOURCE_DATE_EPOCH: ${{ github.event.repository.pushed_at || 1704067200 }}
 
 jobs:
   # ---------- Lint quick pass (delegates to pre-commit) ----------
@@ -40,7 +48,8 @@ jobs:
           python-version: "3.12"
           cache: "pip"
 
-      - uses: actions/cache@v4
+      - name: Cache pre-commit envs
+        uses: actions/cache@v4
         with:
           path: ~/.cache/pre-commit
           key: precommit-${{ runner.os }}-3.12-${{ hashFiles('.pre-commit-config.yaml') }}
@@ -48,9 +57,9 @@ jobs:
             precommit-${{ runner.os }}-3.12-
             precommit-${{ runner.os }}-
 
-      - run: |
-          python -m pip install --upgrade pip
-          pip install pre-commit
+      - name: Run pre-commit
+        run: |
+          python -m pip install --upgrade pip pre-commit
           if [ -f ".pre-commit-config.yaml" ]; then
             pre-commit run --all-files --show-diff-on-failure
           else
@@ -79,26 +88,31 @@ jobs:
           python-version: ${{ matrix.python }}
           cache: "pip"
 
-      - run: |
-          python -m pip install --upgrade pip
-          pip install "poetry==1.8.3"
+      - name: Install Poetry via pipx (isolated)
+        uses: pipxproject/pipx-action@v1
+        with:
+          python_version: ${{ matrix.python }}
+          pipx_args: "install poetry==1.8.3"
 
-      - uses: actions/cache@v4
+      - name: Cache Poetry & virtualenv
+        uses: actions/cache@v4
         with:
           path: |
             .venv
+            ~/.cache/pip
             ~/.cache/pypoetry
-          key: unit-poetry-${{ runner.os }}-${{ matrix.python }}-${{ hashFiles('poetry.lock') }}
+          key: unit-poetry-${{ runner.os }}-${{ matrix.python }}-${{ hashFiles('**/poetry.lock') }}
           restore-keys: |
             unit-poetry-${{ runner.os }}-${{ matrix.python }}-
 
-      - run: |
+      - name: Install dependencies (dev)
+        run: |
           poetry env use "${{ steps.setup-py.outputs.python-path }}"
-          poetry install --no-interaction
+          poetry install --no-interaction --with dev
 
-      - run: |
+      - name: Run unit tests with coverage
+        run: |
           mkdir -p artifacts
-          poetry run pip install pytest pytest-cov
           if [ ! -d "tests" ]; then
             echo "::error::No tests/ directory found. Please add unit tests."
             exit 1
@@ -135,24 +149,30 @@ jobs:
           python-version: "3.12"
           cache: "pip"
 
-      - run: |
-          python -m pip install --upgrade pip
-          pip install "poetry==1.8.3"
+      - name: Install Poetry via pipx (isolated)
+        uses: pipxproject/pipx-action@v1
+        with:
+          python_version: "3.12"
+          pipx_args: "install poetry==1.8.3"
 
-      - uses: actions/cache@v4
+      - name: Cache Poetry & virtualenv
+        uses: actions/cache@v4
         with:
           path: |
             .venv
+            ~/.cache/pip
             ~/.cache/pypoetry
-          key: e2e-poetry-${{ runner.os }}-3.12-${{ hashFiles('poetry.lock') }}
+          key: e2e-poetry-${{ runner.os }}-3.12-${{ hashFiles('**/poetry.lock') }}
           restore-keys: |
             e2e-poetry-${{ runner.os }}-3.12-
 
-      - run: |
+      - name: Install (main + dev tools used by CLI)
+        run: |
           poetry env use "${{ steps.setup-py.outputs.python-path }}"
-          poetry install --no-interaction
+          poetry install --no-interaction --with dev
 
-      - run: |
+      - name: Prepare caches (DVC optional) + HF cache dir
+        run: |
           if command -v dvc >/dev/null 2>&1 && [ -f "dvc.yaml" ]; then
             dvc pull --run-cache --force || true
           fi
@@ -161,9 +181,10 @@ jobs:
       - name: Fast self-test
         run: |
           mkdir -p artifacts
-          poetry run spectramind selftest --fast || (echo "::error::CLI self-test failed"; exit 1)
+          # Use canonical subcommand name per repo standard:
+          poetry run spectramind test --fast || (echo "::error::CLI self-test failed"; exit 1)
 
-      - name: Tiny diagnostics
+      - name: Tiny diagnostics (no UMAP/TSNE for speed)
         run: |
           poetry run spectramind diagnose dashboard --no-umap --no-tsne --no-open --outdir outputs/diagnostics-ci || true
           poetry run spectramind analyze-log --out outputs/diagnostics-ci/log_table.md || true
@@ -177,7 +198,7 @@ jobs:
             tar -czf artifacts/diagnostics-ci.tar.gz outputs/diagnostics-ci || true
           fi
           if [ -d outputs/singlerun ]; then
-            latest=$(ls -1dt outputs/singlerun/* | head -n 1 || true)
+            latest=$(ls -1dt outputs/singlerun/* 2>/dev/null | head -n 1 || true)
             if [ -n "$latest" ]; then
               tar -czf artifacts/hydra-singlerun-latest.tar.gz "$latest" || true
             fi
@@ -200,14 +221,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     env:
-      # local cache paths (persist between runs via actions/cache)
       BUILDKIT_CACHE_TO: /tmp/.buildx-cache-new
       BUILDKIT_CACHE_FROM: /tmp/.buildx-cache
       IMAGE_TAG: spectramindv50:ci
     steps:
       - uses: actions/checkout@v4
 
-      # Buildx + cache priming
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -236,7 +255,7 @@ jobs:
           sudo systemctl restart docker
 
       - name: Build CUDA image (cached)
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
@@ -244,9 +263,6 @@ jobs:
           load: true
           cache-from: type=local,src=${{ env.BUILDKIT_CACHE_FROM }}
           cache-to: type=local,dest=${{ env.BUILDKIT_CACHE_TO }},mode=max
-          # Build args can be passed if your Dockerfile accepts them, e.g.:
-          # build-args: |
-          #   POETRY_VERSION=1.8.3
 
       - name: Save BuildKit cache
         if: always()
@@ -260,7 +276,7 @@ jobs:
           docker run --rm --gpus all \
             -v "$PWD":/workspace -w /workspace \
             ${{ env.IMAGE_TAG }} \
-            bash -lc "which spectramind || true; spectramind selftest --fast || exit 1"
+            bash -lc "which spectramind || true; spectramind test --fast || exit 1"
 
   # ---------- Coverage combine / Codecov ----------
   summarize:
@@ -273,12 +289,15 @@ jobs:
         with:
           pattern: unit-py*
           merge-multiple: true
+          path: artifacts
 
-      - run: |
-          echo "Coverage XML files:"
+      - name: List coverage files
+        run: |
+          echo "Coverage XML files in artifacts/:"
           ls -1 artifacts/coverage-*.xml || true
 
-      - if: ${{ secrets.CODECOV_TOKEN != '' }}
+      - name: Upload to Codecov (if token set)
+        if: ${{ secrets.CODECOV_TOKEN != '' }}
         uses: codecov/codecov-action@v4
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
