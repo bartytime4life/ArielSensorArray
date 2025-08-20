@@ -21,7 +21,7 @@ repos:
           (?x)^(
             outputs/|
             logs/|
-            .dvc/|
+            \.dvc/|
             .*\.ipynb_checkpoints/|
             .*\.log$
           )
@@ -38,7 +38,6 @@ repos:
     rev: 24.8.0
     hooks:
       - id: black
-        # Change to 100 if you want wider lines
         args: ["--line-length=88"]
 
   - repo: https://github.com/pycqa/isort
@@ -93,20 +92,26 @@ repos:
     hooks:
       - id: check-added-large-files
         args: ["--maxkb=5120"]   # 5 MB cap; adjust for your repo
-        exclude: ^(data/|outputs/|docs/assets/|.dvc/)
+        exclude: ^(data/|outputs/|docs/assets/|\.dvc/)
       - id: check-ast
       - id: check-builtin-literals
       - id: check-case-conflict
       - id: check-executables-have-shebangs
       - id: check-json
       - id: check-merge-conflict
+      - id: check-symlinks
       - id: check-toml
       - id: check-xml
       - id: check-yaml
       - id: debug-statements
       - id: end-of-file-fixer
+      - id: mixed-line-ending
+        args: ["--fix=lf"]
       - id: name-tests-test
-        args: ["--pytest"]       # nudge test naming
+        args: ["--pytest"]
+      - id: pretty-format-json
+        args: ["--autofix", "--no-ensure-ascii", "--no-sort-keys"]
+        files: "\\.json$"
       - id: trailing-whitespace
         exclude: \.md$           # keep Markdown spacing when needed
 
@@ -116,7 +121,7 @@ repos:
     hooks:
       - id: codespell
         args:
-          - --ignore-words-list=nd,teh,ot,fo   # extend as needed
+          - --ignore-words-list=nd,teh,ot,fo
           - --skip="*.lock,*.svg,*.ipynb,docs/_build/*,data/*,outputs/*"
         exclude: ^(data/|outputs/|docs/assets/)
 
@@ -178,7 +183,7 @@ repos:
     hooks:
       - id: hadolint
         name: hadolint (Dockerfile linter)
-        files: (?i)^(Dockerfile|.*Dockerfile.*)$
+        files: ^(Dockerfile|.*[Dd]ockerfile.*)$
 
   - repo: https://github.com/rhysd/actionlint
     rev: v1.7.3
@@ -186,6 +191,17 @@ repos:
       - id: actionlint
         name: actionlint (GitHub Actions linter)
         files: ^\.github/workflows/.*\.ya?ml$
+
+  # ── Local hooks (repo-managed) ──────────────────────────────────────────────
+  - repo: local
+    hooks:
+      - id: check-large-files-lfs
+        name: Prevent committing large files without Git LFS (>50 MB)
+        entry: bash scripts/pre_commit_check_lfs.sh
+        language: system
+        pass_filenames: true
+        types_or: [file, binary]
+        stages: [commit]
 
 ci:
   autofix_prs: true
