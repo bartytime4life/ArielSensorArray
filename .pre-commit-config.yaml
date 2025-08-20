@@ -1,34 +1,177 @@
+# .pre-commit-config.yaml
+# SpectraMind V50 — pre-commit suite (code quality, security, notebooks, docs)
+# Run locally:  pre-commit install && pre-commit run --all-files
+# CI tip:       pre-commit run --all-files (as a separate step)
+
+minimum_pre_commit_version: "3.5.0"
+
+default_language_version:
+  python: python3.11
+
 repos:
+  # ── Python lint/format ──────────────────────────────────────────────────────
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.6.9
     hooks:
       - id: ruff
-        args: [--fix]
+        args: [--fix, --exit-non-zero-on-fix]
       - id: ruff-format
 
   - repo: https://github.com/psf/black
     rev: 24.8.0
     hooks:
       - id: black
+        args: ["--line-length=100"]
 
   - repo: https://github.com/pycqa/isort
     rev: 5.13.2
     hooks:
       - id: isort
-        args: ["--profile", "black"]
+        args: ["--profile", "black", "--line-length=100"]
 
+  # Upgrade Python syntax to current targets (safe fixes, complements Ruff)
+  - repo: https://github.com/asottile/pyupgrade
+    rev: v3.15.1
+    hooks:
+      - id: pyupgrade
+        args: ["--py310-plus"]
+
+  # ── Type checking (fast fail for obvious issues) ────────────────────────────
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.10.0
+    hooks:
+      - id: mypy
+        args:
+          - --strict
+          - --ignore-missing-imports
+        additional_dependencies:
+          - types-PyYAML==6.0.12
+          - types-requests==2.32.0.20240622
+
+  # ── Notebooks (lint/format via nbQA + strip big outputs) ────────────────────
   - repo: https://github.com/nbQA-dev/nbQA
     rev: 1.8.5
     hooks:
       - id: nbqa-ruff
         args: [--fix]
       - id: nbqa-black
+        args: ["--line-length=100"]
       - id: nbqa-isort
-        args: ["--profile", "black"]
+        args: ["--profile", "black", "--line-length=100"]
+      # Optional: mypy on notebooks (comment in if notebooks use types)
+      # - id: nbqa-mypy
+      #   args: [--strict, --ignore-missing-imports]
 
+  - repo: https://github.com/kynan/nbstripout
+    rev: 0.6.1
+    hooks:
+      - id: nbstripout
+        name: strip-notebook-outputs
+        exclude: ^(docs/|data/|outputs/|benchmarks/)
+
+  # ── General hygiene & safety ────────────────────────────────────────────────
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.6.0
     hooks:
+      - id: check-added-large-files
+        args: ["--maxkb=5120"]   # 5 MB cap; adjust for your repo
+        exclude: ^(data/|outputs/|docs/assets/|.dvc/)
+      - id: check-ast
+      - id: check-builtin-literals
+      - id: check-case-conflict
+      - id: check-executables-have-shebangs
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-toml
+      - id: check-xml
       - id: check-yaml
+      - id: debug-statements
       - id: end-of-file-fixer
+      - id: name-tests-test
+        args: ["--pytest"]       # nudge test naming
       - id: trailing-whitespace
+
+  # Spell-check identifiers & docs (keeps false positives low)
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.3.0
+    hooks:
+      - id: codespell
+        args:
+          - --ignore-words-list=nd,teh,ot,fo   # extend as needed
+          - --skip="*.lock,*.svg,*.ipynb,docs/_build/*,data/*,outputs/*"
+        exclude: ^(data/|outputs/|docs/assets/)
+
+  # Shell lint/format for scripts
+  - repo: https://github.com/jumanjihouse/pre-commit-hooks
+    rev: 3.0.0
+    hooks:
+      - id: shellcheck
+      - id: shfmt
+        args: ["-i", "2", "-ci", "-bn"]  # 2-space indent, POSIX-friendly
+
+  # YAML lint beyond well-formedness (style + rules)
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.35.1
+    hooks:
+      - id: yamllint
+        args: ["-d", "{extends: default, rules: {line-length: {max: 120}, truthy: disable}}"]
+
+  # Format Markdown / JSON / YAML consistently (Prettier for docs/config)
+  - repo: https://github.com/pre-commit/mirrors-prettier
+    rev: v3.2.5
+    hooks:
+      - id: prettier
+        additional_dependencies: ["prettier@3.2.5"]
+        files: "\\.(md|markdown|mdx|json|ya?ml)$"
+        exclude: ^(docs/_build/|data/|outputs/)
+
+  # ── Security: static & supply-chain ─────────────────────────────────────────
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: ["--baseline", ".secrets.baseline"]
+        exclude: ^(data/|outputs/|docs/_build/)
+
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.7.9
+    hooks:
+      - id: bandit
+        args: ["-q", "-r", "src", "-x", "tests"]
+
+  - repo: https://github.com/pypa/pip-audit
+    rev: v2.7.3
+    hooks:
+      - id: pip-audit
+        args: ["--require-hashes=false", "--progress-spinner=off"]
+        # Note: runs against the resolver view of your env; use in CI for lockfiles, too.
+
+  # Grep-based safety/sanity checks (eval, blanket except, etc.)
+  - repo: https://github.com/pre-commit/pygrep-hooks
+    rev: v1.10.0
+    hooks:
+      - id: python-no-eval
+      - id: python-no-log-warn
+      - id: python-use-type-annotations
+
+ci:
+  autofix_prs: true
+  autoupdate_schedule: quarterly
+
+# Global excludes to keep hooks fast & non-noisy
+exclude: |
+  (?x)(
+      ^\.venv/|
+      ^venv/|
+      ^\.mypy_cache/|
+      ^\.ruff_cache/|
+      ^\.pytest_cache/|
+      ^\.dvc/|
+      ^\.git/|
+      ^build/|
+      ^dist/|
+      ^data/|
+      ^outputs/|
+      ^logs/|
+      ^docs/_build/
+  )
