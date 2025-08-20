@@ -1,39 +1,61 @@
 # ======================================================================
-# SpectraMind V50 — requirements-dev.txt
+# SpectraMind V50 — requirements-dev.txt  (2025-08)
 # ----------------------------------------------------------------------
 # Purpose: Developer tooling for linting, testing, typing, hooks, and reports.
 # Usage:
 #   pip install -r requirements.txt -r requirements-dev.txt
 #   pre-commit install
-#   pytest
+#   pytest -q
 # ======================================================================
 
 # ----------------------------
 # Linters / Formatters
 # ----------------------------
-ruff>=0.6.9
-black>=24.8.0
-isort>=5.13.2
+ruff==0.6.9
+black==24.8.0
+isort==5.13.2
+
+# Lint notebooks with your existing tools (ruff/black/isort) via nbqa
+nbqa==1.8.5
 
 # ----------------------------
 # Testing / Coverage
 # ----------------------------
-pytest>=7.4
-pytest-cov>=4.1
+pytest==8.2.0
+pytest-cov==5.0.0
+pytest-xdist==3.6.1        # parallel tests: pytest -n auto
+hypothesis==6.106.1        # property-based tests
+coverage==7.6.1            # explicit, used by pytest-cov under the hood
 
 # ----------------------------
 # Pre-commit hooks
 # ----------------------------
-pre-commit>=3.7.1
+pre-commit==3.7.1
 
 # ----------------------------
 # Typing / Stubs
 # ----------------------------
-mypy>=1.10.0
-types-PyYAML>=6.0.12
-types-requests>=2.32.0.20240622
+mypy==1.10.0
+typing-extensions==4.12.2
+types-PyYAML==6.0.12.20240808
+types-requests==2.32.0.20240712
 
 # ----------------------------
-# Optional diagnostics (local)
+# Optional docs (local) — enables `mkdocs serve` with Mermaid support
 # ----------------------------
-# rich[jupyter]>=13.7.1
+# mkdocs==1.6.1
+# mkdocs-material==9.5.32
+# mkdocstrings[python]==0.25.1
+# mkdocs-mermaid2-plugin==1.1.1
+
+# ----------------------------
+# Optional Markdown tooling (local)
+# ----------------------------
+# mdformat==0.7.17
+# mdformat-gfm==0.3.5
+# mdformat-black==0.1.1
+
+# ----------------------------
+# Optional richer terminal UX in notebooks
+# ----------------------------
+# rich[jupyter]==13.7.1
