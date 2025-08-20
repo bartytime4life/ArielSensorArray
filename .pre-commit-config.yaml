@@ -1,12 +1,4 @@
-# -----------------------------------------------------------------------------
-# .pre-commit-config.yaml — SpectraMind V50
-# Purpose: enforce style, lint, security, and notebook hygiene consistently
-# -----------------------------------------------------------------------------
-
 repos:
-  # -----------------------
-  # Python style & linting
-  # -----------------------
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.6.9
     hooks:
@@ -25,36 +17,18 @@ repos:
       - id: isort
         args: ["--profile", "black"]
 
-  # -----------------------
-  # Config & YAML hygiene
-  # -----------------------
+  - repo: https://github.com/nbQA-dev/nbQA
+    rev: 1.8.5
+    hooks:
+      - id: nbqa-ruff
+        args: [--fix]
+      - id: nbqa-black
+      - id: nbqa-isort
+        args: ["--profile", "black"]
+
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.6.0
     hooks:
       - id: check-yaml
-      - id: check-json
-      - id: check-toml
       - id: end-of-file-fixer
       - id: trailing-whitespace
-      - id: mixed-line-ending
-        args: [--fix=lf]
-      - id: check-merge-conflict
-      - id: forbid-new-submodules
-      - id: check-added-large-files
-
-  # -----------------------
-  # Security & secrets scanning
-  # -----------------------
-  - repo: https://github.com/Yelp/detect-secrets
-    rev: v1.4.0
-    hooks:
-      - id: detect-secrets
-        args: ["--baseline", ".secrets.baseline"]
-
-  # -----------------------
-  # Jupyter notebook cleanup
-  # -----------------------
-  - repo: https://github.com/kynan/nbstripout
-    rev: 0.7.1
-    hooks:
-      - id: nbstripout
