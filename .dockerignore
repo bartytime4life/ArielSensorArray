@@ -1,0 +1,122 @@
+# .dockerignore — SpectraMind V50 (NeurIPS 2025 Ariel Data Challenge)
+# Purpose: Prevent unnecessary files from bloating Docker images.
+# Mirrors .gitignore and .dvcignore for full alignment (Git + DVC + Docker).
+
+# ----------------------------------------------------------------------
+# Python build & cache
+__pycache__/
+*.py[cod]
+*.pyd
+*.so
+*.egg-info/
+*.egg
+*.whl
+
+# ----------------------------------------------------------------------
+# Virtual environments & package managers
+.venv/
+venv/
+env/
+ENV/
+.poetry/
+pip-wheel-metadata/
+site-packages/
+
+# ----------------------------------------------------------------------
+# IDE/editor settings
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ----------------------------------------------------------------------
+# OS / system junk
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ----------------------------------------------------------------------
+# Logs & temporary artifacts
+logs/
+*.log
+*.tmp
+*.bak
+*.old
+*.pid
+*.lock
+
+# ----------------------------------------------------------------------
+# Intermediate & scratch outputs
+outputs/checkpoints/
+outputs/intermediate/
+outputs/temp/
+outputs/cache/
+outputs/debug/
+
+# ----------------------------------------------------------------------
+# Model bundles & artifacts (selectively managed by pipeline)
+*.ckpt
+*.pth
+*.pt
+*.onnx
+*.h5
+
+# ----------------------------------------------------------------------
+# Kaggle / competition specifics
+.kaggle/
+kaggle.json
+*.ipynb   # Kaggle auto-notebooks (prefer notebooks/ dir)
+
+# ----------------------------------------------------------------------
+# Jupyter / notebooks
+.ipynb_checkpoints/
+notebooks/.ipynb_checkpoints/
+
+# ----------------------------------------------------------------------
+# DVC internals (managed by host, not inside Docker)
+.dvc/cache/
+.dvc/tmp/
+.dvc/plots/
+
+# ----------------------------------------------------------------------
+# Diagnostics, reports & dashboards (regenerable)
+outputs/diagnostics/
+*.html
+*.htm
+*.png
+*.svg
+*.jpg
+*.jpeg
+*.gif
+*.pdf
+*.csv
+*.json
+*.md
+
+# ----------------------------------------------------------------------
+# Submission bundles (pipeline-reproducible)
+outputs/submission.csv
+outputs/submission.zip
+outputs/submission_bundle.zip
+
+# ----------------------------------------------------------------------
+# Generated configs & manifests
+hydra_outputs/
+multirun/
+run_logs/
+manifest.json
+diagnostic_summary.json
+run_hash_summary_v50.json
+
+# ----------------------------------------------------------------------
+# Local GUI/UX assets (regenerable)
+assets/screenshots/
+assets/plots/
+assets/tmp/
+
+# ----------------------------------------------------------------------
+# Hugging Face / MLflow / W&B caches
+.huggingface/
+wandb/
+mlruns/
+*.mlmodel
