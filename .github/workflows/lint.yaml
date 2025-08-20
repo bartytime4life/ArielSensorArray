@@ -1,3 +1,13 @@
+# .github/workflows/lint.yml
+# ==============================================================================
+# SpectraMind V50 — Lint & Static Analysis
+# Runs repo-managed pre-commit hooks (ruff/black/isort/mypy/nbqa/yamllint/prettier/etc.)
+# - Python 3.12 with pip & pre-commit caches for speed
+# - Two-pass strategy: autofix then enforce clean
+# - Optional ruff/mypy summaries for quick signal
+# - Skips noisy paths (data/outputs/logs/checkpoints/etc.)
+# ==============================================================================
+
 name: Lint & Static Analysis
 
 on:
@@ -7,6 +17,10 @@ on:
       - "data/**"
       - "outputs/**"
       - "logs/**"
+      - "benchmarks/**"
+      - "artifacts/**"
+      - "site/**"
+      - "node_modules/**"
       - "**/.ipynb_checkpoints/**"
   pull_request:
     branches: ["**"]
@@ -14,8 +28,12 @@ on:
       - "data/**"
       - "outputs/**"
       - "logs/**"
+      - "benchmarks/**"
+      - "artifacts/**"
+      - "site/**"
+      - "node_modules/**"
       - "**/.ipynb_checkpoints/**"
-  workflow_dispatch:
+  workflow_dispatch: {}
 
 permissions:
   contents: read
@@ -36,7 +54,7 @@ jobs:
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
       PIP_NO_PYTHON_VERSION_WARNING: "1"
       PRE_COMMIT_COLOR: "always"
-      # many tools honor NO_COLOR; allow users to disable color in logs if they wish
+      # allow opt-out of color in logs (some CI terminals)
       NO_COLOR: ${{ vars.NO_COLOR || '' }}
 
     steps:
@@ -56,7 +74,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: pip-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('**/pyproject.toml', '**/poetry.lock', '**/requirements*.txt') }}
+          key: pip-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('**/pyproject.toml', '**/poetry.lock', '**/requirements*.txt', '.pre-commit-config.yaml') }}
           restore-keys: |
             pip-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-
             pip-${{ runner.os }}-
@@ -78,6 +96,12 @@ jobs:
       - name: Prepare artifacts dir
         run: mkdir -p artifacts
 
+      - name: Show pre-commit version & hooks
+        run: |
+          pre-commit --version | tee artifacts/precommit-version.txt
+          # Print hook IDs for visibility
+          awk '/^- id: /{print $0}' .pre-commit-config.yaml | tee artifacts/hooks.txt || true
+
       # First pass: allow autofixes; do not fail the job on this pass
       - name: pre-commit (autofix pass)
         run: |
@@ -89,7 +113,7 @@ jobs:
       - name: pre-commit (enforce clean)
         run: pre-commit run --all-files --show-diff-on-failure
 
-      # Optional quick signal jobs (leave non-blocking); useful when some hooks are optional in pre-commit
+      # Optional quick signal jobs (remain non-blocking)
       - name: Ruff (summary)
         if: always()
         run: |
@@ -102,6 +126,7 @@ jobs:
         run: |
           python -m pip install mypy || true
           mypy --version | tee artifacts/mypy.txt || true
+          # Limit to src/ to keep this fast; full strict is enforced via the repo hook
           mypy --pretty --show-error-codes src || true
 
       - name: Build CI summary
