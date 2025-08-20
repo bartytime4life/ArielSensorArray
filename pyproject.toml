@@ -17,7 +17,7 @@ keywords = [
   "exoplanet", "spectroscopy", "Ariel", "ESA",
   "uncertainty", "conformal", "COREL",
   "symbolic-ai", "physics-informed",
-  "hydra", "cli", "dvc", "diagnostics", "umap", "tsne"
+  "hydra", "cli", "dvc", "diagnostics", "umap", "tsne", "kaggle"
 ]
 classifiers = [
   "Development Status :: 4 - Beta",
@@ -34,7 +34,7 @@ classifiers = [
 ]
 
 dependencies = [
-  # Core configuration & CLI
+  # Core config & CLI
   "hydra-core>=1.3.2",
   "typer>=0.12.3",
   "rich>=13.7.1",
@@ -43,19 +43,20 @@ dependencies = [
   "packaging>=24.0",
   "jinja2>=3.1",
   "click>=8.1",
+  "python-dotenv>=1.0",
 
   # Numerics & ML
   "numpy>=1.26",
   "scipy>=1.11",
   "pandas>=2.1",
   "scikit-learn>=1.3",
-  "torch>=2.2",
-  "torchvision>=0.17",
-  "torchaudio>=2.2",
+  "torch==2.2.2",
+  "torchvision==0.17.2",
+  "torchaudio==2.2.2",
 
   # Graph/geom (AIRS GNN)
   "networkx>=3.2",
-  "torch-geometric>=2.5; platform_system != \"Windows\"",
+  "torch-geometric==2.5.3; platform_system != \"Windows\"",
 
   # Visualization & diagnostics
   "matplotlib>=3.8",
@@ -63,15 +64,19 @@ dependencies = [
   "umap-learn>=0.5.6",
   "shap>=0.45.0",
 
+  # Extra ML baselines
+  "xgboost>=2.0",
+  "lightgbm>=4.4",
+
   # I/O, tqdm, misc
   "tqdm>=4.66",
   "joblib>=1.3",
   "psutil>=5.9",
 
-  # DVC core (remote extras via optional-dependencies)
+  # DVC core
   "dvc>=3.50",
 
-  # Optional experiment tracking (enabled when installed)
+  # Optional experiment tracking
   "mlflow>=2.14.0",
   "wandb>=0.17.0"
 ]
@@ -85,12 +90,17 @@ dev = [
   "isort>=5.13.2",
   "pre-commit>=3.7.1",
   "mypy>=1.10.0",
+  "coverage[toml]>=7.6.0",
+  "optuna>=3.6",
+  "kaggle>=1.6.12",
   "types-PyYAML>=6.0.12",
   "types-requests>=2.32.0.20240622"
 ]
 viz = [
   "kaleido>=0.2.1",
-  "seaborn>=0.13.2"
+  "seaborn>=0.13.2",
+  "altair>=5.4",
+  "bokeh>=3.4"
 ]
 gcs = ["dvc[gdrive,gcs]>=3.50"]
 s3 = ["dvc[s3,boto3]>=3.50"]
@@ -126,16 +136,7 @@ line-length = 100
 target-version = "py310"
 extend-select = ["E", "F", "I", "UP", "B", "C4", "SIM"]
 ignore = []
-exclude = [
-  "docs/",
-  "build/",
-  "dist/",
-  ".venv/",
-  "venv/",
-  "outputs/",
-  "data/",
-  "logs/"
-]
+exclude = ["docs/", "build/", "dist/", ".venv/", "venv/", "outputs/", "data/", "logs/"]
 
 [tool.ruff.lint.isort]
 profile = "black"
@@ -190,20 +191,16 @@ log_date_format = "%Y-%m-%d %H:%M:%S"
 [tool.coverage.run]
 branch = true
 source = ["src"]
-omit = [
-  "tests/*",
-  "docs/*"
-]
+omit = ["tests/*", "docs/*"]
 
 [tool.coverage.report]
 show_missing = true
 skip_covered = true
-fail_under = 70
+fail_under = 75
 
 [tool.mypy]
 python_version = "3.10"
-strict = false
+strict = true
 warn_return_any = true
 warn_unused_ignores = true
 ignore_missing_imports = true
-plugins = []
