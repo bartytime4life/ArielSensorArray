@@ -1,71 +1,317 @@
+# .github/workflows/mermaid-export.yml
+# ==============================================================================
+# SpectraMind V50 — Mermaid Export (Upgraded)
+# Renders Mermaid diagrams to SVG/PNG when docs change, on PRs (validate) and
+# on demand. Supports Markdown‑embedded diagrams via scripts/export_mermaid.py
+# and raw .mmd sources via mmdc. Uploads artifacts; can auto‑commit on main,
+# or open a PR from non‑main branches when diffs are detected.
+# ==============================================================================
+
 name: Mermaid Export
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main", "release/**"]
     paths:
       - "ARCHITECTURE.md"
       - "README.md"
       - "docs/**/*.md"
+      - "diagrams/**/*.mmd"
       - "scripts/export_mermaid.py"
-      - ".mermaidrc.json"
+      - ".mermaidrc*"
       - "package.json"
+      - "package-lock.json"
+  pull_request:
+    branches: ["**"]
+    paths:
+      - "ARCHITECTURE.md"
+      - "README.md"
+      - "docs/**/*.md"
+      - "diagrams/**/*.mmd"
+      - "scripts/export_mermaid.py"
+      - ".mermaidrc*"
+      - "package.json"
+      - "package-lock.json"
   workflow_dispatch:
     inputs:
       files:
-        description: "Space-separated list of markdown files (default: ARCHITECTURE.md README.md)"
+        description: "Space-separated list of Markdown files to scan (default: ARCHITECTURE.md README.md). Empty = auto-detect changes."
         required: false
-        default: "ARCHITECTURE.md README.md"
+        default: ""
+        type: string
+      export_png:
+        description: "Also render PNG (in addition to SVG)?"
+        required: false
+        default: "0"
+        type: choice
+        options: ["0", "1"]
+      theme:
+        description: "Mermaid theme (default, dark, forest, neutral). Leave blank to use .mermaidrc if present."
+        required: false
+        default: ""
+        type: string
+      outdir:
+        description: "Output directory for rendered diagrams"
+        required: false
+        default: "docs/diagrams"
+        type: string
+      auto_commit:
+        description: "Commit rendered diagrams back to branch (main only)"
+        required: false
+        default: "true"
+        type: choice
+        options: ["false", "true"]
+      create_pr:
+        description: "Create a PR with rendered diagrams when branch ≠ main"
+        required: false
+        default: "true"
+        type: choice
+        options: ["false", "true"]
 
 permissions:
-  contents: write  # needed for auto-commit
+  contents: write         # needed for auto-commit/branch creation
+  pull-requests: write    # needed for PR creation
+
+concurrency:
+  group: mermaid-export-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   render:
+    name: Render Mermaid diagrams
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      # Inputs with sensible defaults
+      EXPORT_PNG: ${{ inputs.export_png || '0' }}
+      THEME: ${{ inputs.theme || '' }}
+      OUT_DIR: ${{ inputs.outdir || 'docs/diagrams' }}
+      MD_FILES_INPUT: ${{ inputs.files || '' }}
+      IS_MAIN: ${{ github.ref == 'refs/heads/main' }}
+      IS_PR: ${{ github.event_name == 'pull_request' }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
+      - name: Ensure output dir
+        run: mkdir -p "${OUT_DIR}"
+
+      # ---------- Tooling setup ----------
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-
-      - name: Install Mermaid CLI
-        run: npm ci
+          cache: "npm"
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
+          cache: "pip"
 
-      - name: Ensure output dirs
-        run: mkdir -p docs/diagrams
-
-      - name: Render diagrams (SVG; set EXPORT_PNG=1 to also output PNG)
-        env:
-          EXPORT_PNG: "0"
-          THEME: ""
+      - name: Install dev dependencies
         run: |
-          FILES="${{ github.event.inputs.files }}"
-          if [ -z "$FILES" ]; then
-            FILES="ARCHITECTURE.md README.md"
+          # Prefer project-local install if package.json exists; otherwise global mmdc.
+          if [ -f package.json ]; then
+            npm ci
+          else
+            npm install -g @mermaid-js/mermaid-cli@latest
           fi
-          python scripts/export_mermaid.py $FILES
+
+          # Optional: install Python deps if a requirements file exists
+          if [ -f requirements.txt ]; then
+            python -m pip install --upgrade pip
+            pip install -r requirements.txt
+          elif [ -f scripts/export_mermaid.py ]; then
+            # export_mermaid.py usually only needs standard lib + markdown libs; install if present
+            pip install markdown markdown-it-py mdit-py-plugins || true
+          fi
+
+      - name: Compute changed sources (md/mmd)
+        id: detect
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Helper to join array as space-separated
+          join_by_space() { local IFS=" "; echo "$*"; }
+
+          # If explicit files provided via dispatch input, trust them.
+          if [ -n "${MD_FILES_INPUT}" ]; then
+            MD_FILES="${MD_FILES_INPUT}"
+          else
+            # Auto-detect changed Markdown files for push/PR; fallback to common docs for other events.
+            if [ "${{ env.IS_PR }}" = "true" ]; then
+              BASE_SHA="${{ github.event.pull_request.base.sha }}"
+              HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+              CHANGED="$(git diff --name-only --diff-filter=ACMRT "${BASE_SHA}" "${HEAD_SHA}" | tr -d '\r')"
+            else
+              # Last commit range on the branch (handles push)
+              CHANGED="$(git diff --name-only --diff-filter=ACMRT HEAD~1..HEAD | tr -d '\r' || true)"
+            fi
+
+            # Filter to markdown of interest if any changed; else default set.
+            MD_CANDIDATES=$(echo "${CHANGED}" | grep -E '(\.md$)' || true)
+            if [ -z "${MD_CANDIDATES}" ]; then
+              MD_FILES="ARCHITECTURE.md README.md"
+            else
+              # keep only files that actually exist in repo (defensive)
+              LIST=""
+              for f in ${MD_CANDIDATES}; do
+                [ -f "$f" ] && LIST="${LIST} $f" || true
+              done
+              MD_FILES="$(echo "${LIST}" | xargs -n1 | sort -u | xargs || true)"
+              [ -z "${MD_FILES}" ] && MD_FILES="ARCHITECTURE.md README.md"
+            fi
+          fi
+
+          # Find raw .mmd files (always consider all .mmd in diagrams/ so outputs stay in sync)
+          MMD_FILES="$(git ls-files 'diagrams/**/*.mmd' 2>/dev/null || true)"
+
+          echo "Markdown files to scan: ${MD_FILES}"
+          echo "Raw .mmd files: ${MMD_FILES}"
+
+          echo "md=${MD_FILES}" >> "$GITHUB_OUTPUT"
+          echo "mmd=${MMD_FILES}" >> "$GITHUB_OUTPUT"
+
+      # ---------- Render from Markdown (script scans embedded ```mermaid blocks) ----------
+      - name: Render Mermaid from Markdown (scripts/export_mermaid.py)
+        if: ${{ steps.detect.outputs.md != '' && hashFiles('scripts/export_mermaid.py') != '' }}
+        env:
+          MERMAID_THEME: ${{ env.THEME }}
+          MERMAID_OUTDIR: ${{ env.OUT_DIR }}
+          MERMAID_EXPORT_PNG: ${{ env.EXPORT_PNG }}
+        run: |
+          set -euo pipefail
+          echo "Files: ${{ steps.detect.outputs.md }}"
+          echo "OUT_DIR=${MERMAID_OUTDIR}, THEME='${MERMAID_THEME}', PNG=${MERMAID_EXPORT_PNG}"
+          python scripts/export_mermaid.py ${{ steps.detect.outputs.md }} || {
+            echo "::warning::scripts/export_mermaid.py exited non-zero; continuing to mmdc rendering."
+          }
+
+      # ---------- Render raw .mmd diagrams ----------
+      - name: Render raw .mmd → SVG/PNG with mmdc
+        if: ${{ steps.detect.outputs.mmd != '' }}
+        shell: bash
+        env:
+          MERMAID_THEME: ${{ env.THEME }}
+        run: |
+          set -euo pipefail
+
+          # Determine the mmdc entry (local or global)
+          if [ -f node_modules/.bin/mmdc ]; then
+            MMDC="npx --yes @mermaid-js/mermaid-cli"
+          else
+            MMDC="mmdc"
+          fi
+
+          # Build base args
+          THEME_ARG=()
+          if [ -n "${MERMAID_THEME}" ]; then
+            THEME_ARG=(--theme "${MERMAID_THEME}")
+          fi
+          # Prefer user .mermaidrc if present and no theme override supplied
+          if [ -z "${MERMAID_THEME}" ] && [ -f ".mermaidrc" ]; then
+            THEME_ARG=(--configFile ".mermaidrc")
+          elif [ -z "${MERMAID_THEME}" ] && [ -f ".mermaidrc.json" ]; then
+            THEME_ARG=(--configFile ".mermaidrc.json")
+          fi
+
+          # Render each .mmd, preserving relative folder structure under OUT_DIR
+          while IFS= read -r SRC; do
+            [ -z "$SRC" ] && continue
+            REL_DIR="$(dirname "$SRC")"
+            BASE="$(basename "$SRC" .mmd)"
+            DEST_DIR="${OUT_DIR}/${REL_DIR#diagrams/}"
+            mkdir -p "${DEST_DIR}"
+
+            echo "Render SVG: ${SRC} -> ${DEST_DIR}/${BASE}.svg"
+            ${MMDC} -i "${SRC}" -o "${DEST_DIR}/${BASE}.svg" "${THEME_ARG[@]}"
+
+            if [ "${EXPORT_PNG}" = "1" ]; then
+              echo "Render PNG: ${SRC} -> ${DEST_DIR}/${BASE}.png"
+              ${MMDC} -i "${SRC}" -o "${DEST_DIR}/${BASE}.png" "${THEME_ARG[@]}"
+            fi
+          done <<< "${{ steps.detect.outputs.mmd }}"
+
+      - name: List outputs
+        run: |
+          echo ">>> Rendered files in ${OUT_DIR}:"
+          ls -alh "${OUT_DIR}" || true
+          echo ">>> Recursive listing:"
+          find "${OUT_DIR}" -type f | sort || true
 
       - name: Upload diagrams artifact
         uses: actions/upload-artifact@v4
         with:
           name: mermaid-diagrams
-          path: docs/diagrams
+          path: ${{ env.OUT_DIR }}
+          if-no-files-found: warn
+          retention-days: 21
 
-      - name: Auto-commit diagrams (optional)
-        if: ${{ github.ref == 'refs/heads/main' }}
+      # ---------- Commit on main (if enabled) ----------
+      - name: Auto-commit diagrams (main only)
+        if: ${{ env.IS_MAIN == 'true' && (inputs.auto_commit == 'true' || inputs.auto_commit == '') }}
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "ci(diagrams): export Mermaid diagrams"
-          file_pattern: docs/diagrams/**/*.svg docs/diagrams/**/*.png
+          file_pattern: |
+            ${{ env.OUT_DIR }}/**/*.svg
+            ${{ env.OUT_DIR }}/**/*.png
           branch: main
+          commit_user_name: "github-actions[bot]"
+          commit_user_email: "41898282+github-actions[bot]@users.noreply.github.com"
+          push_options: "--force-with-lease"
+
+      # ---------- Create PR on non-main branches when there are changes ----------
+      - name: Detect diagram changes (non-main)
+        id: diffcheck
+        if: ${{ env.IS_MAIN != 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add "${OUT_DIR}" || true
+          if git diff --cached --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create pull request with rendered diagrams
+        if: >
+          ${{
+            env.IS_MAIN != 'true' &&
+            steps.diffcheck.outputs.changed == 'true' &&
+            (inputs.create_pr == 'true' || inputs.create_pr == '')
+          }}
+        uses: peter-evans/create-pull-request@v6
+        with:
+          commit-message: "ci(diagrams): export Mermaid diagrams"
+          title: "ci(diagrams): update rendered Mermaid diagrams"
+          body: |
+            This PR updates rendered Mermaid diagrams from the latest Markdown/mmd sources.
+
+            • Renderer: @mermaid-js/mermaid-cli + scripts/export_mermaid.py
+            • Theme: `${{ env.THEME || 'default/.mermaidrc' }}`
+            • Output dir: `${{ env.OUT_DIR }}`
+            • Trigger: `${{ github.event_name }}`
+          add-paths: |
+            ${{ env.OUT_DIR }}/**/*.svg
+            ${{ env.OUT_DIR }}/**/*.png
+          branch: chore/diagrams/${{ github.run_id }}
+          base: ${{ github.ref_name }}
+          delete-branch: true
+
+      # Nice-to-have: surface a summary in the run log
+      - name: Summary
+        if: always()
+        run: |
+          COUNT=$(find "${OUT_DIR}" -type f $begin:math:text$ -name '*.svg' -o -name '*.png' $end:math:text$ | wc -l | xargs)
+          echo "Rendered files: ${COUNT}"
+          if [ "${COUNT}" -eq 0 ]; then
+            echo "::notice::No diagrams rendered (check inputs/changes)."
+          fi
