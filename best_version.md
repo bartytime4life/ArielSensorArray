@@ -115,6 +115,3 @@ The NeurIPS 2025 Ariel Data Challenge has highlighted several approaches:content
 - Reproducibility and CI:contentReference[oaicite:29]{index=29}.  
 - Kaggle competition constraints:contentReference[oaicite:30]{index=30}.  
 - Future GUI and explainability expansions:contentReference[oaicite:31]{index=31}.  
-
-Would you like me to **expand `contributing.md` next**, to embed these Kaggle learnings (runtime quotas, reproducibility, leaderboard etiquette) into contributor guidelines?
-```
