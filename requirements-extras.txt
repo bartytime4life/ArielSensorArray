@@ -1,0 +1,21 @@
+# DVC remotes (pick as needed, e.g. pip install -r requirements-extras.txt)
+dvc[gdrive,gcs]==3.51.2
+dvc[s3,boto3]==3.51.2
+dvc[ssh]==3.51.2
+dvc[azure]==3.51.2
+
+# HPO / trainers / dashboards
+optuna==3.6.1
+lightning==2.3.3
+tensorboard==2.17.0
+
+# Experiment tracking
+mlflow==2.14.3
+wandb==0.17.6
+
+# SSM research (only if actively used)
+mamba-ssm==2.2.2
+state-spaces==0.4.0
+
+# Diagnostics utilities
+scikit-image==0.24.0
