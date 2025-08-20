@@ -13,6 +13,10 @@ PYTHON      ?= python3
 POETRY      ?= poetry
 CLI         ?= $(POETRY) run spectramind
 
+# Node (for mermaid-cli); keep overridable for CI/local differences
+NODE        ?= node
+NPM         ?= npm
+
 # ========= Defaults (override at CLI) =========
 DEVICE      ?= cpu
 EPOCHS      ?= 1
@@ -24,6 +28,12 @@ DIAG_DIR    ?= $(OUT_DIR)/diagnostics
 PRED_DIR    ?= $(OUT_DIR)/predictions
 SUBMIT_DIR  ?= $(OUT_DIR)/submission
 SUBMIT_ZIP  ?= $(SUBMIT_DIR)/bundle.zip
+
+# Mermaid export defaults
+DIAGRAMS_DIR      ?= docs/diagrams
+MERMAID_FILES     ?= ARCHITECTURE.md README.md
+MERMAID_THEME     ?=
+MERMAID_EXPORT_PNG?= 0   # 1 to export PNG alongside SVG
 
 OVERRIDES   ?=
 EXTRA_ARGS  ?=
@@ -39,6 +49,7 @@ EXTRA_ARGS  ?=
         dvc-pull dvc-push \
         bench-selftest benchmark benchmark-cpu benchmark-gpu benchmark-run benchmark-report benchmark-clean \
         kaggle-run kaggle-submit \
+        mermaid-init diagrams diagrams-png mermaid-export mermaid-clean \
         ci clean realclean distclean
 
 # ========= Help =========
@@ -47,10 +58,14 @@ help:
 	@echo "  selftest | calibrate | train | predict | diagnose | submit"
 	@echo "  ablate(-light|-heavy|-grid|-optuna)"
 	@echo "  analyze-log | analyze-log-short | open-report"
+	@echo "  diagrams | diagrams-png | mermaid-init | mermaid-clean"
 	@echo "  benchmark | kaggle-run | kaggle-submit | ci"
 	@echo "  fmt | lint | test | validate-env"
 	@echo "  clean | realclean | distclean"
-	@echo "Vars: DEVICE=$(DEVICE) EPOCHS=$(EPOCHS) OUT_DIR=$(OUT_DIR) OVERRIDES='$(OVERRIDES)' EXTRA_ARGS='$(EXTRA_ARGS)'"
+	@echo "Vars: DEVICE=$(DEVICE) EPOCHS=$(EPOCHS) OUT_DIR=$(OUT_DIR)"
+	@echo "      OVERRIDES='$(OVERRIDES)' EXTRA_ARGS='$(EXTRA_ARGS)'"
+	@echo "      MERMAID_FILES='$(MERMAID_FILES)' DIAGRAMS_DIR='$(DIAGRAMS_DIR)'"
+	@echo "      MERMAID_THEME='$(MERMAID_THEME)' MERMAID_EXPORT_PNG=$(MERMAID_EXPORT_PNG)"
 
 # ========= Init =========
 init: env
@@ -62,6 +77,8 @@ info:
 	@echo "poetry : $$($(POETRY) --version 2>&1 || true)"
 	@echo "cli    : $(CLI)"
 	@echo "device : $(DEVICE)"
+	@echo "node   : $$($(NODE) --version 2>&1 || true)"
+	@echo "npm    : $$($(NPM) --version 2>&1 || true)"
 
 # ========= Dev / Quality =========
 fmt:
@@ -169,6 +186,34 @@ analyze-log-short: init
 
 check-cli-map:
 	$(CLI) check-cli-map
+
+# ========= Mermaid / Diagrams =========
+# Install @mermaid-js/mermaid-cli via npm ci (using package.json at repo root)
+mermaid-init:
+	@if ! command -v $(NPM) >/dev/null 2>&1; then \
+	  echo "ERROR: npm not found. Please install Node.js/npm."; exit 1; \
+	fi
+	$(NPM) ci
+	mkdir -p "$(DIAGRAMS_DIR)"
+
+# Render SVGs (and optionally PNGs with MERMAID_EXPORT_PNG=1)
+diagrams: mermaid-init
+	@echo ">>> Rendering Mermaid diagrams (SVG; PNG=$(MERMAID_EXPORT_PNG))"
+	EXPORT_PNG=$(MERMAID_EXPORT_PNG) THEME="$(MERMAID_THEME)" \
+	$(PYTHON) scripts/export_mermaid.py $(MERMAID_FILES)
+	@echo ">>> Output → $(DIAGRAMS_DIR)"
+
+# Convenience target: force PNG export alongside SVG
+diagrams-png:
+	@$(MAKE) --no-print-directory diagrams MERMAID_EXPORT_PNG=1
+
+# Full export with explicit file list (override MERMAID_FILES on CLI)
+mermaid-export:
+	@$(MAKE) --no-print-directory diagrams
+
+# Clean generated diagrams and temp
+mermaid-clean:
+	rm -rf "$(DIAGRAMS_DIR)" .mermaid_tmp
 
 # ========= CI convenience (dev/local reuse) =========
 ci: validate-env selftest train diagnose analyze-log-short
