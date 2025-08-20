@@ -1,53 +1,16 @@
-==============================================================================
+Here’s a clean, copy‑paste drop‑in upgrade of your Makefile. It fixes the curly quotes/dashes, tightens portability and safety, aligns flags with your CLI, and keeps full parity with your targets. It also adds a few niceties (strict shell, reusable colors, consistent help, and robust Mermaid/DVC/Kaggle guards).
 
-SpectraMind V50 — Master Makefile (Dev/Local, CI‑Safe)
+# ==============================================================================
+# SpectraMind V50 — Master Makefile (Dev/Local, CI‑Safe)
+# Neuro‑Symbolic, Physics‑Informed AI Pipeline
+# ==============================================================================
 
-Neuro‑Symbolic, Physics‑Informed AI Pipeline
-
-==============================================================================
-
-
-
-Philosophy:
-
-• CLI‑first: all heavy lifting is delegated to the Typer CLI spectramind
-
-• Reproducibility: deterministic runs, structured logs, and config hashes
-
-• Ergonomics: helpful defaults, safe shell, rich help, and guardrails
-
-
-
-Usage examples:
-
-• make selftest                  # fast integrity checks
-
-• make train EPOCHS=10           # train for 10 epochs (Hydra override below)
-
-• make predict-e2e               # smoke: run predict and assert CSV exists
-
-• make diagnose                  # build diagnostics report(s)
-
-• make submit                    # produce submission bundle ZIP
-
-• make diagrams                  # render Mermaid diagrams → docs/diagrams/
-
-• make benchmark-gpu EPOCHS=3    # small benchmark on GPU
-
-• make kaggle-submit             # run + submit to Kaggle (requires Kaggle CLI)
-
-
-
-==============================================================================
-
-========= Shell =========
-
+# ========= Shell =========
 SHELL        := /usr/bin/env bash
 .ONESHELL:
 .SHELLFLAGS  := -euo pipefail -c
 
-========= Tooling =========
-
+# ========= Tooling =========
 PYTHON       ?= python3
 POETRY       ?= poetry
 CLI          ?= $(POETRY) run spectramind
@@ -56,8 +19,7 @@ NODE         ?= node
 NPM          ?= npm
 KAGGLE       ?= kaggle
 
-========= Defaults (override at CLI) =========
-
+# ========= Defaults (override at CLI) =========
 DEVICE       ?= cpu
 EPOCHS       ?= 1
 TS           := $(shell date +%Y%m%d_%H%M%S)
@@ -71,20 +33,17 @@ SUBMIT_ZIP   ?= $(SUBMIT_DIR)/bundle.zip
 
 RUN_HASH_FILE ?= run_hash_summary_v50.json
 
-Mermaid export defaults
-
+# Mermaid export defaults
 DIAGRAMS_DIR       ?= docs/diagrams
 MERMAID_FILES      ?= ARCHITECTURE.md README.md
 MERMAID_THEME      ?=
 MERMAID_EXPORT_PNG ?= 0   # 1 to export PNG alongside SVG
 
-Hydra overrides and passthrough args for the CLI
-
+# Hydra overrides and passthrough args for the CLI
 OVERRIDES    ?=
 EXTRA_ARGS   ?=
 
-========= Colors =========
-
+# ========= Colors =========
 BOLD := \033[1m
 DIM  := \033[2m
 RED  := \033[31m
@@ -93,324 +52,301 @@ YLW  := \033[33m
 CYN  := \033[36m
 RST  := \033[0m
 
-========= PHONY =========
+# ========= PHONY =========
+.PHONY: help init env info doctor versions \
+        fmt lint mypy test \
+        selftest selftest-deep validate-env \
+        calibrate calibrate-temp corel-train \
+        train predict predict-e2e diagnose submit \
+        ablate ablate-light ablate-heavy ablate-grid ablate-optuna \
+        analyze-log analyze-log-short check-cli-map open-report \
+        dvc-pull dvc-push \
+        bench-selftest benchmark benchmark-cpu benchmark-gpu benchmark-run benchmark-report benchmark-clean \
+        kaggle-run kaggle-submit \
+        mermaid-init diagrams diagrams-png mermaid-export mermaid-clean \
+        ci quickstart clean realclean distclean
 
-.PHONY: help init env info doctor versions 
-fmt lint mypy test 
-selftest selftest-deep validate-env 
-calibrate calibrate-temp corel-train 
-train predict predict-e2e diagnose submit 
-ablate ablate-light ablate-heavy ablate-grid ablate-optuna 
-analyze-log analyze-log-short check-cli-map open-report 
-dvc-pull dvc-push 
-bench-selftest benchmark benchmark-cpu benchmark-gpu benchmark-run benchmark-report benchmark-clean 
-kaggle-run kaggle-submit 
-mermaid-init diagrams diagrams-png mermaid-export mermaid-clean 
-ci quickstart clean realclean distclean
-
-========= Default Goal =========
-
+# ========= Default Goal =========
 .DEFAULT_GOAL := help
 
-========= Help =========
-
+# ========= Help =========
 help:
-@echo “”
-@echo “$(BOLD)SpectraMind V50 — Make targets$(RST)”
-@echo “  $(CYN)quickstart$(RST)       : install deps (poetry), init dirs, print info”
-@echo “  $(CYN)doctor$(RST)           : dependency checks (python/poetry/node/npm/cli)”
-@echo “  $(CYN)selftest$(RST)         : fast integrity checks (CLI + files)”
-@echo “  $(CYN)train$(RST)            : run training (EPOCHS=$(EPOCHS), DEVICE=$(DEVICE))”
-@echo “  $(CYN)predict$(RST)          : run inference → $(PRED_DIR)/submission.csv”
-@echo “  $(CYN)predict-e2e$(RST)      : smoke test asserting submission exists”
-@echo “  $(CYN)diagnose$(RST)         : build diagnostics (smoothness + dashboard)”
-@echo “  $(CYN)submit$(RST)           : package submission ZIP ($(SUBMIT_ZIP))”
-@echo “  $(CYN)ablate*(RST)           : ablation sweeps (light/heavy/grid/optuna)”
-@echo “  $(CYN)analyze-log$(RST)      : parse logs → $(OUT_DIR)/log_table.{md,csv}”
-@echo “  $(CYN)diagrams$(RST)         : render Mermaid in $(MERMAID_FILES) → $(DIAGRAMS_DIR)”
-@echo “  $(CYN)benchmark-(RST)       : small benchmark runs (cpu/gpu)”
-@echo “  $(CYN)kaggle-(RST)          : Kaggle run+submit (requires Kaggle CLI login)”
-@echo “  $(CYN)fmt | lint | mypy | test$(RST) : code quality”
-@echo “  $(CYN)ci$(RST)               : CI convenience target: validate + selftest + train + diagnose + summarize”
-@echo “  $(CYN)clean | realclean | distclean$(RST)”
-@echo “”
-@echo “$(DIM)Vars: DEVICE=$(DEVICE) EPOCHS=$(EPOCHS) OUT_DIR=$(OUT_DIR) OVERRIDES=’$(OVERRIDES)’ EXTRA_ARGS=’$(EXTRA_ARGS)’$(RST)”
-@echo “$(DIM)Mermaid: MERMAID_FILES=’$(MERMAID_FILES)’ DIAGRAMS_DIR=’$(DIAGRAMS_DIR)’ THEME=’$(MERMAID_THEME)’ PNG=$(MERMAID_EXPORT_PNG)$(RST)”
-@echo “”
+	@echo ""
+	@echo "$(BOLD)SpectraMind V50 — Make targets$(RST)"
+	@echo "  $(CYN)quickstart$(RST)       : install deps (poetry), init dirs, print info"
+	@echo "  $(CYN)doctor$(RST)           : dependency checks (python/poetry/node/npm/cli)"
+	@echo "  $(CYN)selftest$(RST)         : fast integrity checks (CLI + files)"
+	@echo "  $(CYN)train$(RST)            : run training (EPOCHS=$(EPOCHS), DEVICE=$(DEVICE))"
+	@echo "  $(CYN)predict$(RST)          : run inference → $(PRED_DIR)/submission.csv"
+	@echo "  $(CYN)predict-e2e$(RST)      : smoke test asserting submission exists"
+	@echo "  $(CYN)diagnose$(RST)         : build diagnostics (smoothness + dashboard)"
+	@echo "  $(CYN)submit$(RST)           : package submission ZIP ($(SUBMIT_ZIP))"
+	@echo "  $(CYN)ablate*$(RST)          : ablation sweeps (light/heavy/grid/optuna)"
+	@echo "  $(CYN)analyze-log$(RST)      : parse logs → $(OUT_DIR)/log_table.{md,csv}"
+	@echo "  $(CYN)diagrams$(RST)         : render Mermaid in $(MERMAID_FILES) → $(DIAGRAMS_DIR)"
+	@echo "  $(CYN)benchmark-*$(RST)      : small benchmark runs (cpu/gpu)"
+	@echo "  $(CYN)kaggle-*$(RST)         : Kaggle run+submit (requires Kaggle CLI login)"
+	@echo "  $(CYN)fmt | lint | mypy | test$(RST) : code quality"
+	@echo "  $(CYN)ci$(RST)               : CI convenience target: validate + selftest + train + diagnose + summarize"
+	@echo "  $(CYN)clean | realclean | distclean$(RST)"
+	@echo ""
+	@echo "$(DIM)Vars: DEVICE=$(DEVICE) EPOCHS=$(EPOCHS) OUT_DIR=$(OUT_DIR) OVERRIDES='$(OVERRIDES)' EXTRA_ARGS='$(EXTRA_ARGS)'$(RST)"
+	@echo "$(DIM)Mermaid: MERMAID_FILES='$(MERMAID_FILES)' DIAGRAMS_DIR='$(DIAGRAMS_DIR)' THEME='$(MERMAID_THEME)' PNG=$(MERMAID_EXPORT_PNG)$(RST)"
+	@echo ""
 
-========= Init / Env =========
-
+# ========= Init / Env =========
 init: env
 env:
-mkdir -p “$(OUT_DIR)” “$(LOGS_DIR)” “$(DIAG_DIR)” “$(PRED_DIR)” “$(SUBMIT_DIR)”
+	mkdir -p "$(OUT_DIR)" "$(LOGS_DIR)" "$(DIAG_DIR)" "$(PRED_DIR)" "$(SUBMIT_DIR)"
 
 versions:
-@echo “$(BOLD)Versions$(RST)”
-@echo “python : $$($(PYTHON) –version 2>&1 || true)”
-@echo “poetry : $$($(POETRY) –version 2>&1 || true)”
-@echo “node   : $$($(NODE) –version 2>&1 || true)”
-@echo “npm    : $$($(NPM) –version 2>&1 || true)”
-@echo “kaggle : $$($(KAGGLE) –version 2>&1 || true)”
-@echo “cli    : $(CLI)”
+	@echo "$(BOLD)Versions$(RST)"
+	@echo "python : $$($(PYTHON) --version 2>&1 || true)"
+	@echo "poetry : $$($(POETRY) --version 2>&1 || true)"
+	@echo "node   : $$($(NODE) --version 2>&1 || true)"
+	@echo "npm    : $$($(NPM) --version 2>&1 || true)"
+	@echo "kaggle : $$($(KAGGLE) --version 2>&1 || true)"
+	@echo "cli    : $(CLI)"
 
 info: versions
-@echo “device : $(DEVICE)”
-@echo “OUT_DIR: $(OUT_DIR)”
-@echo “RUN_HASH_FILE: $(RUN_HASH_FILE)”
+	@echo "device : $(DEVICE)"
+	@echo "OUT_DIR: $(OUT_DIR)"
+	@echo "RUN_HASH_FILE: $(RUN_HASH_FILE)"
 
 doctor:
-@ok=1; 
-command -v $(PYTHON) >/dev/null 2>&1 || { echo “$(RED)Missing python3$(RST)”; ok=0; }; 
-command -v $(POETRY) >/dev/null 2>&1 || { echo “$(YLW)Poetry not found — attempting pipx/pip install$(RST)”; ok=0; }; 
-command -v $(NODE)   >/dev/null 2>&1 || { echo “$(YLW)Node not found (needed for mermaid-cli)$(RST)”; }; 
-command -v $(NPM)    >/dev/null 2>&1 || { echo “$(YLW)npm not found (needed for mermaid-cli)$(RST)”; }; 
-{ $(CLI) –version >/dev/null 2>&1 && echo “$(GRN)CLI OK$(RST)”; } || { echo “$(YLW)CLI not yet installed or venv not active$(RST)”; }; 
-test $$ok -eq 1
+	@ok=1; \
+	command -v $(PYTHON) >/dev/null 2>&1 || { echo "$(RED)Missing python3$(RST)"; ok=0; }; \
+	command -v $(POETRY) >/dev/null 2>&1 || { echo "$(YLW)Poetry not found — install via pipx/pip$(RST)"; ok=0; }; \
+	command -v $(NODE)   >/dev/null 2>&1 || { echo "$(YLW)Node not found (needed for mermaid-cli)$(RST)"; }; \
+	command -v $(NPM)    >/dev/null 2>&1 || { echo "$(YLW)npm not found (needed for mermaid-cli)$(RST)"; }; \
+	{ $(CLI) --version >/dev/null 2>&1 && echo "$(GRN)CLI OK$(RST)"; } || { echo "$(YLW)CLI not yet installed or venv not active$(RST)"; }; \
+	test $$ok -eq 1
 
 quickstart: env info
-@echo “$(CYN)Installing project deps via Poetry (no-root)…$(RST)”
-@$(POETRY) install –no-root
-@echo “$(GRN)Done.$(RST)”
-@$(MAKE) doctor
+	@echo "$(CYN)Installing project deps via Poetry (no-root)…$(RST)"
+	@$(POETRY) install --no-root
+	@echo "$(GRN)Done.$(RST)"
+	@$(MAKE) doctor
 
-========= Dev / Quality =========
-
+# ========= Dev / Quality =========
 fmt:
-$(POETRY) run isort .
-$(POETRY) run black .
+	$(POETRY) run isort .
+	$(POETRY) run black .
 
 lint:
-$(POETRY) run ruff check .
+	$(POETRY) run ruff check .
 
 mypy:
-$(POETRY) run mypy –strict src || true
+	$(POETRY) run mypy --strict src || true
 
 test: init
-$(POETRY) run pytest -q || $(POETRY) run pytest -q -x
+	$(POETRY) run pytest -q || $(POETRY) run pytest -q -x
 
-========= Env validation (safe no-op if script missing) =========
-
+# ========= Env validation (safe no-op if script missing) =========
 validate-env:
-@if [ -x scripts/validate_env.py ] || [ -f scripts/validate_env.py ]; then 
-echo “>>> Validating .env schema”; 
-$(PYTHON) scripts/validate_env.py || exit 1; 
-else 
-echo “>>> Skipping validate-env (scripts/validate_env.py not found)”; 
-fi
+	@if [ -x scripts/validate_env.py ] || [ -f scripts/validate_env.py ]; then \
+	  echo ">>> Validating .env schema"; \
+	  $(PYTHON) scripts/validate_env.py || exit 1; \
+	else \
+	  echo ">>> Skipping validate-env (scripts/validate_env.py not found)"; \
+	fi
 
-========= Pipeline =========
-
+# ========= Pipeline =========
 selftest: init
-$(CLI) selftest
+	$(CLI) selftest
 
 selftest-deep: init
-$(CLI) selftest –deep
+	$(CLI) selftest --deep
 
 calibrate: init
-$(CLI) calibrate $(OVERRIDES) $(EXTRA_ARGS)
+	$(CLI) calibrate $(OVERRIDES) $(EXTRA_ARGS)
 
 calibrate-temp: init
-$(CLI) calibrate-temp $(OVERRIDES) $(EXTRA_ARGS)
+	$(CLI) calibrate-temp $(OVERRIDES) $(EXTRA_ARGS)
 
 corel-train: init
-$(CLI) corel-train $(OVERRIDES) $(EXTRA_ARGS)
+	$(CLI) corel-train $(OVERRIDES) $(EXTRA_ARGS)
 
 train: init
-$(CLI) train +training.epochs=$(EPOCHS) $(OVERRIDES) –device $(DEVICE) $(EXTRA_ARGS)
+	$(CLI) train +training.epochs=$(EPOCHS) $(OVERRIDES) --device $(DEVICE) $(EXTRA_ARGS)
 
 predict: init
-mkdir -p “$(PRED_DIR)”
-$(CLI) predict –out-csv “$(PRED_DIR)/submission.csv” $(OVERRIDES) $(EXTRA_ARGS)
+	mkdir -p "$(PRED_DIR)"
+	$(CLI) predict --out-csv "$(PRED_DIR)/submission.csv" $(OVERRIDES) $(EXTRA_ARGS)
 
-ensure CSV exists (e2e smoke)
-
+# ensure CSV exists (e2e smoke)
 predict-e2e: predict
-@test -f “$(PRED_DIR)/submission.csv” && echo “$(GRN)OK: $(PRED_DIR)/submission.csv$(RST)” || (echo “$(RED)Missing submission.csv$(RST)”; exit 1)
+	@test -f "$(PRED_DIR)/submission.csv" && echo "$(GRN)OK: $(PRED_DIR)/submission.csv$(RST)" || (echo "$(RED)Missing submission.csv$(RST)"; exit 1)
 
 diagnose: init
-$(CLI) diagnose smoothness –outdir “$(DIAG_DIR)” $(EXTRA_ARGS)
-$(CLI) diagnose dashboard –no-umap –no-tsne –outdir “$(DIAG_DIR)” $(EXTRA_ARGS) || 
-$(CLI) diagnose dashboard –outdir “$(DIAG_DIR)” $(EXTRA_ARGS) || true
+	$(CLI) diagnose smoothness --outdir "$(DIAG_DIR)" $(EXTRA_ARGS)
+	$(CLI) diagnose dashboard --no-umap --no-tsne --outdir "$(DIAG_DIR)" $(EXTRA_ARGS) || \
+	$(CLI) diagnose dashboard --outdir "$(DIAG_DIR)" $(EXTRA_ARGS) || true
 
 open-report:
-@latest=$$(ls -t $(DIAG_DIR)/*.html 2>/dev/null | head -n1 || true); 
-if [ -n “$$latest” ]; then 
-echo “Opening $$latest”; 
-if command -v xdg-open >/dev/null 2>&1; then xdg-open “$$latest” || true; 
-elif command -v open >/dev/null 2>&1; then open “$$latest” || true; 
-else echo “No opener found (CI/headless)”; fi; 
-else echo “No diagnostics HTML found.”; fi
+	@latest=$$(ls -t $(DIAG_DIR)/*.html 2>/dev/null | head -n1 || true); \
+	if [ -n "$$latest" ]; then \
+	  echo "Opening $$latest"; \
+	  if command -v xdg-open >/dev/null 2>&1; then xdg-open "$$latest" || true; \
+	  elif command -v open >/dev/null 2>&1; then open "$$latest" || true; \
+	  else echo "No opener found (CI/headless)"; fi; \
+	else echo "No diagnostics HTML found."; fi
 
 submit: init
-mkdir -p “$(SUBMIT_DIR)”
-$(CLI) submit –zip-out “$(SUBMIT_ZIP)” $(EXTRA_ARGS)
+	mkdir -p "$(SUBMIT_DIR)"
+	$(CLI) submit --zip-out "$(SUBMIT_ZIP)" $(EXTRA_ARGS)
 
-========= Ablation (profiles & sweep styles) =========
-
+# ========= Ablation (profiles & sweep styles) =========
 ablate: init
-$(CLI) ablate $(OVERRIDES) $(EXTRA_ARGS)
-@$(PYTHON) tools/ablation_post.py –csv outputs/ablate/leaderboard.csv –metric gll –ascending –top-n 5 –outdir outputs/ablate –html-template tools/leaderboard_template.html || true
+	$(CLI) ablate $(OVERRIDES) $(EXTRA_ARGS)
+	@$(PYTHON) tools/ablation_post.py --csv outputs/ablate/leaderboard.csv --metric gll --ascending --top-n 5 --outdir outputs/ablate --html-template tools/leaderboard_template.html || true
 
 ablate-light: init
-$(CLI) ablate ablation=ablation_light $(EXTRA_ARGS)
-@$(PYTHON) tools/ablation_post.py –csv outputs/ablate/leaderboard.csv –metric gll –ascending –top-n 3 –outdir outputs/ablate_light –html-template tools/leaderboard_template.html || true
+	$(CLI) ablate ablation=ablation_light $(EXTRA_ARGS)
+	@$(PYTHON) tools/ablation_post.py --csv outputs/ablate/leaderboard.csv --metric gll --ascending --top-n 3 --outdir outputs/ablate_light --html-template tools/leaderboard_template.html || true
 
 ablate-heavy: init
-$(CLI) ablate ablation=ablation_heavy $(EXTRA_ARGS)
-@$(PYTHON) tools/ablation_post.py –csv outputs/ablate/leaderboard.csv –metric gll –ascending –top-n 10 –outdir outputs/ablate_heavy –html-template tools/leaderboard_template.html || true
+	$(CLI) ablate ablation=ablation_heavy $(EXTRA_ARGS)
+	@$(PYTHON) tools/ablation_post.py --csv outputs/ablate/leaderboard.csv --metric gll --ascending --top-n 10 --outdir outputs/ablate_heavy --html-template tools/leaderboard_template.html || true
 
 ablate-grid: init
-$(CLI) ablate -m ablate.sweeper=basic +ablate.search=v50_fast_grid ablation=ablation_light $(EXTRA_ARGS)
-@$(PYTHON) tools/ablation_post.py –csv outputs/ablate/leaderboard.csv –metric gll –ascending –top-n 5 –outdir outputs/ablate –html-template tools/leaderboard_template.html || true
+	$(CLI) ablate -m ablate.sweeper=basic +ablate.search=v50_fast_grid ablation=ablation_light $(EXTRA_ARGS)
+	@$(PYTHON) tools/ablation_post.py --csv outputs/ablate/leaderboard.csv --metric gll --ascending --top-n 5 --outdir outputs/ablate --html-template tools/leaderboard_template.html || true
 
 ablate-optuna: init
-$(CLI) ablate -m ablate.sweeper=optuna +ablate.search=v50_symbolic_core ablation=ablation_heavy $(EXTRA_ARGS)
-@$(PYTHON) tools/ablation_post.py –csv outputs/ablate/leaderboard.csv –metric gll –ascending –top-n 10 –outdir outputs/ablate –html-template tools/leaderboard_template.html || true
+	$(CLI) ablate -m ablate.sweeper=optuna +ablate.search=v50_symbolic_core ablation=ablation_heavy $(EXTRA_ARGS)
+	@$(PYTHON) tools/ablation_post.py --csv outputs/ablate/leaderboard.csv --metric gll --ascending --top-n 10 --outdir outputs/ablate --html-template tools/leaderboard_template.html || true
 
-========= Log analysis =========
-
+# ========= Log analysis =========
 analyze-log: init
-$(CLI) analyze-log –md “$(OUT_DIR)/log_table.md” –csv “$(OUT_DIR)/log_table.csv” $(EXTRA_ARGS)
+	$(CLI) analyze-log --md "$(OUT_DIR)/log_table.md" --csv "$(OUT_DIR)/log_table.csv" $(EXTRA_ARGS)
 
-Short CI-friendly summary: last 5 entries from CSV (auto-runs analyze-log if CSV missing)
-
+# Short CI-friendly summary: last 5 entries from CSV (auto-runs analyze-log if CSV missing)
 analyze-log-short: init
-@if [ ! -f “$(OUT_DIR)/log_table.csv” ]; then 
-echo “>>> Generating log CSV via analyze-log”; 
-$(CLI) analyze-log –md “$(OUT_DIR)/log_table.md” –csv “$(OUT_DIR)/log_table.csv” $(EXTRA_ARGS); 
-fi; 
-if [ -f “$(OUT_DIR)/log_table.csv” ]; then 
-echo “=== Last 5 CLI invocations ===”; 
-tail -n +2 “$(OUT_DIR)/log_table.csv” | tail -n 5 | 
-awk -F’,’ ‘BEGIN{OFS=” | “} {print “time=”$${1}, “cmd=”$${2}, “git_sha=”$${3}, “cfg=”$${4}}’; 
-else 
-echo “::warning::No log_table.csv to summarize”; 
-fi
+	@if [ ! -f "$(OUT_DIR)/log_table.csv" ]; then \
+	  echo ">>> Generating log CSV via analyze-log"; \
+	  $(CLI) analyze-log --md "$(OUT_DIR)/log_table.md" --csv "$(OUT_DIR)/log_table.csv" $(EXTRA_ARGS); \
+	fi; \
+	if [ -f "$(OUT_DIR)/log_table.csv" ]; then \
+	  echo "=== Last 5 CLI invocations ==="; \
+	  tail -n +2 "$(OUT_DIR)/log_table.csv" | tail -n 5 | \
+	    awk -F',' 'BEGIN{OFS=" | "} {print "time="$${1}, "cmd="$${2}, "git_sha="$${3}, "cfg="$${4}}'; \
+	else \
+	  echo "::warning::No log_table.csv to summarize"; \
+	fi
 
 check-cli-map:
-$(CLI) check-cli-map
+	$(CLI) check-cli-map
 
-========= Mermaid / Diagrams =========
-
-Install @mermaid-js/mermaid-cli via npm ci (using package.json at repo root)
-
+# ========= Mermaid / Diagrams =========
+# Install @mermaid-js/mermaid-cli via npm ci (using package.json at repo root)
 mermaid-init:
-@if ! command -v $(NPM) >/dev/null 2>&1; then 
-echo “$(RED)ERROR: npm not found. Please install Node.js/npm.$(RST)”; exit 1; 
-fi
-$(NPM) ci
-mkdir -p “$(DIAGRAMS_DIR)”
+	@if ! command -v $(NPM) >/dev/null 2>&1; then \
+	  echo "$(RED)ERROR: npm not found. Please install Node.js/npm.$(RST)"; exit 1; \
+	fi
+	$(NPM) ci
+	mkdir -p "$(DIAGRAMS_DIR)"
 
-Render SVGs (and optionally PNGs with MERMAID_EXPORT_PNG=1)
-
+# Render SVGs (and optionally PNGs with MERMAID_EXPORT_PNG=1)
 diagrams: mermaid-init
-@echo “>>> Rendering Mermaid diagrams (SVG; PNG=$(MERMAID_EXPORT_PNG))”
-EXPORT_PNG=$(MERMAID_EXPORT_PNG) THEME=”$(MERMAID_THEME)” 
-$(PYTHON) scripts/export_mermaid.py $(MERMAID_FILES)
-@echo “>>> Output → $(DIAGRAMS_DIR)”
+	@echo ">>> Rendering Mermaid diagrams (SVG; PNG=$(MERMAID_EXPORT_PNG))"
+	EXPORT_PNG=$(MERMAID_EXPORT_PNG) THEME="$(MERMAID_THEME)" \
+	$(PYTHON) scripts/export_mermaid.py $(MERMAID_FILES)
+	@echo ">>> Output → $(DIAGRAMS_DIR)"
 
-Convenience target: force PNG export alongside SVG
-
+# Convenience target: force PNG export alongside SVG
 diagrams-png:
-@$(MAKE) –no-print-directory diagrams MERMAID_EXPORT_PNG=1
+	@$(MAKE) --no-print-directory diagrams MERMAID_EXPORT_PNG=1
 
-Full export with explicit file list (override MERMAID_FILES on CLI)
-
+# Full export with explicit file list (override MERMAID_FILES on CLI)
 mermaid-export:
-@$(MAKE) –no-print-directory diagrams
+	@$(MAKE) --no-print-directory diagrams
 
-Clean generated diagrams and temp
-
+# Clean generated diagrams and temp
 mermaid-clean:
-rm -rf “$(DIAGRAMS_DIR)” .mermaid_tmp
+	rm -rf "$(DIAGRAMS_DIR)" .mermaid_tmp
 
-========= CI convenience (dev/local reuse) =========
-
+# ========= CI convenience (dev/local reuse) =========
 ci: validate-env selftest train diagnose analyze-log-short
 
-========= DVC =========
-
+# ========= DVC =========
 dvc-pull:
-dvc pull || true
+	dvc pull || true
 
 dvc-push:
-dvc push || true
+	dvc push || true
 
-========= Benchmarks =========
-
+# ========= Benchmarks =========
 bench-selftest:
-$(CLI) selftest –fast
+	$(CLI) selftest
 
 benchmark: bench-selftest
-@$(MAKE) –no-print-directory benchmark-run DEVICE=$(DEVICE) EPOCHS=$(EPOCHS) OVERRIDES=’$(OVERRIDES)’ EXTRA_ARGS=’$(EXTRA_ARGS)’
+	@$(MAKE) --no-print-directory benchmark-run DEVICE=$(DEVICE) EPOCHS=$(EPOCHS) OVERRIDES='$(OVERRIDES)' EXTRA_ARGS='$(EXTRA_ARGS)'
 
 benchmark-cpu: bench-selftest
-@$(MAKE) –no-print-directory benchmark-run DEVICE=cpu EPOCHS=$(EPOCHS) OVERRIDES=’$(OVERRIDES)’ EXTRA_ARGS=’$(EXTRA_ARGS)’
+	@$(MAKE) --no-print-directory benchmark-run DEVICE=cpu EPOCHS=$(EPOCHS) OVERRIDES='$(OVERRIDES)' EXTRA_ARGS='$(EXTRA_ARGS)'
 
 benchmark-gpu: bench-selftest
-@$(MAKE) –no-print-directory benchmark-run DEVICE=gpu EPOCHS=$(EPOCHS) OVERRIDES=’$(OVERRIDES)’ EXTRA_ARGS=’$(EXTRA_ARGS)’
+	@$(MAKE) --no-print-directory benchmark-run DEVICE=gpu EPOCHS=$(EPOCHS) OVERRIDES='$(OVERRIDES)' EXTRA_ARGS='$(EXTRA_ARGS)'
 
 benchmark-run:
-OUTDIR=“benchmarks/$(TS)_$(DEVICE)”
-mkdir -p “$$OUTDIR”
-$(CLI) train +training.epochs=$(EPOCHS) $(OVERRIDES) –device $(DEVICE) –outdir “$$OUTDIR” $(EXTRA_ARGS)
-$(CLI) diagnose smoothness –outdir “$$OUTDIR” $(EXTRA_ARGS)
-$(CLI) diagnose dashboard –no-umap –no-tsne –outdir “$$OUTDIR” $(EXTRA_ARGS) || 
-$(CLI) diagnose dashboard –outdir “$$OUTDIR” $(EXTRA_ARGS) || true
-{ 
-echo “Benchmark summary”; 
-date; 
-echo “python   : $$($(PYTHON) –version 2>&1)”; 
-echo “poetry   : $$($(POETRY) –version 2>&1 || true)”; 
-echo “cli      : $(CLI)”; 
-echo “device   : $(DEVICE)”; 
-echo “epochs   : $(EPOCHS)”; 
-echo “overrides: $(OVERRIDES)”; 
-command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi || true; 
-echo “”; 
-echo “Artifacts in $$OUTDIR:”; 
-ls -lh “$$OUTDIR” || true; 
-} > “$$OUTDIR/summary.txt”
-@echo “>>> Benchmark complete → $$OUTDIR/summary.txt”
+	OUTDIR="benchmarks/$(TS)_$(DEVICE)"; \
+	mkdir -p "$$OUTDIR"; \
+	$(CLI) train +training.epochs=$(EPOCHS) $(OVERRIDES) --device $(DEVICE) --outdir "$$OUTDIR" $(EXTRA_ARGS); \
+	$(CLI) diagnose smoothness --outdir "$$OUTDIR" $(EXTRA_ARGS); \
+	$(CLI) diagnose dashboard --no-umap --no-tsne --outdir "$$OUTDIR" $(EXTRA_ARGS) || \
+	$(CLI) diagnose dashboard --outdir "$$OUTDIR" $(EXTRA_ARGS) || true; \
+	{ \
+	  echo "Benchmark summary"; \
+	  date; \
+	  echo "python   : $$($(PYTHON) --version 2>&1)"; \
+	  echo "poetry   : $$($(POETRY) --version 2>&1 || true)"; \
+	  echo "cli      : $(CLI)"; \
+	  echo "device   : $(DEVICE)"; \
+	  echo "epochs   : $(EPOCHS)"; \
+	  echo "overrides: $(OVERRIDES)"; \
+	  command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi || true; \
+	  echo ""; \
+	  echo "Artifacts in $$OUTDIR:"; \
+	  ls -lh "$$OUTDIR" || true; \
+	} > "$$OUTDIR/summary.txt"; \
+	echo ">>> Benchmark complete → $$OUTDIR/summary.txt"
 
 benchmark-report:
-mkdir -p aggregated
-{ 
-echo “# SpectraMind V50 Benchmark Report”; 
-echo “”; 
-for f in $$(find benchmarks -type f -name summary.txt | sort); do 
-echo “## $$f”; echo “”; cat “$$f”; echo “”; 
-done; 
-} > aggregated/report.md
-@echo “>>> Aggregated → aggregated/report.md”
+	mkdir -p aggregated
+	{ \
+	  echo "# SpectraMind V50 Benchmark Report"; \
+	  echo ""; \
+	  for f in $$(find benchmarks -type f -name summary.txt | sort); do \
+	    echo "## $$f"; echo ""; cat "$$f"; echo ""; \
+	  done; \
+	} > aggregated/report.md
+	@echo ">>> Aggregated → aggregated/report.md"
 
 benchmark-clean:
-rm -rf benchmarks aggregated
+	rm -rf benchmarks aggregated
 
-========= Kaggle Helpers =========
-
+# ========= Kaggle Helpers =========
 kaggle-run: init
-@echo “>>> Running single-epoch GPU run (Kaggle-like)”
-$(CLI) selftest –fast
-$(CLI) train +training.epochs=1 –device gpu –outdir “$(OUT_DIR)”
-$(CLI) predict –out-csv “$(PRED_DIR)/submission.csv”
+	@echo ">>> Running single-epoch GPU run (Kaggle-like)"
+	$(CLI) selftest
+	$(CLI) train +training.epochs=1 --device gpu --outdir "$(OUT_DIR)"
+	$(CLI) predict --out-csv "$(PRED_DIR)/submission.csv"
 
 kaggle-submit: kaggle-run
-@echo “>>> Submitting to Kaggle competition”
-$(KAGGLE) competitions submit -c neurips-2025-ariel -f “$(PRED_DIR)/submission.csv” -m “SpectraMind V50 auto-submit”
+	@echo ">>> Submitting to Kaggle competition"
+	$(KAGGLE) competitions submit -c neurips-2025-ariel -f "$(PRED_DIR)/submission.csv" -m "Spectramind V50 auto-submit"
 
-========= Cleanup =========
-
+# ========= Cleanup =========
 clean:
-rm -rf “$(OUT_DIR)” “$(DIAG_DIR)” “$(PRED_DIR)” “$(SUBMIT_DIR)”
+	rm -rf "$(OUT_DIR)" "$(DIAG_DIR)" "$(PRED_DIR)" "$(SUBMIT_DIR)"
 
 realclean: clean
-rm -rf .pytest_cache .ruff_cache .mypy_cache .dvc/tmp .dvc/cache
+	rm -rf .pytest_cache .ruff_cache .mypy_cache .dvc/tmp .dvc/cache
 
-Full reset: artifacts + caches + Poetry envs (LOCAL USE ONLY)
-
+# Full reset: artifacts + caches + Poetry envs (LOCAL USE ONLY)
 distclean: realclean
-@echo “>>> Removing Poetry caches and local venv (this is a full reset)”
-rm -rf .venv
-rm -rf ~/.cache/pypoetry || true
-rm -rf ~/.cache/pip || true
+	@echo ">>> Removing Poetry caches and local venv (this is a full reset)"
+	rm -rf .venv
+	rm -rf ~/.cache/pypoetry || true
+	rm -rf ~/.cache/pip || true
