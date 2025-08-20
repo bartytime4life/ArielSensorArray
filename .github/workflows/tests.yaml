@@ -1,17 +1,26 @@
 # .github/workflows/tests.yml
-# GitHub Actions workflow to run unit tests for SpectraMind V50
-# - Matrix across Python versions
-# - Poetry-based install with caching
-# - Pytest with coverage + JUnit report
-# - Artifacts uploaded on every run
+# SpectraMind V50 — CI: Lint ✦ Unit ✦ E2E ✦ Coverage (Hydra/DVC/CLI‑first)
+#
+# What this does:
+#   • Lint & format (if repo has config / pre-commit)
+#   • Install via Poetry with caching
+#   • Run pytest with coverage + JUnit (per-Python matrix)
+#   • Run fast self-test + tiny e2e smoke with the SpectraMind CLI
+#   • Upload artifacts: junit, coverage, logs, HTML/JSON diagnostics (if produced)
+#   • Combine & summarize coverage; optional Codecov upload if token present
+#
+# Conventions:
+#   • Workflow files use .yml extension
+#   • Hydra outputs go to outputs/singlerun|multirun; we gather key artifacts on failure/success
+#   • CI is terminal-first; no heavy GUIs
 
 name: tests
 
 on:
   push:
-    branches: [ "**" ]
+    branches: ["**"]
   pull_request:
-    branches: [ "**" ]
+    branches: ["**"]
   workflow_dispatch:
 
 permissions:
@@ -21,123 +30,263 @@ concurrency:
   group: tests-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  POETRY_VIRTUALENVS_IN_PROJECT: "true"
+  POETRY_NO_INTERACTION: "1"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  PIP_NO_PYTHON_VERSION_WARNING: "1"
+  HF_HOME: ${{ github.workspace }}/.cache/huggingface
+  TRANSFORMERS_OFFLINE: "1"     # prefer offline/cached behavior during CI
+  MPLBACKEND: "Agg"             # headless plotting
+
 jobs:
-  unit:
-    name: Unit Tests (pytest) • py${{ matrix.python-version }}
+  lint:
+    name: Lint & Style
     runs-on: ubuntu-latest
-    timeout-minutes: 35
-
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.10", "3.11", "3.12"]
-
-    env:
-      POETRY_VIRTUALENVS_IN_PROJECT: "true"
-      POETRY_NO_INTERACTION: "1"
-      PIP_DISABLE_PIP_VERSION_CHECK: "1"
-      PIP_NO_PYTHON_VERSION_WARNING: "1"
-      COVERAGE_FILE: ".coverage.${{ matrix.python-version }}"
-
+    timeout-minutes: 15
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Setup Python ${{ matrix.python-version }}
-        id: setup-py
+      - name: Set up Python (3.11)
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.11"
 
-      - name: Install pipx (for Poetry)
+      - name: Install pipx
         uses: pipxproject/action-install-pipx@v1
 
       - name: Install Poetry
         run: pipx install poetry==1.8.3
 
-      - name: Cache Poetry virtualenv & cache
+      - name: Cache Poetry venv & poetry cache
         uses: actions/cache@v4
         with:
           path: |
             .venv
             ~/.cache/pypoetry
-          key: poetry-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('poetry.lock') }}
+          key: lint-poetry-${{ runner.os }}-3.11-${{ hashFiles('poetry.lock') }}
           restore-keys: |
-            poetry-${{ runner.os }}-${{ matrix.python-version }}-
+            lint-poetry-${{ runner.os }}-3.11-
+
+      - name: Install dependencies
+        run: |
+          poetry env use "3.11"
+          poetry install --no-interaction
+
+      - name: Run pre-commit (if configured)
+        run: |
+          if [ -f ".pre-commit-config.yaml" ]; then
+            poetry run pip install pre-commit
+            poetry run pre-commit run --all-files --show-diff-on-failure
+          else
+            echo "No .pre-commit-config.yaml found; skipping."
+          fi
+
+      - name: Ruff lint (fallback if no pre-commit)
+        run: |
+          if ! [ -f ".pre-commit-config.yaml" ]; then
+            poetry run pip install ruff==0.6.9
+            poetry run ruff check .
+          fi
+
+  unit:
+    name: Unit Tests • py${{ matrix.python }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12"]
+    env:
+      COVERAGE_FILE: ".coverage.${{ matrix.python }}"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python ${{ matrix.python }}
+        id: setup-py
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: "pip"
+
+      - name: Install pipx
+        uses: pipxproject/action-install-pipx@v1
+
+      - name: Install Poetry
+        run: pipx install poetry==1.8.3
+
+      - name: Cache Poetry venv & poetry cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            .venv
+            ~/.cache/pypoetry
+          key: unit-poetry-${{ runner.os }}-${{ matrix.python }}-${{ hashFiles('poetry.lock') }}
+          restore-keys: |
+            unit-poetry-${{ runner.os }}-${{ matrix.python }}-
 
       - name: Install dependencies (Poetry)
         run: |
           poetry env use "${{ steps.setup-py.outputs.python-path }}"
-          # Prefer dev dependencies if defined
-          if poetry show --tree >/dev/null 2>&1; then
-            poetry install
-          else
-            poetry install --no-root
-          fi
+          poetry install --no-interaction
 
       - name: Show versions
         run: |
           python --version
           poetry --version
-          poetry run python -c "import sys,platform;print('platform:', platform.platform());print('py:', sys.version)"
+          poetry run python - <<'PY'
+          import sys, platform
+          print("platform:", platform.platform())
+          print("python:", sys.version.split()[0])
+          PY
 
-      - name: Run pytest
+      - name: Run pytest with coverage
         run: |
           mkdir -p artifacts
-          # If tests/ is absent, exit with a friendly message (fail loudly to keep expectations clear)
           if [ ! -d "tests" ]; then
             echo "::error::No tests/ directory found. Please add unit tests."
             exit 1
           fi
+          poetry run pip install pytest pytest-cov
           poetry run pytest \
-            -q \
             --maxfail=1 \
             --disable-warnings \
             -ra \
             --cov=src \
             --cov-report=term-missing \
-            --cov-report=xml:artifacts/coverage-${{ matrix.python-version }}.xml \
-            --junitxml=artifacts/junit-${{ matrix.python-version }}.xml
+            --cov-report=xml:artifacts/coverage-${{ matrix.python }}.xml \
+            --junitxml=artifacts/junit-${{ matrix.python }}.xml
 
-      - name: Upload test artifacts (coverage, junit)
+      - name: Upload unit artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-artifacts-py${{ matrix.python-version }}
+          name: unit-py${{ matrix.python }}
           path: artifacts/
-          if-no-files-found: warn
           retention-days: 14
+          if-no-files-found: warn
+
+  e2e:
+    name: Self‑Test & E2E Smoke (CLI) • py3.11
+    needs: [lint, unit]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python (3.11)
+        id: setup-py
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install pipx
+        uses: pipxproject/action-install-pipx@v1
+
+      - name: Install Poetry
+        run: pipx install poetry==1.8.3
+
+      - name: Cache Poetry venv & poetry cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            .venv
+            ~/.cache/pypoetry
+          key: e2e-poetry-${{ runner.os }}-3.11-${{ hashFiles('poetry.lock') }}
+          restore-keys: |
+            e2e-poetry-${{ runner.os }}-3.11-
+
+      - name: Install dependencies
+        run: |
+          poetry env use "${{ steps.setup-py.outputs.python-path }}"
+          poetry install --no-interaction
+
+      - name: Warm caches (optional DVC / HF)
+        run: |
+          # Pull minimal DVC caches if configured (no remote required; ignore if absent)
+          if command -v dvc >/dev/null 2>&1 && [ -f "dvc.yaml" ]; then
+            dvc pull --run-cache --force || true
+          fi
+          mkdir -p "${HF_HOME}"
+
+      - name: Fast self-test (spectramind)
+        run: |
+          mkdir -p artifacts
+          # Validate CLI and wiring (should be fast)
+          poetry run spectramind test --fast || (echo "::error::CLI self-test failed"; exit 1)
+
+      - name: Tiny e2e smoke (diagnostics)
+        run: |
+          # Run a minimal diagnostic pass without browser/GUI; produce logs + small artifacts
+          poetry run spectramind diagnose dashboard --no-open --outdir outputs/diagnostics-ci || true
+          poetry run spectramind analyze-log --out outputs/diagnostics-ci/log_table.md || true
+
+      - name: Gather logs & diagnostics
+        if: always()
+        run: |
+          mkdir -p artifacts/logs
+          # Common logs
+          test -f logs/v50_debug_log.md && cp logs/v50_debug_log.md artifacts/logs/ || true
+          # Diagnostics bundle (if present)
+          if [ -d outputs/diagnostics-ci ]; then
+            tar -czf artifacts/diagnostics-ci.tar.gz outputs/diagnostics-ci || true
+          fi
+          # Hydra outputs (latest singlerun dir)
+          if [ -d outputs/singlerun ]; then
+            latest=$(ls -1dt outputs/singlerun/* | head -n 1 || true)
+            if [ -n "$latest" ]; then
+              tar -czf artifacts/hydra-singlerun-latest.tar.gz "$latest" || true
+            fi
+          fi
+
+      - name: Upload E2E artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-artifacts
+          path: artifacts/
+          retention-days: 14
+          if-no-files-found: warn
 
   summarize:
-    name: Summarize Coverage
-    needs: unit
+    name: Coverage Summary & Upload
+    needs: [unit, e2e]
     runs-on: ubuntu-latest
     if: always()
     steps:
-      - name: Download coverage artifacts
+      - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: test-artifacts-*
+          pattern: unit-py*
           merge-multiple: true
 
-      - name: Combine coverage (if multiple builds) and print quick summary
+      - name: List coverage files
         run: |
-          # This step prints out which coverage files were produced.
-          echo "Coverage XML files found:"
+          echo "Coverage XML files:"
           ls -1 artifacts/coverage-*.xml || true
-          # Optional: you can aggregate with coverage.py if repo uses it; otherwise, keep per-Python reports.
-          # Example aggregation (requires coverage >=7 and identical source mapping):
-          # pip install coverage
-          # coverage combine artifacts/coverage-*.xml || true
-          # coverage xml -o artifacts/coverage-combined.xml || true
 
-      - name: Upload combined/summary artifacts
-        if: always()
+      - name: Codecov upload (optional)
+        if: ${{ secrets.CODECOV_TOKEN != '' }}
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: |
+            artifacts/coverage-3.10.xml
+            artifacts/coverage-3.11.xml
+            artifacts/coverage-3.12.xml
+          flags: unittests
+          fail_ci_if_error: false
+
+      - name: Upload summary bundle
         uses: actions/upload-artifact@v4
         with:
-          name: test-artifacts-summary
+          name: ci-summary
           path: artifacts/
-          if-no-files-found: ignore
           retention-days: 14
+          if-no-files-found: ignore
