@@ -1,18 +1,5 @@
 # .github/workflows/tests.yml
 # SpectraMind V50 — CI: Lint ✦ Unit ✦ E2E ✦ Coverage (Hydra/DVC/CLI‑first)
-#
-# What this does:
-#   • Lint & format (if repo has config / pre-commit)
-#   • Install via Poetry with caching
-#   • Run pytest with coverage + JUnit (per-Python matrix)
-#   • Run fast self-test + tiny e2e smoke with the SpectraMind CLI
-#   • Upload artifacts: junit, coverage, logs, HTML/JSON diagnostics (if produced)
-#   • Combine & summarize coverage; optional Codecov upload if token present
-#
-# Conventions:
-#   • Workflow files use .yml extension
-#   • Hydra outputs go to outputs/singlerun|multirun; we gather key artifacts on failure/success
-#   • CI is terminal-first; no heavy GUIs
 
 name: tests
 
@@ -40,6 +27,7 @@ env:
   MPLBACKEND: "Agg"             # headless plotting
 
 jobs:
+  # ---------- Lint quick pass (delegates to pre-commit) ----------
   lint:
     name: Lint & Style
     runs-on: ubuntu-latest
@@ -48,50 +36,37 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python (3.11)
+      - name: Set up Python (3.12)
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
+          cache: "pip"
 
-      - name: Install pipx
-        uses: pipxproject/action-install-pipx@v1
-
-      - name: Install Poetry
-        run: pipx install poetry==1.8.3
-
-      - name: Cache Poetry venv & poetry cache
+      - name: Cache pre-commit env
         uses: actions/cache@v4
         with:
-          path: |
-            .venv
-            ~/.cache/pypoetry
-          key: lint-poetry-${{ runner.os }}-3.11-${{ hashFiles('poetry.lock') }}
+          path: ~/.cache/pre-commit
+          key: precommit-${{ runner.os }}-3.12-${{ hashFiles('.pre-commit-config.yaml') }}
           restore-keys: |
-            lint-poetry-${{ runner.os }}-3.11-
+            precommit-${{ runner.os }}-3.12-
+            precommit-${{ runner.os }}-
 
-      - name: Install dependencies
+      - name: Install pre-commit
         run: |
-          poetry env use "3.11"
-          poetry install --no-interaction
+          python -m pip install --upgrade pip
+          pip install pre-commit
 
       - name: Run pre-commit (if configured)
         run: |
           if [ -f ".pre-commit-config.yaml" ]; then
-            poetry run pip install pre-commit
-            poetry run pre-commit run --all-files --show-diff-on-failure
+            pre-commit run --all-files --show-diff-on-failure
           else
             echo "No .pre-commit-config.yaml found; skipping."
           fi
 
-      - name: Ruff lint (fallback if no pre-commit)
-        run: |
-          if ! [ -f ".pre-commit-config.yaml" ]; then
-            poetry run pip install ruff==0.6.9
-            poetry run ruff check .
-          fi
-
+  # ---------- Unit test matrix + coverage ----------
   unit:
-    name: Unit Tests • py${{ matrix.python }}
+    name: Unit • py${{ matrix.python }}
     runs-on: ubuntu-latest
     timeout-minutes: 40
     strategy:
@@ -106,20 +81,19 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up Python ${{ matrix.python }}
+      - name: Set up Python
         id: setup-py
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
           cache: "pip"
 
-      - name: Install pipx
-        uses: pipxproject/action-install-pipx@v1
-
       - name: Install Poetry
-        run: pipx install poetry==1.8.3
+        run: |
+          python -m pip install --upgrade pip
+          pip install "poetry==1.8.3"
 
-      - name: Cache Poetry venv & poetry cache
+      - name: Cache Poetry venv & cache
         uses: actions/cache@v4
         with:
           path: |
@@ -129,7 +103,7 @@ jobs:
           restore-keys: |
             unit-poetry-${{ runner.os }}-${{ matrix.python }}-
 
-      - name: Install dependencies (Poetry)
+      - name: Install deps (Poetry)
         run: |
           poetry env use "${{ steps.setup-py.outputs.python-path }}"
           poetry install --no-interaction
@@ -138,11 +112,6 @@ jobs:
         run: |
           python --version
           poetry --version
-          poetry run python - <<'PY'
-          import sys, platform
-          print("platform:", platform.platform())
-          print("python:", sys.version.split()[0])
-          PY
 
       - name: Run pytest with coverage
         run: |
@@ -170,8 +139,9 @@ jobs:
           retention-days: 14
           if-no-files-found: warn
 
+  # ---------- Fast CLI smoke ----------
   e2e:
-    name: Self‑Test & E2E Smoke (CLI) • py3.11
+    name: Self‑Test & E2E Smoke (CLI) • py3.12
     needs: [lint, unit]
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -179,37 +149,35 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python (3.11)
+      - name: Set up Python (3.12)
         id: setup-py
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
           cache: "pip"
 
-      - name: Install pipx
-        uses: pipxproject/action-install-pipx@v1
-
       - name: Install Poetry
-        run: pipx install poetry==1.8.3
+        run: |
+          python -m pip install --upgrade pip
+          pip install "poetry==1.8.3"
 
-      - name: Cache Poetry venv & poetry cache
+      - name: Cache Poetry venv & cache
         uses: actions/cache@v4
         with:
           path: |
             .venv
             ~/.cache/pypoetry
-          key: e2e-poetry-${{ runner.os }}-3.11-${{ hashFiles('poetry.lock') }}
+          key: e2e-poetry-${{ runner.os }}-3.12-${{ hashFiles('poetry.lock') }}
           restore-keys: |
-            e2e-poetry-${{ runner.os }}-3.11-
+            e2e-poetry-${{ runner.os }}-3.12-
 
-      - name: Install dependencies
+      - name: Install deps (Poetry)
         run: |
           poetry env use "${{ steps.setup-py.outputs.python-path }}"
           poetry install --no-interaction
 
       - name: Warm caches (optional DVC / HF)
         run: |
-          # Pull minimal DVC caches if configured (no remote required; ignore if absent)
           if command -v dvc >/dev/null 2>&1 && [ -f "dvc.yaml" ]; then
             dvc pull --run-cache --force || true
           fi
@@ -218,26 +186,21 @@ jobs:
       - name: Fast self-test (spectramind)
         run: |
           mkdir -p artifacts
-          # Validate CLI and wiring (should be fast)
-          poetry run spectramind test --fast || (echo "::error::CLI self-test failed"; exit 1)
+          poetry run spectramind selftest --fast || (echo "::error::CLI self-test failed"; exit 1)
 
       - name: Tiny e2e smoke (diagnostics)
         run: |
-          # Run a minimal diagnostic pass without browser/GUI; produce logs + small artifacts
-          poetry run spectramind diagnose dashboard --no-open --outdir outputs/diagnostics-ci || true
+          poetry run spectramind diagnose dashboard --no-umap --no-tsne --no-open --outdir outputs/diagnostics-ci || true
           poetry run spectramind analyze-log --out outputs/diagnostics-ci/log_table.md || true
 
       - name: Gather logs & diagnostics
         if: always()
         run: |
           mkdir -p artifacts/logs
-          # Common logs
           test -f logs/v50_debug_log.md && cp logs/v50_debug_log.md artifacts/logs/ || true
-          # Diagnostics bundle (if present)
           if [ -d outputs/diagnostics-ci ]; then
             tar -czf artifacts/diagnostics-ci.tar.gz outputs/diagnostics-ci || true
           fi
-          # Hydra outputs (latest singlerun dir)
           if [ -d outputs/singlerun ]; then
             latest=$(ls -1dt outputs/singlerun/* | head -n 1 || true)
             if [ -n "$latest" ]; then
@@ -254,13 +217,14 @@ jobs:
           retention-days: 14
           if-no-files-found: warn
 
+  # ---------- Coverage combine / Codecov ----------
   summarize:
     name: Coverage Summary & Upload
     needs: [unit, e2e]
     runs-on: ubuntu-latest
     if: always()
     steps:
-      - name: Download artifacts
+      - name: Download unit artifacts
         uses: actions/download-artifact@v4
         with:
           pattern: unit-py*
