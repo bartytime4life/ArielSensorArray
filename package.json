@@ -1,11 +1,22 @@
 {
   "name": "spectramind-v50-mermaid-export",
+  "version": "1.0.0",
+  "description": "Mermaid diagram rendering utilities for SpectraMind V50 (NeurIPS 2025 Ariel Data Challenge).",
   "private": true,
-  "devDependencies": {
-    "@mermaid-js/mermaid-cli": "^10.9.0"
-  },
   "scripts": {
-    "mmd:render": "node ./node_modules/.bin/mmdc",
-    "mmd:version": "node ./node_modules/.bin/mmdc -V"
+    "mmd:render": "mmdc -i diagrams/main.mmd -o outputs/diagrams/main.svg",
+    "mmd:render:png": "mmdc -i diagrams/main.mmd -o outputs/diagrams/main.png",
+    "mmd:watch": "chokidar 'diagrams/**/*.mmd' -c 'npm run mmd:render'",
+    "mmd:version": "mmdc -V",
+    "lint": "prettier --check 'diagrams/**/*.mmd'",
+    "format": "prettier --write 'diagrams/**/*.mmd'"
+  },
+  "devDependencies": {
+    "@mermaid-js/mermaid-cli": "^10.9.1",
+    "chokidar-cli": "^3.0.0",
+    "prettier": "^3.3.3"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }
