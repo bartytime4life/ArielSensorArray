@@ -1,7 +1,5 @@
-Here’s a clean, copy‑paste drop‑in upgrade of your Makefile. It fixes the curly quotes/dashes, tightens portability and safety, aligns flags with your CLI, and keeps full parity with your targets. It also adds a few niceties (strict shell, reusable colors, consistent help, and robust Mermaid/DVC/Kaggle guards).
-
 # ==============================================================================
-# SpectraMind V50 — Master Makefile (Dev/Local, CI‑Safe)
+# SpectraMind V50 — Master Makefile (Dev/Local, CI‑Safe, Kaggle‑Ready)
 # Neuro‑Symbolic, Physics‑Informed AI Pipeline
 # ==============================================================================
 
@@ -18,6 +16,7 @@ CLI          ?= $(POETRY) run spectramind
 NODE         ?= node
 NPM          ?= npm
 KAGGLE       ?= kaggle
+PIP          ?= $(PYTHON) -m pip
 
 # ========= Defaults (override at CLI) =========
 DEVICE       ?= cpu
@@ -32,6 +31,13 @@ SUBMIT_DIR   ?= $(OUT_DIR)/submission
 SUBMIT_ZIP   ?= $(SUBMIT_DIR)/bundle.zip
 
 RUN_HASH_FILE ?= run_hash_summary_v50.json
+
+# Requirements files
+REQ_CORE          ?= requirements.txt
+REQ_EXTRAS        ?= requirements-extras.txt
+REQ_DEV           ?= requirements-dev.txt
+REQ_KAGGLE        ?= requirements-kaggle.txt
+REQ_FREEZE        ?= requirements.freeze.txt
 
 # Mermaid export defaults
 DIAGRAMS_DIR       ?= docs/diagrams
@@ -54,7 +60,7 @@ RST  := \033[0m
 
 # ========= PHONY =========
 .PHONY: help init env info doctor versions \
-        fmt lint mypy test \
+        fmt lint mypy test pre-commit hooks \
         selftest selftest-deep validate-env \
         calibrate calibrate-temp corel-train \
         train predict predict-e2e diagnose submit \
@@ -64,7 +70,12 @@ RST  := \033[0m
         bench-selftest benchmark benchmark-cpu benchmark-gpu benchmark-run benchmark-report benchmark-clean \
         kaggle-run kaggle-submit \
         mermaid-init diagrams diagrams-png mermaid-export mermaid-clean \
-        ci quickstart clean realclean distclean
+        ci quickstart clean realclean distclean cache-clean \
+        export-reqs export-reqs-dev export-kaggle-reqs export-freeze \
+        install-core install-extras install-dev install-kaggle \
+        env-capture hash-config \
+        pip-audit audit docs-serve docs-build \
+        pyg-install kaggle-pyg-index
 
 # ========= Default Goal =========
 .DEFAULT_GOAL := help
@@ -86,8 +97,12 @@ help:
 	@echo "  $(CYN)diagrams$(RST)         : render Mermaid in $(MERMAID_FILES) → $(DIAGRAMS_DIR)"
 	@echo "  $(CYN)benchmark-*$(RST)      : small benchmark runs (cpu/gpu)"
 	@echo "  $(CYN)kaggle-*$(RST)         : Kaggle run+submit (requires Kaggle CLI login)"
-	@echo "  $(CYN)fmt | lint | mypy | test$(RST) : code quality"
-	@echo "  $(CYN)ci$(RST)               : CI convenience target: validate + selftest + train + diagnose + summarize"
+	@echo "  $(CYN)fmt | lint | mypy | test | pre-commit$(RST) : code quality"
+	@echo "  $(CYN)env-capture | hash-config$(RST) : reproducibility utilities"
+	@echo "  $(CYN)export-reqs* | install-*(RST)  : requirements export/install helpers"
+	@echo "  $(CYN)docs-serve | docs-build$(RST)  : MkDocs docs helpers (optional)"
+	@echo "  $(CYN)pip-audit$(RST)                : CVE scan for installed packages"
+	@echo "  $(CYN)cache-clean$(RST)              : wipe caches/__pycache__/logs"
 	@echo "  $(CYN)clean | realclean | distclean$(RST)"
 	@echo ""
 	@echo "$(DIM)Vars: DEVICE=$(DEVICE) EPOCHS=$(EPOCHS) OUT_DIR=$(OUT_DIR) OVERRIDES='$(OVERRIDES)' EXTRA_ARGS='$(EXTRA_ARGS)'$(RST)"
@@ -142,6 +157,10 @@ mypy:
 test: init
 	$(POETRY) run pytest -q || $(POETRY) run pytest -q -x
 
+pre-commit:
+	$(POETRY) run pre-commit install
+	$(POETRY) run pre-commit run --all-files || true
+
 # ========= Env validation (safe no-op if script missing) =========
 validate-env:
 	@if [ -x scripts/validate_env.py ] || [ -f scripts/validate_env.py ]; then \
@@ -174,7 +193,6 @@ predict: init
 	mkdir -p "$(PRED_DIR)"
 	$(CLI) predict --out-csv "$(PRED_DIR)/submission.csv" $(OVERRIDES) $(EXTRA_ARGS)
 
-# ensure CSV exists (e2e smoke)
 predict-e2e: predict
 	@test -f "$(PRED_DIR)/submission.csv" && echo "$(GRN)OK: $(PRED_DIR)/submission.csv$(RST)" || (echo "$(RED)Missing submission.csv$(RST)"; exit 1)
 
@@ -221,7 +239,6 @@ ablate-optuna: init
 analyze-log: init
 	$(CLI) analyze-log --md "$(OUT_DIR)/log_table.md" --csv "$(OUT_DIR)/log_table.csv" $(EXTRA_ARGS)
 
-# Short CI-friendly summary: last 5 entries from CSV (auto-runs analyze-log if CSV missing)
 analyze-log-short: init
 	@if [ ! -f "$(OUT_DIR)/log_table.csv" ]; then \
 	  echo ">>> Generating log CSV via analyze-log"; \
@@ -239,7 +256,6 @@ check-cli-map:
 	$(CLI) check-cli-map
 
 # ========= Mermaid / Diagrams =========
-# Install @mermaid-js/mermaid-cli via npm ci (using package.json at repo root)
 mermaid-init:
 	@if ! command -v $(NPM) >/dev/null 2>&1; then \
 	  echo "$(RED)ERROR: npm not found. Please install Node.js/npm.$(RST)"; exit 1; \
@@ -247,22 +263,18 @@ mermaid-init:
 	$(NPM) ci
 	mkdir -p "$(DIAGRAMS_DIR)"
 
-# Render SVGs (and optionally PNGs with MERMAID_EXPORT_PNG=1)
 diagrams: mermaid-init
 	@echo ">>> Rendering Mermaid diagrams (SVG; PNG=$(MERMAID_EXPORT_PNG))"
 	EXPORT_PNG=$(MERMAID_EXPORT_PNG) THEME="$(MERMAID_THEME)" \
 	$(PYTHON) scripts/export_mermaid.py $(MERMAID_FILES)
 	@echo ">>> Output → $(DIAGRAMS_DIR)"
 
-# Convenience target: force PNG export alongside SVG
 diagrams-png:
 	@$(MAKE) --no-print-directory diagrams MERMAID_EXPORT_PNG=1
 
-# Full export with explicit file list (override MERMAID_FILES on CLI)
 mermaid-export:
 	@$(MAKE) --no-print-directory diagrams
 
-# Clean generated diagrams and temp
 mermaid-clean:
 	rm -rf "$(DIAGRAMS_DIR)" .mermaid_tmp
 
@@ -337,14 +349,92 @@ kaggle-submit: kaggle-run
 	@echo ">>> Submitting to Kaggle competition"
 	$(KAGGLE) competitions submit -c neurips-2025-ariel -f "$(PRED_DIR)/submission.csv" -m "Spectramind V50 auto-submit"
 
+# ========= Requirements export / install =========
+export-reqs:
+	@echo ">>> Exporting Poetry deps → $(REQ_CORE)"
+	$(POETRY) export -f requirements.txt --without-hashes -o $(REQ_CORE)
+	@echo ">>> Done."
+
+export-reqs-dev:
+	@echo ">>> Exporting Poetry deps (incl. dev) → $(REQ_DEV)"
+	$(POETRY) export -f requirements.txt --with dev --without-hashes -o $(REQ_DEV)
+	@echo ">>> Done."
+
+export-kaggle-reqs:
+	@echo ">>> Exporting Kaggle-friendly requirements → $(REQ_KAGGLE)"
+	$(POETRY) export -f requirements.txt --without-hashes | \
+		grep -vE '^(torch|torchvision|torchaudio|torch-geometric)(==|>=)' > $(REQ_KAGGLE)
+	@echo ">>> Done."
+
+export-freeze:
+	@echo ">>> Freezing active env → $(REQ_FREEZE)"
+	$(PIP) freeze -q > $(REQ_FREEZE)
+	@echo ">>> Wrote $(REQ_FREEZE)"
+
+install-core:
+	$(PIP) install -r $(REQ_CORE)
+
+install-extras:
+	@if [ -f "$(REQ_EXTRAS)" ]; then $(PIP) install -r $(REQ_EXTRAS); else echo "::warning::$(REQ_EXTRAS) not found"; fi
+
+install-dev:
+	$(PIP) install -r $(REQ_DEV)
+
+install-kaggle:
+	$(PIP) install -r $(REQ_KAGGLE)
+
+# ========= CLI utilities (reproducibility) =========
+env-capture:
+	$(CLI) env-capture
+
+hash-config:
+	$(CLI) hash-config
+
+# ========= Security / Docs (optional) =========
+pip-audit:
+	@echo ">>> pip-audit (CVE scan)"
+	@if ! command -v pip-audit >/dev/null 2>&1; then $(PIP) install pip-audit; fi
+	pip-audit -r $(REQ_CORE) || true
+
+audit: pip-audit
+
+docs-serve:
+	@if ! command -v mkdocs >/dev/null 2>&1; then echo "$(YLW)MkDocs not installed (pip install mkdocs mkdocs-material)$(RST)"; exit 1; fi
+	mkdocs serve
+
+docs-build:
+	@if ! command -v mkdocs >/dev/null 2>&1; then echo "$(YLW)MkDocs not installed (pip install mkdocs mkdocs-material)$(RST)"; exit 1; fi
+	mkdocs build
+
+# ========= PyTorch Geometric helper (Kaggle/Local) =========
+kaggle-pyg-index:
+	@$(PYTHON) - << 'PY'
+import torch
+ver = torch.__version__.split('+')[0]
+cu  = (torch.version.cuda or 'cpu').replace('.','')
+base = f"https://data.pyg.org/whl/torch-{ver}+{'cu'+cu if torch.version.cuda else 'cpu'}.html"
+print(base)
+PY
+
+pyg-install:
+	@echo ">>> Installing torch-geometric matching the current torch/CUDA"
+	@PYG_INDEX="$$( $(MAKE) --no-print-directory kaggle-pyg-index )"; \
+	echo "Using index: $$PYG_INDEX"; \
+	$(PIP) install torch-geometric==2.5.3 -f "$$PYG_INDEX"
+
 # ========= Cleanup =========
 clean:
 	rm -rf "$(OUT_DIR)" "$(DIAG_DIR)" "$(PRED_DIR)" "$(SUBMIT_DIR)"
 
-realclean: clean
-	rm -rf .pytest_cache .ruff_cache .mypy_cache .dvc/tmp .dvc/cache
+cache-clean:
+	@echo ">>> Cleaning caches and logs"
+	find . -type d -name "__pycache__" -prune -exec rm -rf {} + || true
+	rm -rf .pytest_cache .ruff_cache .mypy_cache .dvc/tmp || true
+	find $(LOGS_DIR) -type f -name "*.log" -delete 2>/dev/null || true
 
-# Full reset: artifacts + caches + Poetry envs (LOCAL USE ONLY)
+realclean: clean cache-clean
+	rm -rf .dvc/cache
+
 distclean: realclean
 	@echo ">>> Removing Poetry caches and local venv (this is a full reset)"
 	rm -rf .venv
