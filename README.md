@@ -1,4 +1,3 @@
-Here’s a fully upgraded README.md for your repository, integrating insights from the SpectraMind V50 Technical Plan, Project Analysis, Cosmic Fingerprints, Radiation, Gravitational Lensing, and Kaggle references. It emphasizes scientific fidelity, CLI-first reproducibility, and competition readiness, while embedding astrophysical and physics-informed context.
 
 ⸻
 
