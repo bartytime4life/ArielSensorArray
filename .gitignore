@@ -1,210 +1,122 @@
-# -----------------------------------------------------------------------------
-# SpectraMind V50 — .gitignore (ArielSensorArray)
-# Purpose: keep repo clean, reproducible, and free of local/secret artifacts.
-# -----------------------------------------------------------------------------
+# .gitignore — SpectraMind V50 (NeurIPS 2025 Ariel Data Challenge)
+# Purpose: Ignore ephemeral, reproducible, and environment-specific files.
+# Mirrors .dvcignore for consistency between Git and DVC.
 
-
-# -----------------------
-# Python bytecode / cache
-# -----------------------
+# ----------------------------------------------------------------------
+# Python build & cache
 __pycache__/
 *.py[cod]
-*$py.class
+*.pyd
+*.so
+*.egg-info/
+*.egg
+*.whl
 
-
-# -----------------------
-# Virtual environments
-# -----------------------
+# ----------------------------------------------------------------------
+# Virtual environments & package managers
 .venv/
 venv/
 env/
-.python-version
-
-
-# -----------------------
-# Build / packaging
-# -----------------------
-build/
-dist/
-*.egg-info/
-.eggs/
-*.egg
+ENV/
+.poetry/
 pip-wheel-metadata/
+site-packages/
 
-
-# -----------------------
-# Jupyter / notebooks
-# -----------------------
-.ipynb_checkpoints/
-*.ipynb~
-
-
-# -----------------------
-# Logs / telemetry
-# -----------------------
-logs/
-!logs/.gitkeep
-*.log
-*.jsonl
-*.csv.tmp
-
-
-# -----------------------
-# Outputs / artifacts
-# -----------------------
-outputs/
-!outputs/.gitkeep
-
-# Explicitly ignore submissions & bundles
-outputs/submission.csv
-outputs/submission*.zip
-outputs/submission_bundle.zip
-
-# Common local scratch dirs
-.tmp/
-tmp/
-cache/
-.cache/
-wandb/
-mlruns/
-mlartifacts/
-tensorboard/
-tb_logs/
-lightning_logs/
-
-
-# -----------------------
-# Data (tracked via DVC or external)
-# -----------------------
-data/
-!data/.gitkeep
-*.parquet
-*.feather
-*.h5
-*.hdf5
-*.npz
-*.npy
-*.csv
-*.tsv
-
-# Allow small config/meta files if needed
-!data/*.md
-!data/*.txt
-
-
-# -----------------------
-# DVC
-# -----------------------
-.dvc/
-*.dvc
-!.dvc/config
-.dvcignore
-
-
-# -----------------------
-# Hydra run directories
-# -----------------------
-multirun/
-outputs_hydra/
-**/.hydra/
-
-
-# -----------------------
-# Poetry / pip / cache
-# -----------------------
-# Keep poetry.lock in version control for reproducibility
-# (uncomment below if you prefer ignoring it)
-# poetry.lock
-
-.poetry-cache/
-pip-cache/
-__pypackages__/
-
-
-# -----------------------
-# Editors / IDEs
-# -----------------------
+# ----------------------------------------------------------------------
+# IDE/editor settings
 .vscode/
-.vscode-test/
-*.code-workspace
 .idea/
-*.iml
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw*
+*.swp
+*.swo
+
+# ----------------------------------------------------------------------
+# OS / system junk
 .DS_Store
 Thumbs.db
+Desktop.ini
 
-
-# -----------------------
-# Testing / coverage
-# -----------------------
-htmlcov/
-.coverage
-.coverage.*
-.cache/
-.pytest_cache/
-.tox/
-.nox/
-
-
-# -----------------------
-# Docs build artifacts
-# -----------------------
-site/
-mkdocs-site/
-docs/_build/
-docs/_autosummary/
-*.doctree
-*.pickle
-
-
-# -----------------------
-# OS / misc
-# -----------------------
-*.bak
+# ----------------------------------------------------------------------
+# Logs & temporary artifacts
+logs/
+*.log
 *.tmp
-~$*
-*.orig
-*.rej
-
-
-# -----------------------
-# Docker / Compose
-# -----------------------
+*.bak
+*.old
 *.pid
-docker-data/
-docker-volume/
-.env
-.env.*.local
-.env.local
+*.lock
 
-# Keep a template for environment variables
-!.env.example
+# ----------------------------------------------------------------------
+# Intermediate & scratch outputs
+outputs/checkpoints/
+outputs/intermediate/
+outputs/temp/
+outputs/cache/
+outputs/debug/
 
+# ----------------------------------------------------------------------
+# Model bundles & artifacts (tracked selectively in pipeline)
+*.ckpt
+*.pth
+*.pt
+*.onnx
+*.h5
 
-# -----------------------
-# Kaggle cache / credentials
-# -----------------------
+# ----------------------------------------------------------------------
+# Kaggle / competition specifics
 .kaggle/
 kaggle.json
+*.ipynb  # Kaggle-synced notebooks (prefer notebooks/ dir)
 
+# ----------------------------------------------------------------------
+# Jupyter / notebooks
+.ipynb_checkpoints/
+notebooks/.ipynb_checkpoints/
 
-# -----------------------
-# Security: prevent accidental secrets
-# -----------------------
-*.key
-*.pem
-*.crt
-*.p12
-*.der
-*.asc
-*.gpg
-secrets/
-**/secrets.*
-**/*secret*.*
-**/*credentials*.*
-**/*token*.*
-**/*apikey*.*
+# ----------------------------------------------------------------------
+# DVC internals (Git tracks only dvc.yaml + .dvc files, not cache)
+.dvc/cache/
+.dvc/tmp/
+.dvc/plots/
+
+# ----------------------------------------------------------------------
+# Diagnostics, reports & dashboards (reproducible)
+outputs/diagnostics/
+*.html
+*.htm
+*.png
+*.svg
+*.jpg
+*.jpeg
+*.gif
+*.pdf
+*.csv
+*.json
+*.md
+
+# ----------------------------------------------------------------------
+# Submission bundles (reproducible via pipeline)
+outputs/submission.csv
+outputs/submission.zip
+outputs/submission_bundle.zip
+
+# ----------------------------------------------------------------------
+# Generated configs & manifests
+hydra_outputs/
+multirun/
+run_logs/
+manifest.json
+diagnostic_summary.json
+run_hash_summary_v50.json
+
+# ----------------------------------------------------------------------
+# Local GUI/UX assets (regenerable)
+assets/screenshots/
+assets/plots/
+assets/tmp/
+
+# ----------------------------------------------------------------------
+# Hugging Face / MLflow / W&B caches
+.huggingface/
+wandb/
+mlruns/
+*.mlmodel
