@@ -1,7 +1,18 @@
-# .github/workflows/diagnostics.yml
+# ==============================================================================
 # SpectraMind V50 — Diagnostics Workflow
-# Generates HTML dashboards and diagnostic artifacts (UMAP/t‑SNE, GLL heatmaps, SHAP, symbolic overlays)
-# on a small, CI‑safe slice of data. Artifacts are uploaded for review.
+# Generates HTML dashboards & diagnostic artifacts (UMAP/t‑SNE*, GLL heatmaps,
+# SHAP*, symbolic overlays). Defaults to a CI‑safe "light" run; you can supply
+# extra Hydra overrides in workflow_dispatch. (*heavy diagnostics may be skipped)
+#
+# Artifacts:
+#   - artifacts/diagnostics/py<ver>/  (per‑interpreter)
+#   - outputs/diagnostics/             (mirrored into per‑interp artifact)
+#   - aggregated/DIAGNOSTICS_INDEX.md  (merged index)
+#
+# Optional:
+#   - DVC pull (safe no‑op if not configured)
+#   - ablation leaderboard (fast grid) — manual or on schedule
+# ==============================================================================
 
 name: diagnostics
 
@@ -9,10 +20,16 @@ on:
   workflow_dispatch:
     inputs:
       extra_overrides:
-        description: "Optional Hydra overrides (e.g., +data.split=toy +diagnostics.light=true)"
+        description: "Hydra overrides (e.g., +data.split=toy +diagnostics.light=true)"
         type: string
         required: false
         default: "+diagnostics.light=true +data.split=toy"
+      run_ablation:
+        description: "Also run fast ablation and attach leaderboard?"
+        type: choice
+        options: [ "false", "true" ]
+        required: false
+        default: "false"
   push:
     branches: [ "main" ]
   pull_request:
@@ -28,6 +45,16 @@ concurrency:
   group: diagnostics-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  POETRY_VIRTUALENVS_IN_PROJECT: "true"
+  POETRY_NO_INTERACTION: "1"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  PIP_NO_PYTHON_VERSION_WARNING: "1"
+  HYDRA_FULL_ERROR: "1"
+  DEFAULT_OVERRIDES: "+diagnostics.light=true +data.split=toy"
+  DEVICE: "cpu"
+  POETRY_VERSION: "1.8.3"
+
 jobs:
   build:
     name: Diagnostics • py${{ matrix.python-version }}
@@ -40,17 +67,9 @@ jobs:
         python-version: ["3.10", "3.11", "3.12"]
 
     env:
-      POETRY_VIRTUALENVS_IN_PROJECT: "true"
-      POETRY_NO_INTERACTION: "1"
-      PIP_DISABLE_PIP_VERSION_CHECK: "1"
-      PIP_NO_PYTHON_VERSION_WARNING: "1"
-      HYDRA_FULL_ERROR: "1"
-      # Diagnostics output
+      # per‑job computed paths
       DIAG_DIR: "outputs/diagnostics"
       ARTIFACT_DIR: "artifacts/diagnostics/py${{ matrix.python-version }}"
-      # Keep default fast settings; allow workflow_dispatch to add more
-      DEFAULT_OVERRIDES: "+diagnostics.light=true +data.split=toy"
-      DEVICE: "cpu"
 
     steps:
       - name: Checkout repository
@@ -64,11 +83,9 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install pipx
+      - name: Install pipx & Poetry
         uses: pipxproject/action-install-pipx@v1
-
-      - name: Install Poetry
-        run: pipx install poetry==1.8.3
+      - run: pipx install poetry==${{ env.POETRY_VERSION }}
 
       - name: Cache Poetry & venv
         uses: actions/cache@v4
@@ -76,6 +93,7 @@ jobs:
           path: |
             .venv
             ~/.cache/pypoetry
+            ~/.cache/pip
           key: poetry-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('poetry.lock') }}
           restore-keys: |
             poetry-${{ runner.os }}-${{ matrix.python-version }}-
@@ -83,16 +101,15 @@ jobs:
       - name: Install dependencies
         run: |
           poetry env use "${{ steps.setup-python.outputs.python-path }}"
-          poetry install --no-interaction
+          poetry install --no-interaction --no-root
 
-      - name: Show versions
+      - name: Versions
         run: |
           python --version
           poetry --version
-          poetry run python -c "import sys, platform; print('platform:', platform.platform()); print('python:', sys.version.replace('\\n',' '))"
           poetry run python - <<'PY'
-          import importlib, json, sys
-          info={}
+          import sys, platform, importlib, json
+          info={"platform": platform.platform(), "python": sys.version.replace("\n"," ")}
           for m in ("torch","numpy","pandas","matplotlib"):
               try:
                   mod=importlib.import_module(m)
@@ -102,43 +119,51 @@ jobs:
           print(json.dumps(info, indent=2))
           PY
 
-      - name: Pipeline selftest (fast)
+      - name: Validate .env (safe no‑op if missing)
         run: |
-          poetry run spectramind test --fast
+          if [ -f scripts/validate_env.py ]; then
+            poetry run python scripts/validate_env.py
+          else
+            echo "No scripts/validate_env.py — skipping."
+          fi
+
+      - name: Optional DVC pull
+        run: |
+          poetry run python - <<'PY'
+          import subprocess, sys
+          try:
+              subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "dvc[all]"])
+              subprocess.call(["dvc","--version"])
+              subprocess.call(["dvc","pull","-q"])
+          except Exception as e:
+              print("DVC not configured or pull failed (ok for CI):", e)
+          PY
 
       - name: Prepare artifact folders
         run: |
-          mkdir -p "${ARTIFACT_DIR}"
-          mkdir -p "${DIAG_DIR}"
+          mkdir -p "${ARTIFACT_DIR}" "${DIAG_DIR}"
+
+      - name: Pipeline selftest (fast)
+        run: |
+          poetry run spectramind selftest --fast
 
       - name: Train minimal model for diagnostics (fast)
         run: |
-          # Keep this lean to ensure CI completes quickly; merge user overrides if provided.
           OVERRIDES="${DEFAULT_OVERRIDES} ${{ inputs.extra_overrides }}"
           echo "Using overrides: ${OVERRIDES}"
-          poetry run spectramind train \
-            +training.epochs=1 \
-            ${OVERRIDES} \
-            --device ${DEVICE} \
-            --outdir "${ARTIFACT_DIR}"
+          poetry run spectramind train +training.epochs=1 ${OVERRIDES} --device ${DEVICE} --outdir "${ARTIFACT_DIR}"
 
       - name: Generate diagnostics — smoothness
         run: |
-          poetry run spectramind diagnose smoothness \
-            --outdir "${ARTIFACT_DIR}"
+          poetry run spectramind diagnose smoothness --outdir "${ARTIFACT_DIR}"
 
       - name: Generate diagnostics — dashboard (HTML)
         run: |
-          # Prefer a light dashboard (skip heavy projections) but attempt full if available
-          poetry run spectramind diagnose dashboard \
-            --no-umap --no-tsne \
-            --outdir "${ARTIFACT_DIR}" || \
-          poetry run spectramind diagnose dashboard \
-            --outdir "${ARTIFACT_DIR}" || true
+          poetry run spectramind diagnose dashboard --no-umap --no-tsne --outdir "${ARTIFACT_DIR}" || \
+          poetry run spectramind diagnose dashboard --outdir "${ARTIFACT_DIR}" || true
 
-      - name: Copy common artifacts
+      - name: Copy common artifacts into per‑interp bundle
         run: |
-          # Copy known diagnostics outputs if they exist
           for p in \
             "${DIAG_DIR}"/*.html \
             "${DIAG_DIR}"/*.png \
@@ -153,6 +178,9 @@ jobs:
           ; do
             [ -f "$p" ] && cp -v "$p" "${ARTIFACT_DIR}/" || true
           done
+          # Also capture debug & run hash if present
+          [ -f logs/v50_debug_log.md ] && cp -v logs/v50_debug_log.md "${ARTIFACT_DIR}/" || true
+          [ -f outputs/run_hash_summary_v50.json ] && cp -v outputs/run_hash_summary_v50.json "${ARTIFACT_DIR}/" || true
 
       - name: Summarize diagnostics run
         run: |
@@ -173,11 +201,66 @@ jobs:
           name: diagnostics-py${{ matrix.python-version }}
           path: ${{ env.ARTIFACT_DIR }}
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 21
+
+  ablate:
+    name: Ablation Leaderboard (scheduled/manual)
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    if: |
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && inputs.run_ablation == 'true')
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Poetry
+        run: |
+          python -m pip install --upgrade pip
+          pip install poetry==${{ env.POETRY_VERSION }}
+
+      - name: Cache Poetry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.cache/pypoetry
+            .venv
+          key: poetry-${{ runner.os }}-3.11-${{ hashFiles('**/poetry.lock') }}
+          restore-keys: |
+            poetry-${{ runner.os }}-3.11-
+
+      - name: Install deps
+        run: |
+          poetry config virtualenvs.create true
+          poetry install --no-root
+
+      - name: Run ablation (fast grid) + post-process
+        run: |
+          make -f makefile.ci ablate-ci
+
+      - name: Upload ablation artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ablation-leaderboard
+          path: |
+            outputs/ablate/leaderboard.csv
+            outputs/ablate/leaderboard.html
+            outputs/ablate/**
+          if-no-files-found: ignore
+          retention-days: 30
 
   aggregate:
     name: Aggregate Diagnostics Index
-    needs: build
+    needs: [build]
     runs-on: ubuntu-latest
     if: always()
     steps:
@@ -195,10 +278,10 @@ jobs:
             echo ""
             echo "_Generated: $(date -u)_"
             echo ""
-            find artifacts -type f -maxdepth 3 | sed 's/^/- /'
+            find artifacts -type f -maxdepth 5 | sed 's/^/- /'
           } > aggregated/DIAGNOSTICS_INDEX.md
           echo "Created aggregated/DIAGNOSTICS_INDEX.md"
-          head -n 40 aggregated/DIAGNOSTICS_INDEX.md || true
+          head -n 50 aggregated/DIAGNOSTICS_INDEX.md || true
 
       - name: Upload aggregated index
         uses: actions/upload-artifact@v4
