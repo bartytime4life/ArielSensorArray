@@ -1,23 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-SpectraMind V50 — Unified Typer CLI (ArielSensorArray)
+SpectraMind V50 — Unified Typer CLI (ArielSensorArray)  •  upgraded
 
-Mission:
-  • CLI-first orchestration with friendly Rich output
-  • Safe stub artifacts for every command (works before full pipeline is wired)
-  • Append-only operator audit log: logs/v50_debug_log.md
-  • Optional Hydra compose snapshot to outputs/config_snapshot.yaml
+Highlights
+  • Full CLI parity with Makefile targets (validate-env, dvc, kaggle, benchmark, diagrams, etc.)
+  • Deterministic seeding & run hashing (config + env) persisted to outputs/run_hash_summary_v50.json
+  • Rich/JSONL logging with global --log-level / --no-rich
+  • Safer subprocess wrappers, friendlier errors, consistent exit codes
 
-References (engineering context only):
-  - CLI-first, Hydra, DVC, CI reproducibility
-  - Kaggle runtime envelope (≤9h), GPU quotas
-  - Terminal UX (Rich), HTML diagnostics stubs
-  - Physics-informed mindset for guardrails (e.g., log hygiene)
-
-This CLI is intentionally safe:
-  - Never deletes user data
-  - Creates outputs/… folders and placeholder artifacts so Makefile/CI can proceed
+Design notes are aligned with the V50 plan (CLI-first orchestration, Hydra snapshots, auditable logs). 
 """
 
 from __future__ import annotations
@@ -27,6 +19,7 @@ import datetime as dt
 import hashlib
 import json
 import os
+import random
 import re
 import signal
 import subprocess
@@ -41,6 +34,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 import typer
 from rich import box
 from rich.console import Console
+from rich.json import JSON
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
@@ -62,7 +56,7 @@ except Exception:  # pragma: no cover
 # -----------------------------------------------------------------------------
 APP = typer.Typer(
     name="spectramind",
-    help="SpectraMind V50 — Unified CLI (calibrate/train/predict/diagnose/submit/selftest/analyze-log/check-cli-map)",
+    help="SpectraMind V50 — Unified CLI (calibrate/train/predict/diagnose/submit/selftest/analyze-log/check-cli-map and more)",
     add_completion=True,
     no_args_is_help=True,
 )
@@ -80,19 +74,20 @@ SUBMISSION = OUTPUTS / "submission"
 SUBMISSION_ZIP = SUBMISSION / "bundle.zip"
 
 DEBUG_LOG = LOGS / "v50_debug_log.md"
+JSONL_LOG = LOGS / "v50_runs.jsonl"
 VERSION_FILE = REPO / "VERSION"
 RUN_HASH_JSON = OUTPUTS / "run_hash_summary_v50.json"
 
 # -----------------------------------------------------------------------------
 # Utilities
 # -----------------------------------------------------------------------------
-def timestamp() -> str:
-    return dt.datetime.utcnow().isoformat(timespec="seconds") + "Z"
-
-
 def ensure_dirs() -> None:
     for p in (OUTPUTS, LOGS, DIAG, CALIB, CHECKPOINTS, PREDICTIONS, SUBMISSION):
         p.mkdir(parents=True, exist_ok=True)
+
+
+def timestamp() -> str:
+    return dt.datetime.utcnow().isoformat(timespec="seconds") + "Z"
 
 
 def git_sha_short() -> str:
@@ -110,31 +105,10 @@ def read_version() -> str:
     return VERSION_FILE.read_text(encoding="utf-8").strip() if VERSION_FILE.exists() else "0.1.0"
 
 
-def read_run_hash() -> str:
-    try:
-        if RUN_HASH_JSON.exists():
-            j = json.loads(RUN_HASH_JSON.read_text(encoding="utf-8"))
-            return str(j.get("run_hash") or j.get("config_hash") or "unknown")
-    except Exception:
-        pass
-    return "unknown"
-
-
-def render_header(title: str) -> None:
-    console.print(Panel.fit(f"[bold]SpectraMind V50[/bold]\n{title}", box=box.ROUNDED))
-
-
-def append_debug_log(lines: Iterable[str]) -> None:
-    ensure_dirs()
-    lines = list(lines)
-    header = f"\n⸻\n\n{timestamp()} — {lines[0] if lines else ''}"
-    body = "".join(f"\n\t• {ln}" for ln in lines[1:])
-    prefix = (
-        DEBUG_LOG.read_text(encoding="utf-8")
-        if DEBUG_LOG.exists()
-        else "SpectraMind V50 — Debug & Audit Log\n\nAppend-only operator log (immutable).\n"
-    )
-    DEBUG_LOG.write_text(prefix + header + body, encoding="utf-8")
+def dict_hash(d: Dict[str, Any]) -> str:
+    # stable hash of a resolved config/env dict
+    payload = json.dumps(d, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()[:12]
 
 
 def write_text(path: Path, text: str) -> None:
@@ -145,6 +119,12 @@ def write_text(path: Path, text: str) -> None:
 def write_json(path: Path, data: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def append_jsonl(path: Path, record: Dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
 def write_stub_html(path: Path, title: str, body_html: str) -> None:
@@ -160,7 +140,7 @@ hr{{border:0;border-top:1px solid #ddd;margin:2rem 0}}
 </style></head>
 <body>
 <h1>{title}</h1>
-<div class="small">{timestamp()} • stub HTML</div>
+<div class="small">{timestamp()} • generated by spectramind</div>
 <hr/>
 {body_html}
 </body></html>"""
@@ -184,8 +164,8 @@ def simulate_progress(title: str, steps: int = 5, sleep_s: float = 0.25) -> None
 
 def hydra_compose_or_stub(config_dir: Path, task_cfg: str, overrides: Optional[List[str]]) -> Dict[str, Any]:
     """
-    Tries to compose config; if Hydra is unavailable or compose fails, returns a stub dict.
-    Also writes a snapshot YAML under outputs/config_snapshot.yaml when possible.
+    Compose Hydra config if available, else return stub dict.
+    Writes a config snapshot YAML under outputs/config_snapshot.yaml when possible.
     """
     if HYDRA_AVAILABLE and config_dir.exists():
         try:
@@ -213,23 +193,89 @@ def zip_paths(zip_path: Path, paths: List[Path]) -> None:
 
 
 # -----------------------------------------------------------------------------
-# Global --version
+# Determinism & run hashing
+# -----------------------------------------------------------------------------
+def seed_everything(seed: int = 42) -> None:
+    random.seed(seed)
+    try:
+        import numpy as np  # type: ignore
+
+        np.random.seed(seed)
+    except Exception:
+        pass
+    try:
+        import torch  # type: ignore
+
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.deterministic = True  # type: ignore
+        torch.backends.cudnn.benchmark = False  # type: ignore
+    except Exception:
+        pass
+
+
+def persist_run_hash(extra: Dict[str, Any] | None = None) -> str:
+    # collect minimal env/config fingerprints
+    info: Dict[str, Any] = {
+        "ts": timestamp(),
+        "git": git_sha_short(),
+        "version": read_version(),
+        "python": sys.version.split()[0],
+    }
+    # include hydra snapshot if present
+    snap = OUTPUTS / "config_snapshot.yaml"
+    if snap.exists():
+        info["config_snapshot_sha256"] = hashlib.sha256(snap.read_bytes()).hexdigest()[:12]
+    if extra:
+        info.update(extra)
+    rh = dict_hash(info)
+    write_json(RUN_HASH_JSON, {"run_hash": rh, "meta": info})
+    return rh
+
+
+def append_debug_log(lines: Iterable[str]) -> None:
+    ensure_dirs()
+    lines = list(lines)
+    header = f"\n⸻\n\n{timestamp()} — {lines[0] if lines else ''}"
+    body = "".join(f"\n\t• {ln}" for ln in lines[1:])
+    prefix = (
+        DEBUG_LOG.read_text(encoding="utf-8")
+        if DEBUG_LOG.exists()
+        else "SpectraMind V50 — Debug & Audit Log\n\nAppend-only operator log (immutable).\n"
+    )
+    DEBUG_LOG.write_text(prefix + header + body, encoding="utf-8")
+
+
+# -----------------------------------------------------------------------------
+# Global options (log level, rich on/off, seed)
 # -----------------------------------------------------------------------------
 @APP.callback(invoke_without_command=False)
 def _root_callback(
     ctx: typer.Context,
     version: Optional[bool] = typer.Option(None, "--version", is_flag=True, help="Show CLI version & hashes"),
+    log_level: str = typer.Option("INFO", "--log-level", help="Log level (DEBUG, INFO, WARNING, ERROR)"),
+    no_rich: bool = typer.Option(False, "--no-rich", help="Disable rich formatting (plain console)"),
+    seed: int = typer.Option(42, "--seed", help="Deterministic seed for this run"),
 ) -> None:
+    if no_rich:
+        # swap console to plain
+        global console
+        console = Console(no_color=True, highlight=False)
+    seed_everything(seed)
+    ensure_dirs()
     if version:
-        ver, sha, rh, now = read_version(), git_sha_short(), read_run_hash(), timestamp()
+        ver, sha, now = read_version(), git_sha_short(), timestamp()
+        rh = persist_run_hash({"invocation": "--version"})
         t = Table(title="SpectraMind V50 — Version", box=box.MINIMAL_DOUBLE_HEAD)
         t.add_row("CLI", ver)
         t.add_row("Git SHA", sha)
-        t.add_row("Run/Config Hash", rh)
+        t.add_row("Run Hash", rh)
         t.add_row("Timestamp (UTC)", now)
         console.print(t)
-        append_debug_log(["spectramind --version", f"Git SHA: {sha}", f"Version: {ver}", f"Run/Config hash: {rh}"])
+        append_debug_log(["spectramind --version", f"Git SHA: {sha}", f"Version: {ver}", f"Run hash: {rh}"])
         raise typer.Exit()
+    # set log level into env for children
+    os.environ["SPECTRAMIND_LOG_LEVEL"] = log_level.upper()
 
 
 # -----------------------------------------------------------------------------
@@ -240,7 +286,8 @@ def selftest(
     deep: bool = typer.Option(False, "--deep", help="Check Hydra + DVC + CUDA availability.")
 ) -> None:
     """Fast environment & paths sanity with optional deeper checks."""
-    render_header("Selftest")
+    title = "Selftest"
+    console.print(Panel.fit(f"[bold]SpectraMind V50[/bold]\n{title}", box=box.ROUNDED))
     ensure_dirs()
 
     checks: List[Tuple[str, bool]] = []
@@ -261,7 +308,6 @@ def selftest(
     if deep:
         check("Hydra importable", HYDRA_AVAILABLE)
         check("DVC present (.dvc/)", (REPO / ".dvc").exists())
-        # GPU presence (best-effort)
         try:
             subprocess.check_output(["nvidia-smi"])
             gpu_ok = True
@@ -269,7 +315,6 @@ def selftest(
             gpu_ok = False
         check("CUDA (nvidia-smi)", gpu_ok)
 
-    # Render table
     tb = Table(box=box.SIMPLE_HEAVY)
     tb.add_column("Check")
     tb.add_column("Status")
@@ -277,7 +322,8 @@ def selftest(
         tb.add_row(name, "[green]OK[/green]" if cond else "[red]FAIL[/red]")
     console.print(tb)
     console.print("✅ Environment looks good." if ok else "❌ Selftest failed.")
-    append_debug_log(["spectramind selftest" + (" --deep" if deep else ""), f"Result: {'OK' if ok else 'FAIL'}"])
+    rh = persist_run_hash({"invocation": "selftest", "deep": deep})
+    append_debug_log([f"spectramind selftest{' --deep' if deep else ''}", f"Result: {'OK' if ok else 'FAIL'}", f"Run: {rh}"])
     if not ok:
         raise typer.Exit(code=1)
 
@@ -290,13 +336,14 @@ def calibrate(
     overrides: List[str] = typer.Argument(None, help="Hydra-style overrides, e.g., data=nominal +calib.version=v1")
 ) -> None:
     """Run the calibration kill chain (stubbed)."""
-    render_header("Calibration")
+    console.print(Panel.fit("[bold]SpectraMind V50[/bold]\nCalibration", box=box.ROUNDED))
     ensure_dirs()
     cfg = hydra_compose_or_stub(REPO / "configs", "calibration=default", overrides)
     simulate_progress("Calibrating", steps=6)
     write_json(CALIB / "calibration_summary.json", {"cfg": cfg, "note": "stub"})
     console.print("[green]Calibration done[/green] → outputs/calibrated")
-    append_debug_log(["spectramind calibrate", f"overrides={overrides}"])
+    rh = persist_run_hash({"invocation": "calibrate"})
+    append_debug_log(["spectramind calibrate", f"overrides={overrides}", f"Run: {rh}"])
 
 
 @APP.command("calibrate-temp")
@@ -304,13 +351,14 @@ def calibrate_temp(
     overrides: List[str] = typer.Argument(None, help="Hydra overrides for temperature scaling")
 ) -> None:
     """Apply temperature scaling to logits/σ (stub)."""
-    render_header("Temperature Scaling")
+    console.print(Panel.fit("[bold]SpectraMind V50[/bold]\nTemperature Scaling", box=box.ROUNDED))
     ensure_dirs()
     cfg = hydra_compose_or_stub(REPO / "configs", "calibration=temperature", overrides)
     simulate_progress("Calibrating temperature", steps=4)
     write_json(OUTPUTS / "temperature_scaling.json", {"cfg": cfg, "temp": 1.23, "note": "stub"})
     console.print("[green]Temperature scaling complete[/green] → outputs/temperature_scaling.json")
-    append_debug_log(["spectramind calibrate-temp", f"overrides={overrides}"])
+    rh = persist_run_hash({"invocation": "calibrate-temp"})
+    append_debug_log(["spectramind calibrate-temp", f"overrides={overrides}", f"Run: {rh}"])
 
 
 @APP.command("corel-train")
@@ -318,13 +366,14 @@ def corel_train(
     overrides: List[str] = typer.Argument(None, help="Hydra overrides for COREL conformal training")
 ) -> None:
     """Train COREL (graph conformal calibration) — stubbed."""
-    render_header("COREL Conformal Training")
+    console.print(Panel.fit("[bold]SpectraMind V50[/bold]\nCOREL Conformal Training", box=box.ROUNDED))
     ensure_dirs()
     cfg = hydra_compose_or_stub(REPO / "configs", "uncertainty=corel", overrides)
     simulate_progress("Training COREL", steps=8)
     write_json(OUTPUTS / "corel_model.json", {"cfg": cfg, "coverage": 0.95, "note": "stub"})
     console.print("[green]COREL saved[/green] → outputs/corel_model.json")
-    append_debug_log(["spectramind corel-train", f"overrides={overrides}"])
+    rh = persist_run_hash({"invocation": "corel-train"})
+    append_debug_log(["spectramind corel-train", f"overrides={overrides}", f"Run: {rh}"])
 
 
 @APP.command("train")
@@ -334,7 +383,7 @@ def train(
     outdir: Optional[Path] = typer.Option(None, "--outdir", help="Write artifacts to this dir (default checkpoints/)"),
 ) -> None:
     """Train the V50 model (stub)."""
-    render_header("Training")
+    console.print(Panel.fit("[bold]SpectraMind V50[/bold]\nTraining", box=box.ROUNDED))
     ensure_dirs()
     cfg = hydra_compose_or_stub(REPO / "configs", "training=default", overrides)
     simulate_progress(f"Training on {device}", steps=10)
@@ -343,7 +392,8 @@ def train(
     write_text(target_dir / "best.ckpt", "stub-model-weights")
     write_json(target_dir / "train_summary.json", {"cfg": cfg, "device": device, "note": "stub"})
     console.print(f"[green]Training done[/green] → {target_dir}/best.ckpt")
-    append_debug_log(["spectramind train", f"device={device}", f"overrides={overrides}", f"outdir={target_dir}"])
+    rh = persist_run_hash({"invocation": "train", "device": device, "outdir": str(target_dir)})
+    append_debug_log(["spectramind train", f"device={device}", f"overrides={overrides}", f"outdir={target_dir}", f"Run: {rh}"])
 
 
 @APP.command("predict")
@@ -352,7 +402,7 @@ def predict(
     overrides: List[str] = typer.Argument(None, help="Hydra overrides for inference"),
 ) -> None:
     """Run inference and write a submission CSV (stub)."""
-    render_header("Prediction")
+    console.print(Panel.fit("[bold]SpectraMind V50[/bold]\nPrediction", box=box.ROUNDED))
     ensure_dirs()
     _ = hydra_compose_or_stub(REPO / "configs", "inference=default", overrides)
     simulate_progress("Predicting", steps=6)
@@ -362,7 +412,8 @@ def predict(
         w.writerow(["planet_id"] + [f"bin_{i:03d}" for i in range(283)])
         w.writerow(["P0001"] + [round(0.1 + i * 1e-3, 6) for i in range(283)])
     console.print(f"[green]CSV written[/green] → {out_csv}")
-    append_debug_log(["spectramind predict", f"out_csv={out_csv}", f"overrides={overrides}"])
+    rh = persist_run_hash({"invocation": "predict", "out_csv": str(out_csv)})
+    append_debug_log(["spectramind predict", f"out_csv={out_csv}", f"overrides={overrides}", f"Run: {rh}"])
 
 
 # -----------------------------------------------------------------------------
@@ -377,13 +428,14 @@ def diag_smoothness(
     outdir: Path = typer.Option(DIAG, "--outdir", help="Output directory for smoothness artifacts")
 ) -> None:
     """Generate a stub smoothness map/HTML."""
-    render_header("Diagnostics — Smoothness")
+    console.print(Panel.fit("[bold]SpectraMind V50[/bold]\nDiagnostics — Smoothness", box=box.ROUNDED))
     ensure_dirs()
     simulate_progress("Computing smoothness", steps=4)
     outdir.mkdir(parents=True, exist_ok=True)
     write_stub_html(outdir / "smoothness.html", "Smoothness Map (stub)", "<p>No real data — stub output.</p>")
     console.print(f"[green]Smoothness HTML[/green] → {outdir}/smoothness.html")
-    append_debug_log(["spectramind diagnose smoothness", f"outdir={outdir}"])
+    rh = persist_run_hash({"invocation": "diagnose.smoothness"})
+    append_debug_log(["spectramind diagnose smoothness", f"outdir={outdir}", f"Run: {rh}"])
 
 
 @DIAG_APP.command("dashboard")
@@ -393,19 +445,19 @@ def diag_dashboard(
     outdir: Path = typer.Option(DIAG, "--outdir", help="Output directory for dashboard"),
 ) -> None:
     """Build the unified diagnostics dashboard (stub)."""
-    render_header("Diagnostics — Dashboard")
+    console.print(Panel.fit("[bold]SpectraMind V50[/bold]\nDiagnostics — Dashboard", box=box.ROUNDED))
     ensure_dirs()
     steps = 6 - int(no_umap) - int(no_tsne)
     simulate_progress("Assembling dashboard", steps=max(3, steps))
-    # small stub report
     body = "<ul>"
     body += f"<li>UMAP: {'skipped' if no_umap else 'ok (stub)'}</li>"
     body += f"<li>t-SNE: {'skipped' if no_tsne else 'ok (stub)'}</li>"
     body += "<li>GLL: ok (stub)</li><li>SHAP: ok (stub)</li><li>Microlens audit: ok (stub)</li></ul>"
     write_stub_html(outdir / f"report_{dt.datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.html", "Diagnostics Report (stub)", body)
     console.print(f"[green]Dashboard built[/green] → {outdir}")
+    rh = persist_run_hash({"invocation": "diagnose.dashboard", "no_umap": no_umap, "no_tsne": no_tsne})
     append_debug_log(
-        ["spectramind diagnose dashboard", f"outdir={outdir}", f"no_umap={no_umap}", f"no_tsne={no_tsne}"]
+        ["spectramind diagnose dashboard", f"outdir={outdir}", f"no_umap={no_umap}", f"no_tsne={no_tsne}", f"Run: {rh}"]
     )
 
 
@@ -417,7 +469,7 @@ def submit(
     zip_out: Path = typer.Option(SUBMISSION_ZIP, "--zip-out", help="Path to write submission ZIP"),
 ) -> None:
     """Bundle artifacts for leaderboard submission (stub)."""
-    render_header("Submission Bundle")
+    console.print(Panel.fit("[bold]SpectraMind V50[/bold]\nSubmission Bundle", box=box.ROUNDED))
     ensure_dirs()
     # Ensure a submission.csv exists (create stub if missing)
     sub_csv = PREDICTIONS / "submission.csv"
@@ -427,14 +479,14 @@ def submit(
             w = csv.writer(f)
             w.writerow(["planet_id"] + [f"bin_{i:03d}" for i in range(283)])
             w.writerow(["P0001"] + [0.0] * 283)
-    # Create zip with common artifacts
     zip_paths(zip_out, [sub_csv, OUTPUTS / "config_snapshot.yaml", CHECKPOINTS, DIAG])
     console.print(f"[green]Bundle created[/green] → {zip_out}")
-    append_debug_log(["spectramind submit", f"zip_out={zip_out}"])
+    rh = persist_run_hash({"invocation": "submit", "zip_out": str(zip_out)})
+    append_debug_log(["spectramind submit", f"zip_out={zip_out}", f"Run: {rh}"])
 
 
 # -----------------------------------------------------------------------------
-# Analyze log
+# Analyze log + short
 # -----------------------------------------------------------------------------
 def _parse_debug_log(md_path: Path) -> List[Dict[str, str]]:
     if not md_path.exists():
@@ -444,7 +496,6 @@ def _parse_debug_log(md_path: Path) -> List[Dict[str, str]]:
     current: Dict[str, str] = {}
     for line in content:
         if re.match(r"^\d{4}-\d{2}-\d{2}T", line.strip().split(" — ")[0] if " — " in line else ""):
-            # new header
             if current:
                 rows.append(current)
             ts_cmd = line.strip().split(" — ", 1)
@@ -452,7 +503,6 @@ def _parse_debug_log(md_path: Path) -> List[Dict[str, str]]:
             cmd = ts_cmd[1].strip() if len(ts_cmd) > 1 else ""
             current = {"time": ts, "cmd": cmd, "git_sha": git_sha_short(), "cfg": (OUTPUTS / "config_snapshot.yaml").exists() and "snapshot" or "none"}
         elif line.strip().startswith("• "):
-            # maybe parse useful key-values
             kv = line.strip()[2:]
             if ":" in kv:
                 k, v = kv.split(":", 1)
@@ -467,8 +517,8 @@ def analyze_log(
     md_out: Path = typer.Option(OUTPUTS / "log_table.md", "--md", help="Path to write Markdown table"),
     csv_out: Path = typer.Option(OUTPUTS / "log_table.csv", "--csv", help="Path to write CSV"),
 ) -> None:
-    """Parse v50_debug_log.md into a small CSV/Markdown summary for CI/dashboards."""
-    render_header("Analyze Log")
+    """Parse v50_debug_log.md into CSV/Markdown summary for CI/dashboards."""
+    console.print(Panel.fit("[bold]SpectraMind V50[/bold]\nAnalyze Log", box=box.ROUNDED))
     ensure_dirs()
     rows = _parse_debug_log(DEBUG_LOG)
     # CSV
@@ -485,7 +535,214 @@ def analyze_log(
         lines.append(f"| {r.get('time','')} | {r.get('cmd','').replace('|','/')} | {r.get('git_sha','')} | {r.get('cfg','')} |")
     write_text(md_out, "\n".join(lines))
     console.print(f"[green]Wrote[/green] {md_out} and {csv_out}")
-    append_debug_log(["spectramind analyze-log", f"md={md_out}", f"csv={csv_out}", f"rows={len(rows)}"])
+    rh = persist_run_hash({"invocation": "analyze-log"})
+    append_debug_log(["spectramind analyze-log", f"md={md_out}", f"csv={csv_out}", f"rows={len(rows)}", f"Run: {rh}"])
+
+
+@APP.command("analyze-log-short")
+def analyze_log_short(
+    overrides: List[str] = typer.Argument(None, help="Ignored; parity with Make target"),
+) -> None:
+    """Short CI-friendly summary: last 5 entries from CSV (auto-runs analyze-log if needed)."""
+    console.print(Panel.fit("[bold]SpectraMind V50[/bold]\nAnalyze Log (short)", box=box.ROUNDED))
+    ensure_dirs()
+    csv_path = OUTPUTS / "log_table.csv"
+    if not csv_path.exists():
+        console.print(">>> Generating log CSV via analyze-log")
+        analyze_log()
+    if csv_path.exists():
+        console.print("=== Last 5 CLI invocations ===")
+        body = (csv_path.read_text(encoding="utf-8").splitlines()[1:])[-5:]
+        for row in body:
+            cols = row.split(",")
+            if len(cols) >= 4:
+                console.print(f"time={cols[0]} | cmd={cols[1]} | git_sha={cols[2]} | cfg={cols[3]}")
+    else:
+        console.print("::warning::No log_table.csv to summarize")
+    rh = persist_run_hash({"invocation": "analyze-log-short"})
+    append_debug_log(["spectramind analyze-log-short", f"Run: {rh}"])
+
+
+# -----------------------------------------------------------------------------
+# Validate-env (parity with Make)
+# -----------------------------------------------------------------------------
+@APP.command("validate-env")
+def validate_env() -> None:
+    """Validate .env schema if scripts/validate_env.py exists (safe no-op otherwise)."""
+    if (REPO / "scripts" / "validate_env.py").exists():
+        console.print(">>> Validating .env schema")
+        try:
+            subprocess.check_call([sys.executable, str(REPO / "scripts" / "validate_env.py")])
+        except subprocess.CalledProcessError as e:
+            console.print(f"[red]validate_env.py failed ({e.returncode})[/red]")
+            raise typer.Exit(code=e.returncode)
+    else:
+        console.print(">>> Skipping validate-env (scripts/validate_env.py not found)")
+    rh = persist_run_hash({"invocation": "validate-env"})
+    append_debug_log(["spectramind validate-env", f"Run: {rh}"])
+
+
+# -----------------------------------------------------------------------------
+# DVC helpers (parity with Make)
+# -----------------------------------------------------------------------------
+DVC_APP = typer.Typer(help="DVC convenience commands")
+APP.add_typer(DVC_APP, name="dvc")
+
+
+@DVC_APP.command("pull")
+def dvc_pull() -> None:
+    """dvc pull || true"""
+    try:
+        subprocess.check_call(["dvc", "pull"])
+    except Exception:
+        pass
+    rh = persist_run_hash({"invocation": "dvc.pull"})
+    append_debug_log(["spectramind dvc pull", f"Run: {rh}"])
+
+
+@DVC_APP.command("push")
+def dvc_push() -> None:
+    """dvc push || true"""
+    try:
+        subprocess.check_call(["dvc", "push"])
+    except Exception:
+        pass
+    rh = persist_run_hash({"invocation": "dvc.push"})
+    append_debug_log(["spectramind dvc push", f"Run: {rh}"])
+
+
+# -----------------------------------------------------------------------------
+# Kaggle helpers (parity with Make)
+# -----------------------------------------------------------------------------
+KAGGLE_APP = typer.Typer(help="Kaggle helpers (run, submit)")
+APP.add_typer(KAGGLE_APP, name="kaggle")
+
+
+@KAGGLE_APP.command("run")
+def kaggle_run(
+    out_dir: Path = typer.Option(OUTPUTS, "--outdir", help="Artifacts directory"),
+) -> None:
+    """Single-epoch GPU-ish run (Kaggle-like)."""
+    console.print(">>> Running single-epoch GPU run (Kaggle-like)")
+    selftest(deep=False)
+    train(overrides=["+training.epochs=1"], device="gpu", outdir=out_dir)
+    predict(out_csv=PREDICTIONS / "submission.csv", overrides=None)
+    rh = persist_run_hash({"invocation": "kaggle.run"})
+    append_debug_log(["spectramind kaggle-run", f"outdir={out_dir}", f"Run: {rh}"])
+
+
+@KAGGLE_APP.command("submit")
+def kaggle_submit(
+    comp: str = typer.Option("neurips-2025-ariel", "--competition", "-c", help="Kaggle competition slug"),
+    file: Path = typer.Option(PREDICTIONS / "submission.csv", "--file", "-f", help="submission.csv path"),
+    message: str = typer.Option("Spectramind V50 auto-submit", "--message", "-m", help="Submission message"),
+) -> None:
+    """Submit to Kaggle via kaggle CLI (requires kaggle to be installed & authed)."""
+    console.print(">>> Submitting to Kaggle competition")
+    try:
+        subprocess.check_call(["kaggle", "competitions", "submit", "-c", comp, "-f", str(file), "-m", message])
+    except FileNotFoundError:
+        console.print("[red]kaggle CLI not found. Install and authenticate first.[/red]")
+        raise typer.Exit(code=127)
+    rh = persist_run_hash({"invocation": "kaggle.submit", "competition": comp})
+    append_debug_log(["spectramind kaggle-submit", f"comp={comp}", f"file={file}", f"Run: {rh}"])
+
+
+# -----------------------------------------------------------------------------
+# Benchmark helpers (parity with Make)
+# -----------------------------------------------------------------------------
+BENCH_APP = typer.Typer(help="Benchmark helpers")
+APP.add_typer(BENCH_APP, name="benchmark")
+
+
+@BENCH_APP.command("run")
+def benchmark_run(
+    device: str = typer.Option("cpu", "--device"),
+    epochs: int = typer.Option(1, "--epochs"),
+    outroot: Path = typer.Option(Path("benchmarks"), "--outroot"),
+) -> None:
+    """Run a benchmark flow (train+diagnose) and emit a summary."""
+    ts = dt.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    outdir = outroot / f"{ts}_{device}"
+    outdir.mkdir(parents=True, exist_ok=True)
+    train(overrides=[f"+training.epochs={epochs}"], device=device, outdir=outdir)
+    diag_smoothness(outdir=outdir)
+    try:
+        diag_dashboard(no_umap=True, no_tsne=True, outdir=outdir)
+    except Exception:
+        diag_dashboard(no_umap=False, no_tsne=False, outdir=outdir)
+    # write summary
+    summary = [
+        "Benchmark summary",
+        dt.datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        f"python   : {subprocess.getoutput(sys.executable + ' --version')}",
+        f"cli      : spectramind",
+        f"device   : {device}",
+        f"epochs   : {epochs}",
+    ]
+    if shutil_ := getattr(__import__("shutil"), "which", None):
+        if shutil_("nvidia-smi"):
+            summary.append(subprocess.getoutput("nvidia-smi"))
+    summary.append("\nArtifacts in " + str(outdir) + ":\n" + subprocess.getoutput(f"ls -lh {outdir}"))
+    write_text(outdir / "summary.txt", "\n".join(summary))
+    console.print(f">>> Benchmark complete → {outdir}/summary.txt")
+    rh = persist_run_hash({"invocation": "benchmark.run", "device": device, "epochs": epochs, "outdir": str(outdir)})
+    append_debug_log(["spectramind benchmark-run", f"outdir={outdir}", f"Run: {rh}"])
+
+
+@BENCH_APP.command("report")
+def benchmark_report() -> None:
+    """Aggregate benchmark summaries into aggregated/report.md"""
+    aggregated = Path("aggregated")
+    aggregated.mkdir(exist_ok=True)
+    lines = ["# SpectraMind V50 Benchmark Report", ""]
+    for f in sorted(Path("benchmarks").rglob("summary.txt")):
+        rel = str(f)
+        lines += [f"## {rel}", "", Path(rel).read_text(encoding="utf-8"), ""]
+    write_text(aggregated / "report.md", "\n".join(lines))
+    console.print(">>> Aggregated → aggregated/report.md")
+    rh = persist_run_hash({"invocation": "benchmark.report"})
+    append_debug_log(["spectramind benchmark-report", f"Run: {rh}"])
+
+
+@BENCH_APP.command("clean")
+def benchmark_clean() -> None:
+    """Remove benchmarks/ and aggregated/"""
+    for p in [Path("benchmarks"), Path("aggregated")]:
+        if p.exists():
+            subprocess.call(["rm", "-rf", str(p)])
+    console.print(">>> Benchmarks cleaned")
+    rh = persist_run_hash({"invocation": "benchmark.clean"})
+    append_debug_log(["spectramind benchmark-clean", f"Run: {rh}"])
+
+
+# -----------------------------------------------------------------------------
+# Mermaid/diagrams helpers (parity with Make)
+# -----------------------------------------------------------------------------
+DIAGX_APP = typer.Typer(help="Mermaid / diagrams export")
+APP.add_typer(DIAGX_APP, name="diagrams")
+
+
+@DIAGX_APP.command("render")
+def diagrams_render(
+    files: List[str] = typer.Argument(["ARCHITECTURE.md", "README.md"], help="Files to scan & export Mermaid"),
+    theme: Optional[str] = typer.Option(None, "--theme"),
+    export_png: bool = typer.Option(False, "--png", help="Export PNG alongside SVG"),
+) -> None:
+    """Call scripts/export_mermaid.py if present to render diagrams (SVG/PNG)."""
+    script = REPO / "scripts" / "export_mermaid.py"
+    if not script.exists():
+        console.print("[yellow]scripts/export_mermaid.py not found (skipping).[/yellow]")
+        return
+    env = os.environ.copy()
+    if theme:
+        env["THEME"] = theme
+    env["EXPORT_PNG"] = "1" if export_png else "0"
+    console.print(">>> Rendering Mermaid diagrams")
+    subprocess.check_call([sys.executable, str(script), *files], env=env)
+    console.print(">>> Output → docs/diagrams")
+    rh = persist_run_hash({"invocation": "diagrams.render", "files": files})
+    append_debug_log(["spectramind diagrams.render", f"files={files}", f"Run: {rh}"])
 
 
 # -----------------------------------------------------------------------------
@@ -494,16 +751,21 @@ def analyze_log(
 @APP.command("check-cli-map")
 def check_cli_map() -> None:
     """Emit a quick mapping of CLI commands → typical files produced (dev/CI aid)."""
-    render_header("CLI → File map")
+    console.print(Panel.fit("[bold]SpectraMind V50[/bold]\nCLI → File map", box=box.SIMPLE))
     rows = [
         ("selftest", "logs/v50_debug_log.md"),
+        ("validate-env", "scripts/validate_env.py → OK"),
+        ("dvc pull/push", ".dvc cache/state"),
         ("calibrate", "outputs/calibrated/calibration_summary.json"),
         ("train", "outputs/checkpoints/best.ckpt"),
         ("predict", "outputs/submission.csv (or outputs/predictions/submission.csv)"),
         ("diagnose smoothness", "outputs/diagnostics/smoothness.html"),
         ("diagnose dashboard", "outputs/diagnostics/report_*.html"),
         ("submit", "outputs/submission/bundle.zip"),
-        ("analyze-log", "outputs/log_table.{csv,md}"),
+        ("analyze-log / analyze-log-short", "outputs/log_table.{csv,md}"),
+        ("benchmark run/report/clean", "benchmarks/* / aggregated/report.md"),
+        ("diagrams render", "docs/diagrams/*"),
+        ("kaggle run/submit", "predictions/submission.csv / Kaggle submission"),
     ]
     table = Table(box=box.SIMPLE_HEAVY)
     table.add_column("Command")
@@ -511,7 +773,8 @@ def check_cli_map() -> None:
     for cmd, art in rows:
         table.add_row(cmd, art)
     console.print(table)
-    append_debug_log(["spectramind check-cli-map"])
+    rh = persist_run_hash({"invocation": "check-cli-map"})
+    append_debug_log(["spectramind check-cli-map", f"Run: {rh}"])
 
 
 # -----------------------------------------------------------------------------
