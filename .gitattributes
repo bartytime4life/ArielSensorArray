@@ -1,5 +1,89 @@
-# Normalize line endings to LF
+# ==============================================================================
+# SpectraMind V50 — .gitattributes
+# Enforces consistent handling of text, notebooks, and binary assets across
+# Git, GitHub, Kaggle, and CI/CD.
+# ==============================================================================
+
+# === Universal Text Normalization ===
 * text=auto eol=lf
 
-# nbstripout-managed notebooks: strip outputs on commit
-*.ipynb filter=nbstripout
+# === Notebooks (nbstripout-managed) ===
+*.ipynb filter=nbstripout diff=jupyternotebook
+
+# === Source Code Languages ===
+*.py    text diff=python
+*.cpp   text diff=cpp
+*.c     text diff=cpp
+*.h     text diff=cpp
+*.hpp   text diff=cpp
+*.java  text diff=java
+*.js    text diff=javascript
+*.ts    text diff=javascript
+*.html  text diff=html
+*.css   text diff=css
+*.json  text
+*.yaml  text
+*.yml   text
+*.toml  text
+*.sh    text eol=lf
+
+# === Documentation ===
+*.md    text diff=markdown
+*.rst   text diff=asciidoc
+*.tex   text diff=tex
+
+# === Config / Data Files ===
+*.csv   text diff=csv
+*.tsv   text
+*.ini   text
+*.env   text
+*.lock  text
+
+# === Logs / Diagnostics ===
+*.log   text
+*.out   text
+*.err   text
+
+# === Scientific Data / Models (binary, no diff) ===
+*.pkl   binary
+*.pt    binary
+*.pth   binary
+*.ckpt  binary
+*.npy   binary
+*.npz   binary
+*.h5    binary
+*.onnx  binary
+*.tflite binary
+*.pb    binary
+*.gz    binary
+*.zip   binary
+*.tar   binary
+*.tar.gz binary
+*.tgz   binary
+*.xz    binary
+*.zst   binary
+
+# === Images / Figures (binary, no diff) ===
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.tif   binary
+*.tiff  binary
+*.bmp   binary
+*.svg   text
+
+# === Vector / Diagram ===
+*.dot   text
+*.gv    text
+*.mmd   text
+
+# === Special GitHub/CI Metadata ===
+.gitattributes text
+.gitignore     text
+*.gitattributes text
+*.editorconfig text
+
+# === Kaggle/CI Convenience ===
+*.ipynb diff=jupyternotebook
+*.csv text diff=csv
