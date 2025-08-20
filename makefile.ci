@@ -12,11 +12,15 @@ SHELL       := /usr/bin/env bash
 export PIP_DISABLE_PIP_VERSION_CHECK := 1
 export PYTHONUNBUFFERED              := 1
 export SPECTRAMIND_CI                := 1
+export MPLBACKEND                    := Agg
+export PYTHONHASHSEED                := 0
 
 # ========= Tooling =========
 PYTHON ?= python3
 POETRY ?= poetry
 CLI    ?= $(POETRY) run spectramind
+DVC    ?= dvc
+GIT    ?= git
 
 # ========= Paths / Artifacts =========
 OUT_DIR    ?= outputs
@@ -28,6 +32,7 @@ ABLATE_DIR ?= $(OUT_DIR)/ablate
 # ========= Fixed knobs for CI =========
 DEVICE     ?= cpu
 EPOCHS     ?= 1
+SEED       ?= 1337
 OVERRIDES  ?=
 EXTRA_ARGS ?=
 
@@ -43,8 +48,9 @@ KAGGLE_CLI           ?= kaggle
         validate validate-env selftest selftest-deep versions \
         train diagnose analyze analyze-short predict \
         ablate-ci ablate-post \
-        dvc-pull dvc-push \
+        dvc-pull dvc-push dvc-status \
         kaggle-submit \
+        env-capture hash-config git-status \
         clean
 
 # ========= Default =========
@@ -67,10 +73,14 @@ help:
 	@echo "  predict           : write submission.csv → $(PRED_DIR)"
 	@echo "  ablate-ci         : fast grid ablation (light profile) + post-process"
 	@echo "  dvc-pull|dvc-push : sync DVC artifacts (no-fail)"
+	@echo "  dvc-status        : DVC DAG drift status (no-fail)"
+	@echo "  env-capture       : capture environment snapshot via CLI"
+	@echo "  hash-config       : compute config hash via CLI"
 	@echo "  kaggle-submit     : guarded Kaggle submission (set ALLOW_KAGGLE_SUBMIT=1)"
+	@echo "  git-status        : short git status (branch + changes)"
 	@echo "  clean             : remove CI artifacts (outputs/, diagnostics/, predictions/)"
 	@echo ""
-	@echo "Vars: DEVICE=$(DEVICE) EPOCHS=$(EPOCHS) OVERRIDES='$(OVERRIDES)' EXTRA_ARGS='$(EXTRA_ARGS)'"
+	@echo "Vars: DEVICE=$(DEVICE) EPOCHS=$(EPOCHS) SEED=$(SEED) OVERRIDES='$(OVERRIDES)' EXTRA_ARGS='$(EXTRA_ARGS)'"
 
 # ========= CI Pipeline =========
 ci: validate validate-env selftest train diagnose analyze-short
@@ -102,8 +112,8 @@ selftest-deep:
 
 # ========= Train / Diagnose / Analyze =========
 train:
-	@echo ">>> Train (CI deterministic: EPOCHS=$(EPOCHS), DEVICE=$(DEVICE))"
-	$(CLI) train +training.epochs=$(EPOCHS) $(OVERRIDES) --device $(DEVICE) --outdir "$(OUT_DIR)" $(EXTRA_ARGS)
+	@echo ">>> Train (CI deterministic: EPOCHS=$(EPOCHS), DEVICE=$(DEVICE), SEED=$(SEED))"
+	$(CLI) train +training.epochs=$(EPOCHS) +training.seed=$(SEED) $(OVERRIDES) --device $(DEVICE) --outdir "$(OUT_DIR)" $(EXTRA_ARGS)
 
 diagnose:
 	@echo ">>> Diagnostics (CI lightweight)"
@@ -154,10 +164,23 @@ ablate-post:
 
 # ========= DVC Helpers =========
 dvc-pull:
-	dvc pull || true
+	$(DVC) pull || true
 
 dvc-push:
-	dvc push || true
+	$(DVC) push || true
+
+dvc-status:
+	$(DVC) status || true
+
+# ========= Reproducibility Helpers =========
+env-capture:
+	$(CLI) env-capture || true
+
+hash-config:
+	$(CLI) hash-config || true
+
+git-status:
+	$(GIT) status --short --branch || true
 
 # ========= Kaggle Submit (guarded) =========
 kaggle-submit:
