@@ -39,7 +39,7 @@ EXTRA_ARGS  ?=
         dvc-pull dvc-push \
         bench-selftest benchmark benchmark-cpu benchmark-gpu benchmark-run benchmark-report benchmark-clean \
         kaggle-run kaggle-submit \
-        clean realclean distclean
+        ci clean realclean distclean
 
 # ========= Help =========
 help:
@@ -47,7 +47,7 @@ help:
 	@echo "  selftest | calibrate | train | predict | diagnose | submit"
 	@echo "  ablate(-light|-heavy|-grid|-optuna)"
 	@echo "  analyze-log | analyze-log-short | open-report"
-	@echo "  benchmark | kaggle-run | kaggle-submit"
+	@echo "  benchmark | kaggle-run | kaggle-submit | ci"
 	@echo "  fmt | lint | test | validate-env"
 	@echo "  clean | realclean | distclean"
 	@echo "Vars: DEVICE=$(DEVICE) EPOCHS=$(EPOCHS) OUT_DIR=$(OUT_DIR) OVERRIDES='$(OVERRIDES)' EXTRA_ARGS='$(EXTRA_ARGS)'"
@@ -164,6 +164,9 @@ analyze-log-short: init
 
 check-cli-map:
 	$(CLI) check-cli-map
+
+# ========= CI convenience (dev/local reuse) =========
+ci: validate-env selftest train diagnose analyze-log-short
 
 # ========= DVC =========
 dvc-pull:
