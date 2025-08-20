@@ -1,89 +1,100 @@
 # ==============================================================================
 # SpectraMind V50 — .gitattributes
-# Enforces consistent handling of text, notebooks, and binary assets across
-# Git, GitHub, Kaggle, and CI/CD.
+# Mission-grade Git attributes for reproducibility, CI safety, and Kaggle export
 # ==============================================================================
 
-# === Universal Text Normalization ===
+# -----------------------
+# Line Endings
+# -----------------------
+# Normalize line endings across platforms
 * text=auto eol=lf
 
-# === Notebooks (nbstripout-managed) ===
-*.ipynb filter=nbstripout diff=jupyternotebook
+# Ensure Windows batch files keep CRLF
+*.bat text eol=crlf
 
-# === Source Code Languages ===
-*.py    text diff=python
-*.cpp   text diff=cpp
-*.c     text diff=cpp
-*.h     text diff=cpp
-*.hpp   text diff=cpp
-*.java  text diff=java
-*.js    text diff=javascript
-*.ts    text diff=javascript
-*.html  text diff=html
-*.css   text diff=css
-*.json  text
-*.yaml  text
-*.yml   text
-*.toml  text
-*.sh    text eol=lf
+# -----------------------
+# Jupyter Notebooks
+# -----------------------
+# Strip notebook outputs on commit (nbstripout must be installed & configured)
+*.ipynb filter=nbstripout text eol=lf
 
-# === Documentation ===
-*.md    text diff=markdown
-*.rst   text diff=asciidoc
-*.tex   text diff=tex
+# -----------------------
+# Source Code & Configs
+# -----------------------
+*.py text diff=python
+*.pyi text
+*.toml text
+*.yaml text
+*.yml text
+*.json text
+*.md text
+*.rst text
+*.html text
+*.css text
+*.js text
+*.ts text
+*.sh text eol=lf
+*.dockerfile text
+Dockerfile text
 
-# === Config / Data Files ===
-*.csv   text diff=csv
-*.tsv   text
-*.ini   text
-*.env   text
-*.lock  text
-
-# === Logs / Diagnostics ===
-*.log   text
-*.out   text
-*.err   text
-
-# === Scientific Data / Models (binary, no diff) ===
-*.pkl   binary
-*.pt    binary
-*.pth   binary
-*.ckpt  binary
-*.npy   binary
-*.npz   binary
-*.h5    binary
-*.onnx  binary
-*.tflite binary
-*.pb    binary
-*.gz    binary
-*.zip   binary
-*.tar   binary
-*.tar.gz binary
-*.tgz   binary
-*.xz    binary
-*.zst   binary
-
-# === Images / Figures (binary, no diff) ===
-*.png   binary
-*.jpg   binary
-*.jpeg  binary
-*.gif   binary
-*.tif   binary
-*.tiff  binary
-*.bmp   binary
-*.svg   text
-
-# === Vector / Diagram ===
-*.dot   text
-*.gv    text
-*.mmd   text
-
-# === Special GitHub/CI Metadata ===
-.gitattributes text
-.gitignore     text
-*.gitattributes text
-*.editorconfig text
-
-# === Kaggle/CI Convenience ===
-*.ipynb diff=jupyternotebook
+# -----------------------
+# Data Files
+# -----------------------
 *.csv text diff=csv
+*.tsv text
+*.txt text
+*.dat text
+*.npy binary
+*.npz binary
+*.pkl binary
+*.joblib binary
+
+# -----------------------
+# Binary Assets
+# -----------------------
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.svg text
+*.pdf binary
+*.docx binary
+*.pptx binary
+*.xlsx binary
+
+# -----------------------
+# Git LFS (Large Files)
+# -----------------------
+# Route large data through Git LFS to keep repo lean
+*.npy filter=lfs diff=lfs merge=lfs -text
+*.npz filter=lfs diff=lfs merge=lfs -text
+*.pt  filter=lfs diff=lfs merge=lfs -text
+*.pth filter=lfs diff=lfs merge=lfs -text
+*.h5  filter=lfs diff=lfs merge=lfs -text
+*.ckpt filter=lfs diff=lfs merge=lfs -text
+*.onnx filter=lfs diff=lfs merge=lfs -text
+*.zip filter=lfs diff=lfs merge=lfs -text
+*.tar filter=lfs diff=lfs merge=lfs -text
+*.tar.gz filter=lfs diff=lfs merge=lfs -text
+
+# -----------------------
+# Logs & Artifacts
+# -----------------------
+*.log text
+*.jsonl text
+*.md text
+outputs/** -diff -merge
+logs/** -diff -merge
+
+# -----------------------
+# Documentation Diagrams
+# -----------------------
+docs/diagrams/**.svg text
+docs/diagrams/**.png binary
+
+# -----------------------
+# CI / Security
+# -----------------------
+# Ensure env files are never diffed (protects secrets)
+.env -diff -merge
+.env.* -diff -merge
