@@ -131,18 +131,23 @@ submit: init
 # ========= Ablation (profiles & sweep styles) =========
 ablate: init
 	$(CLI) ablate $(OVERRIDES) $(EXTRA_ARGS)
+	@$(PYTHON) tools/ablation_post.py --csv outputs/ablate/leaderboard.csv --metric gll --ascending --top-n 5 --outdir outputs/ablate --html-template tools/leaderboard_template.html || true
 
 ablate-light: init
 	$(CLI) ablate ablation=ablation_light $(EXTRA_ARGS)
+	@$(PYTHON) tools/ablation_post.py --csv outputs/ablate/leaderboard.csv --metric gll --ascending --top-n 3 --outdir outputs/ablate_light --html-template tools/leaderboard_template.html || true
 
 ablate-heavy: init
 	$(CLI) ablate ablation=ablation_heavy $(EXTRA_ARGS)
+	@$(PYTHON) tools/ablation_post.py --csv outputs/ablate/leaderboard.csv --metric gll --ascending --top-n 10 --outdir outputs/ablate_heavy --html-template tools/leaderboard_template.html || true
 
 ablate-grid: init
 	$(CLI) ablate -m ablate.sweeper=basic +ablate.search=v50_fast_grid ablation=ablation_light $(EXTRA_ARGS)
+	@$(PYTHON) tools/ablation_post.py --csv outputs/ablate/leaderboard.csv --metric gll --ascending --top-n 5 --outdir outputs/ablate --html-template tools/leaderboard_template.html || true
 
 ablate-optuna: init
 	$(CLI) ablate -m ablate.sweeper=optuna +ablate.search=v50_symbolic_core ablation=ablation_heavy $(EXTRA_ARGS)
+	@$(PYTHON) tools/ablation_post.py --csv outputs/ablate/leaderboard.csv --metric gll --ascending --top-n 10 --outdir outputs/ablate --html-template tools/leaderboard_template.html || true
 
 # ========= Log analysis =========
 analyze-log: init
