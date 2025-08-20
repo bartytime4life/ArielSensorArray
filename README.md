@@ -1,47 +1,56 @@
-````markdown
+
+---
+
 # SpectraMind V50 — ArielSensorArray
 
 **Neuro-symbolic, physics-informed pipeline for the NeurIPS 2025 Ariel Data Challenge**
 
-> **North Star:** From raw FGS1/AIRS frames → calibration kill chain → μ/σ per 283 bins → diagnostics & explainability → Kaggle leaderboard-ready submission — all **reproducible** via CLI, Hydra configs, DVC, and CI:contentReference[oaicite:0]{index=0}:contentReference[oaicite:1]{index=1}.
+> **North Star:** From raw FGS1/AIRS frames → calibrated light curves → μ/σ per 283 bins → diagnostics → leaderboard-ready submission — **fully reproducible** via CLI, Hydra configs, DVC, CI, and Kaggle integration.
 
 ---
 
 [![Build](https://img.shields.io/badge/CI-GitHub_Actions-blue.svg)](./.github/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)
-![License](https://img.shields.io/badge/license-Apache_2.0-green)
+![License](https://img.shields.io/badge/license-MIT-green)
 ![Hydra](https://img.shields.io/badge/config-Hydra_1.3-blueviolet)
 ![DVC](https://img.shields.io/badge/data-DVC_3.x-945DD6)
 ![GPU](https://img.shields.io/badge/CUDA-12.x-76B900)
+![Kaggle](https://img.shields.io/badge/platform-Kaggle-20BEFF)
 
 ---
 
 ## 0) What is this?
 
-**ArielSensorArray** is the repository root for the **SpectraMind V50** solution to the NeurIPS 2025 Ariel Data Challenge:contentReference[oaicite:2]{index=2}. It implements a mission-grade, CLI-first pipeline:
+**ArielSensorArray** is the root repository for **SpectraMind V50**, our end-to-end solution to the **NeurIPS 2025 Ariel Data Challenge**.
 
-* **Calibration kill chain** (linearity, bias, dark, dead pixel, flat, read noise, wavelength alignment, normalization):contentReference[oaicite:3]{index=3}:contentReference[oaicite:4]{index=4}.
-* **Dual-encoder modeling**:  
-  - FGS1 → **Mamba SSM** for long-sequence transit curves:contentReference[oaicite:5]{index=5}  
-  - AIRS → **Graph Neural Network** with edges for λ adjacency, molecular priors, detector regions:contentReference[oaicite:6]{index=6}
-* **Uncertainty calibration**: temperature scaling + COREL conformal prediction:contentReference[oaicite:7]{index=7}.
-* **Diagnostics & explainability**: GLL heatmaps, RMSE/entropy plots, SHAP overlays, symbolic violation maps, UMAP/t-SNE latents, FFT smoothness:contentReference[oaicite:8]{index=8}.
-* **Reproducibility stack**: Hydra YAMLs, DVC/lakeFS, deterministic seeds, MLflow/Weights & Biases optional, Docker + CI smoke tests:contentReference[oaicite:9]{index=9}.
-* **Unified Typer CLI**: `spectramind` (train / predict / calibrate / diagnose / submit / ablate / selftest / analyze-log / corel-train / check-cli-map).
+It implements a **mission-grade, CLI-first pipeline** with:
 
-Optimized to meet Kaggle competition constraints: **≤ 9 hours** runtime for ~1,100 planets on a single GPU:contentReference[oaicite:10]{index=10}.
+* **Calibration kill chain** for FGS1/AIRS (ADC, bias, dark, flat, dead-pixel map, nonlinearity, linearity correction, trace extraction, wavelength alignment, normalization).
+* **Dual-encoder modeling**:
+
+  * FGS1 → **Mamba SSM** for long-sequence transit curves.
+  * AIRS → **Graph Neural Network** (edges: wavelength adjacency, molecular priors, detector regions).
+* **Decoders**: μ (mean spectrum) and σ (uncertainty), with support for quantile/diffusion heads.
+* **Uncertainty calibration**: temperature scaling + **COREL conformal prediction**.
+* **Diagnostics & explainability**: GLL/entropy, SHAP overlays, symbolic rule violations, FFT, UMAP/t-SNE latent maps, HTML dashboard.
+* **Symbolic physics layer**: smoothness, positivity, FFT suppression, asymmetry, radiative-transfer priors, gravitational lensing & micro-lensing modeling.
+* **Reproducibility**: Hydra YAMLs, DVC/lakeFS, deterministic seeds, config hashing, CI pipelines.
+* **Unified Typer CLI**: `spectramind` (train / predict / calibrate / calibrate-temp / corel-train / diagnose / ablate / submit / selftest / analyze-log / check-cli-map).
+
+The pipeline is Kaggle-compliant: ≤9 hrs runtime across \~1,100 planets on Kaggle A100 GPUs.
 
 ---
 
 ## 1) Quickstart
 
 ### Clone & enter
+
 ```bash
 git clone https://github.com/bartytime4life/ArielSensorArray.git
 cd ArielSensorArray
-````
+```
 
-### Environment
+### Environment setup
 
 **Option A — Poetry (recommended)**
 
@@ -59,14 +68,14 @@ pip install -r requirements.txt
 pre-commit install
 ```
 
-**Option C — Docker (GPU)**
+**Option C — Docker (GPU-ready)**
 
 ```bash
 docker build -t spectramindv50:dev .
 docker run --gpus all -it --rm -v "$PWD":/workspace spectramindv50:dev bash
 ```
 
-### DVC setup
+### DVC data setup
 
 ```bash
 dvc init
@@ -90,21 +99,20 @@ Run:
 python -m spectramind --help
 ```
 
-**Common subcommands:**
+Common subcommands:
 
-* `selftest` — integrity and wiring checks
-* `calibrate` — calibration kill chain
-* `train` — train the V50 model
-* `predict` — generate μ/σ predictions
+* `selftest` — integrity checks
+* `calibrate` — run calibration kill chain
+* `train` — train V50 model
+* `predict` — μ/σ inference + submission
 * `calibrate-temp` — temperature scaling
-* `corel-train` — COREL conformal training
-* `diagnose` — diagnostics suite (FFT/SHAP/UMAP/symbolic overlays)
-* `dashboard` — build HTML diagnostics report
-* `tsne-latents`, `smoothness`, `profile` — additional diagnostics
-* `ablate` — automated ablation study
-* `submit` — selftest → predict → validate → package submission
-* `analyze-log` — parse CLI logs → Markdown/CSV
-* `check-cli-map` — validate CLI ↔ file mapping
+* `corel-train` — conformal calibration
+* `diagnose` — diagnostics suite
+* `dashboard` — HTML diagnostics report
+* `ablate` — automated ablation sweeps
+* `submit` — selftest → predict → validate → bundle ZIP
+* `analyze-log` — parse CLI logs → Markdown/CSV/heatmaps
+* `check-cli-map` — verify CLI↔file mapping
 
 ---
 
@@ -114,13 +122,13 @@ All parameters live in `configs/`:
 
 * `data/`, `model/`, `training/`, `diagnostics/`, `calibration/`, `logging/`
 
-**Example override:**
+Example:
 
 ```bash
 python -m spectramind train data=kaggle model=v50 training=default +training.seed=1337
 ```
 
-Hydra writes resolved configs into run outputs; config hashes are logged for reproducibility.
+Hydra writes resolved configs into run outputs; config hashes logged to `v50_debug_log.md`.
 
 ---
 
@@ -128,9 +136,9 @@ Hydra writes resolved configs into run outputs; config hashes are logged for rep
 
 ```
 data/
-  raw/          # raw frames
-  processed/    # calibrated spectra
-  meta/         # metadata
+  raw/         # raw frames
+  processed/   # calibrated spectra
+  meta/        # metadata
 
 outputs/
   checkpoints/
@@ -146,41 +154,54 @@ logs/
 
 ## 5) Reproducibility
 
-* Deterministic seeds
-* Config + git SHA hashes recorded
-* Structured logging (console, file, JSONL)
-* Docker images for hermetic runs
-* GitHub Actions CI smoke tests on PRs
+* Deterministic seeds & curriculum configs
+* Config hashes + Git SHA logged
+* Hydra YAMLs with overrides
+* DVC/lakeFS for datasets
+* Docker & Poetry for environments
+* GitHub Actions CI: selftest + smoke pipelines
 
 ---
 
-## 6) Makefile Targets
+## 6) Kaggle Integration
 
-```bash
-make help       # list targets
-make selftest   # run integrity checks
-make train      # run training
-make predict    # run inference
-make diagnose   # diagnostics report
-make submit     # full pipeline + zip
-```
+* Pipeline optimized for **≤9 hr Kaggle runtime**.
+* Compatible with Kaggle Notebooks & datasets.
+* Models benchmarked against Kaggle baselines:
 
----
-
-## 7) Testing & CI
-
-* `pytest` unit + integration suite
-* `spectramind selftest` runs in CI
-* Pre-commit hooks: ruff, black, isort, mypy, yaml
+  * Thang Do Duc’s 0.329 LB baseline
+  * V1ctorious3010’s deep residual model
+  * Fawad Awan’s Spectrum Regressor
 
 ---
 
-## 8) Citation
+## 7) Scientific Priors
+
+* **Astrophysics**: transmission spectroscopy, radiative transfer, gas absorption (H₂O, CO₂, CH₄, Na, K).
+* **Systematics**: spacecraft jitter, detector dead pixels, nonlinearity, cosmic rays.
+* **Gravitational lensing & micro-lensing corrections**: flux amplification patterns, time-domain distortions.
+* **Symbolic constraints**: smoothness, asymmetry, FFT suppression, positivity.
+
+---
+
+## 8) Roadmap
+
+* TorchScript/JIT inference
+* Expanded symbolic influence maps in HTML
+* GUI (React+FastAPI) dashboard
+* Kaggle leaderboard automation
+* Advanced calibration: micro-lensing, non-Gaussian noise modeling
+
+---
+
+## 9) Citation
+
+If you use this repo:
 
 ```bibtex
 @software{spectramind_v50_2025,
   title   = {SpectraMind V50 — Neuro-symbolic, Physics-informed Exoplanet Spectroscopy},
-  author  = {SpectraMind Team},
+  author  = {SpectraMind Team and Andy Barta},
   year    = {2025},
   url     = {https://github.com/bartytime4life/ArielSensorArray}
 }
@@ -188,45 +209,9 @@ make submit     # full pipeline + zip
 
 ---
 
-## 9) Roadmap
+## 10) License
 
-* Expanded symbolic influence maps
-* TorchScript/JIT optimization for inference
-* Optional GUI (FastAPI + React, MVVM style)
-* Automated ablation sweeps with leaderboard export
-* Kaggle leaderboard automation (artifact promotion)
+MIT — see [LICENSE](./LICENSE).
 
 ---
 
-## 10) Repo Layout
-
-```
-ArielSensorArray/
-  README.md
-  ARCHITECTURE.md
-  CONTRIBUTING.md
-  CITATION.cff
-  requirements.txt
-  requirements-dev.txt
-  pyproject.toml
-  Makefile
-  spectramind.py
-  configs/
-  src/
-  outputs/
-  data/
-  logs/
-  docs/
-  .github/workflows/ci.yml
-```
-
----
-
-**License:** Apache-2.0
-**Contact:** Please open Issues/Discussions in this repo.
-
-```
-
----
-
-✅ This updated **README.md** is now aligned with your expanded `architecture.md`, enriched with Kaggle competition framing:contentReference[oaicite:16]{index=16}, competitor model comparisons:contentReference[oaicite:17]{index=17}, physics references:contentReference[oaicite:18]{index=18}:contentReference[oaicite:19]{index=19}, reproducibility stack:contentReference[oaicite:20]{index=20}, and GUI roadmap:contentReference[oaicite:21]{index=21}.  
