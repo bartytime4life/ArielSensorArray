@@ -1,6 +1,10 @@
+# ==============================================================================
 # .dockerignore — SpectraMind V50 (NeurIPS 2025 Ariel Data Challenge)
-# Purpose: Prevent unnecessary files from bloating Docker images.
-# Mirrors .gitignore and .dvcignore for full alignment (Git + DVC + Docker).
+# Purpose:
+#   • Prevent unnecessary files from bloating Docker images
+#   • Mirror .gitignore + .dvcignore for consistency
+#   • Keep Docker context lean, CI-safe, and reproducible
+# ==============================================================================
 
 # ----------------------------------------------------------------------
 # Python build & cache
@@ -11,6 +15,7 @@ __pycache__/
 *.egg-info/
 *.egg
 *.whl
+*.pkl
 
 # ----------------------------------------------------------------------
 # Virtual environments & package managers
@@ -52,6 +57,7 @@ outputs/intermediate/
 outputs/temp/
 outputs/cache/
 outputs/debug/
+outputs/tmp/
 
 # ----------------------------------------------------------------------
 # Model bundles & artifacts (selectively managed by pipeline)
@@ -60,12 +66,15 @@ outputs/debug/
 *.pt
 *.onnx
 *.h5
+*.tar.gz
 
 # ----------------------------------------------------------------------
 # Kaggle / competition specifics
 .kaggle/
 kaggle.json
-*.ipynb   # Kaggle auto-notebooks (prefer notebooks/ dir)
+*.ipynb   # auto notebooks (prefer notebooks/ dir)
+input/
+working/
 
 # ----------------------------------------------------------------------
 # Jupyter / notebooks
@@ -73,10 +82,11 @@ kaggle.json
 notebooks/.ipynb_checkpoints/
 
 # ----------------------------------------------------------------------
-# DVC internals (managed by host, not inside Docker)
+# DVC internals (host-managed; never in Docker)
 .dvc/cache/
 .dvc/tmp/
 .dvc/plots/
+.dvc/config.local
 
 # ----------------------------------------------------------------------
 # Diagnostics, reports & dashboards (regenerable)
@@ -92,6 +102,8 @@ outputs/diagnostics/
 *.csv
 *.json
 *.md
+reports/
+dashboards/
 
 # ----------------------------------------------------------------------
 # Submission bundles (pipeline-reproducible)
@@ -107,12 +119,14 @@ run_logs/
 manifest.json
 diagnostic_summary.json
 run_hash_summary_v50.json
+version_manifest.json
 
 # ----------------------------------------------------------------------
 # Local GUI/UX assets (regenerable)
 assets/screenshots/
 assets/plots/
 assets/tmp/
+assets/diagrams/
 
 # ----------------------------------------------------------------------
 # Hugging Face / MLflow / W&B caches
@@ -120,3 +134,33 @@ assets/tmp/
 wandb/
 mlruns/
 *.mlmodel
+cache/
+hf_cache/
+
+# ----------------------------------------------------------------------
+# Build system artifacts
+dist/
+build/
+.eggs/
+coverage/
+.coverage*
+pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.tox/
+.nox/
+
+# ----------------------------------------------------------------------
+# Git internals
+.git/
+.gitignore
+.gitattributes
+.github/
+
+# ----------------------------------------------------------------------
+# Misc (CI/CD + local)
+*.env
+.env*
+Dockerfile*
+docker-compose*.yml
+Makefile.local
