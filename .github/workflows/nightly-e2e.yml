@@ -1,0 +1,246 @@
+name: nightly-e2e
+
+on:
+  schedule:
+    # 04:30 UTC every day
+    - cron: '30 4 * * *'
+  workflow_dispatch:
+    inputs:
+      fast:
+        description: "Run a fast smoke instead of full E2E"
+        required: false
+        default: "false"
+        type: choice
+        options: ["false", "true"]
+      subset:
+        description: "Optional dataset subset selector (e.g. 50 or 'dev')"
+        required: false
+        default: ""
+        type: string
+      extra_args:
+        description: "Extra CLI args to pass to spectramind commands"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-e2e-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  POETRY_VIRTUALENVS_IN_PROJECT: "true"
+  POETRY_NO_INTERACTION: "1"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  PIP_NO_PYTHON_VERSION_WARNING: "1"
+  HF_HOME: ${{ github.workspace }}/.cache/huggingface
+  TRANSFORMERS_OFFLINE: "1"
+  MPLBACKEND: "Agg"
+  # Allow opt-in notifications (e.g., Slack webhook); keep blank by default
+  NOTIFY_WEBHOOK: ${{ secrets.NIGHTLY_NOTIFY_WEBHOOK || '' }}
+
+jobs:
+  e2e-linux:
+    name: Linux • Nightly E2E (${{ github.event.inputs.fast == 'true' && 'fast' || 'full' }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python 3.12
+        id: setup-py
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Show runner info
+        run: |
+          uname -a
+          python -V
+          df -h
+          nproc || true
+          lscpu | head -n 20 || true
+
+      - name: Install Poetry
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "poetry==1.8.3"
+
+      - name: Restore Poetry/HF caches
+        uses: actions/cache@v4
+        with:
+          path: |
+            .venv
+            ~/.cache/pypoetry
+            .cache/huggingface
+          key: nightly-e2e-${{ runner.os }}-py312-${{ hashFiles('poetry.lock') }}
+          restore-keys: |
+            nightly-e2e-${{ runner.os }}-py312-
+            nightly-e2e-${{ runner.os }}-
+
+      - name: Install dependencies (Poetry)
+        run: |
+          poetry env use "${{ steps.setup-py.outputs.python-path }}"
+          poetry install --no-interaction --with dev
+
+      - name: Prime data/artifacts via DVC (if present)
+        run: |
+          if command -v dvc >/dev/null 2>&1 || poetry run which dvc >/dev/null 2>&1; then
+            echo ">>> DVC detected — pulling data & run-cache"
+            poetry run dvc pull --run-cache --force || true
+          else
+            echo "DVC not found — skipping."
+          fi
+
+      - name: Create directories
+        run: |
+          mkdir -p artifacts logs outputs
+
+      - name: Nightly E2E run (SpectraMind CLI)
+        env:
+          FAST_FLAG: ${{ github.event.inputs.fast || 'false' }}
+          SUBSET: ${{ github.event.inputs.subset || '' }}
+          EXTRA: ${{ github.event.inputs.extra_args || '' }}
+        run: |
+          set -euo pipefail
+
+          # Detect CLI
+          if ! poetry run which spectramind >/dev/null 2>&1; then
+            echo "::warning::spectramind CLI not found. Attempting module entrypoint..."
+          fi
+
+          # Choose arguments for fast vs full
+          if [ "${FAST_FLAG}" = "true" ]; then
+            CAL_ARGS="--sample 20"
+            TRN_ARGS="--epochs 1 --fast-dev-run"
+            DIA_ARGS="--no-umap --no-tsne"
+          else
+            CAL_ARGS=""
+            TRN_ARGS=""
+            DIA_ARGS=""
+          fi
+
+          # Optional subset
+          if [ -n "${SUBSET}" ]; then
+            CAL_ARGS="${CAL_ARGS} --subset ${SUBSET}"
+          fi
+
+          echo ">>> Running calibration"
+          poetry run spectramind calibrate ${CAL_ARGS} ${EXTRA} || {
+            echo "::error::Calibration failed"; exit 1; }
+
+          echo ">>> Training"
+          poetry run spectramind train ${TRN_ARGS} ${EXTRA} || {
+            echo "::error::Training failed"; exit 1; }
+
+          echo ">>> Diagnostics"
+          poetry run spectramind diagnose dashboard ${DIA_ARGS} --no-open --outdir outputs/diagnostics-nightly || true
+
+          echo ">>> Package submission (dry run)"
+          poetry run spectramind submit --dry-run --out artifacts/submission-dryrun.zip || true
+
+      - name: Collect artifacts
+        if: always()
+        run: |
+          mkdir -p artifacts/logs artifacts/outputs
+          # Gather logs
+          test -d logs && tar -czf artifacts/logs/nightly-logs.tgz logs || true
+          # Diagnostics / outputs snapshots
+          test -d outputs/diagnostics-nightly && tar -czf artifacts/outputs/diagnostics-nightly.tgz outputs/diagnostics-nightly || true
+          test -d outputs && find outputs -maxdepth 2 -type f -size -50M -print0 | xargs -0 -I{} cp --parents {} artifacts/outputs 2>/dev/null || true
+          # Config snapshots if your pipeline writes them
+          find . -maxdepth 3 -name "hydra.yaml" -o -name "*.hydra" 2>/dev/null | tar -czf artifacts/configs.tgz -T - || true
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-e2e-${{ github.run_id }}
+          path: artifacts/
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Basic summary
+        if: always()
+        run: |
+          echo "## Nightly E2E Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- Fast mode: \`${{ github.event.inputs.fast || 'false' }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Subset: \`${{ github.event.inputs.subset || '(none)' }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Extra args: \`${{ github.event.inputs.extra_args || '(none)' }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Artifacts: nightly-e2e-${{ github.run_id }}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Optional webhook notification
+        if: always() && env.NOTIFY_WEBHOOK != ''
+        env:
+          STATUS: ${{ job.status }}
+        run: |
+          short_sha="${GITHUB_SHA:0:7}"
+          payload=$(jq -n --arg status "$STATUS" \
+                         --arg run "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+                         --arg ref "${GITHUB_REF_NAME}" \
+                         --arg sha "$short_sha" \
+                         '{text: ("Nightly E2E: " + $status + " • " + $ref + "@" + $sha + "\n" + $run)}')
+          curl -sS -X POST -H 'Content-Type: application/json' \
+               -d "$payload" "$NOTIFY_WEBHOOK" || true
+
+  # Optional GPU-in-docker nightly smoke (opt-in via org/repo variable DOCKER_GPU=1)
+  docker-gpu:
+    name: Docker GPU Nightly Smoke
+    if: ${{ vars.DOCKER_GPU == '1' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      IMAGE_TAG: spectramindv50:nightly
+      BUILDKIT_CACHE_TO: /tmp/.buildx-cache-new
+      BUILDKIT_CACHE_FROM: /tmp/.buildx-cache
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Restore BuildKit cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.BUILDKIT_CACHE_FROM }}
+          key: nightly-buildx-${{ runner.os }}-${{ hashFiles('Dockerfile', '**/pyproject.toml', '**/poetry.lock') }}
+          restore-keys: nightly-buildx-${{ runner.os }}-
+
+      - name: Build CUDA image (cached, load)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          tags: ${{ env.IMAGE_TAG }}
+          load: true
+          cache-from: type=local,src=${{ env.BUILDKIT_CACHE_FROM }}
+          cache-to: type=local,dest=${{ env.BUILDKIT_CACHE_TO }},mode=max
+
+      - name: Save BuildKit cache
+        if: always()
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.BUILDKIT_CACHE_TO }}
+          key: nightly-buildx-${{ runner.os }}-${{ hashFiles('Dockerfile', '**/pyproject.toml', '**/poetry.lock') }}
+
+      - name: GPU smoke (inside container)
+        run: |
+          docker run --rm --gpus all -v "$PWD":/workspace -w /workspace \
+            ${{ env.IMAGE_TAG }} \
+            bash -lc 'spectramind selftest --fast || exit 1'
+
+      - name: Upload GPU-smoke logs (if any)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-gpu-smoke-${{ github.run_id }}
+          path: artifacts/
+          if-no-files-found: ignore
+          retention-days: 7
