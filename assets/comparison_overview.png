@@ -1,1 +1,53 @@
+import matplotlib.pyplot as plt
+import numpy as np
+from pathlib import Path
+
+# Directory and filename
+output_dir = Path("assets")
+output_dir.mkdir(parents=True, exist_ok=True)
+output_file = output_dir / "comparison_overview.png"
+
+# Data for the comparison (3 Kaggle models vs. SpectraMind V50)
+labels = ["Thang Do Duc (0.329 LB)", "V1ctorious3010 (80bl-128hd)", "Fawad Awan (Spectrum Regressor)", "SpectraMind V50"]
+scores = [0.329, 0.55, 0.47, 0.60]  # Representative scores (LB/public as per references)
+complexity = [3, 5, 4, 6]  # Relative complexity (arbitrary scale 1–6)
+reproducibility = [3, 4, 4, 6]  # Reproducibility rating (1–6)
+
+x = np.arange(len(labels))
+width = 0.25
+
+# Create figure
+fig, ax = plt.subplots(figsize=(12, 6))
+
+# Plot bars
+rects1 = ax.bar(x - width, scores, width, label="Leaderboard Score", color="skyblue")
+rects2 = ax.bar(x, complexity, width, label="Complexity", color="orange")
+rects3 = ax.bar(x + width, reproducibility, width, label="Reproducibility", color="green")
+
+# Add labels and formatting
+ax.set_ylabel("Value (normalized scale)")
+ax.set_title("Comparison Overview: Kaggle Models vs SpectraMind V50")
+ax.set_xticks(x)
+ax.set_xticklabels(labels, rotation=15, ha="right")
+ax.legend()
+
+# Annotate bars
+def annotate(rects):
+    for rect in rects:
+        height = rect.get_height()
+        ax.annotate(f"{height:.2f}" if height < 1 else f"{int(height)}",
+                    xy=(rect.get_x() + rect.get_width() / 2, height),
+                    xytext=(0, 3), textcoords="offset points",
+                    ha="center", va="bottom", fontsize=8)
+
+annotate(rects1)
+annotate(rects2)
+annotate(rects3)
+
+# Save
+plt.tight_layout()
+plt.savefig(output_file, dpi=300)
+plt.close()
+
+output_file
 
