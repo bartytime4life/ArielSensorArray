@@ -1,601 +1,289 @@
 <!DOCTYPE html>
-
-
-<html lang="en">
+<html lang="en" data-build-env="local" data-build-run="—" data-build-ts="—">
 <head>
-  <!--
-    SpectraMind V50 — Diagnostics Dashboard (Seed)
-    ------------------------------------------------
-    Purpose:
-      • Zero-dependency, self-contained HTML dashboard for the assets/ directory
-      • Safe before first run: uses placeholder PNGs shipped in assets/
-      • After pipeline runs, CLI regenerates/overwrites this file or in-place replaces <img> src
-      • Light/Dark aware with CSS variables and prefers-color-scheme support
-      • Clean hooks (data-asset="...") so tooling can replace targets without brittle selectors
-
-
-Integration:
-  • spectramind diagnose dashboard        -> overwrites/injects live plots
-  • generate_html_report.py               -> may embed sections here or produce report.html
-  • mermaid-export.yml (CI)               -> not used directly here (Mermaid renders elsewhere)
-
-Notes:
-  • Keep paths relative to assets/ root
-  • Placeholders: sample_spectrum.png, shap_overlay.png, umap_clusters.png, tsne_projection.png,
-                  fft_power.png, symbolic_heatmap.png, calibration_curve.png
-  • This file intentionally avoids external fonts, JS CDNs, or CSS frameworks.
-
-Accessibility:
-  • High-contrast theming
-  • ARIA roles and labels
-  • Keyboard focus rings visible
-
-–>
-
-
-
-
-
+  <!-- SpectraMind V50 — Diagnostics Dashboard (Hardened Seed)
+       - Offline, zero-deps, print-friendly
+       - CLI can overwrite build metadata via data-* on <html> or #build-* spans
+       - Images swapped to iframes when ?embed=1 is present
+  -->
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light dark" />
   <title>SpectraMind V50 — Diagnostics Dashboard</title>
-
 
   <style>
     :root{
-      /* Base palette (light) */
-      --bg: #f7f7fb;
-      --surface: #ffffff;
-      --ink: #1f2328;
-      --muted: #6b7280;
-      --accent: #2b2d42;
-      --accent-2: #5da9ff;
-      --border: #e7e7ee;
-      --shadow: 0 4px 22px rgba(27, 31, 35, 0.06);
-
-      /* State colors */
-      --ok: #16a34a;
-      --warn: #f59e0b;
-      --err: #dc2626;
-
-      /* Cards */
-      --radius: 16px;
-      --pad: 16px;
-      --gap: 16px;
-
-      /* Motion */
-      --ts: 200ms ease;
-
-      /* Typography */
-      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
-      --sans: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, "Helvetica Neue", Arial, "Noto Sans", "Liberation Sans", sans-serif;
-      --fs-xxl: clamp(22px, 2.4vw, 28px);
-      --fs-xl:  clamp(18px, 2vw, 22px);
-      --fs-lg:  16px;
-      --fs-md:  14px;
-      --fs-sm:  12px;
+      --bg:#f7f7fb;--surface:#fff;--ink:#1f2328;--muted:#6b7280;--accent:#2b2d42;--accent-2:#5da9ff;
+      --border:#e7e7ee;--ok:#16a34a;--warn:#f59e0b;--err:#dc2626;
+      --radius:16px;--pad:16px;--gap:16px;--ts:200ms ease;
+      --fs-xxl:clamp(22px,2.4vw,28px);--fs-xl:clamp(18px,2vw,22px);--fs-lg:16px;--fs-md:14px;--fs-sm:12px;
     }
-
     @media (prefers-color-scheme: dark){
       :root{
-        --bg: #0c1116;
-        --surface: #0f141a;
-        --ink: #d1d5db;
-        --muted: #9aa4af;
-        --accent: #8ab4ff;
-        --accent-2: #60a5fa;
-        --border: #1f2a36;
-        --shadow: 0 4px 20px rgba(0,0,0,.45);
-        --warn: #f59e0b;
-        --ok: #22c55e;
-        --err: #f87171;
+        --bg:#0c1116;--surface:#0f141a;--ink:#d1d5db;--muted:#9aa4af;--accent:#8ab4ff;--accent-2:#60a5fa;--border:#1f2a36;
+        --ok:#22c55e;--warn:#f59e0b;--err:#f87171;
       }
     }
-
-    html, body{
-      height: 100%;
-      background: var(--bg);
-      color: var(--ink);
-      font-family: var(--sans);
-      line-height: 1.45;
-      -webkit-font-smoothing: antialiased;
-      -moz-osx-font-smoothing: grayscale;
+    @media (prefers-reduced-motion: reduce){
+      *{animation:none!important;transition:none!important;scroll-behavior:auto!important}
     }
 
-    .wrap{
-      max-width: 1400px;
-      margin: 0 auto;
-      padding: 20px;
-      display: grid;
-      gap: var(--gap);
-      grid-template-columns: 1fr;
-    }
+    html,body{height:100%;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,"Helvetica Neue",Arial,"Noto Sans",sans-serif;line-height:1.45}
+    a{color:var(--accent-2);text-decoration:none} a:hover{text-decoration:underline}
+    .sr-only{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(1px,1px,1px,1px);white-space:nowrap;border:0}
+
+    .wrap{max-width:1400px;margin:0 auto;padding:20px;display:grid;gap:var(--gap);grid-template-columns:1fr}
 
     header.appbar{
-      position: sticky;
-      top: 0;
-      z-index: 10;
-      background: color-mix(in oklab, var(--bg) 80%, var(--surface) 20%);
-      backdrop-filter: saturate(120%) blur(6px);
-      border-bottom: 1px solid var(--border);
-      box-shadow: var(--shadow);
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 10px 16px;
-      border-radius: 0 0 var(--radius) var(--radius);
+      position:sticky;top:0;z-index:10;background:color-mix(in oklab,var(--bg)80%,var(--surface)20%);
+      backdrop-filter:saturate(120%) blur(6px);border-bottom:1px solid var(--border);box-shadow:0 4px 22px rgba(27,31,35,.06);
+      display:flex;justify-content:space-between;align-items:center;padding:10px 16px;border-radius:0 0 var(--radius) var(--radius)
+    }
+    .brand{display:flex;align-items:center;gap:12px;font-size:var(--fs-xl);font-weight:700;letter-spacing:.2px}
+    .badge{padding:4px 10px;border-radius:999px;font-size:var(--fs-sm);font-weight:600;color:var(--surface);background:var(--accent)}
+    .toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    .btn{appearance:none;border:1px solid var(--border);background:var(--surface);color:var(--ink);
+      padding:8px 12px;border-radius:10px;font-size:var(--fs-md);font-weight:600;cursor:pointer;transition:transform var(--ts),background var(--ts),border-color var(--ts)}
+    .btn:hover{transform:translateY(-1px);border-color:var(--accent-2)} .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+    .btn:focus-visible{outline:3px solid color-mix(in oklab,var(--accent-2)30%,transparent);outline-offset:2px}
+
+    .grid{display:grid;gap:var(--gap);grid-template-columns:repeat(12,1fr);grid-auto-rows:minmax(120px,auto)}
+    .span-12{grid-column:span 12}.span-8{grid-column:span 8}.span-6{grid-column:span 6}.span-4{grid-column:span 4}.span-3{grid-column:span 3}
+    @media (max-width:1200px){.span-8,.span-6,.span-4{grid-column:span 12}.span-3{grid-column:span 6}}
+    @media (max-width:720px){.span-3{grid-column:span 12}}
+
+    .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 4px 22px rgba(27,31,35,.06);
+      padding:var(--pad);display:flex;flex-direction:column;gap:10px;min-height:120px;overflow:hidden}
+    .card h3{margin:0;font-size:var(--fs-lg);font-weight:700;letter-spacing:.2px}
+    .muted{color:var(--muted);font-size:var(--fs-sm)}
+    .kpis{display:grid;gap:10px;grid-template-columns:repeat(3,1fr)} @media (max-width:1200px){.kpis{grid-template-columns:repeat(2,1fr)}} @media (max-width:720px){.kpis{grid-template-columns:1fr}}
+    .kpi{background:color-mix(in oklab,var(--surface)85%,var(--bg)15%);border:1px dashed var(--border);border-radius:12px;padding:12px;display:grid;gap:6px}
+    .kpi .label{color:var(--muted);font-size:var(--fs-sm)} .kpi .value{font-size:var(--fs-xl);font-weight:800}
+    .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-weight:700;font-size:var(--fs-sm);color:#fff}
+    .pill.ok{background:var(--ok)} .pill.warn{background:var(--warn)} .pill.err{background:var(--err)}
+
+    .preview{display:grid;place-items:center;background:color-mix(in oklab,var(--surface)92%,var(--bg)8%);border:1px dashed var(--border);border-radius:12px;padding:8px;min-height:220px;overflow:hidden}
+    .preview img,.preview iframe{max-width:100%;max-height:360px;border-radius:10px;border:1px solid var(--border);display:block}
+    .links{display:grid;gap:6px;grid-template-columns:1fr 1fr} @media (max-width:720px){.links{grid-template-columns:1fr}}
+    .link{display:inline-flex;align-items:center;gap:8px;padding:8px 10px;border-radius:10px;background:color-mix(in oklab,var(--surface)85%,var(--bg)15%);border:1px solid var(--border);text-decoration:none;color:var(--ink);font-weight:600;font-size:var(--fs-md)}
+    .link:hover{border-color:var(--accent-2)}
+
+    .table{width:100%;border-collapse:collapse;border:1px solid var(--border);border-radius:12px;overflow:hidden;font-size:var(--fs-sm)}
+    .table th,.table td{padding:10px;border-bottom:1px solid var(--border);text-align:left}
+    .table thead th{background:color-mix(in oklab,var(--surface)80%,var(--bg)20%);font-size:var(--fs-md)}
+
+    /* print */
+    @media print{
+      header.appbar, .toolbar, footer{display:none!important}
+      body{background:#fff;color:#000}
+      .card{box-shadow:none;border-color:#999}
     }
 
-    .brand{
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      font-size: var(--fs-xl);
-      font-weight: 700;
-      letter-spacing: .2px;
-    }
-    .brand .badge{
-      padding: 4px 10px;
-      border-radius: 999px;
-      font-size: var(--fs-sm);
-      font-weight: 600;
-      color: var(--surface);
-      background: var(--accent);
-    }
-
-    .toolbar{
-      display: flex;
-      gap: 8px;
-      align-items: center;
-      flex-wrap: wrap;
-    }
-    .btn{
-      appearance: none;
-      border: 1px solid var(--border);
-      background: var(--surface);
-      color: var(--ink);
-      padding: 8px 12px;
-      border-radius: 10px;
-      font-size: var(--fs-md);
-      font-weight: 600;
-      cursor: pointer;
-      transition: transform var(--ts), background var(--ts), border-color var(--ts);
-    }
-    .btn:hover{ transform: translateY(-1px); border-color: var(--accent-2); }
-    .btn:focus-visible{ outline: 3px solid color-mix(in oklab, var(--accent-2) 30%, transparent); outline-offset: 2px; }
-    .btn.primary{ background: var(--accent); border-color: var(--accent); color: #fff; }
-    .btn.ghost{ background: transparent; }
-
-    /* Grid */
-    .grid{
-      display: grid;
-      gap: var(--gap);
-      grid-template-columns: repeat(12, 1fr);
-      grid-auto-rows: minmax(120px, auto);
-    }
-
-    /* Card */
-    .card{
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      box-shadow: var(--shadow);
-      padding: var(--pad);
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-      min-height: 120px;
-      overflow: hidden;
-    }
-
-    .card h3{
-      margin: 0;
-      font-size: var(--fs-lg);
-      font-weight: 700;
-      letter-spacing: .2px;
-    }
-
-    .card .muted{
-      color: var(--muted);
-      font-size: var(--fs-sm);
-    }
-
-    .kpis{
-      display: grid;
-      gap: 10px;
-      grid-template-columns: repeat(3, 1fr);
-    }
-    .kpi{
-      background: color-mix(in oklab, var(--surface) 85%, var(--bg) 15%);
-      border: 1px dashed var(--border);
-      border-radius: 12px;
-      padding: 12px;
-      display: grid;
-      gap: 6px;
-    }
-    .kpi .label{ color: var(--muted); font-size: var(--fs-sm); }
-    .kpi .value{ font-size: var(--fs-xl); font-weight: 800; }
-
-    .preview{
-      display: grid;
-      place-items: center;
-      background: color-mix(in oklab, var(--surface) 92%, var(--bg) 8%);
-      border: 1px dashed var(--border);
-      border-radius: 12px;
-      padding: 8px;
-      min-height: 220px;
-      overflow: hidden;
-    }
-    .preview img{
-      max-width: 100%;
-      max-height: 360px;
-      border-radius: 10px;
-      border: 1px solid var(--border);
-      display: block;
-    }
-
-    .links{
-      display: grid;
-      gap: 6px;
-      grid-template-columns: 1fr 1fr;
-    }
-    .link{
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      padding: 8px 10px;
-      border-radius: 10px;
-      background: color-mix(in oklab, var(--surface) 85%, var(--bg) 15%);
-      border: 1px solid var(--border);
-      text-decoration: none;
-      color: var(--ink);
-      font-weight: 600;
-      font-size: var(--fs-md);
-      transition: background var(--ts), border-color var(--ts);
-    }
-    .link:hover{ border-color: var(--accent-2); }
-
-    .table{
-      width: 100%;
-      border-collapse: collapse;
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      overflow: hidden;
-      font-size: var(--fs-sm);
-    }
-    .table th, .table td{
-      padding: 10px;
-      border-bottom: 1px solid var(--border);
-      text-align: left;
-    }
-    .table thead th{
-      background: color-mix(in oklab, var(--surface) 80%, var(--bg) 20%);
-      font-size: var(--fs-md);
-    }
-    .pill{
-      display: inline-block;
-      padding: 2px 8px;
-      border-radius: 999px;
-      font-weight: 700;
-      font-size: var(--fs-sm);
-      color: #fff;
-    }
-    .pill.ok{ background: var(--ok); }
-    .pill.warn{ background: var(--warn); }
-    .pill.err{ background: var(--err); }
-
-    /* Layout placements */
-    .span-12{ grid-column: span 12; }
-    .span-8{ grid-column: span 8; }
-    .span-6{ grid-column: span 6; }
-    .span-4{ grid-column: span 4; }
-    .span-3{ grid-column: span 3; }
-
-    @media (max-width: 1200px){
-      .span-8{ grid-column: span 12; }
-      .span-6{ grid-column: span 12; }
-      .span-4{ grid-column: span 12; }
-      .span-3{ grid-column: span 6; }
-      .kpis{ grid-template-columns: repeat(2, 1fr); }
-    }
-    @media (max-width: 720px){
-      .span-3{ grid-column: span 12; }
-      .kpis{ grid-template-columns: 1fr; }
-      .links{ grid-template-columns: 1fr; }
-    }
-
-    footer{
-      margin: 24px 0 8px;
-      color: var(--muted);
-      font-size: var(--fs-sm);
-      text-align: center;
-    }
-
-    /* Focus ring for keyboard users */
-    a:focus-visible, button:focus-visible{ outline: 3px solid color-mix(in oklab, var(--accent-2) 35%, transparent); outline-offset: 2px; border-radius: 8px; }
-
-    /* Small helper for hidden text for screen readers */
-    .sr-only{
-      position: absolute !important;
-      height: 1px; width: 1px;
-      overflow: hidden; clip: rect(1px,1px,1px,1px);
-      white-space: nowrap; border: 0; padding: 0; margin: -1px;
-    }
+    /* better keyboard visibility */
+    :focus-visible{outline:3px solid color-mix(in oklab,var(--accent-2)40%,transparent);outline-offset:2px;border-radius:8px}
   </style>
-
-
 </head>
 <body>
-  <header class="appbar" role="banner" aria-label="SpectraMind Diagnostics Toolbar">
-    <div class="brand" aria-label="Project Title">
-      <span>🛰️ SpectraMind V50</span>
-      <span class="badge" title="Ariel Data Challenge 2025">Ariel 2025</span>
+<a href="#main" class="sr-only">Skip to main content</a>
+
+<header class="appbar" role="banner" aria-label="SpectraMind Diagnostics Toolbar">
+  <div class="brand" aria-label="Project Title">
+    <span>🛰️ SpectraMind V50</span>
+    <span class="badge" title="Ariel Data Challenge 2025">Ariel 2025</span>
+  </div>
+  <div class="toolbar" role="group" aria-label="Dashboard actions">
+    <button class="btn" id="refreshBtn" title="Soft reload images (cache-bust)">↻ Soft Refresh</button>
+    <button class="btn" id="toggleThemeBtn" title="Toggle light/dark/auto">☯ Theme</button>
+    <a class="btn" href="./report.html" title="Open detailed diagnostics report">Open Full Report</a>
+    <a class="btn primary" href="../README.md" title="Open project README">Project README</a>
+  </div>
+</header>
+
+<main id="main" class="wrap" role="main" aria-live="polite">
+  <!-- Overview / KPIs -->
+  <section class="card span-12" aria-labelledby="sec-overview">
+    <h3 id="sec-overview">Overview</h3>
+    <div class="muted">
+      Seed dashboard — safe before first run. CLI overwrites KPIs, build info, and figures post‑diagnostics.<br/>
+      Build: <span id="build-env">local</span> • Run: <span id="build-run">—</span> • TS (UTC): <span id="build-ts">—</span>
     </div>
-    <div class="toolbar" role="group" aria-label="Dashboard actions">
-      <button class="btn" id="refreshBtn" title="Soft reload images without reloading the page">↻ Soft Refresh</button>
-      <button class="btn ghost" id="toggleThemeBtn" title="Toggle light/dark theme">☯ Theme</button>
-      <a class="btn" href="./report.html" title="Open the detailed diagnostics report">Open Full Report</a>
-      <a class="btn primary" href="../README.md" title="Open project README">Project README</a>
+    <div class="kpis" role="list">
+      <div class="kpi" role="listitem">
+        <div class="label">Last Run Status</div>
+        <div class="value"><span class="pill warn" id="kpi-status">PENDING</span></div>
+        <div class="muted">Set by generator</div>
+      </div>
+      <div class="kpi" role="listitem">
+        <div class="label">GLL Δ (↓ better)</div>
+        <div class="value" id="kpi-gll">—</div>
+        <div class="muted">Across 283 bins</div>
+      </div>
+      <div class="kpi" role="listitem">
+        <div class="label">Conformal Coverage</div>
+        <div class="value" id="kpi-coverage">—</div>
+        <div class="muted">COREL / σ calibration</div>
+      </div>
     </div>
-  </header>
+  </section>
 
-
-  <main class="wrap" role="main">
-    <!-- Overview / KPIs -->
-    <section class="card span-12" aria-labelledby="sec-overview">
-      <h3 id="sec-overview">Overview</h3>
-      <div class="muted">Seed dashboard — safe before first diagnostics run. Placeholders will be replaced by the pipeline.</div>
-
-
-  <div class="kpis" role="list">
-    <div class="kpi" role="listitem">
-      <div class="label">Last Run Status</div>
-      <div class="value"><span class="pill warn" id="kpi-status" aria-live="polite">PENDING</span></div>
-      <div class="muted">Updated by CLI on generate</div>
+  <!-- Quick links -->
+  <section class="card span-12" aria-labelledby="sec-links">
+    <h3 id="sec-links">Quick Links</h3>
+    <div class="links">
+      <a class="link" href="./ARCHITECTURE.md" title="Open architecture document">📐 Architecture</a>
+      <a class="link" href="./log_table.md" title="Open CLI call summary (if generated)">🪵 CLI Log Table</a>
     </div>
-    <div class="kpi" role="listitem">
-      <div class="label">GLL Δ (↓ better)</div>
-      <div class="value" id="kpi-gll">—</div>
-      <div class="muted">Across 283 bins</div>
-    </div>
-    <div class="kpi" role="listitem">
-      <div class="label">Conformal Coverage</div>
-      <div class="value" id="kpi-coverage">—</div>
-      <div class="muted">COREL / σ calibration</div>
-    </div>
-  </div>
-</section>
+  </section>
 
-<!-- Quick links -->
-<section class="card span-12" aria-labelledby="sec-links">
-  <h3 id="sec-links">Quick Links</h3>
-  <div class="links">
-    <a class="link" href="./ARCHITECTURE.md" title="Open architecture document">📐 Architecture</a>
-    <a class="link" href="./log_table.md" title="Open CLI call summary (if generated)">🪵 CLI Log Table</a>
-  </div>
-</section>
+  <!-- Visuals (all rely on data-asset hooks; CLI swaps src or writes sidecar HTMLs) -->
+  <section class="card span-6" aria-labelledby="sec-umap">
+    <h3 id="sec-umap">UMAP — Latent Clusters</h3>
+    <div class="preview"><img alt="UMAP clusters (placeholder)" loading="lazy" data-asset="umap" src="./umap_clusters.png" /></div>
+    <div class="muted">Hook: <code>data-asset="umap"</code> (or <code>umap.html</code>)</div>
+  </section>
 
-<!-- UMAP -->
-<section class="card span-6" aria-labelledby="sec-umap">
-  <h3 id="sec-umap">UMAP — Latent Clusters</h3>
-  <div class="preview">
-    <!-- data-asset is a stable hook the generator replaces -->
-    <img data-asset="umap" alt="UMAP latent clusters (placeholder)" src="./umap_clusters.png" />
-  </div>
-  <div class="muted">Hook: data-asset="umap" → replaced by interactive HTML or updated PNG</div>
-</section>
+  <section class="card span-6" aria-labelledby="sec-tsne">
+    <h3 id="sec-tsne">t‑SNE — Latent Projection</h3>
+    <div class="preview"><img alt="t‑SNE projection (placeholder)" loading="lazy" data-asset="tsne" src="./tsne_projection.png" /></div>
+    <div class="muted">Hook: <code>data-asset="tsne"</code></div>
+  </section>
 
-<!-- t-SNE -->
-<section class="card span-6" aria-labelledby="sec-tsne">
-  <h3 id="sec-tsne">t‑SNE — Latent Projection</h3>
-  <div class="preview">
-    <img data-asset="tsne" alt="t-SNE projection (placeholder)" src="./tsne_projection.png" />
-  </div>
-  <div class="muted">Hook: data-asset="tsne"</div>
-</section>
+  <section class="card span-6" aria-labelledby="sec-shap">
+    <h3 id="sec-shap">SHAP × μ Overlay</h3>
+    <div class="preview"><img alt="SHAP overlay (placeholder)" loading="lazy" data-asset="shap" src="./shap_overlay.png" /></div>
+    <div class="muted">Hook: <code>data-asset="shap"</code></div>
+  </section>
 
-<!-- SHAP Overlay -->
-<section class="card span-6" aria-labelledby="sec-shap">
-  <h3 id="sec-shap">SHAP × μ Overlay</h3>
-  <div class="preview">
-    <img data-asset="shap" alt="SHAP overlay (placeholder)" src="./shap_overlay.png" />
-  </div>
-  <div class="muted">Hook: data-asset="shap"</div>
-</section>
+  <section class="card span-6" aria-labelledby="sec-mu">
+    <h3 id="sec-mu">Sample μ Spectrum</h3>
+    <div class="preview"><img alt="μ spectrum (placeholder)" loading="lazy" data-asset="mu" src="./sample_spectrum.png" /></div>
+    <div class="muted">Hook: <code>data-asset="mu"</code></div>
+  </section>
 
-<!-- Sample Spectrum -->
-<section class="card span-6" aria-labelledby="sec-mu">
-  <h3 id="sec-mu">Sample μ Spectrum</h3>
-  <div class="preview">
-    <img data-asset="mu" alt="Sample μ spectrum (placeholder)" src="./sample_spectrum.png" />
-  </div>
-  <div class="muted">Hook: data-asset="mu"</div>
-</section>
+  <section class="card span-6" aria-labelledby="sec-fft">
+    <h3 id="sec-fft">FFT Power / Autocorr</h3>
+    <div class="preview"><img alt="FFT power (placeholder)" loading="lazy" data-asset="fft" src="./fft_power.png" /></div>
+    <div class="muted">Hook: <code>data-asset="fft"</code></div>
+  </section>
 
-<!-- FFT / Autocorr -->
-<section class="card span-6" aria-labelledby="sec-fft">
-  <h3 id="sec-fft">FFT Power / Autocorr</h3>
-  <div class="preview">
-    <img data-asset="fft" alt="FFT power (placeholder)" src="./fft_power.png" />
-  </div>
-  <div class="muted">Hook: data-asset="fft"</div>
-</section>
+  <section class="card span-6" aria-labelledby="sec-symbolic">
+    <h3 id="sec-symbolic">Symbolic Rule Violations</h3>
+    <div class="preview"><img alt="Symbolic violations heatmap (placeholder)" loading="lazy" data-asset="symbolic" src="./symbolic_heatmap.png" /></div>
+    <div class="muted">Hook: <code>data-asset="symbolic"</code></div>
+  </section>
 
-<!-- Symbolic Heatmap -->
-<section class="card span-6" aria-labelledby="sec-symbolic">
-  <h3 id="sec-symbolic">Symbolic Rule Violations</h3>
-  <div class="preview">
-    <img data-asset="symbolic" alt="Symbolic violation heatmap (placeholder)" src="./symbolic_heatmap.png" />
-  </div>
-  <div class="muted">Hook: data-asset="symbolic"</div>
-</section>
+  <section class="card span-6" aria-labelledby="sec-calib">
+    <h3 id="sec-calib">σ Calibration / Residuals</h3>
+    <div class="preview"><img alt="Calibration curve (placeholder)" loading="lazy" data-asset="calibration" src="./calibration_curve.png" /></div>
+    <div class="muted">Hook: <code>data-asset="calibration"</code></div>
+  </section>
 
-<!-- Calibration -->
-<section class="card span-6" aria-labelledby="sec-calib">
-  <h3 id="sec-calib">σ Calibration / Residuals</h3>
-  <div class="preview">
-    <img data-asset="calibration" alt="Calibration curve (placeholder)" src="./calibration_curve.png" />
-  </div>
-  <div class="muted">Hook: data-asset="calibration"</div>
-</section>
+  <!-- Recent CLI Calls -->
+  <section class="card span-6" aria-labelledby="sec-cli">
+    <h3 id="sec-cli">Recent CLI Calls (seed)</h3>
+    <table class="table" aria-describedby="cli-desc">
+      <caption id="cli-desc" class="sr-only">Recent CLI calls (time, command, status)</caption>
+      <thead><tr><th style="width:30%">When</th><th>Command</th><th style="width:15%">Status</th></tr></thead>
+      <tbody id="cli-rows">
+        <tr><td>—</td><td><code>spectramind diagnose dashboard</code></td><td><span class="pill warn">PENDING</span></td></tr>
+        <tr><td>—</td><td><code>spectramind train +diagnostics.light=true</code></td><td><span class="pill warn">PENDING</span></td></tr>
+        <tr><td>—</td><td><code>spectramind analyze-log --md</code></td><td><span class="pill warn">PENDING</span></td></tr>
+      </tbody>
+    </table>
+    <div class="muted">Generator replaces this seed. See <a href="./log_table.md">log_table.md</a>.</div>
+  </section>
 
-<!-- Recent CLI Calls (seed) -->
-<section class="card span-6" aria-labelledby="sec-cli">
-  <h3 id="sec-cli">Recent CLI Calls (seed)</h3>
-  <table class="table" aria-describedby="cli-desc">
-    <caption id="cli-desc" class="sr-only">Recent CLI calls, arguments, and status.</caption>
-    <thead>
-      <tr>
-        <th style="width: 30%;">When</th>
-        <th>Command</th>
-        <th style="width: 15%;">Status</th>
-      </tr>
-    </thead>
-    <tbody id="cli-rows">
-      <tr>
-        <td>—</td>
-        <td><code>spectramind diagnose dashboard</code></td>
-        <td><span class="pill warn">PENDING</span></td>
-      </tr>
-      <tr>
-        <td>—</td>
-        <td><code>spectramind train +diagnostics.light=true</code></td>
-        <td><span class="pill warn">PENDING</span></td>
-      </tr>
-      <tr>
-        <td>—</td>
-        <td><code>spectramind analyze-log --md</code></td>
-        <td><span class="pill warn">PENDING</span></td>
-      </tr>
-    </tbody>
-  </table>
-  <div class="muted">Generated table replaces this seed. See <a href="./log_table.md">log_table.md</a>.</div>
-</section>
+  <!-- How-To -->
+  <section class="card span-12" aria-labelledby="sec-howto">
+    <h3 id="sec-howto">Regenerate This Dashboard</h3>
+    <ol>
+      <li>Run diagnostics (light mode example): <code>spectramind diagnose dashboard +diagnostics.light=true</code></li>
+      <li>Optional: <code>spectramind analyze-log --md</code> → updates <code>assets/log_table.md</code></li>
+      <li>Open <code>assets/report.html</code> for full detail</li>
+    </ol>
+    <div class="muted">CLI overwrites KPI text and <code>img[data-asset]</code> sources (or swaps to sidecar HTMLs).</div>
+  </section>
+</main>
 
-<!-- Guidance / How-To -->
-<section class="card span-12" aria-labelledby="sec-howto">
-  <h3 id="sec-howto">How to Regenerate This Dashboard</h3>
-  <ol>
-    <li>Run diagnostics (light mode example):<br/>
-      <code>spectramind diagnose dashboard +diagnostics.light=true</code>
-    </li>
-    <li>Analyze CLI history (optional):<br/>
-      <code>spectramind analyze-log --md</code> &nbsp;<span class="muted">→ updates <code>assets/log_table.md</code></span>
-    </li>
-    <li>Open the detailed report:<br/>
-      <code>assets/report.html</code>
-    </li>
-  </ol>
-  <div class="muted">These commands overwrite placeholders using the <code>data-asset</code> hooks above.</div>
-</section>
+<footer role="contentinfo" class="wrap">
+  <section class="card span-12">
+    <div class="muted">SpectraMind V50 — Ariel Data Challenge 2025 • Neuro‑symbolic, physics‑informed AI for exoplanet spectroscopy</div>
+  </section>
+</footer>
 
-  </main>
+<script>
+(function(){
+  "use strict";
 
+  // Build metadata placeholders the generator can overwrite
+  const htmlEl = document.documentElement;
+  const setText = (id, v) => { const el = document.getElementById(id); if(el) el.textContent = v; };
+  setText("build-env", htmlEl.getAttribute("data-build-env") || "local");
+  setText("build-run", htmlEl.getAttribute("data-build-run") || "—");
+  setText("build-ts",  htmlEl.getAttribute("data-build-ts")  || new Date().toISOString());
 
-  <footer role="contentinfo">
-    SpectraMind V50 — Ariel Data Challenge 2025 • Neuro‑symbolic, physics‑informed AI for exoplanet spectroscopy
-  </footer>
+  // Theme toggle: auto → dark → light
+  const toggleBtn = document.getElementById('toggleThemeBtn');
+  function setTheme(mode){
+    if(mode==='auto'){ document.documentElement.removeAttribute('data-theme'); localStorage.removeItem('smv50_theme'); }
+    else { document.documentElement.setAttribute('data-theme', mode); localStorage.setItem('smv50_theme', mode); }
+  }
+  function applyStoredTheme(){
+    const s = localStorage.getItem('smv50_theme');
+    if(s==='light'||s==='dark'){ document.documentElement.setAttribute('data-theme', s); }
+  }
+  toggleBtn?.addEventListener('click', ()=>{
+    const cur = document.documentElement.getAttribute('data-theme') || 'auto';
+    if(cur==='auto') setTheme('dark'); else if(cur==='dark') setTheme('light'); else setTheme('auto');
+  });
+  applyStoredTheme();
 
+  // Soft refresh: cache-bust all images with ?v=timestamp
+  document.getElementById('refreshBtn')?.addEventListener('click', ()=>{
+    const stamp = Date.now();
+    document.querySelectorAll('img[data-asset]').forEach(img=>{
+      try{
+        const u = new URL(img.getAttribute('src'), location.href);
+        u.searchParams.set('v', String(stamp));
+        img.setAttribute('src', u.toString());
+      }catch{/* no-op */}
+    });
+  });
 
-  <script>
-    (function(){
-      "use strict";
+  // Defensive loader: if an image fails, mark it and show a subtle fallback border
+  document.querySelectorAll('img[data-asset]').forEach(img=>{
+    img.addEventListener('error', ()=>{
+      img.alt = (img.alt||'Asset') + ' (unavailable)';
+      img.style.opacity = '0.65';
+      img.style.borderColor = 'var(--warn)';
+      img.title = 'Asset not found — check generator outputs';
+    }, { once:true });
+  });
 
-      // Lightweight theme toggle: toggles a data attribute to invert prefers-color-scheme result.
-      const toggleBtn = document.getElementById('toggleThemeBtn');
-      const refreshBtn = document.getElementById('refreshBtn');
+  // Optional: replace images with iframes if sidecars exist (forced via ?embed=1)
+  const params = new URLSearchParams(location.search);
+  if(params.get('embed')==='1'){
+    const map = {
+      'umap':'./umap.html','tsne':'./tsne.html','shap':'./shap_overlay.html',
+      'mu':'./mu_spectrum.html','fft':'./fft_power.html','symbolic':'./symbolic_heatmap.html',
+      'calibration':'./calibration_curve.html'
+    };
+    Object.entries(map).forEach(([key, src])=>{
+      const img = document.querySelector(`img[data-asset="${key}"]`);
+      if(!img) return;
+      const frame = document.createElement('iframe');
+      frame.src = src; frame.loading = 'lazy'; frame.title = key + ' interactive view';
+      frame.setAttribute('aria-label', frame.title);
+      frame.style.width = '100%'; frame.style.height = '380px';
+      frame.style.border = '1px solid var(--border)'; frame.style.borderRadius = '10px';
+      img.parentElement.replaceChild(frame, img);
+    });
+  }
 
-      function setTheme(mode){
-        // mode: 'light' | 'dark' | 'auto'
-        if(mode === 'auto'){
-          document.documentElement.removeAttribute('data-theme');
-          localStorage.removeItem('smv50_theme');
-        } else {
-          document.documentElement.setAttribute('data-theme', mode);
-          localStorage.setItem('smv50_theme', mode);
-        }
-      }
-
-      function applyStoredTheme(){
-        const stored = localStorage.getItem('smv50_theme');
-        if(stored === 'light' || stored === 'dark'){
-          document.documentElement.setAttribute('data-theme', stored);
-        }
-      }
-
-      toggleBtn?.addEventListener('click', () => {
-        const cur = document.documentElement.getAttribute('data-theme') || 'auto';
-        if(cur === 'auto'){ setTheme('dark'); }
-        else if(cur === 'dark'){ setTheme('light'); }
-        else { setTheme('auto'); }
-      });
-
-      refreshBtn?.addEventListener('click', () => {
-        // Soft refresh: bust cache of <img> without reloading full page
-        const stamp = Date.now();
-        document.querySelectorAll('img[data-asset]').forEach(img => {
-          const url = new URL(img.getAttribute('src'), location.href);
-          url.searchParams.set('v', String(stamp));
-          img.setAttribute('src', url.toString());
-        });
-      });
-
-      // If URL contains ?theme=dark|light|auto, honor it
-      const params = new URLSearchParams(location.search);
-      const urlTheme = params.get('theme');
-      if(urlTheme === 'dark' || urlTheme === 'light' || urlTheme === 'auto'){
-        setTheme(urlTheme);
-      } else {
-        applyStoredTheme();
-      }
-
-      // Seed KPI examples: tooling should overwrite these during generation.
-      // Leaving minimal defaults to avoid empty UI.
-      const kpiStatus = document.getElementById('kpi-status');
-      const kpiGLL = document.getElementById('kpi-gll');
-      const kpiCov = document.getElementById('kpi-coverage');
-      if(kpiStatus && kpiGLL && kpiCov){
-        // No-op defaults; generator will set concrete values.
-        // Example for developers testing locally (commented):
-        // kpiStatus.textContent = 'OK';
-        // kpiStatus.className = 'pill ok';
-        // kpiGLL.textContent = '−0.123';
-        // kpiCov.textContent = '92%';
-      }
-
-      // Progressive enhancement: If the generator drops sidecar HTML (e.g., umap.html),
-      // replace the <img data-asset="umap"> node with an <iframe>.
-      const sidecarMap = {
-        'umap':       './umap.html',
-        'tsne':       './tsne.html',
-        'shap':       './shap_overlay.html',
-        'mu':         './mu_spectrum.html',
-        'fft':        './fft_power.html',
-        'symbolic':   './symbolic_heatmap.html',
-        'calibration':'./calibration_curve.html'
-      };
-
-      Object.entries(sidecarMap).forEach(([key, href]) => {
-        const img = document.querySelector(`img[data-asset="${key}"]`);
-        if(!img) return;
-        // HEAD request simulation is not allowed cross-origin; instead,
-        // we attempt to load hidden image to check presence.
-        // Simpler: we keep the <img>. The generator can directly replace node to <iframe>.
-        // Still, support a URL param to force iframes for quick local testing.
-        if(params.get('embed') === '1'){
-          const frame = document.createElement('iframe');
-          frame.src = href;
-          frame.loading = 'lazy';
-          frame.title = key + ' interactive view';
-          frame.setAttribute('aria-label', key + ' interactive view');
-          frame.style.width = '100%';
-          frame.style.height = '380px';
-          frame.style.border = '1px solid var(--border)';
-          frame.style.borderRadius = '10px';
-          img.parentElement.replaceChild(frame, img);
-        }
-      });
-    })();
-  </script>
-
-
+  // URL param override for theme (?theme=dark|light|auto)
+  const urlTheme = new URLSearchParams(location.search).get('theme');
+  if(urlTheme==='dark'||urlTheme==='light'||urlTheme==='auto'){ setTheme(urlTheme); }
+})();
+</script>
 </body>
 </html>
