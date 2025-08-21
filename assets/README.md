@@ -1,4 +1,3 @@
-Here’s a fully upgraded, drop‑in replacement for assets/README.md that folds in the CLI‑first workflow, diagram policy, CI rendering, and Kaggle handoff details you asked for. It keeps the folder practical (how to use/rebuild/embed) and “mission‑grade” (traceable, reproducible).
 
 ⸻
 
