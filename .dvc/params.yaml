@@ -1,0 +1,32 @@
+# SpectraMind V50 — Parameter tracking for DVC
+training:
+  epochs: 50
+  batch_size: 32
+  lr: 0.0003
+  seed: 1337
+  device: cuda
+
+model:
+  encoder: fgs1_mamba
+  decoder: multi_scale_decoder
+  gnn: airs_gnn
+  latent_dim: 256
+  dropout: 0.1
+
+data:
+  fgs1_path: data/raw/fgs1/
+  airs_path: data/raw/airs/
+  calibration_path: data/processed/calibration/
+  bins: 283
+
+diagnostics:
+  shap: true
+  umap: true
+  tsne: true
+  fft: true
+  symbolic: true
+  conformal: true
+
+submission:
+  bundle_dir: outputs/submission
+  bundle_zip: outputs/submission/bundle.zip
