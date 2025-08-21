@@ -1,0 +1,2 @@
+['remote "storage"']
+    url = file:///mnt/data/spectramind-v50-dvc   # Local override for offline use
