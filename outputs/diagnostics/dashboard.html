@@ -1,55 +1,68 @@
 <!-- =============================================================================
- SpectraMind V50 — Diagnostics Dashboard (Seed)
+ SpectraMind V50 — Diagnostics Dashboard (Seed • v2)
  -------------------------------------------------------------------------------
  Purpose:
-   • Prevents broken README/ARCHITECTURE links on first clone
-   • Provides clear placeholders + expected artifact paths
-   • Looks good in light/dark mode; zero external deps
-   • Safe before artifacts exist; becomes a launcher once they do
- Generation (later):
-   • spectramind diagnose dashboard
-   • make diagnostics
+   • Keep README/ARCHITECTURE anchors stable from first clone
+   • Light up links automatically when CI produces artifacts
+   • Surface SBOM status (commit, timestamp) from sbom/INDEX.json when present
+   • Remain a single, dependency‑free file (safe for GH Pages or local file)
+ Notes:
+   • Sections map to README anchors and future HTML/JSON artifacts.
+   • JS only enhances; if blocked, it remains a readable seed.
  ============================================================================== -->
 
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
+  <meta charset="utf-8" />
   <title>SpectraMind V50 — Diagnostics Dashboard</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light dark" />
+  <meta name="description" content="Seeded diagnostics dashboard for SpectraMind V50: safe anchors, SBOM index, and CI-populated reports." />
+
+  <!-- Security-friendly defaults -->
+  <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+  <meta http-equiv="Referrer-Policy" content="no-referrer" />
+
   <style>
     :root{
       --bg:#f9f9fb;
       --card:#ffffff;
-      --ink:#222;
-      --muted:#666;
+      --ink:#1f2328;
+      --muted:#6b7280;
       --accent:#2b2d42;
       --border:#e7e7ee;
-      --dash:#bbbbc4;
+      --dash:#c5cad9;
       --placeholder:#fafafa;
+      --ok:#15a34a;      /* green-600 */
+      --warn:#f59e0b;    /* amber-500 */
+      --err:#dc2626;     /* red-600 */
+      --chip:#eef0f6;
+      --chip-border:#e1e6f5;
       --shadow:0 2px 4px rgba(0,0,0,.08);
       --radius:12px;
       --radius-sm:8px;
       --space:1rem;
       --space-lg:2rem;
       --mono: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;
-      --sans: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
+      --sans: system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"Apple Color Emoji","Segoe UI Emoji","Segoe UI Symbol";
     }
     @media (prefers-color-scheme: dark){
       :root{
         --bg:#0f1115;
         --card:#151922;
         --ink:#e9e9ee;
-        --muted:#9aa3b2;
+        --muted:#a3adbd;
         --accent:#5da9ff;
         --border:#222838;
         --dash:#334155;
         --placeholder:#121620;
+        --chip:#1f2535;
+        --chip-border:#2a3146;
         --shadow:0 2px 4px rgba(0,0,0,.35);
       }
     }
-    html,body{height:100%;}
+    html,body{height:100%}
     body{
       margin:0;
       font-family:var(--sans);
@@ -65,21 +78,31 @@
       box-shadow:var(--shadow);
     }
     header h1{margin:.25rem 0 0 0;font-size:1.4rem;font-weight:700}
-    header p{margin:.25rem 0 0 0;opacity:.9}
+    header p{margin:.25rem 0 0 0;opacity:.92}
     .wrap{max-width:1100px;margin:0 auto;padding:var(--space-lg) var(--space)}
+    .ribbon{
+      display:flex;gap:.5rem;flex-wrap:wrap;margin-top:.6rem;font-size:.92rem;opacity:.95
+    }
+    .ribbon .kv{
+      display:inline-flex;gap:.35rem;align-items:center;background:#ffffff22;
+      border:1px solid #ffffff33;border-radius:999px;padding:.25rem .6rem
+    }
+
+    /* Quick chips */
     nav{
       display:flex;gap:.75rem;flex-wrap:wrap;margin:0 0 var(--space-lg);
     }
-    nav a{
+    .chip{
       text-decoration:none;
       color:var(--ink);
-      background:var(--card);
-      border:1px solid var(--border);
+      background:var(--chip);
+      border:1px solid var(--chip-border);
       border-radius:999px;
-      padding:.4rem .75rem;
+      padding:.45rem .8rem;
       box-shadow:var(--shadow);
       font-size:.92rem;
     }
+
     main{display:grid;gap:var(--space-lg)}
     section{
       background:var(--card);
@@ -98,187 +121,295 @@
       color:var(--muted);
       font-style:italic;
     }
-    .hint{
-      margin-top:.75rem;
-      font-size:.95rem;
-      color:var(--muted);
-    }
-    .paths{
-      margin:.75rem 0 0 0;
-      padding:.75rem;
-      border-radius:var(--radius-sm);
-      background:transparent;
-      border:1px dashed var(--border);
-      font-family:var(--mono);
-      font-size:.9rem;
-      overflow:auto;
-    }
-    .kbd{
-      font-family:var(--mono);
-      border:1px solid var(--border);
-      border-bottom-width:2px;
-      padding:.15rem .35rem;
-      border-radius:6px;
-      background:var(--card);
-    }
-    footer{
-      text-align:center;
-      color:var(--muted);
-      padding:var(--space-lg);
-      font-size:.95rem;
-    }
-    .two{
-      display:grid;
-      grid-template-columns:1fr;
-      gap:var(--space);
-    }
-    @media (min-width:900px){
-      .two{grid-template-columns:1fr 1fr;}
-    }
+    .hint{margin-top:.75rem;color:var(--muted)}
+    .paths{margin:.75rem 0 0 0;padding:.8rem;border-radius:var(--radius-sm);border:1px dashed var(--border);font-family:var(--mono);font-size:.9rem;overflow:auto}
     .small{font-size:.9rem;color:var(--muted)}
-    .ok{color:#18b86a}
-    .warn{color:#f59e0b}
+    .ok{color:var(--ok)}
+    .warn{color:var(--warn)}
+    .err{color:var(--err)}
+
+    /* Status grid for artifact presence */
+    .grid{
+      display:grid;gap:.6rem;
+      grid-template-columns:1fr;
+    }
+    @media (min-width:720px){
+      .grid{grid-template-columns:1fr 1fr}
+    }
+    .card{
+      background:var(--card);
+      border:1px dashed var(--border);
+      border-radius:10px;
+      padding:.8rem;
+    }
+    .card h3{margin:.1rem 0 .35rem 0;font-size:1rem}
+    .row{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
+    .btn{
+      display:inline-flex;align-items:center;gap:.4rem;
+      border:1px solid var(--chip-border);background:var(--chip);border-radius:10px;
+      padding:.35rem .6rem;text-decoration:none;color:inherit;font-size:.9rem
+    }
+    .tag{display:inline-flex;align-items:center;gap:.35rem;border-radius:999px;border:1px solid var(--border);padding:.15rem .5rem;font-size:.8rem;color:var(--muted)}
+    footer{text-align:center;color:var(--muted);padding:var(--space-lg);font-size:.95rem}
+    code.k{font-family:var(--mono);background:rgba(127,127,127,.1);border:1px solid var(--border);border-radius:6px;padding:.15rem .35rem}
+    a.inline{color:inherit;text-decoration-thickness:2px;text-underline-offset:2px}
   </style>
 </head>
+
 <body>
-  <header>
+  <header role="banner">
     <div class="wrap">
       <div class="small">SpectraMind V50 • ArielSensorArray</div>
       <h1>Diagnostics Dashboard</h1>
-      <p><em>Seeded placeholder — will auto‑promote to a live dashboard after your first run.</em></p>
+      <p><em>Seeded, link‑safe, and CI‑aware. Anchors won’t 404; links light up as artifacts arrive.</em></p>
+      <div class="ribbon" aria-live="polite">
+        <span class="kv"><strong>Build:</strong> <span id="build-ts">unknown</span></span>
+        <span class="kv"><strong>SBOM Commit:</strong> <span id="sbom-sha">—</span></span>
+        <span class="kv"><strong>SBOM Generated:</strong> <span id="sbom-when">—</span></span>
+      </div>
     </div>
   </header>
 
   <div class="wrap">
     <!-- Quick Nav -->
     <nav aria-label="Sections">
-      <a href="#overview">Overview</a>
-      <a href="#leaderboard">Leaderboard</a>
-      <a href="#latents">UMAP / t‑SNE</a>
-      <a href="#shap">SHAP + Symbolic</a>
-      <a href="#gll">GLL & Calibration</a>
-      <a href="#sbom">SBOM</a>
+      <a class="chip" href="#overview">Overview</a>
+      <a class="chip" href="#leaderboard">Leaderboard</a>
+      <a class="chip" href="#latents">UMAP / t‑SNE</a>
+      <a class="chip" href="#shap">SHAP + Symbolic</a>
+      <a class="chip" href="#gll">GLL & Calibration</a>
+      <a class="chip" href="#sbom">SBOM</a>
+      <a class="chip" href="#artifacts">Artifact Matrix</a>
     </nav>
 
     <main>
       <!-- Overview / How-to -->
-      <section id="overview">
-        <h2>🧭 Overview</h2>
-        <p>This page ships as a <strong>seed</strong> so your README links don’t 404. When you run diagnostics,
-           this page becomes a launchpad to the generated HTML, PNG, and JSON artifacts.</p>
-        <div class="two">
-          <div>
-            <div class="placeholder">No artifacts yet. Generate diagnostics to populate links & charts.</div>
+      <section id="overview" aria-labelledby="h-overview">
+        <h2 id="h-overview">🧭 Overview</h2>
+        <p>This page ships as a <strong>seed</strong> so README links don’t 404. When you run diagnostics, this page becomes a launchpad to generated HTML, PNG, and JSON artifacts.</p>
+        <div class="grid" role="region" aria-label="Quick start">
+          <div class="card">
+            <h3>How to generate diagnostics</h3>
             <div class="hint">
-              Try:
-              <span class="kbd">spectramind diagnose dashboard</span>
-              or
-              <span class="kbd">make diagnostics</span>
+              Run from the CLI:
+              <div class="paths">
+spectramind diagnose dashboard
+make diagnostics
+              </div>
+              <div class="small">These commands are part of the CLI‑first workflow and produce report assets this page links to.</div>
             </div>
           </div>
-          <div>
+          <div class="card">
+            <h3>Expected outputs (examples)</h3>
             <div class="paths">
-# Expected outputs (examples)
-outputs/diagnostics/
-  ├─ report.html
-  ├─ umap.html                  # interactive UMAP
-  ├─ tsne.html                  # interactive t‑SNE
-  ├─ shap_overlay.html          # SHAP overlays (per-planet / aggregate)
-  ├─ gll_heatmap.png            # GLL heatmap (283 bins)
-  ├─ calibration_report.html    # σ coverage / quantiles
-  └─ artifacts.json             # optional manifest / summary
-sbom/
-  ├─ INDEX.json
-  └─ YYYY-MM-DD/…               # SBOM & scan SARIF per run
+outputs/diagnostics/<br/>
+&nbsp;&nbsp;├─ report.html<br/>
+&nbsp;&nbsp;├─ umap.html<br/>
+&nbsp;&nbsp;├─ tsne.html<br/>
+&nbsp;&nbsp;├─ shap_overlay.html<br/>
+&nbsp;&nbsp;├─ gll_heatmap.png<br/>
+&nbsp;&nbsp;└─ calibration_report.html<br/>
+sbom/<br/>
+&nbsp;&nbsp;├─ INDEX.json<br/>
+&nbsp;&nbsp;└─ catalog/… (per‑run artifacts)
             </div>
+            <p class="small">Files light up below as CI/CLI writes them.</p>
           </div>
         </div>
-        <p class="small">Tip: You can safely commit this seed file; your CI/CLI will overwrite or link out to richer pages later.</p>
       </section>
 
       <!-- Leaderboard -->
-      <section id="leaderboard">
-        <h2>📊 Leaderboard Snapshot</h2>
-        <div class="placeholder">Leaderboard metrics will be displayed here.</div>
-        <p class="hint">Later this can link to <span class="kbd">report.html</span> sections summarizing run hashes, configs, and scores.</p>
+      <section id="leaderboard" aria-labelledby="h-leaderboard">
+        <h2 id="h-leaderboard">📊 Leaderboard Snapshot</h2>
+        <div class="placeholder" data-slot="leaderboard">
+          Leaderboard metrics will be displayed or linked here.
+        </div>
+        <p class="hint">Link target: <code class="k">outputs/diagnostics/report.html</code></p>
       </section>
 
       <!-- Latents -->
-      <section id="latents">
-        <h2>🌌 UMAP / t‑SNE Latents</h2>
-        <div class="placeholder">Interactive latent plots will be embedded here.</div>
-        <div class="paths">
-./outputs/diagnostics/umap.html
-./outputs/diagnostics/tsne.html
+      <section id="latents" aria-labelledby="h-latents">
+        <h2 id="h-latents">🌌 UMAP / t‑SNE Latents</h2>
+        <div class="placeholder" data-slot="latents">
+          Interactive latent plots will be embedded or linked here.
         </div>
-        <p class="hint">If those files exist, this section becomes your launcher to interactive plots.</p>
+        <div class="hint">Targets:
+          <code class="k">outputs/diagnostics/umap.html</code>,
+          <code class="k">outputs/diagnostics/tsne.html</code>
+        </div>
       </section>
 
       <!-- SHAP + Symbolic -->
-      <section id="shap">
-        <h2>🔍 SHAP & Symbolic Overlays</h2>
-        <div class="placeholder">SHAP explanations and symbolic overlays will appear here.</div>
-        <div class="paths">./outputs/diagnostics/shap_overlay.html</div>
-        <p class="hint">Consider also linking per‑planet pages (e.g. <span class="kbd">planet_XXXX.html</span>).</p>
+      <section id="shap" aria-labelledby="h-shap">
+        <h2 id="h-shap">🔍 SHAP & Symbolic Overlays</h2>
+        <div class="placeholder" data-slot="shap">
+          SHAP explanations and symbolic overlays will appear here.
+        </div>
+        <div class="hint">Target: <code class="k">outputs/diagnostics/shap_overlay.html</code></div>
       </section>
 
       <!-- GLL & Calibration -->
-      <section id="gll">
-        <h2>📈 GLL & Calibration Heatmaps</h2>
-        <div class="placeholder">Heatmaps and calibration plots will appear here.</div>
-        <div class="paths">
-./outputs/diagnostics/gll_heatmap.png
-./outputs/diagnostics/calibration_report.html
+      <section id="gll" aria-labelledby="h-gll">
+        <h2 id="h-gll">📈 GLL & Calibration Heatmaps</h2>
+        <div class="placeholder" data-slot="gll">
+          Heatmaps and calibration plots will appear here.
         </div>
-        <p class="hint">GLL heatmap (283 bins) and σ coverage/quantile calibration go here.</p>
+        <div class="hint">Targets:
+          <code class="k">outputs/diagnostics/gll_heatmap.png</code>,
+          <code class="k">outputs/diagnostics/calibration_report.html</code>
+        </div>
       </section>
 
       <!-- SBOM -->
-      <section id="sbom">
-        <h2>📦 SBOM Report</h2>
-        <div class="placeholder">CycloneDX/SPDX SBOM will be embedded here.</div>
-        <div class="paths">
-./sbom/INDEX.json
-./sbom/YYYY-MM-DD/INDEX.txt
+      <section id="sbom" aria-labelledby="h-sbom">
+        <h2 id="h-sbom">📦 SBOM Catalog</h2>
+        <div class="placeholder" data-slot="sbom">
+          CycloneDX/SPDX SBOM catalog will be summarized here.
         </div>
-        <p class="hint">Use <span class="kbd">sbom-refresh.yml</span> to generate & PR the dated catalog.</p>
+        <div class="hint">
+          Catalog index: <a class="inline" href="sbom/INDEX.json">sbom/INDEX.json</a><br/>
+          Full artifacts: <code class="k">sbom/catalog/</code> (per run)
+        </div>
+      </section>
+
+      <!-- Artifact Matrix (lights up as files arrive) -->
+      <section id="artifacts" aria-labelledby="h-artifacts">
+        <h2 id="h-artifacts">🧱 Artifact Matrix</h2>
+        <div class="grid" id="matrix" role="region" aria-label="Artifacts">
+          <!-- Cards are rendered by JS based on the list below -->
+        </div>
+        <p class="small">This matrix probes for known outputs (HEAD request). When present, it shows an “Open” button.</p>
       </section>
     </main>
 
     <footer>
-      <div class="small">Build: <span id="build-ts" class="ok">unknown</span> • Seeded on first render • Generated by CI/CLI</div>
+      <div class="small">Seeded on first render • CI/CLI will enhance • <span id="footer-ts"></span></div>
     </footer>
   </div>
 
   <script>
-    // Show when this file was last modified (useful for sanity checks)
-    document.getElementById('build-ts').textContent = new Date(document.lastModified).toLocaleString();
+  (function(){
+    // Human-readable last modified
+    const lm = new Date(document.lastModified);
+    const fmt = (d)=> isNaN(+d) ? 'unknown' : d.toLocaleString();
+    const buildEl = document.getElementById('build-ts');
+    const footEl  = document.getElementById('footer-ts');
+    if (buildEl) buildEl.textContent = fmt(lm);
+    if (footEl)  footEl.textContent  = 'Last modified: ' + fmt(lm);
 
-    // Optional manifest auto-wiring (no-op in seed):
-    // If you emit outputs/diagnostics/artifacts.json, uncomment/fill to autolink artifacts.
-    // function wireLinks(manifest){
-    //   const map = [
-    //     ["latents", ["umap","tsne"]],
-    //     ["shap",    ["shap"]],
-    //     ["gll",     ["gll","calibration"]],
-    //     ["sbom",    ["sbom"]]
-    //   ];
-    //   map.forEach(([id, keys])=>{
-    //     const sec = document.getElementById(id);
-    //     if(!sec) return;
-    //     const box = sec.querySelector('.placeholder');
-    //     const found = keys.filter(k => manifest[k]).map(k => `<a href="../${manifest[k]}">${k}</a>`);
-    //     if(found.length && box){
-    //       box.outerHTML = `<div><strong>Artifacts:</strong> ${found.join(" • ")}</div>`;
-    //     }
-    //   });
-    // }
-    // (async ()=>{
-    //   try{
-    //     const r = await fetch('./outputs/diagnostics/artifacts.json', {cache:'no-store'});
-    //     if(r.ok){ wireLinks(await r.json()); }
-    //   }catch(_){}
-    // })();
+    // Known artifacts to probe (path, label, slotId)
+    const targets = [
+      {href:'outputs/diagnostics/report.html',              label:'Open report',         slot:'leaderboard'},
+      {href:'outputs/diagnostics/umap.html',                label:'Open UMAP',           slot:'latents'},
+      {href:'outputs/diagnostics/tsne.html',                label:'Open t‑SNE',          slot:'latents'},
+      {href:'outputs/diagnostics/shap_overlay.html',        label:'Open SHAP overlay',   slot:'shap'},
+      {href:'outputs/diagnostics/calibration_report.html',  label:'Open calibration',     slot:'gll'},
+      {href:'outputs/diagnostics/gll_heatmap.png',          label:'Open heatmap',        slot:'gll'}
+    ];
+
+    // Build matrix list (also displayed as status cards)
+    const matrixList = [
+      {name:'Leaderboard Report', path:'outputs/diagnostics/report.html',              kind:'html'},
+      {name:'UMAP Latents',       path:'outputs/diagnostics/umap.html',                kind:'html'},
+      {name:'t‑SNE Latents',      path:'outputs/diagnostics/tsne.html',                kind:'html'},
+      {name:'SHAP Overlay',       path:'outputs/diagnostics/shap_overlay.html',        kind:'html'},
+      {name:'Calibration Report', path:'outputs/diagnostics/calibration_report.html',  kind:'html'},
+      {name:'GLL Heatmap',        path:'outputs/diagnostics/gll_heatmap.png',          kind:'image'}
+    ];
+
+    // Utility: probe existence via HEAD and return boolean
+    async function exists(url){
+      try{
+        const r = await fetch(url, { method:'HEAD', cache:'no-store' });
+        return r.ok;
+      }catch(e){
+        return false;
+      }
+    }
+
+    // Render a button into a placeholder slot
+    function mountLink(slotName, href, label){
+      const slot = document.querySelector(`[data-slot="${slotName}"]`);
+      if (!slot) return;
+      const btn = document.createElement('a');
+      btn.className = 'btn';
+      btn.href = href;
+      btn.textContent = label;
+      btn.setAttribute('role','button');
+      // Replace placeholder with a row if empty, otherwise append
+      if (slot.classList.contains('placeholder')) {
+        const wrap = document.createElement('div');
+        wrap.className = 'row';
+        wrap.appendChild(btn);
+        slot.replaceWith(wrap);
+      } else {
+        slot.appendChild(btn);
+      }
+    }
+
+    // Initialize matrix cards
+    const matrix = document.getElementById('matrix');
+    function addCard(entry, status, href){
+      const card = document.createElement('div');
+      card.className = 'card';
+      const h3 = document.createElement('h3'); h3.textContent = entry.name;
+      const row = document.createElement('div'); row.className = 'row';
+      const tag = document.createElement('span'); tag.className = 'tag';
+      tag.innerHTML = status ? 'Status: <span class="ok">available</span>' : 'Status: <span class="warn">pending</span>';
+      row.appendChild(tag);
+      if (status && href){
+        const open = document.createElement('a');
+        open.className = 'btn';
+        open.href = href;
+        open.textContent = 'Open';
+        row.appendChild(open);
+      } else {
+        const path = document.createElement('span');
+        path.className = 'tag';
+        path.textContent = entry.path;
+        row.appendChild(path);
+      }
+      card.appendChild(h3);
+      card.appendChild(row);
+      matrix.appendChild(card);
+    }
+
+    // Probe all targets: enhance sections and build matrix
+    (async () => {
+      for (const t of targets){
+        if (await exists(t.href)){
+          mountLink(t.slot, t.href, t.label);
+        }
+      }
+      for (const e of matrixList){
+        addCard(e, await exists(e.path), await exists(e.path) ? e.path : null);
+      }
+    })();
+
+    // Try to read SBOM index for commit/timestamp
+    (async () => {
+      try{
+        const r = await fetch('sbom/INDEX.json', { cache:'no-store' });
+        if (!r.ok) return;
+        const j = await r.json();
+        const sha = (j.commit_sha || '').slice(0,7);
+        const when = j.generated_at_utc || '';
+        const shaEl = document.getElementById('sbom-sha');
+        const whenEl = document.getElementById('sbom-when');
+        if (shaEl && sha)  shaEl.textContent  = sha;
+        if (whenEl && when) whenEl.textContent = new Date(when).toLocaleString();
+        // Also upgrade the SBOM section placeholder with a quick link to catalog, if present
+        const slot = document.querySelector('[data-slot="sbom"]');
+        if (slot){
+          const row = document.createElement('div'); row.className = 'row';
+          const idx = document.createElement('a'); idx.className='btn'; idx.href='sbom/INDEX.json'; idx.textContent='Open SBOM index';
+          const cat = document.createElement('a'); cat.className='btn'; cat.href='sbom/catalog/'; cat.textContent='Open catalog';
+          row.appendChild(idx); row.appendChild(cat);
+          slot.replaceWith(row);
+        }
+      }catch(e){/* silent: seed stays simple */}
+    })();
+  })();
   </script>
 </body>
 </html>
