@@ -1,0 +1,29 @@
+['core']
+    remote = storage
+    autostage = true
+    jobs = 4
+    no_scm = false
+
+['cache']
+    type = "reflink,copy"
+    shared = group
+    dir = .dvc/cache
+
+['remote "storage"']
+    url = s3://spectramind-v50-dvc-storage
+    region = us-east-1
+    endpointurl = https://s3.amazonaws.com
+    access_key_id = ${DVC_AWS_KEY}
+    secret_access_key = ${DVC_AWS_SECRET}
+
+['remote "local"']
+    url = ../.dvc-storage
+    type = local
+
+['experiments']
+    auto_push = true
+    temp_dir = .dvc/tmp/experiments
+    run_cache = true
+
+['plots']
+    template_dir = .dvc/plots/templates
