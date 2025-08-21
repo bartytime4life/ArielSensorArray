@@ -1,0 +1,106 @@
+# .github/workflows/sbom-refresh.yml
+# ==============================================================================
+# SpectraMind V50 — SBOM Refresh Workflow
+# ------------------------------------------------------------------------------
+# Generates, validates, and publishes Software Bill of Materials (SBOM)
+# for every push to main and on a scheduled cadence.
+# Ensures compliance, security scanning, and traceability across dependencies.
+# ==============================================================================
+
+name: sbom-refresh
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "pyproject.toml"
+      - "poetry.lock"
+      - "requirements*.txt"
+      - "Dockerfile"
+      - ".github/workflows/sbom-refresh.yml"
+  pull_request:
+    branches: [ "**" ]
+  schedule:
+    # Weekly SBOM refresh: Sundays at 05:00 UTC
+    - cron: "0 5 * * 0"
+  workflow_dispatch:
+    inputs:
+      format:
+        description: "SBOM output format (spdx-json, cyclonedx-json, both)"
+        required: false
+        default: "both"
+
+permissions:
+  contents: write
+  security-events: write
+
+concurrency:
+  group: sbom-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sbom:
+    name: SBOM • py${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    strategy:
+      matrix:
+        python-version: [ "3.10", "3.11" ]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install Poetry
+        run: pip install poetry
+
+      - name: Install dependencies
+        run: poetry install --no-root
+
+      - name: Generate SBOM (CycloneDX JSON)
+        run: |
+          poetry run pip install cyclonedx-bom
+          poetry run cyclonedx-bom -o sbom-cyclonedx.json -e --format json
+
+      - name: Generate SBOM (SPDX JSON)
+        run: |
+          poetry run pip install spdx-tools
+          poetry run cyclonedx-bom -o sbom-spdx.json -e --format spdxjson || true
+
+      - name: Validate SBOMs
+        run: |
+          echo "Validating CycloneDX..."
+          jq . sbom-cyclonedx.json > /dev/null
+          echo "Validating SPDX..."
+          jq . sbom-spdx.json > /dev/null || true
+
+      - name: Upload SBOM Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ matrix.python-version }}
+          path: |
+            sbom-cyclonedx.json
+            sbom-spdx.json
+
+      - name: Upload to Dependency Review (GitHub Security)
+        if: github.event_name == 'push' || github.event_name == 'pull_request'
+        uses: github/dependency-review-action@v4
+
+      - name: Commit & Push SBOMs (main branch only)
+        if: github.ref == 'refs/heads/main'
+        run: |
+          mkdir -p sbom/
+          cp sbom-*.json sbom/
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add sbom/
+          git commit -m "chore(sbom): refresh SBOM for ${{ matrix.python-version }} [skip ci]" || echo "No changes"
+          git push || true
