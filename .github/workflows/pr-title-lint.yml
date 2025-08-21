@@ -1,0 +1,112 @@
+# .github/workflows/pr-title-lint.yml
+# ==============================================================================
+# SpectraMind V50 — PR Title Lint (Conventional Commits)
+# Validates pull request titles against Conventional Commits.
+# Examples:
+#   feat(model): add SSM+GNN fusion head
+#   fix(cli): handle missing Hydra overrides
+#   docs(readme): add quickstart
+#   perf(training)!: cache dataloader between folds
+# ==============================================================================
+
+name: PR Title Lint
+
+on:
+  pull_request_target:
+    types: [opened, edited, reopened, synchronize, ready_for_review]
+
+# This workflow needs to post a status/check and (optionally) a guidance comment.
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+
+concurrency:
+  group: pr-title-lint-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Check PR title (Conventional Commits)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Validate PR title with conventional-commits
+        id: cc
+        uses: amannn/action-semantic-pull-request@v5
+        with:
+          # Allowed types (one per line)
+          types: |
+            feat
+            fix
+            perf
+            refactor
+            docs
+            style
+            test
+            build
+            ci
+            chore
+            revert
+          # Common scopes for this repo (optional; leave empty to allow any)
+          scopes: |
+            core
+            data
+            model
+            training
+            calibration
+            diagnostics
+            cli
+            infra
+            ci
+            deps
+            docs
+            utils
+          # Allow titles without a scope (e.g., "docs: update readme")
+          requireScope: false
+          # Subject should start lowercase (no leading capital) and not end with a period.
+          subjectPattern: '^(?![A-Z]).+[^.\s]$'
+          subjectPatternError: >
+            The subject must start lowercase and must not end with a period.
+          # Consider a single-commit PR’s commit message as the title if the PR title looks auto-generated.
+          validateSingleCommit: true
+          # Labels that, if present, will skip linting (use sparingly).
+          ignoreLabels: |
+            bot
+            skip-pr-title-lint
+          # Treat "WIP" / draft style prefixes as invalid; use GitHub Draft PRs instead.
+          wip: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Comment with guidance on failure
+        if: failure()
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          edit-mode: replace
+          body: |
+            ❌ **PR title does not follow [Conventional Commits](https://www.conventionalcommits.org/)**
+            
+            **Format**
+            ```
+            <type>(<optional scope>)<optional !>: <subject>
+            ```
+            - `type`: feat | fix | perf | refactor | docs | style | test | build | ci | chore | revert
+            - `scope` (optional): e.g., core, model, training, cli, docs, deps, etc.
+            - `!` (optional): add `!` before the colon for breaking changes
+            - `subject`: start **lowercase**, no trailing period
+            
+            **Good examples**
+            - `feat(model): add SSM+GNN fusion head`
+            - `fix(cli): handle missing Hydra overrides`
+            - `docs(readme): add quickstart section`
+            - `perf(training)!: cache dataloader between folds`
+            
+            **Please edit the PR title** to match the format and re-run checks.  
+            (If this PR is automated or should be exempt, add the `skip-pr-title-lint` label.)
+
+      - name: Success summary
+        if: success()
+        run: |
+          echo "✅ PR title is valid."
