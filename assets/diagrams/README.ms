@@ -1,4 +1,3 @@
-Here’s the next file: assets/diagrams/pipeline_overview.mmd
 
 %% --------------------------------------------------------------------
 %% SpectraMind V50 — Pipeline Overview (Mermaid)
