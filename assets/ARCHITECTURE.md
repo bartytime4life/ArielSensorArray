@@ -1,6 +1,4 @@
-Here is the fully coded, upgraded assets/ARCHITECTURE.md file for your project. It aligns with your repo standards (documentation-first, reproducible, CI-ready) and includes embedded Mermaid diagrams so your .github/workflows/mermaid-export.yml can render them automatically.
-
-# 🛰️ SpectraMind V50 — Architecture (Assets Directory)
+🛰️ SpectraMind V50 — Architecture (Assets Directory)
 
 This document provides a **visual and structural reference** for the SpectraMind V50 pipeline, CLI, and data flows.  
 It is designed to work seamlessly with Mermaid diagrams, GitHub Actions (`mermaid-export.yml`), and the diagnostics dashboard.
