@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+
+
+<html lang="en">
+<head>
+  <!--
+    SpectraMind V50 — report.html (Full Upgrade)
+    ------------------------------------------------
+    Location: assets/report.html
+    Role:
+      • Standalone diagnostics report (light/dark, responsive, zero external deps)
+      • Safe pre-run (renders placeholder PNGs shipped with assets/)
+      • Post‑run generator (CLI / python) overwrites KPI values and <img data-asset="..."> sources
+      • Contains anchors and data- hooks for tooling (no brittle query selectors)
+    Conventions:
+      • Use relative paths from assets/ root
+      • Placeholders expected in assets/: 
+          sample_spectrum.png, shap_overlay.png, umap_clusters.png, tsne_projection.png,
+          fft_power.png, symbolic_heatmap.png, calibration_curve.png
+      • Optional sidecar HTMLs (generator may replace images with iframes):
+          umap.html, tsne.html, shap_overlay.html, mu_spectrum.html, fft_power.html,
+          symbolic_heatmap.html, calibration_curve.html
+  -->
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="color-scheme" content="light dark" />
+  <meta http-equiv="Referrer-Policy" content="no-referrer" />
+  <title>SpectraMind V50 — Diagnostics Report</title>
+
+
+  <style>
+    :root{
+      /* Light theme */
+      --bg: #f7f7fb;
+      --surface: #ffffff;
+      --ink: #1f2328;
+      --muted: #6b7280;
+      --border: #e5e7eb;
+      --accent: #2b2d42;
+      --accent-2: #5da9ff;
+      --ok: #16a34a;
+      --warn:#f59e0b;
+      --err: #dc2626;
+
+      --radius: 16px;
+      --pad: 18px;
+      --gap: 18px;
+      --shadow: 0 6px 28px rgba(27,31,35,.07);
+
+      --sans: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+
+      --fs-xxl: clamp(22px, 2.4vw, 30px);
+      --fs-xl:  clamp(18px, 2vw, 22px);
+      --fs-lg:  16px;
+      --fs-md:  14px;
+      --fs-sm:  12px;
+      --ts: 200ms ease;
+    }
+    @media (prefers-color-scheme: dark){
+      :root{
+        --bg: #0c1116;
+        --surface: #0f141a;
+        --ink: #e7eaee;
+        --muted: #9aa4af;
+        --border: #1f2a36;
+        --accent:#8ab4ff;
+        --accent-2:#60a5fa;
+        --ok: #22c55e;
+        --warn:#f59e0b;
+        --err: #f87171;
+        --shadow: 0 6px 28px rgba(0,0,0,.55);
+      }
+    }
+
+    html,body{ height:100%; background:var(--bg); color:var(--ink); font-family:var(--sans); line-height:1.5; }
+
+    .wrap{ max-width: 1400px; margin:0 auto; padding: 20px; display:grid; gap: var(--gap); }
+
+    header.appbar{
+      position: sticky; top:0; z-index: 20;
+      background: color-mix(in oklab, var(--bg) 82%, var(--surface) 18%);
+      backdrop-filter: blur(6px) saturate(120%);
+      border-bottom: 1px solid var(--border);
+      box-shadow: var(--shadow);
+      border-radius: 0 0 var(--radius) var(--radius);
+      padding: 12px 16px;
+      display:flex; align-items:center; justify-content:space-between; gap:10px;
+    }
+    .brand{ display:flex; align-items:center; gap:12px; font-weight:800; letter-spacing:.2px; }
+    .brand .title{ font-size: var(--fs-xxl); }
+    .badge{ padding: 4px 10px; border-radius:999px; background: var(--accent); color:#fff; font-weight:700; font-size: var(--fs-sm); }
+
+    .toolbar{ display:flex; gap:8px; flex-wrap:wrap; }
+    .btn{
+      appearance:none; background:var(--surface); color:var(--ink); border:1px solid var(--border);
+      padding:8px 12px; border-radius:10px; font-weight:700; font-size: var(--fs-md);
+      cursor:pointer; transition: transform var(--ts), border-color var(--ts), background var(--ts);
+    }
+    .btn:hover{ transform: translateY(-1px); border-color: var(--accent-2); }
+    .btn:focus-visible{ outline:3px solid color-mix(in oklab, var(--accent-2) 30%, transparent); outline-offset:2px; }
+    .btn.primary{ background:var(--accent); border-color:var(--accent); color:#fff; }
+
+    /* Layout */
+    .grid{ display:grid; gap: var(--gap); grid-template-columns: repeat(12, 1fr); grid-auto-rows: minmax(120px, auto); }
+    .span-12{ grid-column: span 12; } .span-9{ grid-column: span 9; } .span-8{ grid-column: span 8; }
+    .span-6{ grid-column: span 6; } .span-4{ grid-column: span 4; } .span-3{ grid-column: span 3; }
+
+    @media (max-width: 1200px){ .span-9,.span-8,.span-6,.span-4{ grid-column: span 12; } .span-3{ grid-column: span 6; } }
+    @media (max-width: 720px){ .span-3{ grid-column: span 12; } }
+
+    .card{
+      background: var(--surface); border:1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow);
+      padding: var(--pad); display:flex; flex-direction:column; gap:12px; overflow:hidden;
+    }
+    .card h2{ font-size: var(--fs-xl); margin:0; }
+    .muted{ color:var(--muted); font-size: var(--fs-sm); }
+    .kpis{ display:grid; gap:12px; grid-template-columns: repeat(4, 1fr); }
+    @media (max-width: 900px){ .kpis{ grid-template-columns: repeat(2, 1fr); } }
+    @media (max-width: 540px){ .kpis{ grid-template-columns: 1fr; } }
+
+    .kpi{ border:1px dashed var(--border); border-radius:12px; padding:12px; display:grid; gap:6px; background: color-mix(in oklab, var(--surface) 85%, var(--bg) 15%); }
+    .kpi .label{ color: var(--muted); font-size: var(--fs-sm); }
+    .kpi .value{ font-weight:800; font-size: var(--fs-xl); }
+    .pill{ display:inline-block; padding:2px 8px; border-radius:999px; color:#fff; font-weight:800; font-size: var(--fs-sm); }
+    .ok{ background: var(--ok); } .warn{ background: var(--warn); } .err{ background: var(--err); }
+
+    .preview{ display:grid; place-items:center; min-height: 260px; background: color-mix(in oklab, var(--surface) 92%, var(--bg) 8%); border:1px dashed var(--border); border-radius:12px; padding:10px; }
+    .preview img, .preview iframe{ max-width:100%; max-height: 420px; width:100%; border-radius:10px; border:1px solid var(--border); background: #0000; }
+
+    .table{ width:100%; border-collapse: collapse; border:1px solid var(--border); border-radius:12px; overflow:hidden; font-size: var(--fs-sm); }
+    .table th, .table td{ padding:10px; border-bottom: 1px solid var(--border); text-align:left; vertical-align:top; }
+    .table thead th{ background: color-mix(in oklab, var(--surface) 80%, var(--bg) 20%); font-size: var(--fs-md); }
+
+    code, pre{ font-family: var(--mono); }
+    pre{
+      background: color-mix(in oklab, var(--surface) 80%, var(--bg) 20%);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px;
+      overflow:auto;
+      font-size: var(--fs-sm);
+    }
+
+    .sr-only{ position:absolute !important; width:1px; height:1px; clip:rect(1px,1px,1px,1px); overflow:hidden; white-space:nowrap; }
+
+    a{ color: var(--accent-2); text-decoration:none; }
+    a:hover{ text-decoration:underline; }
+  </style>
+
+
+</head>
+<body>
+  <header class="appbar" role="banner" aria-label="Report toolbar">
+    <div class="brand">
+      <span class="title">🛰️ SpectraMind V50 — Diagnostics Report</span>
+      <span class="badge" title="NeurIPS Ariel Data Challenge 2025">Ariel 2025</span>
+    </div>
+    <div class="toolbar" role="group" aria-label="Report actions">
+      <button class="btn" id="softRefreshBtn" title="Soft refresh images">↻ Soft Refresh</button>
+      <button class="btn" id="toggleThemeBtn" title="Toggle theme">☯ Theme</button>
+      <a class="btn" href="./diagnostics_dashboard.html" title="Back to dashboard">⟵ Dashboard</a>
+      <a class="btn primary" href="../README.md" title="Open project README">Project README</a>
+    </div>
+  </header>
+
+
+  <main class="wrap">
+    <!-- Overview / KPIs -->
+    <section class="card span-12" aria-labelledby="sec-overview">
+      <h2 id="sec-overview">Overview</h2>
+      <div class="muted">This report is safe before first run (placeholders shown). The CLI will overwrite KPIs and figures after diagnostics.</div>
+
+
+  <div class="kpis">
+    <div class="kpi">
+      <div class="label">Last Run Status</div>
+      <div class="value"><span id="kpi-status" class="pill warn" aria-live="polite">PENDING</span></div>
+      <div class="muted">Set by generator</div>
+    </div>
+    <div class="kpi">
+      <div class="label">Mean GLL (↓ better)</div>
+      <div class="value" id="kpi-gll">—</div>
+      <div class="muted">Across 283 bins</div>
+    </div>
+    <div class="kpi">
+      <div class="label">Conformal Coverage</div>
+      <div class="value" id="kpi-coverage">—</div>
+      <div class="muted">COREL / σ calibration</div>
+    </div>
+    <div class="kpi">
+      <div class="label">Config Hash</div>
+      <div class="value" id="kpi-runhash"><code>—</code></div>
+      <div class="muted">from run_hash_summary_v50.json</div>
+    </div>
+  </div>
+</section>
+
+<!-- μ / σ spectra -->
+<section class="card span-6" aria-labelledby="sec-mu">
+  <h2 id="sec-mu">μ Spectrum</h2>
+  <div class="preview"><img data-asset="mu" src="./sample_spectrum.png" alt="Sample μ spectrum placeholder" /></div>
+  <div class="muted">Hook: <code>data-asset="mu"</code>. Sidecar (optional): <code>mu_spectrum.html</code></div>
+</section>
+<section class="card span-6" aria-labelledby="sec-cal">
+  <h2 id="sec-cal">σ Calibration</h2>
+  <div class="preview"><img data-asset="calibration" src="./calibration_curve.png" alt="Calibration curve placeholder" /></div>
+  <div class="muted">Hook: <code>data-asset="calibration"</code>. Sidecar: <code>calibration_curve.html</code></div>
+</section>
+
+<!-- SHAP -->
+<section class="card span-6" aria-labelledby="sec-shap">
+  <h2 id="sec-shap">SHAP × μ Overlay</h2>
+  <div class="preview"><img data-asset="shap" src="./shap_overlay.png" alt="SHAP overlay placeholder" /></div>
+  <div class="muted">Hook: <code>data-asset="shap"</code> (or <code>shap_overlay.html</code>)</div>
+</section>
+
+<!-- UMAP / t-SNE -->
+<section class="card span-6" aria-labelledby="sec-umap">
+  <h2 id="sec-umap">UMAP Latent Projection</h2>
+  <div class="preview"><img data-asset="umap" src="./umap_clusters.png" alt="UMAP clusters placeholder" /></div>
+  <div class="muted">Hook: <code>data-asset="umap"</code> (or <code>umap.html</code>)</div>
+</section>
+
+<section class="card span-6" aria-labelledby="sec-tsne">
+  <h2 id="sec-tsne">t‑SNE Latent Projection</h2>
+  <div class="preview"><img data-asset="tsne" src="./tsne_projection.png" alt="t‑SNE projection placeholder" /></div>
+  <div class="muted">Hook: <code>data-asset="tsne"</code> (or <code>tsne.html</code>)</div>
+</section>
+
+<!-- FFT / Autocorr -->
+<section class="card span-6" aria-labelledby="sec-fft">
+  <h2 id="sec-fft">FFT / Autocorrelation</h2>
+  <div class="preview"><img data-asset="fft" src="./fft_power.png" alt="FFT power placeholder" /></div>
+  <div class="muted">Hook: <code>data-asset="fft"</code> (or <code>fft_power.html</code>)</div>
+</section>
+
+<!-- Symbolic -->
+<section class="card span-12" aria-labelledby="sec-symbolic">
+  <h2 id="sec-symbolic">Symbolic Rule Violations</h2>
+  <div class="preview"><img data-asset="symbolic" src="./symbolic_heatmap.png" alt="Symbolic heatmap placeholder" /></div>
+  <div class="muted">Hook: <code>data-asset="symbolic"</code> (or <code>symbolic_heatmap.html</code>)</div>
+</section>
+
+<!-- CLI log excerpt -->
+<section class="card span-12" aria-labelledby="sec-cli">
+  <h2 id="sec-cli">Recent CLI Calls</h2>
+  <table class="table" aria-describedby="cli-desc">
+    <caption id="cli-desc" class="sr-only">Recent CLI invocations with arguments and status.</caption>
+    <thead>
+      <tr><th style="width:22%;">When (UTC)</th><th>Command</th><th style="width:16%;">Status</th></tr>
+    </thead>
+    <tbody id="cli-rows">
+      <tr><td>—</td><td><code>spectramind diagnose dashboard</code></td><td><span class="pill warn">PENDING</span></td></tr>
+      <tr><td>—</td><td><code>spectramind train +diagnostics.light=true</code></td><td><span class="pill warn">PENDING</span></td></tr>
+      <tr><td>—</td><td><code>spectramind analyze-log --md</code></td><td><span class="pill warn">PENDING</span></td></tr>
+    </tbody>
+  </table>
+  <div class="muted">Full history: <a href="./log_table.md">log_table.md</a> • Raw: <code>logs/v50_debug_log.md</code></div>
+</section>
+
+<!-- Config snapshot -->
+<section class="card span-6" aria-labelledby="sec-config">
+  <h2 id="sec-config">Config Snapshot (Hydra)</h2>
+  <pre id="config-snapshot" aria-live="polite" style="min-height:160px;">
+
+Merged config will be injected here by the generator
+
+Example:
+
+data:
+
+split: toy
+
+model:
+
+name: v50
+
+training:
+
+epochs: 12
+
+  </pre>
+  <div class="muted">Source: <code>outputs/&lt;run&gt;/.hydra/config.yaml</code></div>
+</section>
+
+<!-- Artifacts -->
+<section class="card span-6" aria-labelledby="sec-artifacts">
+  <h2 id="sec-artifacts">Artifacts</h2>
+  <table class="table">
+    <thead><tr><th>Artifact</th><th>Path</th></tr></thead>
+    <tbody id="artifact-rows">
+      <tr><td>Diagnostic Summary</td><td><code>assets/diagnostic_summary.json</code></td></tr>
+      <tr><td>Run Hash Summary</td><td><code>assets/run_hash_summary_v50.json</code></td></tr>
+      <tr><td>Submission Bundle</td><td><code>outputs/submission/bundle.zip</code></td></tr>
+    </tbody>
+  </table>
+  <div class="muted">Tooling updates this table post‑run.</div>
+</section>
+
+<!-- Versioning / Reproducibility -->
+<section class="card span-12" aria-labelledby="sec-repro">
+  <h2 id="sec-repro">Reproducibility & Versioning</h2>
+  <table class="table">
+    <thead><tr><th>Item</th><th>Value</th></tr></thead>
+    <tbody id="repro-rows">
+      <tr><td>Git Commit</td><td id="git-commit"><code>—</code></td></tr>
+      <tr><td>Config Hash</td><td id="config-hash"><code>—</code></td></tr>
+      <tr><td>Dataset Hash (DVC)</td><td id="dvc-hash"><code>—</code></td></tr>
+      <tr><td>Build Timestamp (UTC)</td><td id="build-ts"><code>—</code></td></tr>
+    </tbody>
+  </table>
+  <div class="muted">Filled by generator from <code>run_hash_summary_v50.json</code> and DVC metadata.</div>
+</section>
+
+  </main>
+
+
+  <footer class="wrap" style="padding-top:0;">
+    <section class="card span-12" role="contentinfo">
+      <div class="muted">
+        SpectraMind V50 — Ariel Data Challenge 2025 • Neuro‑symbolic, physics‑informed AI for exoplanet spectroscopy
+      </div>
+    </section>
+  </footer>
+
+
+  <script>
+  (function(){
+    "use strict";
+
+    // Theme toggle — optional override of prefers-color-scheme using data-theme attr.
+    const toggleBtn = document.getElementById('toggleThemeBtn');
+    function setTheme(mode){
+      if(mode === 'auto'){ document.documentElement.removeAttribute('data-theme'); localStorage.removeItem('smv50_theme'); }
+      else { document.documentElement.setAttribute('data-theme', mode); localStorage.setItem('smv50_theme', mode); }
+    }
+    function applyStoredTheme(){
+      const stored = localStorage.getItem('smv50_theme');
+      if(stored === 'light' || stored === 'dark'){ document.documentElement.setAttribute('data-theme', stored); }
+    }
+    toggleBtn?.addEventListener('click', () => {
+      const cur = document.documentElement.getAttribute('data-theme') || 'auto';
+      if(cur === 'auto') setTheme('dark');
+      else if(cur === 'dark') setTheme('light');
+      else setTheme('auto');
+    });
+    applyStoredTheme();
+
+    // Soft refresh of image assets without full reload.
+    document.getElementById('softRefreshBtn')?.addEventListener('click', () => {
+      const stamp = Date.now();
+      document.querySelectorAll('img[data-asset]').forEach(img => {
+        try{
+          const u = new URL(img.getAttribute('src'), location.href);
+          u.searchParams.set('v', String(stamp));
+          img.setAttribute('src', u.toString());
+        }catch{ /* ignore */ }
+      });
+    });
+
+    // Optional: allow ?embed=1 to force iframes for sidecars (useful for local testing)
+    const params = new URLSearchParams(location.search);
+    if(params.get('embed') === '1'){
+      const sidecar = {
+        'mu': './mu_spectrum.html',
+        'calibration': './calibration_curve.html',
+        'shap': './shap_overlay.html',
+        'umap': './umap.html',
+        'tsne': './tsne.html',
+        'fft': './fft_power.html',
+        'symbolic': './symbolic_heatmap.html'
+      };
+      Object.entries(sidecar).forEach(([key, src]) => {
+        const img = document.querySelector(`img[data-asset="${key}"]`);
+        if(!img) return;
+        const frame = document.createElement('iframe');
+        frame.src = src; frame.loading = 'lazy';
+        frame.title = key + ' interactive view';
+        frame.setAttribute('aria-label', key + ' interactive view');
+        frame.style.width = '100%';
+        frame.style.height = '420px';
+        frame.style.border = '1px solid var(--border)';
+        frame.style.borderRadius = '10px';
+        img.parentElement.replaceChild(frame, img);
+      });
+    }
+
+    // These fields are injected by generator; we keep safe defaults here.
+    const kStatus = document.getElementById('kpi-status');
+    const kGll    = document.getElementById('kpi-gll');
+    const kCov    = document.getElementById('kpi-coverage');
+    const kRun    = document.getElementById('kpi-runhash');
+    const git     = document.getElementById('git-commit');
+    const chash   = document.getElementById('config-hash');
+    const dvc     = document.getElementById('dvc-hash');
+    const bts     = document.getElementById('build-ts');
+
+    // Dev hint (commented): uncomment to preview populated state.
+    /*
+    kStatus.textContent = 'OK'; kStatus.className = 'pill ok';
+    kGll.textContent = '−0.127';
+    kCov.textContent = '92%';
+    kRun.textContent = 'cfg:2ad3...';
+    git.textContent = 'f9f2c8a';
+    chash.textContent = 'run:7b3d...';
+    dvc.textContent = 'data:aa91...';
+    bts.textContent = new Date().toISOString();
+    const cfg = document.getElementById('config-snapshot');
+    cfg.textContent = 'data:\\n  split: toy\\nmodel:\\n  name: v50\\ntraining:\\n  epochs: 12\\n';
+    */
+
+    // Accessibility: ensure focus ring on keyboard nav
+    document.body.addEventListener('keydown', (e) => {
+      if(e.key === 'Tab'){ document.body.classList.add('kbd'); }
+    }, { once:true });
+
+  })();
+  </script>
+
+
+</body>
+</html>
