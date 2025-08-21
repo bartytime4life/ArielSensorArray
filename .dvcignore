@@ -1,6 +1,6 @@
 # .dvcignore — SpectraMind V50 (NeurIPS 2025 Ariel Data Challenge)
-# Purpose: Prevent DVC from tracking files that are ephemeral, reproducible, or managed elsewhere.
-# Complements .gitignore — DVC still respects Git versioning rules.
+# Purpose: Prevent DVC from scanning files that are ephemeral, reproducible, or managed elsewhere.
+# NOTE: This affects DVC's file discovery only (not Git). Keep .gitignore in sync for VCS hygiene.
 
 # ----------------------------------------------------------------------
 # Python build & cache
@@ -21,6 +21,8 @@ ENV/
 .poetry/
 pip-wheel-metadata/
 site-packages/
+.cache/
+.python-version
 
 # ----------------------------------------------------------------------
 # IDE/editor settings
@@ -65,39 +67,57 @@ outputs/debug/
 # Kaggle / competition specifics
 .kaggle/
 kaggle.json
-*.ipynb  # Kaggle-synced notebooks (use notebooks/ dir instead)
-
-# ----------------------------------------------------------------------
-# Jupyter / notebooks
+# If you keep notebooks in repo, prefer Git; DVC doesn't need to scan them.
+*.ipynb
 .ipynb_checkpoints/
 notebooks/.ipynb_checkpoints/
 
 # ----------------------------------------------------------------------
-# DVC internal
+# DVC internal (never scan your own cache/plots)
 .dvc/cache/
 .dvc/tmp/
 .dvc/plots/
 
 # ----------------------------------------------------------------------
 # Diagnostics, reports & dashboards (regenerable)
+# IMPORTANT: Scope these to generated folders to avoid hiding real input data.
 outputs/diagnostics/
-*.html
-*.htm
-*.png
-*.svg
-*.jpg
-*.jpeg
-*.gif
-*.pdf
-*.csv
-*.json
-*.md
+outputs/**.html
+outputs/**.htm
+outputs/**.png
+outputs/**.svg
+outputs/**.jpg
+outputs/**.jpeg
+outputs/**.gif
+outputs/**.pdf
+outputs/**.csv
+outputs/**.json
+outputs/**.md
+
+assets/screenshots/
+assets/plots/
+assets/tmp/
+assets/**.png
+assets/**.svg
+assets/**.jpg
+assets/**.jpeg
+assets/**.gif
+
+# If you absolutely need project-wide masks, re-include data/* to be safe:
+!data/**
+!data/**.csv
+!data/**.json
+!data/**.parquet
+!data/**.npy
+!data/**.npz
 
 # ----------------------------------------------------------------------
 # Submission bundles (reproducible via pipeline)
 outputs/submission.csv
 outputs/submission.zip
 outputs/submission_bundle.zip
+outputs/submission/**/*.zip
+outputs/submission/**/*.csv
 
 # ----------------------------------------------------------------------
 # Generated configs & manifests
@@ -109,10 +129,12 @@ diagnostic_summary.json
 run_hash_summary_v50.json
 
 # ----------------------------------------------------------------------
-# Local GUI/UX assets (regenerable)
-assets/screenshots/
-assets/plots/
-assets/tmp/
+# Secrets & local creds (keep out of DVC scans)
+.env
+.envrc
+.aws/
+.gcloud/
+.azure/
 
 # ----------------------------------------------------------------------
 # Hugging Face / MLflow / W&B caches
