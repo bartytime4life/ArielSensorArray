@@ -1,0 +1,38 @@
+# SpectraMind V50 — Diagnostics & Symbolic Plots for DVC
+plots:
+  - ROC:
+      template: simple
+      x: fpr
+      y:
+        eval: tpr
+      title: "ROC Curve"
+      x_label: "False Positive Rate"
+      y_label: "True Positive Rate"
+
+  - Calibration:
+      x: expected_calibration
+      y: observed_calibration
+      title: "Uncertainty Calibration Curve"
+      x_label: "Expected"
+      y_label: "Observed"
+
+  - GLL:
+      x: bin
+      y: gll
+      title: "Binwise Gaussian Log-Likelihood"
+      x_label: "Spectral Bin"
+      y_label: "GLL Score"
+
+  - FFT:
+      x: frequency
+      y: power
+      title: "FFT Power Spectrum"
+      x_label: "Frequency"
+      y_label: "Power"
+
+  - Symbolic:
+      x: bin
+      y: violation_score
+      title: "Symbolic Rule Violation Heatmap"
+      x_label: "Spectral Bin"
+      y_label: "Violation"
