@@ -1,3 +1,4 @@
+```make
 # ==============================================================================
 # SpectraMind V50 — Master Makefile (Dev/Local, CI‑Safe, Kaggle‑Ready, Docker‑Ready)
 # Neuro‑Symbolic, Physics‑Informed AI Pipeline
@@ -45,6 +46,9 @@ SUBMIT_ZIP   ?= $(SUBMIT_DIR)/bundle.zip
 
 RUN_HASH_FILE ?= run_hash_summary_v50.json
 
+# Kaggle competition handle (override if needed)
+KAGGLE_COMP ?= neurips-2025-ariel
+
 # Requirements files (export helpers)
 REQ_CORE          ?= requirements.txt
 REQ_EXTRAS        ?= requirements-extras.txt
@@ -61,6 +65,13 @@ MMD_MAIN          ?= $(DIAGRAMS_SRC_DIR)/main.mmd
 # Hydra overrides and passthrough args for the CLI
 OVERRIDES    ?=
 EXTRA_ARGS   ?=
+
+# -------- Docs export (MD -> HTML/PDF via pandoc) --------
+DOC_MD    ?= assets/AI_Design_and_Modeling.md
+DOC_HTML  ?= assets/AI_Design_and_Modeling.html
+DOC_PDF   ?= assets/AI_Design_and_Modeling.pdf
+DOC_TITLE ?= AI Design and Modeling — SpectraMind V50
+DOC_CSS   ?= https://cdn.jsdelivr.net/npm/water.css@2/out/water.css
 
 # ========= Colors =========
 BOLD := \033[1m
@@ -84,12 +95,12 @@ RST  := \033[0m
         kaggle-run kaggle-submit kaggle-verify \
         node-info mmd-version diagrams diagrams-png diagrams-watch diagrams-lint diagrams-format diagrams-clean \
         node-ci node-diagrams \
-        ci quickstart clean realclean distclean cache-clean \
+        ci ci-docs quickstart clean realclean distclean cache-clean \
         export-reqs export-reqs-dev export-kaggle-reqs export-freeze \
         install-core install-extras install-dev install-kaggle \
         deps deps-min deps-lock verify-deps \
         env-capture hash-config git-clean-check git-status \
-        pip-audit audit docs-serve docs-build \
+        pip-audit audit docs docs-html docs-pdf docs-open docs-clean docs-serve docs-build \
         pyg-install kaggle-pyg-index \
         docker-build docker-run docker-shell docker-test docker-clean docker-print
 
@@ -119,6 +130,7 @@ help:
 	@echo "  $(CYN)verify-deps$(RST)      : print key package versions (torch/numpy/sklearn/etc.)"
 	@echo "  $(CYN)env-capture | hash-config$(RST) : reproducibility utilities"
 	@echo "  $(CYN)export-reqs* | install-*(RST)  : requirements export/install helpers"
+	@echo "  $(CYN)docs$(RST)             : export AI_Design_and_Modeling.md → HTML/PDF in assets/"
 	@echo "  $(CYN)docs-serve | docs-build$(RST)  : MkDocs docs helpers (optional)"
 	@echo "  $(CYN)pip-audit$(RST)                : CVE scan for installed packages"
 	@echo "  $(CYN)dvc-*(RST)                     : DVC pull/push/status helpers"
@@ -164,6 +176,11 @@ quickstart: env info
 	@echo "$(GRN)Done.$(RST)"
 	@$(MAKE) doctor
 
+# ======== Guards (fail fast if CLI not runnable) ========
+guards:
+	@command -v $(POETRY) >/dev/null 2>&1 || { echo "$(RED)Poetry missing$(RST)"; exit 1; }
+	@$(POETRY) run spectramind --version >/dev/null 2>&1 || { echo "$(RED)Spectramind CLI not runnable$(RST)"; exit 1; }
+
 # ========= Dev / Quality =========
 fmt:
 	$(POETRY) run isort .
@@ -192,32 +209,32 @@ validate-env:
 	fi
 
 # ========= Pipeline =========
-selftest: init
+selftest: guards init
 	$(CLI) selftest
 
-selftest-deep: init
+selftest-deep: guards init
 	$(CLI) selftest --deep
 
-calibrate: init
+calibrate: guards init
 	$(CLI) calibrate $(OVERRIDES) $(EXTRA_ARGS)
 
-calibrate-temp: init
+calibrate-temp: guards init
 	$(CLI) calibrate-temp $(OVERRIDES) $(EXTRA_ARGS)
 
-corel-train: init
+corel-train: guards init
 	$(CLI) corel-train $(OVERRIDES) $(EXTRA_ARGS)
 
-train: init
+train: guards init
 	$(CLI) train +training.epochs=$(EPOCHS) $(OVERRIDES) --device $(DEVICE) $(EXTRA_ARGS)
 
-predict: init
+predict: guards init
 	mkdir -p "$(PRED_DIR)"
 	$(CLI) predict --out-csv "$(PRED_DIR)/submission.csv" $(OVERRIDES) $(EXTRA_ARGS)
 
 predict-e2e: predict
 	@test -f "$(PRED_DIR)/submission.csv" && echo "$(GRN)OK: $(PRED_DIR)/submission.csv$(RST)" || (echo "$(RED)Missing submission.csv$(RST)"; exit 1)
 
-diagnose: init
+diagnose: guards init
 	$(CLI) diagnose smoothness --outdir "$(DIAG_DIR)" $(EXTRA_ARGS)
 	$(CLI) diagnose dashboard --no-umap --no-tsne --outdir "$(DIAG_DIR)" $(EXTRA_ARGS) || \
 	$(CLI) diagnose dashboard --outdir "$(DIAG_DIR)" $(EXTRA_ARGS) || true
@@ -231,36 +248,36 @@ open-report:
 	  else echo "No opener found (CI/headless)"; fi; \
 	else echo "No diagnostics HTML found."; fi
 
-submit: init
+submit: guards init
 	mkdir -p "$(SUBMIT_DIR)"
 	$(CLI) submit --zip-out "$(SUBMIT_ZIP)" $(EXTRA_ARGS)
 
 # ========= Ablation (profiles & sweep styles) =========
-ablate: init
+ablate: guards init
 	$(CLI) ablate $(OVERRIDES) $(EXTRA_ARGS)
 	@$(PYTHON) tools/ablation_post.py --csv outputs/ablate/leaderboard.csv --metric gll --ascending --top-n 5 --outdir outputs/ablate --html-template tools/leaderboard_template.html || true
 
-ablate-light: init
+ablate-light: guards init
 	$(CLI) ablate ablation=ablation_light $(EXTRA_ARGS)
 	@$(PYTHON) tools/ablation_post.py --csv outputs/ablate/leaderboard.csv --metric gll --ascending --top-n 3 --outdir outputs/ablate_light --html-template tools/leaderboard_template.html || true
 
-ablate-heavy: init
+ablate-heavy: guards init
 	$(CLI) ablate ablation=ablation_heavy $(EXTRA_ARGS)
 	@$(PYTHON) tools/ablation_post.py --csv outputs/ablate/leaderboard.csv --metric gll --ascending --top-n 10 --outdir outputs/ablate_heavy --html-template tools/leaderboard_template.html || true
 
-ablate-grid: init
+ablate-grid: guards init
 	$(CLI) ablate -m ablate.sweeper=basic +ablate.search=v50_fast_grid ablation=ablation_light $(EXTRA_ARGS)
 	@$(PYTHON) tools/ablation_post.py --csv outputs/ablate/leaderboard.csv --metric gll --ascending --top-n 5 --outdir outputs/ablate --html-template tools/leaderboard_template.html || true
 
-ablate-optuna: init
+ablate-optuna: guards init
 	$(CLI) ablate -m ablate.sweeper=optuna +ablate.search=v50_symbolic_core ablation=ablation_heavy $(EXTRA_ARGS)
 	@$(PYTHON) tools/ablation_post.py --csv outputs/ablate/leaderboard.csv --metric gll --ascending --top-n 10 --outdir outputs/ablate --html-template tools/leaderboard_template.html || true
 
 # ========= Log analysis =========
-analyze-log: init
+analyze-log: guards init
 	$(CLI) analyze-log --md "$(OUT_DIR)/log_table.md" --csv "$(OUT_DIR)/log_table.csv" $(EXTRA_ARGS)
 
-analyze-log-short: init
+analyze-log-short: guards init
 	@if [ ! -f "$(OUT_DIR)/log_table.csv" ]; then \
 	  echo ">>> Generating log CSV via analyze-log"; \
 	  $(CLI) analyze-log --md "$(OUT_DIR)/log_table.md" --csv "$(OUT_DIR)/log_table.csv" $(EXTRA_ARGS); \
@@ -273,7 +290,7 @@ analyze-log-short: init
 	  echo "::warning::No log_table.csv to summarize"; \
 	fi
 
-check-cli-map:
+check-cli-map: guards
 	$(CLI) check-cli-map
 
 # ========= Mermaid / Diagrams (npm) =========
@@ -337,8 +354,47 @@ node-diagrams: init
 	@$(NPM) run mmd:render:png
 	@echo ">>> Diagrams → $(DIAGRAMS_OUT_DIR)"
 
+# ========= Docs export (pandoc: MD -> HTML/PDF) =========
+docs: docs-html docs-pdf ## Build HTML and PDF from $(DOC_MD)
+
+docs-html:
+	@command -v pandoc >/dev/null || { echo "pandoc not found. Install pandoc (and TeX for PDF)."; exit 1; }
+	@test -f "$(DOC_MD)" || { echo "Missing $(DOC_MD)."; exit 1; }
+	@mkdir -p assets
+	pandoc "$(DOC_MD)" \
+	  -f markdown+smart \
+	  -t html5 \
+	  -s \
+	  --metadata title="$(DOC_TITLE)" \
+	  -c "$(DOC_CSS)" \
+	  -o "$(DOC_HTML)"
+	@echo "Wrote $(DOC_HTML)"
+
+docs-pdf:
+	@command -v pandoc >/dev/null || { echo "pandoc not found. Install pandoc + TeX (texlive)."; exit 1; }
+	@test -f "$(DOC_MD)" || { echo "Missing $(DOC_MD)."; exit 1; }
+	pandoc "$(DOC_MD)" \
+	  -f markdown+smart \
+	  -V geometry:margin=1in \
+	  -V linkcolor:blue \
+	  -V fontsize=11pt \
+	  -o "$(DOC_PDF)"
+	@echo "Wrote $(DOC_PDF)"
+
+docs-open: ## Open the latest exported HTML locally
+	@if [ -f "$(DOC_HTML)" ]; then \
+	  if command -v xdg-open >/dev/null 2>&1; then xdg-open "$(DOC_HTML)"; \
+	  elif command -v open >/dev/null 2>&1; then open "$(DOC_HTML)"; \
+	  else echo "Open $(DOC_HTML) manually"; fi; \
+	else echo "No HTML found. Run 'make docs' first."; fi
+
+docs-clean:
+	rm -f "$(DOC_HTML)" "$(DOC_PDF)"
+	@echo "Cleaned $(DOC_HTML) and $(DOC_PDF)"
+
 # ========= CI convenience (dev/local reuse) =========
 ci: validate-env selftest train diagnose analyze-log-short
+ci-docs: docs
 
 # ========= DVC =========
 dvc-pull:
@@ -404,15 +460,15 @@ kaggle-verify:
 	@$(KAGGLE) competitions list >/dev/null 2>&1 || { echo "$(RED)Kaggle CLI not logged in$(RST)"; exit 1; }
 	@echo "$(GRN)Kaggle CLI OK$(RST)"
 
-kaggle-run: init
+kaggle-run: guards init
 	@echo ">>> Running single-epoch GPU run (Kaggle-like)"
 	$(CLI) selftest
 	$(CLI) train +training.epochs=1 --device gpu --outdir "$(OUT_DIR)"
 	$(CLI) predict --out-csv "$(PRED_DIR)/submission.csv"
 
 kaggle-submit: kaggle-verify kaggle-run
-	@echo ">>> Submitting to Kaggle competition"
-	$(KAGGLE) competitions submit -c neurips-2025-ariel -f "$(PRED_DIR)/submission.csv" -m "Spectramind V50 auto-submit"
+	@echo ">>> Submitting to Kaggle competition $(KAGGLE_COMP)"
+	$(KAGGLE) competitions submit -c "$(KAGGLE_COMP)" -f "$(PRED_DIR)/submission.csv" -m "SpectraMind V50 auto-submit"
 
 # ========= Requirements export / install =========
 export-reqs:
@@ -590,3 +646,4 @@ distclean: realclean
 	rm -rf .venv
 	rm -rf ~/.cache/pypoetry || true
 	rm -rf ~/.cache/pip || true
+```
