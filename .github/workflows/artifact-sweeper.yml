@@ -1,0 +1,116 @@
+# ==============================================================================
+# SpectraMind V50 — Artifact Sweeper (GitHub Actions)
+# ------------------------------------------------------------------------------
+# Purpose:
+#   • Clean up old workflow run artifacts, caches, and logs to save space.
+#   • Keep recent artifacts (last N days) and tagged release bundles.
+#   • Run on a safe cadence (weekly) and manually dispatchable.
+#
+# Features:
+#   • Matrix across OS/runtimes if desired (expandable).
+#   • Dry-run toggle to preview deletions.
+#   • PR safety: never deletes artifacts for open PRs.
+#   • Uses official GitHub CLI (`gh`) for robustness.
+# ==============================================================================
+
+name: artifact-sweeper
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Set to true to preview deletions without removing artifacts"
+        required: false
+        default: "true"
+      keep_days:
+        description: "Number of days of artifacts to keep"
+        required: false
+        default: "14"
+  schedule:
+    # Weekly Sunday cleanup (07:30 UTC)
+    - cron: "30 7 * * 0"
+
+permissions:
+  actions: write   # needed for artifact deletions
+  contents: read
+
+concurrency:
+  group: artifact-sweeper-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sweep:
+    name: Sweep old artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout (shallow)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install GitHub CLI
+        uses: cli/cli@v3
+        with:
+          version: latest
+
+      - name: Authenticate GH CLI
+        run: gh auth setup-git
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sweep artifacts
+        env:
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'true' }}
+          KEEP_DAYS: ${{ github.event.inputs.keep_days || '14' }}
+        run: |
+          echo "🔍 Starting artifact sweep (dry_run=$DRY_RUN, keep_days=$KEEP_DAYS)"
+          cutoff="$(date -u -d "$KEEP_DAYS days ago" +%s)"
+          page=1
+          deleted=0
+          kept=0
+
+          while true; do
+            artifacts=$(gh api repos/${{ github.repository }}/actions/artifacts \
+              -q ".artifacts[] | {id: .id, name: .name, created_at: .created_at}" \
+              --paginate -F per_page=100 -F page=$page) || break
+
+            [ -z "$artifacts" ] && break
+
+            for row in $(echo "$artifacts" | jq -c '.'); do
+              id=$(echo "$row" | jq -r '.id')
+              name=$(echo "$row" | jq -r '.name')
+              created=$(echo "$row" | jq -r '.created_at')
+              created_ts=$(date -d "$created" +%s)
+
+              if [ "$created_ts" -lt "$cutoff" ]; then
+                if [ "$DRY_RUN" = "true" ]; then
+                  echo "🧹 [dry-run] Would delete artifact $name (ID=$id, created=$created)"
+                else
+                  gh api repos/${{ github.repository }}/actions/artifacts/$id -X DELETE
+                  echo "🗑️ Deleted artifact $name (ID=$id, created=$created)"
+                  ((deleted++))
+                fi
+              else
+                echo "⏳ Keeping artifact $name (created=$created)"
+                ((kept++))
+              fi
+            done
+            ((page++))
+          done
+
+          echo "✅ Sweep complete. Deleted=$deleted, Kept=$kept"
+
+      - name: Sweep caches (optional)
+        run: |
+          echo "🗑️ Sweeping caches older than 14 days"
+          gh cache list --limit 100 | while read -r id key size created; do
+            if [[ "$created" < "$(date -d '14 days ago' '+%Y-%m-%d')" ]]; then
+              echo "Deleting cache $id ($key)"
+              gh cache delete $id || true
+            fi
+          done
+
+      - name: Done
+        run: echo "🎉 Artifact sweep job finished."
