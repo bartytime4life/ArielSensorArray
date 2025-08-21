@@ -1,0 +1,11 @@
+{
+  "repository": "OWNER/REPO",
+  "ref": "refs/heads/main",
+  "commit_sha": "0000000000000000000000000000000000000000",
+  "generated_at_utc": "1970-01-01T00:00:00Z",
+  "formats": [
+    "cyclonedx-json",
+    "spdx-json"
+  ],
+  "notes": "Seed INDEX file. Real SBOM catalog metadata will overwrite this on first CI/CLI run."
+}
