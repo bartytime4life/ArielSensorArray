@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>SpectraMind V50 — Diagnostics Report</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light dark" />
+  <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+  <meta http-equiv="Referrer-Policy" content="no-referrer" />
+  <style>
+    :root{
+      --bg:#f7f7fb;
+      --card:#ffffff;
+      --ink:#1f2328;
+      --muted:#6b7280;
+      --accent:#2b2d42;
+      --accent-2:#5da9ff;
+      --border:#e7e7ee;
+      --dash:#cbd5e1;
+      --ok:#16a34a;
+      --warn:#f59e0b;
+      --err:#dc2626;
+      --shadow:0 2px 6px rgba(0,0,0,.08);
+      --radius:12px;
+      --radius-sm:8px;
+      --space:.9rem;
+      --space-lg:1.5rem;
+      --mono: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;
+      --sans: system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"Apple Color Emoji","Segoe UI Emoji","Segoe UI Symbol";
+    }
+    @media (prefers-color-scheme: dark){
+      :root{
+        --bg:#0f1115;
+        --card:#161b22;
+        --ink:#e9e9ee;
+        --muted:#a3adbd;
+        --accent:#5da9ff;
+        --border:#222838;
+        --dash:#374151;
+        --shadow:0 2px 8px rgba(0,0,0,.35);
+      }
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0;
+      font-family:var(--sans);
+      background:var(--bg);
+      color:var(--ink);
+      -webkit-font-smoothing:antialiased;
+      -moz-osx-font-smoothing:grayscale;
+    }
+    header{
+      background:linear-gradient(135deg,var(--accent) 0%, #1f6feb 100%);
+      color:#fff;
+      padding:calc(var(--space-lg) + .4rem) var(--space);
+      box-shadow:var(--shadow);
+    }
+    header .wrap{max-width:1200px;margin:0 auto}
+    header h1{margin:.25rem 0 0 0;font-size:1.6rem}
+    header p{margin:.35rem 0 0 0;opacity:.95}
+    .wrap-main{max-width:1200px;margin:0 auto;padding:var(--space-lg) var(--space)}
+    nav.chips{display:flex;gap:.6rem;flex-wrap:wrap;margin:0 0 var(--space-lg)}
+    nav.chips a{
+      text-decoration:none;color:var(--ink);background:var(--card);border:1px solid var(--border);
+      border-radius:999px;padding:.45rem .8rem;box-shadow:var(--shadow);font-size:.92rem
+    }
+    section{
+      background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
+      box-shadow:var(--shadow);padding:var(--space-lg);margin:0 0 var(--space-lg)
+    }
+    section h2{margin:.1rem 0 var(--space);font-size:1.2rem}
+    .grid{display:grid;gap:.9rem}
+    @media (min-width:900px){.grid.two{grid-template-columns:1fr 1fr}}
+    .placeholder{
+      border:2px dashed var(--dash);border-radius:var(--radius-sm);padding:1rem;text-align:center;color:var(--muted)
+    }
+    .hint{color:var(--muted);font-size:.95rem;margin-top:.5rem}
+    .card{
+      background:var(--card);border:1px dashed var(--border);border-radius:10px;padding:1rem
+    }
+    .kv{display:grid;grid-template-columns:max-content 1fr;gap:.35rem .75rem;margin:.25rem 0}
+    .pill{display:inline-flex;align-items:center;gap:.4rem;border:1px solid var(--border);border-radius:999px;padding:.2rem .6rem;font-size:.85rem}
+    .ok{color:var(--ok)} .warn{color:var(--warn)} .err{color:var(--err)}
+    .mono{font-family:var(--mono)}
+    .table{width:100%;border-collapse:collapse}
+    .table th,.table td{border:1px solid var(--border);padding:.55rem .6rem;text-align:left;vertical-align:top}
+    .table th{background:rgba(127,127,127,.08)}
+    details summary{cursor:pointer;font-weight:600}
+    .iframe-box{border:1px solid var(--border);border-radius:10px;overflow:hidden}
+    iframe{width:100%;height:520px;border:0;background:var(--card)}
+    .img-fit{max-width:100%;height:auto;border:1px solid var(--border);border-radius:10px}
+    .flex{display:flex;gap:.6rem;flex-wrap:wrap}
+    .btn{
+      display:inline-flex;align-items:center;gap:.45rem;border:1px solid var(--border);background:var(--card);
+      border-radius:10px;padding:.4rem .65rem;text-decoration:none;color:inherit
+    }
+    footer{color:var(--muted);text-align:center;padding:var(--space-lg);font-size:.95rem}
+    @media print{
+      nav.chips, .btn, .iframe-box iframe{display:none!important}
+      section{page-break-inside:avoid}
+      body{background:#fff;color:#000}
+    }
+    /* Simple progress bar (hidden by default) */
+    .progress{height:3px;background:linear-gradient(90deg,var(--accent) 0%, var(--accent-2) 100%);
+      width:0%;transition:width .3s ease;border-radius:2px}
+    .progress-wrap{background:rgba(127,127,127,.2);height:3px;border-radius:2px;overflow:hidden;margin:.35rem 0 .9rem}
+    .kbd{font-family:var(--mono);border:1px solid var(--border);border-bottom-width:2px;padding:.1rem .35rem;border-radius:6px}
+    .muted{color:var(--muted)}
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <div class="muted">SpectraMind V50 • ArielSensorArray</div>
+      <h1>Diagnostics Report</h1>
+      <p><em>Self-contained, link-safe report that lights up as artifacts land.</em></p>
+    </div>
+  </header>
+
+  <div class="wrap-main">
+    <nav class="chips" aria-label="Sections">
+      <a href="#overview">Overview</a>
+      <a href="#summary">Summary</a>
+      <a href="#latents">UMAP / t‑SNE</a>
+      <a href="#shap">SHAP & Symbolic</a>
+      <a href="#gll">GLL & Calibration</a>
+      <a href="#sbom">SBOM</a>
+      <a href="#cli">CLI Log</a>
+    </nav>
+
+    <!-- Overview -->
+    <section id="overview" aria-labelledby="h-overview">
+      <h2 id="h-overview">🧭 Overview</h2>
+      <div class="grid two">
+        <div class="card">
+          <div class="kv"><div><strong>Build:</strong></div><div><span id="build-ts" class="pill ok">unknown</span></div></div>
+          <div class="kv"><div><strong>Run ID:</strong></div><div><span id="run-id" class="mono muted">n/a</span></div></div>
+          <div class="kv"><div><strong>Artifacts:</strong></div><div id="artifacts-status" class="pill warn">Scanning…</div></div>
+          <div class="kv"><div><strong>Manifest:</strong></div><div class="mono">outputs/diagnostics/artifacts.json</div></div>
+          <div class="progress-wrap" aria-hidden="true"><div id="progress" class="progress"></div></div>
+          <div class="hint">Tip: Drop a manifest at <span class="kbd">outputs/diagnostics/artifacts.json</span> to auto‑wire links.</div>
+        </div>
+        <div class="card">
+          <details open>
+            <summary>Expected files (quick checklist)</summary>
+            <ul class="muted">
+              <li><span class="mono">outputs/diagnostics/umap.html</span>, <span class="mono">tsne.html</span></li>
+              <li><span class="mono">outputs/diagnostics/shap_overlay.html</span></li>
+              <li><span class="mono">outputs/diagnostics/gll_heatmap.png</span></li>
+              <li><span class="mono">outputs/diagnostics/calibration_report.html</span></li>
+              <li><span class="mono">outputs/diagnostics/diagnostic_summary.json</span></li>
+              <li><span class="mono">outputs/diagnostics/symbolic_rule_table.json</span></li>
+              <li><span class="mono">sbom/INDEX.json</span>, <span class="mono">sbom/catalog/…</span></li>
+              <li><span class="mono">logs/v50_debug_log.md</span></li>
+            </ul>
+          </details>
+        </div>
+      </div>
+    </section>
+
+    <!-- Summary -->
+    <section id="summary" aria-labelledby="h-summary">
+      <h2 id="h-summary">📊 Diagnostics Summary</h2>
+      <div id="summary-cards" class="grid two">
+        <div class="placeholder">Looking for <span class="mono">outputs/diagnostics/diagnostic_summary.json</span>…</div>
+      </div>
+      <div id="summary-table-wrap" style="margin-top:.9rem"></div>
+      <div class="hint">If present, key metrics, violators, and coverage trends will render here.</div>
+    </section>
+
+    <!-- Latents -->
+    <section id="latents" aria-labelledby="h-latents">
+      <h2 id="h-latents">🌌 UMAP / t‑SNE Latents</h2>
+      <div id="latents-links" class="flex" style="margin-bottom:.6rem">
+        <a id="lnk-umap" class="btn" href="#" hidden>Open UMAP</a>
+        <a id="lnk-tsne" class="btn" href="#" hidden>Open t‑SNE</a>
+      </div>
+      <div id="latents-embed" class="iframe-box">
+        <div class="placeholder">Waiting for <span class="mono">umap.html</span> or <span class="mono">tsne.html</span>…</div>
+      </div>
+      <div class="hint">Embedded previews use iframes when available; links appear above.</div>
+    </section>
+
+    <!-- SHAP & Symbolic -->
+    <section id="shap" aria-labelledby="h-shap">
+      <h2 id="h-shap">🔍 SHAP & Symbolic Overlays</h2>
+      <div id="shap-links" class="flex" style="margin-bottom:.6rem">
+        <a id="lnk-shap" class="btn" href="#" hidden>Open SHAP Overlay</a>
+      </div>
+      <div id="shap-embed" class="iframe-box">
+        <div class="placeholder">Waiting for <span class="mono">shap_overlay.html</span>…</div>
+      </div>
+
+      <details style="margin-top:.9rem">
+        <summary>Symbolic rule table</summary>
+        <div id="symbolic-table-wrap" style="margin-top:.6rem">
+          <div class="placeholder">Looking for <span class="mono">outputs/diagnostics/symbolic_rule_table.json</span>…</div>
+        </div>
+      </details>
+    </section>
+
+    <!-- GLL & Calibration -->
+    <section id="gll" aria-labelledby="h-gll">
+      <h2 id="h-gll">📈 GLL & Calibration</h2>
+      <div id="calib-links" class="flex" style="margin-bottom:.6rem">
+        <a id="lnk-calib" class="btn" href="#" hidden>Open Calibration Report</a>
+      </div>
+      <div class="grid two">
+        <div id="gll-img-wrap">
+          <img id="gll-img" class="img-fit" alt="GLL Heatmap" hidden />
+          <div id="gll-img-ph" class="placeholder">Waiting for <span class="mono">gll_heatmap.png</span>…</div>
+        </div>
+        <div class="card">
+          <details open>
+            <summary>Notes</summary>
+            <ul class="muted" style="margin:.4rem 0 0 0">
+              <li>GLL heatmap shows per‑bin Gaussian log‑likelihood.</li>
+              <li>Calibration report covers σ coverage and quantile diagnostics.</li>
+            </ul>
+          </details>
+        </div>
+      </div>
+    </section>
+
+    <!-- SBOM -->
+    <section id="sbom" aria-labelledby="h-sbom">
+      <h2 id="h-sbom">📦 SBOM & Supply Chain</h2>
+      <div class="flex" style="margin-bottom:.6rem">
+        <a id="lnk-sbom-index" class="btn" href="sbom/INDEX.json" target="_blank" rel="noopener">Open SBOM Index</a>
+        <a id="lnk-sbom-cat" class="btn" href="sbom/catalog/" target="_blank" rel="noopener">Open Catalog Folder</a>
+      </div>
+      <div id="sbom-status" class="hint">Scanning <span class="mono">sbom/</span> for artifacts…</div>
+      <div class="grid two" id="sbom-cards" style="margin-top:.6rem">
+        <div class="card">
+          <strong>CycloneDX / SPDX</strong>
+          <p class="muted">Expected under <span class="mono">sbom/catalog/YYYY‑MM‑DD/</span></p>
+        </div>
+        <div class="card">
+          <strong>SARIF (Grype)</strong>
+          <p class="muted">Static analysis uploads to code scanning; JSON files kept alongside SBOMs.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- CLI Log -->
+    <section id="cli" aria-labelledby="h-cli">
+      <h2 id="h-cli">🧾 CLI Log (latest)</h2>
+      <div class="hint">Pulls a recent tail from <span class="mono">logs/v50_debug_log.md</span> (if present).</div>
+      <pre id="cli-log" class="mono" style="max-height:360px;overflow:auto;border:1px solid var(--border);border-radius:10px;padding:.75rem;margin-top:.6rem;background:var(--card)"><span class="muted">Waiting for log…</span></pre>
+    </section>
+  </div>
+
+  <footer>
+    Generated by SpectraMind V50 • <span id="footer-ts" class="muted">unknown</span>
+  </footer>
+
+  <script>
+    (function(){
+      const $ = (sel) => document.querySelector(sel);
+      const progress = $('#progress');
+      const setProgress = (p)=>{ if(progress) progress.style.width = p + '%'; };
+
+      // Build / run metadata
+      const now = new Date();
+      const lm = new Date(document.lastModified);
+      $('#build-ts').textContent = lm.toLocaleString();
+      $('#footer-ts').textContent = 'Last modified: ' + lm.toLocaleString();
+
+      // Optional run id from query (?run=HASH)
+      const params = new URLSearchParams(location.search);
+      const runId = params.get('run') || 'n/a';
+      $('#run-id').textContent = runId;
+
+      async function exists(url){
+        try{
+          const r = await fetch(url, {method:'HEAD', cache:'no-store'});
+          return r.ok;
+        }catch(e){ return false; }
+      }
+      async function fetchJSON(url){
+        const r = await fetch(url, {cache:'no-store'});
+        if(!r.ok) throw new Error(url + ' not found');
+        return await r.json();
+      }
+      async function fetchText(url){
+        const r = await fetch(url, {cache:'no-store'});
+        if(!r.ok) throw new Error(url + ' not found');
+        return await r.text();
+      }
+
+      function pill(text, cls='ok'){ return `<span class="pill ${cls}">● ${text}</span>`; }
+
+      // Render summary cards from diagnostic_summary.json (best-effort schema)
+      function renderSummary(summary){
+        const wrap = $('#summary-cards');
+        wrap.innerHTML = '';
+        const cards = [];
+
+        const metrics = summary.metrics || summary || {};
+        const gll = metrics.gll_mean ?? metrics.mean_gll ?? metrics.gll ?? null;
+        const rmse = metrics.rmse ?? null;
+        const mae = metrics.mae ?? null;
+        const coverage = metrics.coverage ?? metrics.sigma_coverage ?? null;
+        const nplanets = metrics.planets ?? metrics.n ?? null;
+
+        function card(title, value, hint){
+          const v = (value===null || value===undefined) ? '<span class="muted">n/a</span>' : String(value);
+          return `<div class="card">
+            <div><strong>${title}</strong></div>
+            <div style="font-size:1.25rem;margin-top:.25rem">${v}</div>
+            ${hint ? `<div class="hint">${hint}</div>` : ''}
+          </div>`;
+        }
+
+        cards.push(card('Mean GLL', gll, 'Higher is better (per‑bin Gaussian log‑likelihood).'));
+        cards.push(card('RMSE', rmse, 'Lower is better.'));
+        cards.push(card('MAE', mae, 'Lower is better.'));
+        cards.push(card('σ Coverage', coverage, 'Target coverage / calibration consistency.'));
+        cards.push(card('Planets', nplanets, 'Count included in this summary.'));
+
+        // Optional: violators / top issues
+        const violators = summary.symbolic_violators || summary.violators || [];
+        if(Array.isArray(violators) && violators.length){
+          const top = violators.slice(0,6).map(v => `<li><span class="mono">${v.rule ?? v.name ?? 'rule'}</span> — ${v.count ?? v.value ?? ''}</li>`).join('');
+          cards.push(`<div class="card"><strong>Top Symbolic Violators</strong><ul style="margin:.4rem 0 0 .9rem">${top}</ul></div>`);
+        }
+
+        wrap.innerHTML = cards.join('');
+
+        // Optional raw table
+        const rawKeys = Object.keys(metrics);
+        if(rawKeys.length){
+          let rows = rawKeys.map(k => `<tr><th scope="row" class="mono">${k}</th><td>${String(metrics[k])}</td></tr>`).join('');
+          $('#summary-table-wrap').innerHTML = `<details open><summary>Raw metrics</summary>
+            <div style="overflow:auto;margin-top:.6rem"><table class="table">${rows}</table></div></details>`;
+        }
+      }
+
+      // Render symbolic rule table if provided
+      function renderSymbolicTable(data){
+        const wrap = $('#symbolic-table-wrap');
+        if(!data || !Array.isArray(data.rules) || !data.rules.length){
+          wrap.innerHTML = `<div class="placeholder">No rules found in <span class="mono">symbolic_rule_table.json</span>.</div>`;
+          return;
+        }
+        const cols = ['rule','count','score','notes'];
+        let thead = `<tr>${cols.map(c=>`<th>${c}</th>`).join('')}</tr>`;
+        let rows = data.rules.map(r => {
+          return `<tr>
+            <td class="mono">${r.rule ?? r.name ?? ''}</td>
+            <td>${r.count ?? ''}</td>
+            <td>${r.score ?? ''}</td>
+            <td>${r.notes ?? ''}</td>
+          </tr>`;
+        }).join('');
+        wrap.innerHTML = `<div style="overflow:auto">
+          <table class="table">
+            ${thead}${rows}
+          </table>
+        </div>`;
+      }
+
+      // CLI log tail
+      async function renderCLILog(){
+        const logPaths = ['logs/v50_debug_log.md','logs/v50_debug_log.txt','logs/cli.log'];
+        for(const p of logPaths){
+          if(await exists(p)){
+            try{
+              const txt = await fetchText(p);
+              const tail = txt.split(/\r?\n/).slice(-200).join('\n');
+              $('#cli-log').textContent = tail || '(empty)';
+              return;
+            }catch(e){}
+          }
+        }
+        $('#cli-log').innerHTML = '<span class="muted">No CLI log found.</span>';
+      }
+
+      // Attempt to embed a first available latent plot
+      async function embedLatents(manifest){
+        const umap = manifest?.umap || 'outputs/diagnostics/umap.html';
+        const tsne = manifest?.tsne || 'outputs/diagnostics/tsne.html';
+        const hasUmap = await exists(umap);
+        const hasTsne = await exists(tsne);
+
+        if(hasUmap){ $('#lnk-umap').href = umap; $('#lnk-umap').hidden = false; }
+        if(hasTsne){ $('#lnk-tsne').href = tsne; $('#lnk-tsne').hidden = false; }
+
+        const embed = $('#latents-embed');
+        if(hasUmap){
+          embed.innerHTML = `<iframe src="${umap}" title="UMAP"></iframe>`;
+        } else if(hasTsne){
+          embed.innerHTML = `<iframe src="${tsne}" title="t‑SNE"></iframe>`;
+        }
+      }
+
+      // SHAP overlay embed
+      async function embedSHAP(manifest){
+        const shap = manifest?.shap || 'outputs/diagnostics/shap_overlay.html';
+        if(await exists(shap)){
+          $('#lnk-shap').href = shap; $('#lnk-shap').hidden = false;
+          $('#shap-embed').innerHTML = `<iframe src="${shap}" title="SHAP Overlay"></iframe>`;
+        }
+      }
+
+      // Calibration report + GLL image
+      async function embedCalibrationAndGLL(manifest){
+        const calib = manifest?.calibration || 'outputs/diagnostics/calibration_report.html';
+        const gll = manifest?.gll || 'outputs/diagnostics/gll_heatmap.png';
+
+        if(await exists(calib)){
+          $('#lnk-calib').href = calib; $('#lnk-calib').hidden = false;
+        }
+        const gllImg = $('#gll-img'), gllPh = $('#gll-img-ph');
+        if(await exists(gll)){
+          gllImg.src = gll + '?t=' + Date.now();
+          gllImg.hidden = false;
+          gllPh.remove();
+        }
+      }
+
+      // SBOM quick status
+      async function sbomStatus(){
+        const idx = 'sbom/INDEX.json';
+        const cat = 'sbom/catalog/';
+        const hasIdx = await exists(idx);
+        const hasCat = await exists(cat);
+        let s = [];
+        s.push(hasIdx ? pill('Index','ok') : pill('Missing index','warn'));
+        s.push(hasCat ? pill('Catalog','ok') : pill('Missing catalog','warn'));
+        $('#sbom-status').innerHTML = s.join(' ');
+        if(!hasIdx) $('#lnk-sbom-index').classList.add('warn');
+      }
+
+      // Artifacts scan + manifest
+      async function scanArtifacts(){
+        setProgress(12);
+        let manifest = null;
+        const manifestPath = 'outputs/diagnostics/artifacts.json';
+        if(await exists(manifestPath)){
+          try{
+            manifest = await fetchJSON(manifestPath);
+            $('#artifacts-status').innerHTML = pill('Manifest detected','ok');
+          }catch(e){
+            $('#artifacts-status').innerHTML = pill('Manifest unreadable','warn');
+          }
+        } else {
+          $('#artifacts-status').innerHTML = pill('No manifest','warn');
+        }
+        setProgress(25);
+
+        // Summary
+        const summaryPath = manifest?.summary || 'outputs/diagnostics/diagnostic_summary.json';
+        if(await exists(summaryPath)){
+          try{
+            const summary = await fetchJSON(summaryPath);
+            renderSummary(summary);
+          }catch(e){
+            $('#summary-cards').innerHTML = `<div class="placeholder">Failed to read <span class="mono">${summaryPath}</span></div>`;
+          }
+        }
+        setProgress(45);
+
+        // Symbolic table
+        const symPath = manifest?.symbolic || 'outputs/diagnostics/symbolic_rule_table.json';
+        if(await exists(symPath)){
+          try{ renderSymbolicTable(await fetchJSON(symPath)); }catch(e){}
+        }
+        setProgress(60);
+
+        // Embeds
+        await embedLatents(manifest);
+        setProgress(72);
+        await embedSHAP(manifest);
+        setProgress(80);
+        await embedCalibrationAndGLL(manifest);
+        setProgress(88);
+
+        // SBOM quick scan
+        await sbomStatus();
+        setProgress(95);
+
+        // CLI log
+        await renderCLILog();
+        setProgress(100);
+        setTimeout(()=>{ if(progress) progress.style.opacity = .0; }, 800);
+      }
+
+      // Kick off
+      scanArtifacts();
+    })();
+  </script>
+</body>
+</html>
