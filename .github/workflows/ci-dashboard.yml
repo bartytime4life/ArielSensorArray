@@ -1,0 +1,137 @@
+# .github/workflows/ci-dashboard.yml
+# ==============================================================================
+# SpectraMind V50 — CI Dashboard Publisher
+# Renders a Markdown dashboard with the latest status for core workflows
+# (diagnostics, nightly-e2e, kaggle-submit, sbom-refresh) and commits it to docs/.
+# ==============================================================================
+
+name: ci-dashboard
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "15 */6 * * *"  # every 6 hours
+  workflow_run:
+    workflows:
+      - diagnostics
+      - nightly-e2e
+      - kaggle-submit
+      - sbom-refresh
+    types: [completed]
+
+permissions:
+  contents: write
+
+jobs:
+  render:
+    name: Build CI Dashboard
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate dashboard markdown
+        id: gen
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const workflows = [
+              { title: "Diagnostics",        file: "diagnostics.yml" },
+              { title: "Nightly E2E",        file: "nightly-e2e.yml" },
+              { title: "Kaggle Submit",      file: "kaggle-submit.yml" },
+              { title: "SBOM Refresh",       file: "sbom-refresh.yml" },
+            ];
+
+            async function latestRun(file) {
+              // listWorkflowRuns - workflow_id can be file name
+              const res = await github.rest.actions.listWorkflowRuns({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: file,
+                per_page: 1,
+                branch: "main"
+              });
+              const run = res.data.workflow_runs?.[0];
+              if (!run) return null;
+              return {
+                status: run.status,
+                conclusion: run.conclusion,
+                updated: run.updated_at,
+                url: run.html_url
+              };
+            }
+
+            function statusEmoji(conclusion) {
+              switch (conclusion) {
+                case "success": return "🟢";
+                case "neutral":
+                case "skipped": return "🟡";
+                case "failure":
+                case "timed_out":
+                case "cancelled": return "🔴";
+                default: return "⚪";
+              }
+            }
+
+            const rows = [];
+            for (const w of workflows) {
+              const run = await latestRun(w.file);
+              if (run) {
+                rows.push({
+                  title: w.title,
+                  emoji: statusEmoji(run.conclusion),
+                  conclusion: run.conclusion ?? "n/a",
+                  updated: new Date(run.updated).toISOString(),
+                  link: run.url
+                });
+              } else {
+                rows.push({
+                  title: w.title,
+                  emoji: "⚪",
+                  conclusion: "n/a",
+                  updated: "n/a",
+                  link: " "
+                });
+              }
+            }
+
+            const now = new Date().toISOString();
+            const lines = [];
+            lines.push("# 🚦 CI Dashboard");
+            lines.push("");
+            lines.push(`_Auto-generated: \`${now}\`_`);
+            lines.push("");
+            lines.push("| Workflow | Status | Conclusion | Updated (UTC) | Link |");
+            lines.push("|---|:---:|:---:|---|---|");
+            for (const r of rows) {
+              lines.push(`| ${r.title} | ${r.emoji} | ${r.conclusion} | ${r.updated} | [view](${r.link}) |`);
+            }
+            lines.push("");
+            lines.push("> Legend: 🟢 success · 🟡 skipped/neutral · 🔴 failing/cancelled · ⚪ no data");
+
+            const fs = require("fs");
+            fs.mkdirSync("docs", { recursive: true });
+            fs.writeFileSync("docs/CI_DASHBOARD.md", lines.join("\n"));
+
+            core.setOutput("summary", lines.join("\n"));
+
+      - name: Commit dashboard
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/CI_DASHBOARD.md
+          git commit -m "docs(ci): update CI dashboard [skip ci]" || echo "No changes to commit."
+          git push || true
+
+      - name: Upload dashboard as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-dashboard
+          path: docs/CI_DASHBOARD.md
+
+      - name: Job summary
+        run: |
+          echo "## CI Dashboard" >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.gen.outputs.summary }}" >> $GITHUB_STEP_SUMMARY
