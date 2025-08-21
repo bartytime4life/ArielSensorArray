@@ -1,0 +1,154 @@
+# SpectraMind V50 — PR Auto Labeler (paths ✦ title ✦ size)
+# - Path-based labels via actions/labeler (uses .github/labeler.yml)
+# - Title-based labels from Conventional Commits (feat/fix/docs/chore/refactor/test/build/ci)
+# - Size labels (XS/S/M/L/XL) by total changed lines
+# Safe for forks: uses pull_request_target with limited permissions.
+
+name: PR Auto Labeler
+
+on:
+  pull_request_target:
+    types:
+      # Trigger when PR is opened/updated, and when moving from draft to ready
+      - opened
+      - synchronize
+      - reopened
+      - edited
+      - ready_for_review
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: pr-labeler-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  paths:
+    name: Path-based labels
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false
+    steps:
+      - name: Apply labels from changed files (.github/labeler.yml)
+        uses: actions/labeler@v5
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          configuration-path: .github/labeler.yml
+          sync-labels: true
+
+  title:
+    name: Title-based labels (Conventional Commits)
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false
+    steps:
+      - name: Label by PR title
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            if (!pr) return;
+
+            const title = pr.title || "";
+            const addLabels = new Set();
+            const removeLabels = new Set();
+
+            // Conventional keyword → label mapping
+            const titleMap = [
+              { re: /^feat(\(.+\))?!?:/i,  add: ['type:feature'] },
+              { re: /^fix(\(.+\))?!?:/i,   add: ['type:bug'] },
+              { re: /^docs(\(.+\))?!?:/i,  add: ['type:docs'] },
+              { re: /^chore(\(.+\))?!?:/i, add: ['type:chore'] },
+              { re: /^refactor(\(.+\))?!?:/i, add: ['type:refactor'] },
+              { re: /^test(\(.+\))?!?:/i,  add: ['type:test'] },
+              { re: /^build(\(.+\))?!?:/i, add: ['type:build'] },
+              { re: /^ci(\(.+\))?!?:/i,    add: ['type:ci'] },
+            ];
+
+            for (const rule of titleMap) {
+              if (rule.re.test(title)) rule.add.forEach(l => addLabels.add(l));
+            }
+
+            // Mark breaking changes if '!' or keyword appears
+            if (/!:/ .test(title) || /\bBREAKING CHANGE\b/i.test(title)) {
+              addLabels.add('breaking-change');
+            }
+
+            // Clean up old type:* labels to keep only the current one(s)
+            const { data: existing } = await github.rest.issues.listLabelsOnIssue({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number,
+            });
+
+            const typeLabels = existing.filter(l => l.name.startsWith('type:')).map(l => l.name);
+            typeLabels.forEach(l => removeLabels.add(l));
+            addLabels.forEach(l => removeLabels.delete(l)); // don't remove ones we plan to add
+
+            if (removeLabels.size) {
+              await github.rest.issues.removeLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                labels: Array.from(removeLabels),
+              }).catch(() => {});
+            }
+            if (addLabels.size) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                labels: Array.from(addLabels),
+              });
+            }
+
+  size:
+    name: Size labels (XS/S/M/L/XL)
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false
+    steps:
+      - name: Compute & apply size label
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            if (!pr) return;
+
+            // Tally changed lines
+            const changed = (pr.additions || 0) + (pr.deletions || 0);
+
+            // Thresholds (tweak as you like)
+            const thresholds = [
+              { label: 'size/XS', max:  49 },
+              { label: 'size/S',  max: 199 },
+              { label: 'size/M',  max: 499 },
+              { label: 'size/L',  max: 999 },
+              { label: 'size/XL', max: Infinity },
+            ];
+            const sizeLabel = thresholds.find(t => changed <= t.max).label;
+
+            // Remove existing size/* labels, then add the new one
+            const { data: existing } = await github.rest.issues.listLabelsOnIssue({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number,
+            });
+            const toRemove = existing
+              .filter(l => l.name.startsWith('size/'))
+              .map(l => l.name)
+              .filter(n => n !== sizeLabel);
+
+            if (toRemove.length) {
+              await github.rest.issues.removeLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                labels: toRemove,
+              }).catch(() => {});
+            }
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number,
+              labels: [sizeLabel],
+            });
