@@ -48,7 +48,7 @@ graphviz==0.20.3         # logic graphs, diagnostics overlays
 # ----- Astrophysics / Modeling -----
 astropy==6.1.1           # astronomy/astrophysics utilities
 h5py==3.11.0             # large scientific dataset handling
-numba==0.60.0            # fast JIT for physics kernels
+numba==0.61.2            # fast JIT for physics kernels
 xarray==2024.6.0         # labeled arrays (time/wavelength cubes)
 
 # ----- Experiment Tracking / Data -----
