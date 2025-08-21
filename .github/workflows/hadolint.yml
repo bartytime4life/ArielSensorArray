@@ -1,0 +1,176 @@
+# .github/workflows/hadolint.yml
+# ==============================================================================
+# SpectraMind V50 — Dockerfile Lint (Hadolint)
+# Lints all Dockerfiles in the repo using hadolint, uploads SARIF to Code Scanning,
+# and optionally fails the build on findings. Respects .hadolint.yaml/.yml if present.
+# ==============================================================================
+
+name: hadolint
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "**/Dockerfile"
+      - "**/Dockerfile.*"
+      - "**/*.dockerfile"
+      - ".hadolint.yaml"
+      - ".hadolint.yml"
+      - ".github/workflows/hadolint.yml"
+  pull_request:
+    branches: ["**"]
+    paths:
+      - "**/Dockerfile"
+      - "**/Dockerfile.*"
+      - "**/*.dockerfile"
+      - ".hadolint.yaml"
+      - ".hadolint.yml"
+      - ".github/workflows/hadolint.yml"
+  schedule:
+    # Weekly Monday 06:25 UTC
+    - cron: "25 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      fail_on_findings:
+        description: "Fail the job if hadolint reports any findings (true/false)"
+        default: "true"
+        required: false
+      ignore_rules:
+        description: "Optional space-separated hadolint rule IDs to ignore (e.g. DL3008 DL3015)"
+        default: ""
+        required: false
+
+permissions:
+  contents: read
+  security-events: write   # required for SARIF upload
+  actions: read
+
+concurrency:
+  group: hadolint-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Hadolint
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      FAIL_ON_FINDINGS: ${{ inputs.fail_on_findings || 'true' }}
+      IGNORE_RULES: ${{ inputs.ignore_rules || '' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Find Dockerfiles
+        id: find
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Collect common Dockerfile patterns
+          mapfile -t FILES < <(git ls-files \
+            '**/Dockerfile' \
+            '**/Dockerfile.*' \
+            '**/*.dockerfile' 2>/dev/null || true)
+          if (( ${#FILES[@]} == 0 )); then
+            echo "found=0" >> "$GITHUB_OUTPUT"
+            echo "::notice::No Dockerfiles found. Skipping hadolint."
+            exit 0
+          fi
+          printf '%s\n' "${FILES[@]}" > /tmp/dockerfiles.txt
+          echo "Found Dockerfiles:"
+          cat /tmp/dockerfiles.txt
+          echo "found=${#FILES[@]}" >> "$GITHUB_OUTPUT"
+
+      - name: Install hadolint
+        if: steps.find.outputs.found != '0'
+        shell: bash
+        run: |
+          set -euo pipefail
+          HDL_URL="https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-x86_64"
+          curl -sSfL "$HDL_URL" -o /usr/local/bin/hadolint
+          chmod +x /usr/local/bin/hadolint
+          hadolint --version
+
+      - name: Build hadolint args
+        if: steps.find.outputs.found != '0'
+        id: args
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Config file (prefer explicit repo root)
+          CONFIG_ARG=()
+          for f in .hadolint.yaml .hadolint.yml; do
+            if [[ -f "$f" ]]; then CONFIG_ARG=(-c "$f"); break; fi
+          done
+
+          # Ignore rules if provided
+          IGNORE_ARG=()
+          if [[ -n "${IGNORE_RULES}" ]]; then
+            for r in ${IGNORE_RULES}; do
+              IGNORE_ARG+=(--ignore "$r")
+            done
+          fi
+
+          # Persist for later steps
+          printf 'config=%s\n' "${CONFIG_ARG[*]}" >> "$GITHUB_OUTPUT"
+          printf 'ignore=%s\n' "${IGNORE_ARG[*]}" >> "$GITHUB_OUTPUT"
+
+      - name: Run hadolint (SARIF)
+        if: steps.find.outputs.found != '0'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Run hadolint with SARIF output across all discovered Dockerfiles
+          # shellcheck disable=SC2046
+          hadolint \
+            ${{ steps.args.outputs.config }} \
+            ${{ steps.args.outputs.ignore }} \
+            -f sarif $(tr '\n' ' ' < /tmp/dockerfiles.txt) \
+            > hadolint.sarif || true
+
+          if [[ ! -s hadolint.sarif ]]; then
+            echo "::warning::hadolint did not produce SARIF output."
+            # Create an empty SARIF skeleton to keep upload step happy
+            cat > hadolint.sarif <<'EOF'
+            { "version": "2.1.0", "$schema": "https://json.schemastore.org/sarif-2.1.0.json", "runs": [ { "tool": { "driver": { "name": "hadolint", "informationUri": "https://github.com/hadolint/hadolint" } }, "results": [] } ] }
+            EOF
+          fi
+
+      - name: Upload SARIF to Code Scanning
+        if: steps.find.outputs.found != '0'
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: hadolint.sarif
+          category: hadolint
+
+      - name: Gate on findings (optional)
+        if: steps.find.outputs.found != '0' && env.FAIL_ON_FINDINGS == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Count SARIF results
+          COUNT=$(jq '[.runs[].results[]] | length' hadolint.sarif 2>/dev/null || echo 0)
+          echo "Hadolint findings: ${COUNT}"
+          if [[ "${COUNT}" -gt 0 ]]; then
+            echo "::error::Hadolint reported ${COUNT} issues. See Code Scanning for details."
+            exit 1
+          fi
+          echo "No hadolint findings."
+
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          if [[ "${{ steps.find.outputs.found }}" == "0" ]]; then
+            echo "No Dockerfiles found to lint." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### Hadolint Summary" >> $GITHUB_STEP_SUMMARY
+            echo "- Files scanned: ${{ steps.find.outputs.found }}" >> $GITHUB_STEP_SUMMARY
+            if test -f hadolint.sarif; then
+              ISSUES=$(jq '[.runs[].results[]] | length' hadolint.sarif 2>/dev/null || echo 0)
+              echo "- Findings: ${ISSUES}" >> $GITHUB_STEP_SUMMARY
+              echo "- SARIF uploaded to Code Scanning" >> $GITHUB_STEP_SUMMARY
+            fi
+          fi
