@@ -1,140 +1,98 @@
+# 📂 Assets Directory — SpectraMind V50 (NeurIPS 2025 Ariel Data Challenge)
 
-# assets/ — Repository‑wide static assets
-
-This directory holds **non-code, static artifacts** used across the SpectraMind V50 project
-(icons, logos, figures, color palettes, fonts, SVG UI parts, sample spectra images, etc.).
-Everything here is safe to package or reference from docs, reports, or the CLI.
-
-> **Do not put datasets or model checkpoints here.** Those belong under `data/` and are versioned with DVC.
+The `assets/` directory contains **all static and semi-static artifacts** required by the SpectraMind V50 pipeline.  
+These files ensure that documentation, dashboards, and CI/CD workflows function correctly **before** and **after** diagnostics are generated.
 
 ---
 
-## Directory layout
+## 🎯 Purpose
 
-assets/
-├─ brand/                # Logos, lockups, wordmarks (SVG/PNG), usage specs
-├─ colors/               # Palettes (JSON/YAML), Matplotlib colormaps (.cmap/.json)
-├─ fonts/                # Open-license fonts only (ttf/otf/woff2) + LICENSE files
-├─ figures/              # Publication-ready figures (PNG/SVG/PDF), 300–600 DPI
-├─ icons/                # Small UI icons (SVG preferred), single-color where possible
-├─ ui/                   # Reusable UI parts: buttons/badges/diagrams as SVG
-├─ spectra/              # Example spectra images (PNG) & tiny CSVs for docs/demos
-├─ papers/               # One-page PDFs, posters, diagrams used in READMEs
-└─ README.md             # You are here
-
-You can add empty `.gitkeep` files to keep a subfolder tracked when it contains no assets yet.
+- Provide **safe pre-run fallbacks** for HTML dashboards, images, and diagrams  
+- Serve as a **central reference point** for the repository’s visualization outputs  
+- Guarantee **reproducibility and CI stability** (e.g., workflows don’t fail if diagnostics haven’t yet run)  
+- Host **diagrams, plots, and placeholders** that feed into:
+  - `spectramind diagnose dashboard`
+  - `generate_html_report.py`
+  - `.github/workflows/diagnostics.yml`
+  - Kaggle submissions / documentation bundles
 
 ---
 
-## Naming conventions
+## 📑 File Inventory
 
-- **kebab-case** filenames: `ariel-logo-dark.svg`, `h2o-band-1p4um.png`
-- **No spaces**; use `-`.
-- **Semantic suffixes**:
-  - `-light` / `-dark` for theme variants
-  - `@2x`, `@3x` for raster scale variants (if needed)
-  - `-mono` for single‑color icons
-- Prefer **vector first** (`.svg`). Fall back to PNG only when raster is necessary.
+### 1. Documentation
+- **`README.md`** → This file, describing `assets/` usage  
+- **`ARCHITECTURE.md`** → Standalone pipeline overview with Mermaid diagrams  
 
----
+### 2. Dashboards
+- **`diagnostics_dashboard.html`** → Seed diagnostics dashboard (overwritten by pipeline runs)  
+- **`report.html`** → Detailed versioned diagnostics report with symbolic overlays, SHAP, FFT, and CLI log tables  
 
-## Formats & quality
+### 3. Placeholder Images (pre-generated for CI safety)
+- `sample_spectrum.png` → Example μ spectrum (synthetic)  
+- `shap_overlay.png` → SHAP × μ overlay visualization  
+- `umap_clusters.png` → UMAP latent clusters projection  
+- `tsne_projection.png` → t-SNE latent projection  
+- `fft_power.png` → FFT power spectrum  
+- `symbolic_heatmap.png` → Symbolic violation heatmap  
+- `calibration_curve.png` → σ vs residual calibration curve  
 
-- **Logos/icons:** SVG (tiny, scalable). Keep strokes and text converted to outlines where licensing permits.
-- **Figures:** SVG or PDF for print; PNG (≥300 DPI) for README/Kaggle notebooks.
-- **Spectra images:** PNG, transparent background, axis‑aligned, text set in project font.
-- **Colormaps:** Provide both a **Matplotlib** JSON and a plain JSON with hex stops.
+> These are auto-replaced by pipeline outputs but **must exist** at bootstrap.
 
-### Example: `colors/magma-extended.json`
-```json
-{
-  "name": "magma-extended",
-  "type": "sequential",
-  "stops": ["#000004","#1b0c41","#4a0c6b","#7e2482","#b5367a","#e55964","#fb8761","#fecf6b","#fcfdbf"]
-}
+### 4. Diagrams
+- `mermaid/` → Source `.mmd` files for CI export (`mermaid-export.yml`)  
+  - `pipeline_overview.mmd`  
+  - `cli_map.mmd`  
+  - `data_flow.mmd`  
 
-Example: Matplotlib colormap (load in Python)
-
-import json, matplotlib.pyplot as plt, matplotlib.colors as mcolors
-from pathlib import Path
-
-stops = json.loads(Path("assets/colors/magma-extended.json").read_text())["stops"]
-cmap = mcolors.LinearSegmentedColormap.from_list("magma_extended", stops)
-
-plt.register_cmap("magma_extended", cmap)
-# usage: plt.imshow(img, cmap="magma_extended")
-
-
-⸻
-
-Licensing & attribution
-	•	Only include open‑licensed assets you are allowed to redistribute.
-	•	Every subfolder must contain a LICENSE or ATTRIBUTION.txt when 3rd‑party assets are present.
-	•	For fonts, keep the upstream license alongside the files.
-	•	For figures derived from published works, add a short caption file: figure-name.caption.md
-with source and citation info.
-
-⸻
-
-Performance & repo hygiene
-	•	Vectors over rasters — smaller diffs, crisp at any size.
-	•	Compress rasters (PNGQuant/oxipng):
-	•	PNG: target ≤ 300–600 DPI, strip metadata, sRGB profile.
-	•	Keep individual assets ≤ 2 MB when possible (figures may exceed for print PDF).
-	•	Avoid duplicate variants; prefer CSS/filters for color variants in docs where feasible.
-
-If you must version large binaries (e.g., a poster PDF > 10 MB), store it in papers/ and consider Git LFS at the repository root (.gitattributes) instead of committing directly here. Large artifacts for experiments belong to DVC, not assets/.
-
-⸻
-
-How other modules consume assets/
-	•	Docs/README: reference with relative paths: ![Logo](assets/brand/ariel-logo-dark.svg)
-	•	CLI output (Rich/ASCII): embed small SVGs only when exporting HTML reports; terminal stays text‑only.
-	•	Matplotlib styling: load colormap JSONs from assets/colors/ (see example above).
-	•	Papers & posters: link PDFs from assets/papers/ in READMEs.
-
-⸻
-
-Checks & CI (optional but recommended)
-
-If your repo uses CI, consider a lightweight check:
-	•	Validate SVGs are minified and contain no external HTTP refs.
-	•	Enforce file size limits (e.g., fail on >10 MB unless in papers/).
-	•	Lint JSON/YAML palettes.
-
-⸻
-
-Quick checklist (before committing)
-	•	File uses kebab-case, no spaces
-	•	Vector preferred; rasters compressed
-	•	License/attribution present if 3rd‑party
-	•	Correct subfolder (brand/colors/fonts/figures/icons/ui/spectra/papers)
-	•	Under size guidance (≤ 2 MB typical; exceptions documented)
-
-⸻
-
-Examples
-	•	brand/ariel-logo-dark.svg — primary logomark (dark theme)
-	•	icons/download-mono.svg — 16×16 UI glyph
-	•	colors/magma-extended.json — sequential colormap for spectra heatmaps
-	•	spectra/wasp-39b-water-band.png — sample annotated figure for docs
-	•	papers/poster-ariel-challenge-2025.pdf — print‑ready A0 poster (with LICENSE or ATTRIBUTION)
-
-⸻
-
-Rationale
-
-Keeping a clear, documented assets/ makes the repo:
-	•	Maintainable: every file has a home and purpose
-	•	Reproducible: figures and palettes used in docs/reports are tracked like code
-	•	Portable: small, vector-first, license‑compliant artifacts travel well across environments
+### 5. Logs (optional but recommended)
+- `log_table.md` → Generated by `spectramind analyze-log` summarizing CLI calls by config hash
 
 ---
 
-If you want the **next file**, tell me which you’d like me to generate, or I can proceed with one of these common follow‑ups (each as a standalone, copy‑pasteable file):
+## 🔄 Workflow Integration
 
-1) `assets/colors/magma-extended.json` (ready-to-use colormap)  
-2) `assets/icons/download-mono.svg` (tiny UI icon example)  
-3) Root `/.gitattributes` snippet to enable Git LFS for large PDFs in `assets/papers/`  
+- **Pre-run safety** → CI will never fail due to missing assets  
+- **GitHub Actions** → Mermaid diagrams auto-render to `.svg` / `.png`  
+- **Diagnostics CLI** → Dashboards (`report.html`, `diagnostics_dashboard.html`) read assets directly  
+- **Submission Bundles** → Placeholder plots ensure Kaggle packages remain valid  
 
-Just say **“next (1)”**, **“next (2)”**, or **“next (3)”** — or name any file/path you want.
+---
+
+## 🚀 Usage
+
+1. **Before running diagnostics**  
+   - Open `diagnostics_dashboard.html` or `report.html` to see seeded dashboards with placeholder plots.  
+
+2. **After running diagnostics**  
+   - Run:  
+     ```bash
+     spectramind diagnose dashboard
+     ```  
+     This regenerates `report.html` with live results (UMAP, t-SNE, GLL, SHAP, symbolic overlays).  
+
+3. **To regenerate diagrams**  
+   - Update `mermaid/*.mmd` and run:  
+     ```bash
+     make mermaid
+     ```  
+
+4. **To analyze logs**  
+   - Run:  
+     ```bash
+     spectramind analyze-log --md
+     ```  
+   - This generates/updates `log_table.md` for quick CLI audit.
+
+---
+
+## 📌 Notes
+
+- All files in `assets/` are version-controlled for **reproducibility**.  
+- Auto-generated artifacts will **overwrite placeholders** but maintain structure.  
+- Always regenerate diagrams and reports after **major pipeline updates**.
+
+---
+
+**SpectraMind V50 — Ariel Data Challenge 2025**  
+*Neuro-symbolic, physics-informed AI for exoplanet spectroscopy* 🌌
