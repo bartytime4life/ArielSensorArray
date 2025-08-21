@@ -17,31 +17,31 @@
 ## 📂 Documentation Index
 
 ### 1. **Getting Started**
-- [README](../README.md) — Repository overview and setup
-- [Architecture](../ARCHITECTURE.md) — Full system design & component map
-- [AI Design & Modeling](../AI%20Design%20and%20Modeling.pdf) — Design notes & references
-- [Ubuntu Setup Guide](../Ubuntu%20Science%20AI%20Setup%20Guide.docx) — Local workstation setup
+- [README](../README.md) — Repository overview and setup  
+- [Architecture](../ARCHITECTURE.md) — Full system design & component map  
+- [AI Design & Modeling](../AI%20Design%20and%20Modeling.pdf) — Design notes & references  
+- [Ubuntu Setup Guide](../Ubuntu%20Science%20AI%20Setup%20Guide.docx) — Local workstation setup  
 
 ### 2. **Data & Calibration**
-- [Calibration Pipeline](../calibration_pipeline.md) — ADC → dark/flat → trace → spectra
-- [Spectroscopy Background](../Cosmic%20Fingerprints%20.txt) — Physics of stellar spectra
-- [Gravitational Lensing](../Gravitational%20Lensing%20and%20Astronomical%20Observation%20-%20Modeling%20and%20Mitigation.pdf) — Mitigation & modeling
+- [Calibration Pipeline](../calibration_pipeline.md) — ADC → dark/flat → trace → spectra  
+- [Spectroscopy Background](../Cosmic%20Fingerprints%20.txt) — Physics of stellar spectra  
+- [Gravitational Lensing](../Gravitational%20Lensing%20and%20Astronomical%20Observation%20-%20Modeling%20and%20Mitigation.pdf) — Mitigation & modeling  
 
 ### 3. **Modeling**
-- [SpectraMind V50 Technical Plan](../SpectraMind%20V50%20Technical%20Plan%20for%20the%20NeurIPS%C2%A02025%20Ariel%20Data%20Challenge.pdf)
-- [Model Configs](../configs/model/) — Hydra-based configuration files
-- [Training](../configs/train/) — Train scripts and configs
-- [AI Decoding Methods](../AI%20Decoding%20and%20Processing%20Methods.pdf)
-- [Scientific Modeling Guide](../Scientific%20Modeling%20and%20Simulation%20-%20A%20Comprehensive%20NASA-Grade%20Guide.pdf)
+- [SpectraMind V50 Technical Plan](../SpectraMind%20V50%20Technical%20Plan%20for%20the%20NeurIPS%C2%A02025%20Ariel%20Data%20Challenge.pdf)  
+- [Model Configs](../configs/model/) — Hydra-based configuration files  
+- [Training](../configs/train/) — Train scripts and configs  
+- [AI Decoding Methods](../AI%20Decoding%20and%20Processing%20Methods.pdf)  
+- [Scientific Modeling Guide](../Scientific%20Modeling%20and%20Simulation%20-%20A%20Comprehensive%20NASA-Grade%20Guide.pdf)  
 
 ### 4. **Competition Integration**
-- [Kaggle Platform Guide](../Kaggle%20Platform%20-%20Comprehensive%20Technical%20Guide.pdf):contentReference[oaicite:0]{index=0}  
-- [Kaggle Model Comparisons](comparison.md) — Analysis of public Kaggle models & baselines:contentReference[oaicite:1]{index=1}  
+- [Kaggle Platform Guide](../Kaggle%20Platform%20-%20Comprehensive%20Technical%20Guide.pdf)  
+- [Kaggle Model Comparisons](comparison.md) — Analysis of public Kaggle models & baselines  
 - [Competition Data](https://www.kaggle.com/competitions/ariel-data-challenge-2025/data)  
 
 ### 5. **Diagnostics & Explainability**
-- [Diagnostics Dashboard](../report.html) — Auto-generated HTML report
-- [SHAP & Symbolic Overlays](../shap_overlay.md) — Feature importance fused with symbolic logic
+- [Diagnostics Dashboard](../report.html) — Auto-generated HTML report  
+- [SHAP & Symbolic Overlays](../shap_overlay.md) — Feature importance fused with symbolic logic  
 - [Generate Diagnostic Summary](../generate_diagnostic_summary.md) — CLI diagnostic metrics  
 - [FFT/Autocorrelation Analysis](../analyze_fft_autocorr_mu.md)  
 - [Symbolic Influence Maps](../symbolic_influence_map.md)  
@@ -80,6 +80,24 @@ To complement the [Kaggle Model Comparisons](comparison.md), architecture visual
   <em>Multi-Output Regressor — joint μ prediction across bins</em>
 </p>
 
+<p align="center">
+  <img src="../assets/comparison_overview.png" alt="Comparison Overview of Kaggle Models vs SpectraMind V50" width="800"><br>
+  <em>Comparison Overview — Public LB Score, Model Complexity, and Reproducibility</em>
+</p>
+
+---
+
+## 🔎 Side-by-Side Model Gallery
+
+<table>
+  <tr>
+    <td align="center"><img src="../assets/baseline_mlp.png" width="300"><br><em>Baseline MLP</em></td>
+    <td align="center"><img src="../assets/deep_residual_mlp.png" width="300"><br><em>Deep Residual MLP</em></td>
+    <td align="center"><img src="../assets/multi_output_regressor.png" width="300"><br><em>Spectrum Regressor</em></td>
+    <td align="center"><img src="../assets/comparison_overview.png" width="320"><br><em>Comparison Chart</em></td>
+  </tr>
+</table>
+
 ---
 
 ## 🧰 Key Tools
@@ -95,10 +113,10 @@ To complement the [Kaggle Model Comparisons](comparison.md), architecture visual
 
 ## 🏆 Competition Notes
 
-- **Leaderboard mechanics:** Kaggle public LB is based on ~30–50% of test data; private LB determines winners:contentReference[oaicite:2]{index=2}.  
+- **Leaderboard mechanics:** Kaggle public LB is based on ~30–50% of test data; private LB determines winners.  
 - Beware the **“Kaggle shake-up”**: rankings often shuffle when private LB is revealed.  
 - Medium-depth **residual MLPs** with symbolic loss constraints may outperform very deep plain MLPs in stability and reproducibility.  
-- Top solutions combine **domain-informed preprocessing** (detrending, jitter correction) with **ensembles**:contentReference[oaicite:3]{index=3}.  
+- Top solutions combine **domain-informed preprocessing** (detrending, jitter correction) with **ensembles** for leaderboard stability.  
 
 ---
 
