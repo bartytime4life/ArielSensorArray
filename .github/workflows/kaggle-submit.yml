@@ -1,0 +1,200 @@
+# .github/workflows/kaggle-submit.yml
+# ==============================================================================
+# SpectraMind V50 — Kaggle Submission (Build ✦ Package ✦ Upload ✦ Submit)
+#
+# What this does
+#  • Builds the project environment (Poetry) on a clean runner
+#  • Runs the pipeline's "submit" command to produce a submission file
+#  • Uploads the submission as a workflow artifact for auditing
+#  • (Optionally) Submits to Kaggle competitions via kaggle CLI
+#
+# Requirements
+#  • Secrets:
+#      - KAGGLE_USERNAME  (your Kaggle username)
+#      - KAGGLE_KEY       (your Kaggle API token)
+#    Create / download from: https://www.kaggle.com/settings/account -> Create New API Token
+#  • Your pipeline should write the submission file to the path specified in `inputs.submission_path`
+#
+# Usage
+#  • Manual Run: Actions → "Kaggle Submit" → Run workflow. Optionally change inputs.
+#  • Default competition id: "ariel-data-challenge-2025"
+#  • Dry run (no Kaggle submission) by setting inputs.submit_to_kaggle = "false"
+# ==============================================================================
+
+name: Kaggle Submit
+
+on:
+  workflow_dispatch:
+    inputs:
+      competition:
+        description: "Kaggle competition id (as used by kaggle CLI: kaggle competitions submit -c <id>)"
+        required: true
+        default: "ariel-data-challenge-2025"
+      submission_path:
+        description: "Path to the submission file produced by the pipeline"
+        required: true
+        default: "outputs/submission/submission.csv"
+      message:
+        description: "Kaggle submission message"
+        required: false
+        default: "ci: automated submission from ${GITHUB_REPOSITORY}@${GITHUB_SHA}"
+      python_version:
+        description: "Python version for the environment"
+        required: true
+        default: "3.11"
+      poetry_version:
+        description: "Poetry version to install"
+        required: true
+        default: "1.8.3"
+      submit_to_kaggle:
+        description: "Actually submit to Kaggle? (true/false)"
+        required: true
+        default: "true"
+        type: choice
+        options: ["true", "false"]
+
+  # (Optional) Automatically generate/attach a submission on tags without sending to Kaggle
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kaggle-submit-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  PIP_NO_PYTHON_VERSION_WARNING: "1"
+  POETRY_VIRTUALENVS_IN_PROJECT: "true"
+  POETRY_NO_INTERACTION: "1"
+  MPLBACKEND: "Agg"
+  # hydra / hf caches (if your pipeline uses them)
+  HF_HOME: ${{ github.workspace }}/.cache/huggingface
+
+jobs:
+  build-and-submit:
+    name: Build & Package ➜ (Optional) Kaggle Submit
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: 🧾 Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🔧 Set up Python ${{ inputs.python_version || '3.11' }}
+        id: setup-py
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python_version || '3.11' }}
+          cache: "pip"
+
+      - name: 📦 Install Poetry ${{ inputs.poetry_version || '1.8.3' }}
+        run: |
+          python -m pip install --upgrade pip wheel
+          python -m pip install "poetry==${{ inputs.poetry_version || '1.8.3' }}"
+
+      - name: 🧰 Restore Poetry cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            .venv
+            ~/.cache/pypoetry
+          key: poetry-${{ runner.os }}-${{ inputs.python_version || '3.11' }}-${{ hashFiles('**/poetry.lock') }}
+          restore-keys: |
+            poetry-${{ runner.os }}-${{ inputs.python_version || '3.11' }}-
+
+      - name: 📚 Install project deps (Poetry)
+        run: |
+          poetry env use "${{ steps.setup-py.outputs.python-path }}"
+          poetry install --no-interaction --with dev
+
+      - name: 🧪 Quick self-check (optional)
+        run: |
+          if poetry run which spectramind >/dev/null 2>&1; then
+            # Fast "does it run" smoke; keep failure non-fatal but visible.
+            poetry run spectramind selftest --fast || echo "::warning::spectramind selftest failed (continuing)"
+          else
+            echo "spectramind CLI not found; skipping selftest."
+          fi
+
+      - name: 🚀 Generate submission with pipeline
+        run: |
+          set -e
+          # If your project uses Hydra configs, add flags here.
+          # Example: poetry run spectramind submit pipeline
+          poetry run spectramind submit \
+            --out "${{ inputs.submission_path }}" || \
+            (echo "::error::Submission generation failed"; exit 1)
+
+      - name: 🔍 Validate submission file exists
+        run: |
+          if [ ! -f "${{ inputs.submission_path }}" ]; then
+            echo "::error::Submission file not found at ${{ inputs.submission_path }}"
+            exit 1
+          fi
+          echo "Found submission file:"
+          ls -lh "${{ inputs.submission_path }}"
+
+      - name: 📤 Upload submission artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kaggle-submission
+          path: ${{ inputs.submission_path }}
+          if-no-files-found: error
+          retention-days: 21
+
+      - name: 🐍 Install Kaggle CLI
+        if: ${{ (inputs.submit_to_kaggle == 'true') && (github.event_name == 'workflow_dispatch') }}
+        run: |
+          python -m pip install --upgrade kaggle
+
+      - name: 🔐 Configure Kaggle credentials
+        if: ${{ (inputs.submit_to_kaggle == 'true') && (github.event_name == 'workflow_dispatch') }}
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+        run: |
+          set -e
+          if [ -z "${KAGGLE_USERNAME}" ] || [ -z "${KAGGLE_KEY}" ]; then
+            echo "::error::KAGGLE_USERNAME and/or KAGGLE_KEY secrets are not set"
+            exit 1
+          fi
+          mkdir -p ~/.kaggle
+          cat > ~/.kaggle/kaggle.json <<EOF
+          {"username":"${KAGGLE_USERNAME}","key":"${KAGGLE_KEY}"}
+          EOF
+          chmod 600 ~/.kaggle/kaggle.json
+          echo "Kaggle credentials configured."
+
+      - name: 🧪 Kaggle auth check
+        if: ${{ (inputs.submit_to_kaggle == 'true') && (github.event_name == 'workflow_dispatch') }}
+        run: |
+          # Will print account list or competitions; failure indicates bad creds.
+          kaggle competitions list | head -n 5 || (echo "::error::Kaggle auth failed"; exit 1)
+
+      - name: 📨 Submit to Kaggle
+        if: ${{ (inputs.submit_to_kaggle == 'true') && (github.event_name == 'workflow_dispatch') }}
+        env:
+          COMPETITION: ${{ inputs.competition }}
+          SUBMISSION_FILE: ${{ inputs.submission_path }}
+          MESSAGE: ${{ inputs.message }}
+        run: |
+          set -e
+          echo "Submitting '${SUBMISSION_FILE}' to competition '${COMPETITION}'"
+          kaggle competitions submit \
+            -c "${COMPETITION}" \
+            -f "${SUBMISSION_FILE}" \
+            -m "${MESSAGE}"
+          echo "Submission posted."
+
+      - name: ✅ Summary
+        if: always()
+        run: |
+          echo "Competition : ${{ inputs.competition }}"
+          echo "File        : ${{ inputs.submission_path }}"
+          echo "Submitted   : ${{ (inputs.submit_to_kaggle == 'true') && (github.event_name == 'workflow_dispatch') && 'yes' || 'no (artifact only)' }}"
