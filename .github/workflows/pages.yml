@@ -1,0 +1,76 @@
+# .github/workflows/pages.yml
+# SpectraMind V50 — GitHub Pages Deployment Workflow
+# Publishes README, ARCHITECTURE.md, and docs/ to GitHub Pages
+# with link validation and artifact persistence.
+
+name: pages
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "README.md"
+      - "ARCHITECTURE.md"
+      - "docs/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build Documentation
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install mkdocs + plugins
+        run: |
+          pip install mkdocs mkdocs-material mkdocs-mermaid2-plugin mkdocs-git-revision-date-localized-plugin linkchecker
+
+      - name: Build static site with MkDocs
+        run: mkdocs build --strict --verbose --clean
+
+      - name: Run link checker
+        run: linkchecker site/
+
+      - name: Upload build artifacts
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
