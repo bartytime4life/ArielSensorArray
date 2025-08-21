@@ -73,6 +73,46 @@ Layered architecture view of the system:
 
 ---
 
+## 🖼 Symbolic Logic Layers
+
+Constraint engine and diagnostic overlays:  
+
+![Symbolic Logic Layers](diagrams/symbolic_logic_layers.svg)
+
+**Key Rule Families:**  
+- **Non-negativity** — μ(λ) ≥ 0  
+- **Smoothness** — spectral gradient penalties  
+- **Asymmetry Guard** — rule out unphysical lobes  
+- **FFT Coherence** — enforce frequency-domain plausibility  
+- **Molecular Alignment** — peak positions within H₂O, CO₂, CH₄ bands  
+- **Optional Monotonicity** — localized monotone segments  
+
+**Evaluation & Diagnostics:**  
+- Per-λ violation maps  
+- Rule scoring & global symbolic loss  
+- HTML overlays, rule tables, heatmaps  
+- Training hooks: curriculum weighting, selective backprop  
+
+---
+
+## 🖼 Kaggle CI Pipeline
+
+End-to-end continuous integration and leaderboard workflow:  
+
+![Kaggle CI Pipeline](diagrams/kaggle_ci_pipeline.svg)
+
+**Flow:**  
+1. **GitHub Actions CI** — triggers on PRs/commits.  
+2. **Selftest** — verifies configs, modules, CLI integrity.  
+3. **Training** — reproducible with Hydra + DVC.  
+4. **Diagnostics** — metrics, symbolic overlays, HTML dashboards.  
+5. **Validation** — shape/bin checks, coverage.  
+6. **Packaging** — CSV/ZIP + reports.  
+7. **Submission** — automatic or manual Kaggle push.  
+8. **Artifacts Registry** — models, plots, logs stored for reproducibility.  
+
+---
+
 ## 📑 Reports & Dashboards
 
 - **`report.html`** — Compact reproducibility log with pipeline + config snapshots.  
@@ -94,7 +134,7 @@ Layered architecture view of the system:
 
 - [Pipeline Overview Diagram](diagrams/pipeline_overview.svg)  
 - [Architecture Stack Diagram](diagrams/architecture_stack.svg)  
-- [Symbolic Logic Layers](diagrams/symbolic_logic_layers.svg)  
-- [Kaggle CI Pipeline](diagrams/kaggle_ci_pipeline.svg)  
+- [Symbolic Logic Layers Diagram](diagrams/symbolic_logic_layers.svg)  
+- [Kaggle CI Pipeline Diagram](diagrams/kaggle_ci_pipeline.svg)  
 
 ---
