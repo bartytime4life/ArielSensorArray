@@ -1,4 +1,4 @@
-dvc[gdrive,gcs]==3.51.2
+dvc[gdrive,gcs]==3.62.0
 dvc[s3,boto3]==3.51.2
 dvc[ssh]==3.51.2
 dvc[azure]==3.51.2
