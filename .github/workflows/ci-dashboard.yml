@@ -1,8 +1,8 @@
 # .github/workflows/ci-dashboard.yml
 # ==============================================================================
 # SpectraMind V50 — CI Dashboard Publisher
-# Renders a Markdown dashboard with the latest status for core workflows
-# (diagnostics, nightly-e2e, kaggle-submit, sbom-refresh) and commits it to docs/.
+# Renders a Markdown dashboard with the latest status for core workflows and
+# commits it to docs/CI_DASHBOARD.md. Also posts the table in the job summary.
 # ==============================================================================
 
 name: ci-dashboard
@@ -10,7 +10,7 @@ name: ci-dashboard
 on:
   workflow_dispatch:
   schedule:
-    - cron: "15 */6 * * *"  # every 6 hours
+    - cron: "15 */6 * * *"   # every 6 hours
   workflow_run:
     workflows:
       - diagnostics
@@ -38,14 +38,13 @@ jobs:
         with:
           script: |
             const workflows = [
-              { title: "Diagnostics",        file: "diagnostics.yml" },
-              { title: "Nightly E2E",        file: "nightly-e2e.yml" },
-              { title: "Kaggle Submit",      file: "kaggle-submit.yml" },
-              { title: "SBOM Refresh",       file: "sbom-refresh.yml" },
+              { title: "Diagnostics",   file: "diagnostics.yml" },
+              { title: "Nightly E2E",   file: "nightly-e2e.yml" },
+              { title: "Kaggle Submit", file: "kaggle-submit.yml" },
+              { title: "SBOM Refresh",  file: "sbom-refresh.yml" },
             ];
 
             async function latestRun(file) {
-              // listWorkflowRuns - workflow_id can be file name
               const res = await github.rest.actions.listWorkflowRuns({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -125,7 +124,7 @@ jobs:
           git commit -m "docs(ci): update CI dashboard [skip ci]" || echo "No changes to commit."
           git push || true
 
-      - name: Upload dashboard as artifact
+      - name: Upload dashboard artifact
         uses: actions/upload-artifact@v4
         with:
           name: ci-dashboard
