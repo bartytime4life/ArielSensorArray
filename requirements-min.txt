@@ -13,12 +13,14 @@ pydantic==2.7.1
 python-dotenv==1.0.1
 packaging==24.1
 click==8.1.7
+typing_extensions==4.12.2     # stability helper for torch/pydantic
 
 # ----- Scientific Python Stack -----
 numpy==1.26.4
 scipy==1.13.1
 pandas==2.2.2
 scikit-learn==1.4.2
+threadpoolctl==3.5.0          # explicit pin for sklearn backend control
 joblib==1.4.2
 tqdm==4.66.4
 psutil==5.9.8
@@ -27,6 +29,7 @@ psutil==5.9.8
 torch==2.2.2
 torchvision==0.17.2
 torchaudio==2.2.2
+Pillow==10.4.0                # torchvision imaging backend
 
 # ----- Visualization / Diagnostics (light) -----
 matplotlib==3.8.4
@@ -37,5 +40,6 @@ shap==0.45.0
 # Notes:
 # • Safe for Kaggle: avoids DVC/MLflow/W&B/astropy/torch-geometric.
 # • SHAP relies on matplotlib (kept); plotly is omitted to stay minimal.
-# • Versions match full stack to avoid surprise drift.
+# • Explicit pins for typing_extensions, threadpoolctl, and Pillow improve runtime stability.
+# • Versions match full stack lineage to avoid drift across environments.
 # ==============================================================================
