@@ -1,172 +1,90 @@
 
-%% --------------------------------------------------------------------
-%% SpectraMind V50 — Pipeline Overview (Mermaid)
-%% Canonical source for the top-level flow diagram used in ARCHITECTURE.md,
-%% report.html, and diagnostics_dashboard.html.
-%% --------------------------------------------------------------------
+# assets/diagrams
 
-flowchart TD
-  %% Direction
-  %% Top-down keeps the dataflow intuitive from ingestion → submission.
-  %% Subgraphs help group pipeline stages for readability.
-  %% IDs are stable to keep diffs clean.
+**SpectraMind V50 — ArielSensorArray**  
+*Repository diagrams, system schematics, and visualization sources*
 
-  %% =========================
-  %% Ingestion & Metadata
-  %% =========================
-  subgraph ING[Ingestion]
-    A1[FGS1 Frames (time×32×32)]:::io
-    A2[AIRS Frames (time×32×356)]:::io
-    A3[Metadata (planet, star, obs)]:::meta
-  end
+---
 
-  %% =========================
-  %% Calibration & Photometry
-  %% =========================
-  subgraph CAL[Calibration & Photometry]
-    direction TB
-    C0[[Start Calibration]]:::op
-    C1[Bias/Dark/Flat/CDS]:::op
-    C2[Trace Extraction / Aperture Photometry]:::op
-    C3[Background / Jitter Correction]:::op
-    C4[Normalization & Phase Alignment]:::op
-    C5[(Calibrated Light Curves)]:::data
-  end
+## 📌 Purpose
 
-  %% Wiring ingestion → calibration
-  A1 --> C0
-  A2 --> C0
-  A3 --> C0
-  C0 --> C1 --> C2 --> C3 --> C4 --> C5
+This directory centralizes all **Mermaid diagrams, SVG schematics, PNG exports, and supporting visuals** used throughout the SpectraMind V50 project. It ensures that every architectural drawing, pipeline flow, and symbolic diagnostic graphic is:
 
-  %% =========================
-  %% Modeling (Encoders → Decoders)
-  %% =========================
-  subgraph MOD[Modeling]
-    direction TB
+- **Source-tracked** (Mermaid `.mmd` is the canonical source)
+- **Exportable** (to `.svg`, `.png`, `.pdf` via GitHub Actions or `make diagrams`)
+- **Reproducible** (diagram generation logged in CI, hashes stored in `v50_debug_log.md`)
+- **Dashboard-ready** (HTML reports and notebooks load diagrams directly from here)
 
-    %% Encoders
-    M0[[Feature Build]]:::op
-    M1[FGS1 Encoder<br/>Mamba SSM]:::model
-    M2[AIRS Encoder<br/>GNN (wavelength graph)]:::model
+---
 
-    %% Fusion & Decoders
-    M3[Latent Fusion]:::model
-    M4[μ Decoder (mean spectrum)]:::model
-    M5[σ Decoder (uncertainty)]:::model
+## 📂 Structure
 
-    %% Outputs
-    M6[(Predicted μ, σ)]:::data
-  end
+assets/diagrams/
+├── README.md                 # This file
+├── architecture.mmd          # High-level pipeline architecture (Mermaid source)
+├── architecture.svg          # Exported vector diagram
+├── architecture.png          # Exported raster preview
+├── cli_map.mmd               # CLI command → file/component map
+├── cli_map.svg
+├── cli_map.png
+├── pipeline_flow.mmd         # DVC/Hydra/CLI pipeline flowchart
+├── pipeline_flow.svg
+├── pipeline_flow.png
+├── symbolic_logic.mmd        # Symbolic logic engine, constraint graph
+├── symbolic_logic.svg
+├── symbolic_logic.png
+└── test_diagrams.py          # Unit tests to validate .mmd → .svg/.png export integrity
 
-  %% Wiring calibration → modeling
-  C5 --> M0 --> M1
-  C5 --> M2
-  M1 --> M3
-  M2 --> M3
-  M3 --> M4
-  M3 --> M5
-  M4 --> M6
-  M5 --> M6
+---
 
-  %% =========================
-  %% Uncertainty Calibration
-  %% =========================
-  subgraph UQ[Uncertainty Calibration]
-    direction TB
-    U1[Temperature Scaling]:::calib
-    U2[COREL Conformal GNN<br/>(binwise coverage)]:::calib
-    U3[(Calibrated μ, σ)]:::data
-  end
+## 🛠️ Workflow
 
-  M6 --> U1 --> U2 --> U3
+1. **Edit Source**  
+   Update the `.mmd` (Mermaid) file using any text editor or IDE with Mermaid preview.
 
-  %% =========================
-  %% Diagnostics & Explainability
-  %% =========================
-  subgraph DIA[Diagnostics & Explainability]
-    direction TB
-    D0[[Start Diagnostics]]:::op
-    D1[GLL / RMSE / MAE Metrics]:::metric
-    D2[FFT / Smoothness / Asymmetry]:::metric
-    D3[SHAP / Attention Traces]:::xai
-    D4[Symbolic Logic Overlays<br/>(rules, violations)]:::symbolic
-    D5[Latent Projections (UMAP / t‑SNE)]:::viz
-    D6[HTML Report & Dashboard]:::viz
-    D7[(diagnostic_summary.json)]:::data
-  end
+2. **Export**  
+   Run:
+   ```bash
+   make diagrams
 
-  U3 --> D0
-  D0 --> D1 --> D2 --> D3 --> D4 --> D5 --> D6 --> D7
+or directly:
 
-  %% =========================
-  %% Packaging & Submission
-  %% =========================
-  subgraph PKG[Packaging & Submission]
-    direction TB
-    P1[Validator (shape, bins, coverage)]:::op
-    P2[Bundle (CSV/ZIP + Report)]:::op
-    P3[(Kaggle Submission Artifact)]:::io
-  end
+npx @mermaid-js/mermaid-cli -i assets/diagrams/architecture.mmd -o assets/diagrams/architecture.svg
 
-  U3 --> P1
-  D7 --> P1
-  P1 --> P2 --> P3
+	3.	Verify
+Run the test:
 
-  %% =========================
-  %% Reproducibility & Ops
-  %% =========================
-  subgraph OPS[Reproducibility & Ops]
-    direction TB
-    O1[(Hydra Configs<br/>configs/**.yaml)]:::cfg
-    O2[(DVC-tracked Data / Models)]:::dvc
-    O3[(logs/v50_debug_log.md)]:::log
-    O4[(events.jsonl)]:::log
-    O5[Typer CLI<br/>spectramind ...]:::cli
-    O6[CI (GitHub Actions)<br/>mermaid export / tests]:::ci
-  end
+pytest assets/diagrams/test_diagrams.py
 
-  %% Global wiring to Ops artefacts
-  A1 & A2 & A3 --> O2
-  C5 --> O2
-  M6 --> O2
-  U3 --> O2
-  D7 --> O2
-  D6 --> O2
+This ensures:
+	•	All .mmd have matching .svg/.png exports
+	•	Files are referenced in ARCHITECTURE.md and report.html
 
-  O1 -. config-> C0
-  O1 -. config-> M0
-  O1 -. config-> U1
-  O1 -. config-> D0
-  O5 -. invokes -> C0
-  O5 -. invokes -> M0
-  O5 -. invokes -> D0
-  O5 -. invokes -> P1
-  O6 -. runs -> O5
-  C0 --> O3
-  M0 --> O3
-  D0 --> O3
-  P1 --> O3
-  C0 --> O4
-  M0 --> O4
-  D0 --> O4
-  P1 --> O4
+⸻
 
-  %% =========================
-  %% Class Definitions (Styling)
-  %% =========================
-  classDef io fill:#eef7ff,stroke:#5b9bd5,stroke-width:1px,color:#0b305b;
-  classDef meta fill:#fff7e6,stroke:#f0a500,stroke-width:1px,color:#7a4a00;
-  classDef data fill:#f3f3f3,stroke:#9e9e9e,stroke-width:1px,color:#333;
-  classDef op fill:#e8f5e9,stroke:#43a047,stroke-width:1px,color:#1b5e20;
-  classDef model fill:#ede7f6,stroke:#7e57c2,stroke-width:1px,color:#4527a0;
-  classDef calib fill:#ffebee,stroke:#e53935,stroke-width:1px,color:#b71c1c;
-  classDef metric fill:#e3f2fd,stroke:#1e88e5,stroke-width:1px,color:#0d47a1;
-  classDef xai fill:#fff3e0,stroke:#fb8c00,stroke-width:1px,color:#e65100;
-  classDef symbolic fill:#fce4ec,stroke:#d81b60,stroke-width:1px,color:#880e4f;
-  classDef viz fill:#e0f7fa,stroke:#00acc1,stroke-width:1px,color:#006064;
-  classDef cfg fill:#f1f8e9,stroke:#7cb342,stroke-width:1px,color:#33691e;
-  classDef dvc fill:#f5f5f5,stroke:#616161,stroke-width:1px,color:#212121;
-  classDef log fill:#fffde7,stroke:#fdd835,stroke-width:1px,color:#8d6e00;
-  classDef cli fill:#e0e0e0,stroke:#455a64,stroke-width:1px,color:#263238;
-  classDef ci fill:#edeff7,stroke:#5c6bc0,stroke-width:1px,color:#283593;
+📊 Integration
+	•	Documentation
+Diagrams are embedded in ARCHITECTURE.md, README.md, and docs in /docs/.
+	•	Diagnostics Dashboard
+HTML outputs (report.html, diagnostics_dashboard.html) include these diagrams inline.
+	•	CI/CD
+.github/workflows/mermaid-export.yml auto-renders .mmd sources to .svg/.png on PRs and pushes.
+
+⸻
+
+✅ Best Practices
+	•	Always commit both the .mmd (source) and .svg/.png (exports).
+	•	Keep diagrams minimal, legible, and color-blind safe.
+	•	Use Mermaid class definitions for consistent styling.
+	•	Cross-reference diagrams in ARCHITECTURE.md using relative paths.
+	•	Update test_diagrams.py when adding a new diagram.
+
+⸻
+
+🔗 References
+	•	Mermaid Documentation
+	•	SpectraMind V50 ARCHITECTURE.md
+	•	Diagnostics Dashboard
+	•	.github/workflows/mermaid-export.yml
+
+⸻
