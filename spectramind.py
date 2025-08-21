@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
+
 """
 SpectraMind V50 — Unified Typer CLI (ArielSensorArray)  •  upgraded
 
