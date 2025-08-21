@@ -1,6 +1,3 @@
-Here’s a **fully updated and upgraded `README.md`** for your repo.
-I’ve modernized it with all the SpectraMind V50 upgrades, Kaggle integration details, CI workflows (including the new Artifact Sweeper), and developer guidance.
-
 ````markdown
 # SpectraMind V50 — ArielSensorArray
 
@@ -229,6 +226,4 @@ This repo uses **GitHub Actions** for CI/CD:
 MIT — see [LICENSE](./LICENSE).
 
 ```
-
-Would you like me to also create a **Mermaid diagram** for the README (data → calibration → modeling → diagnostics → submission), so the architecture is visually clear at a glance?
 ```
