@@ -1,184 +1,116 @@
+# assets/
 
-⸻
+**SpectraMind V50 — Ariel Data Challenge 2025**  
+*Central repository assets: diagrams, dashboards, reports, comparisons, and reproducibility visuals*
 
-assets/
+> See companion docs: **[ARCHITECTURE.md](ARCHITECTURE.md)**, **[KAGGLE_GUIDE.md](KAGGLE_GUIDE.md)**, **[COMPARISON_GUIDE.md](COMPARISON_GUIDE.md)**
 
-SpectraMind V50 — Ariel Data Challenge 2025
-Central repository assets: diagrams, dashboards, reports, and reproducibility visuals
+---
 
-All assets are generated and consumed through the Typer CLI + Hydra configs (no hidden notebook state), so every figure is reproducible and traceable to code, data, and config.
+## 📌 Purpose
 
-⸻
+This directory consolidates all **visual + documentation artifacts** used across SpectraMind V50.  
+It ensures the system is **self-documented, reproducible, and leaderboard-ready**:
 
-📌 Purpose
+- **Source-tracked** (Mermaid `.mmd` is canonical)  
+- **Auto-exported** (`.svg`, `.png`, `.pdf` via CI or `make diagrams`)  
+- **CI-validated** (diagram tests + mermaid-export workflow)  
+- **Dashboard-ready** (`report.html`, `diagnostics_dashboard.html`)  
 
-This directory houses the visual artifacts used across SpectraMind V50:
-	•	Architecture & pipeline Mermaid diagrams (source .mmd + rendered .svg/.png)
-	•	HTML reports and the diagnostics dashboard
-	•	Example/static images used in docs and Kaggle hand‑offs
+---
 
-Everything here is source‑tracked (Mermaid is the canonical source), auto‑exported in CI, and consumed by docs & dashboards.
+## 📂 Contents
 
-⸻
+- **`diagrams/`** — Mermaid diagrams (`.mmd` sources) + rendered `.svg`/`.png`.  
+  Used in **[ARCHITECTURE.md](ARCHITECTURE.md)**, reports, and dashboards.  
+- **`gui/`** — Optional GUI/dashboard visuals.  
+- **`logos/`** — Project branding and iconography.  
+- **`report.html`** — Compact reproducibility log (pipeline + configs).  
+- **`diagnostics_dashboard.html`** — Interactive dashboard (UMAP/t-SNE, SHAP overlays, symbolic rule tables, calibration).  
+- **`KAGGLE_GUIDE.md`** — Kaggle runtime integration and submission workflow.  
+- **`COMPARISON_GUIDE.md`** — Narrative explainer of `comparison_overview.png`, contrasting Kaggle baselines vs V50.  
+- **`comparison_overview.png`** — Visual comparison of Kaggle baselines vs SpectraMind V50.  
+- **`kaggle_infer_template.ipynb`** — Notebook template for Kaggle inference.  
+- **`sample_plots/`** *(optional)* — Example PNGs for testing (`sample_spectrum.png`, `umap_clusters.png`, `shap_overlay.png`).  
 
-📂 Layout
+---
 
-assets/
-├─ diagrams/                 # Mermaid sources + renders
-│  ├─ architecture_stack.mmd / .svg / .png
-│  ├─ pipeline_overview.mmd  / .svg / .png
-│  ├─ symbolic_logic_layers.mmd / .svg / .png
-│  ├─ kaggle_ci_pipeline.mmd / .svg / .png
-│  ├─ test_diagrams.py       # render/validate all .mmd
-│  └─ README.md
-├─ diagnostics_dashboard.html
-├─ report.html
-└─ sample_plots/             # optional PNGs (e.g., spectrum, SHAP overlay)
+## 📊 Kaggle Model Insights (Why the diagrams look this way)
 
-Why this structure: it keeps source→render close, participates in CI, and feeds docs & HTML outputs without manual steps.
+SpectraMind V50 integrates lessons from Kaggle baselines in the NeurIPS 2025 Ariel Data Challenge:
 
-⸻
+- **Thang Do Duc “0.329 LB”**  
+  • Residual MLP; simple preprocessing; no σ estimation.  
+  • Robust, reproducible reference design.  
 
-🧭 What to edit vs. what not to edit
-	•	Edit: *.mmd (Mermaid sources).
-	•	Do not edit: generated .svg/.png. Regenerate them via the commands below or CI.
+- **V1ctorious3010 “80bl-128hd-impact”**  
+  • Extremely deep (80 residual blocks, 128 hidden).  
+  • Captures subtle features; higher variance/overfitting risk; less interpretable.  
 
-⸻
+- **Fawad Awan “Spectrum Regressor”**  
+  • Multi-output head predicts the entire spectrum.  
+  • Stable, interpretable; consistent across bins.  
 
-🛠 Rendering diagrams
+**Takeaways embedded in V50 (reflected in diagrams & docs):**  
+- Residual-style encoders (**Mamba SSM** for FGS1, **GNN** for AIRS) instead of brute-force deep MLPs.  
+- Physics-informed detrending & jitter correction in calibration.  
+- Explicit uncertainty (σ) with **Temperature Scaling + COREL GNN**.  
+- Ensembles that fuse shallow + deep + symbolic overlays.
 
-Option A — Local (Mermaid CLI)
+> Full narrative + image: **[COMPARISON_GUIDE.md](COMPARISON_GUIDE.md)**
 
-# 1) Install mermaid-cli
-npm i -g @mermaid-js/mermaid-cli
+---
 
-# 2) Render one diagram
-mmdc -i assets/diagrams/pipeline_overview.mmd -o assets/diagrams/pipeline_overview.svg
-mmdc -i assets/diagrams/pipeline_overview.mmd -o assets/diagrams/pipeline_overview.png
+## 📐 Diagrams (maintained in `assets/diagrams/`)
 
-# 3) Render all .mmd in the folder
-for f in assets/diagrams/*.mmd; do
-  base="${f%.mmd}"
-  mmdc -i "$f" -o "${base}.svg"
-  mmdc -i "$f" -o "${base}.png"
-done
+- **Pipeline Overview** — `diagrams/pipeline_overview.svg`  
+  *FGS1/AIRS → Calibration → Modeling (μ/σ) → UQ → Diagnostics → Submission → Reproducibility & Ops*
 
-Option B — Python test harness
+- **Architecture Stack** — `diagrams/architecture_stack.svg`  
+  *Layers: CLI → Configs → DVC/Git → Calibration → Encoders/Decoders → UQ → Diagnostics → Packaging → CI → Runtime*
 
-# Render & validate all Mermaid sources
-python assets/diagrams/test_diagrams.py --render --strict
-# Only some files
-python assets/diagrams/test_diagrams.py --render --only pipeline_overview.mmd,symbolic_logic_layers.mmd
+- **Symbolic Logic Layers** — `diagrams/symbolic_logic_layers.svg`  
+  *Rule families: non-negativity, smoothness, asymmetry, FFT coherence, molecular alignment; evaluation & diagnostics*
 
-The harness is designed to fail fast in CI if any source can’t export cleanly.
+- **Kaggle CI Pipeline** — `diagrams/kaggle_ci_pipeline.svg`  
+  *GitHub Actions → Selftest → Training → Diagnostics → Validation → Packaging → Kaggle Submission → Artifact Registry*
 
-Option C — GitHub Actions (recommended)
+Rendered `.svg` and `.png` files are committed for portability.  
+All four are embedded in **[ARCHITECTURE.md](ARCHITECTURE.md)**.
 
-On pushes/PRs, the Mermaid export job runs and attaches the artifacts; renders are committed/packaged per repo policy. This keeps reviewers in the loop without asking them to install toolchains.
+---
 
-⸻
+## 📑 Reports
 
-🧩 Diagrams that must exist (and what they show)
-	•	pipeline_overview — FGS1/AIRS → Calibration → Modeling (μ/σ) → UQ → Diagnostics → Submission → Ops. Aligns with our calibrated, physics‑aware pipeline.
-	•	architecture_stack — CLI (Typer) → Hydra configs → DVC/Git → Calibration → Encoders/Decoders → UQ → Diagnostics → Packaging → CI/Runtime. Mirrors the CLI‑first, Hydra‑composed system.
-	•	symbolic_logic_layers — constraint families (smoothness, FFT coherence, asymmetry, molecular alignment) used as overlays and diagnostics.
-	•	kaggle_ci_pipeline — GitHub Actions → Selftest → Train → Diagnose → Validate → Package → Kaggle Submit to ensure portable, leaderboard‑ready assets.
+- **`report.html`** — Compact reproducibility report (pipeline + config snapshots).  
+- **`diagnostics_dashboard.html`** — Rich interactive diagnostics (symbolic overlays, SHAP, latent projections, calibration checks).
 
-All four are embedded in docs and HTML dashboards (SVG preferred) and are part of CI checks.
+---
 
-⸻
+## 🛠 Reproducibility & CI
 
-📑 Embedding (docs, dashboards, Kaggle)
-	•	Markdown:
-![Pipeline Overview](assets/diagrams/pipeline_overview.svg)
-	•	HTML:
-<img src="assets/diagrams/pipeline_overview.svg" alt="Pipeline Overview" />
-	•	Prefer SVG for clarity; keep PNG only for environments that can’t inline SVG (some viewers/Kaggle).
+- **Configs:** Hydra YAMLs in `configs/`.  
+- **Data:** DVC-tracked datasets/models (hash-bound to runs).  
+- **CI:** GitHub Actions (selftest, diagnostics, mermaid-export).  
+- **Logs:** `logs/v50_debug_log.md` (append-only), JSONL event streams.  
+- **Validation:** diagram tests ensure sources render and are embedded in docs.
 
-⸻
+Every artifact here is **versioned, CI-tested, and leaderboard-safe**.
 
-🔁 Reproducibility hooks (how assets stay auditable)
-	•	CLI‑first: all generation is done through Typer subcommands + Hydra configs — no hidden notebook state.
-	•	Hydra configs captured with each run; config + data hash land in logs so any figure can be traced to code+config+data.
-	•	DVC ties large artifacts (data/models) to Git commits to reproduce figures exactly from historical states.
-	•	CI renders diagrams and runs a pipeline sanity pass on sample data to ensure nothing regresses before merge.
+---
 
-⸻
+## 🔁 How to regenerate diagrams (local)
 
-🧪 Quick‑start commands (developer workstation)
+From repo root:
 
-Render diagrams + run diagnostics end‑to‑end:
+```bash
+# Render all diagrams from .mmd → .svg/.png
+make diagrams
 
-# Render all diagrams locally
-python assets/diagrams/test_diagrams.py --render --strict
+# Or render individual files
+npx @mermaid-js/mermaid-cli \
+  -i assets/diagrams/architecture_stack.mmd \
+  -o assets/diagrams/architecture_stack.svg
 
-# End-to-end smoke on a tiny slice (example; actual CLI shown here)
-spectramind calibrate --sample 5
-spectramind train --epochs 1 --fast_dev_run
-spectramind diagnose
-
-The CLI uses Hydra overrides (e.g., trainer=ddp or training.epochs=20) to keep experiments code‑free and repeatable.
-
-⸻
-
-🧪 Diagram test (assets/diagrams/test_diagrams.py)
-	•	--render: build .svg/.png for each .mmd.
-	•	--strict: fail the run on any Mermaid warnings/errors.
-	•	--only: comma‑separated subset.
-Use this both locally and in CI to catch broken sources early.
-
-⸻
-
-📊 Kaggle model insights (why diagrams look the way they do)
-
-Our diagram flow reflects lessons from public Kaggle baselines:
-	•	Residual MLP baselines (~0.329 LB) offer reproducible starting points.
-	•	Very deep residual MLPs (80 blocks) squeeze extra signal but risk overfitting without strong detrending.
-	•	Multi‑output regressors provide stable full‑spectrum predictions and are easy to operationalize.
-
-These observations are “baked” into the architecture_stack and pipeline_overview diagrams to document why our pipeline emphasizes calibration, physics‑informed features, μ/σ prediction, and downstream validation.
-
-⸻
-
-🧪 Style guide (Mermaid)
-	•	Graph direction: top‑down (TD) unless inherently left‑to‑right.
-	•	Subgraphs: group stages (Calibration, Modeling, Diagnostics).
-	•	Node text: concise; longer prose belongs in docs.
-	•	No external links inside nodes.
-	•	Stable IDs so SVG diffs are readable.
-	•	Use defaults for theme/colors to keep CI consistent.
-
-Keep arrows readable; prefer subgraphs and labels over spaghetti connectors.
-
-⸻
-
-🧷 Maintenance checklist (per PR)
-	•	Only .mmd edited; no manual edits to .svg/.png.
-	•	python assets/diagrams/test_diagrams.py --render --strict passes locally.
-	•	Renders are readable at 100% and wired into docs/HTML.
-	•	Large diffs? Consider splitting a diagram.
-
-⸻
-
-🔐 Source of truth & traceability
-	•	Configs: configs/**.yaml (Hydra), committed.
-	•	Data/Models: tracked by DVC remotes and tied to Git commits.
-	•	Logs: console + structured logs with config & dataset hashes.
-	•	CI: GitHub Actions runs unit/self‑tests and diagram export before merge.
-
-⸻
-
-📦 Packaging & handoff
-	•	Reports (report.html, diagnostics_dashboard.html) bundle diagrams (SVG preferred) and JSON metrics; these are exported as artifacts in CI and included in Kaggle submissions when required.
-	•	The kaggle_ci_pipeline diagram documents the path from GitHub Actions to a reproducible Kaggle artifact.
-
-⸻
-
-🔎 References
-	•	CLI + Hydra + DVC + CI reproducibility loop.
-	•	Diagram policy and rendering harness.
-	•	Kaggle platform practices & constraints.
-
-⸻
-
-End of assets/README.md
+# Run diagram tests
+pytest assets/diagrams/test_diagrams.py
