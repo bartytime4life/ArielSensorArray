@@ -1,4 +1,3 @@
-# .github/workflows/ci-dashboard.yml
 # ==============================================================================
 # SpectraMind V50 — CI Dashboard Publisher
 # Renders a Markdown dashboard with the latest status for core workflows and
