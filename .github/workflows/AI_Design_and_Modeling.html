@@ -1,0 +1,193 @@
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>AI Design and Modeling — SpectraMind V50</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light dark" />
+  <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+  <meta http-equiv="Referrer-Policy" content="no-referrer" />
+
+  <style>
+    :root {
+      --bg: #f9fafb;
+      --fg: #1e293b;
+      --card: #ffffff;
+      --muted: #64748b;
+      --accent: #0ea5e9;
+      --border: #e2e8f0;
+      --ok: #16a34a;
+      --warn: #f59e0b;
+      --err: #dc2626;
+      --shadow: 0 2px 8px rgba(0,0,0,0.06);
+      --radius: 12px;
+    }
+    body {
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--fg);
+      margin: 0;
+      line-height: 1.6;
+    }
+    header {
+      background: var(--card);
+      border-bottom: 1px solid var(--border);
+      padding: 1rem 1.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: var(--shadow);
+    }
+    header h1 {
+      font-size: 1.25rem;
+      margin: 0;
+    }
+    main {
+      padding: 2rem;
+      max-width: 960px;
+      margin: 0 auto;
+    }
+    section {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.5rem;
+      margin-bottom: 2rem;
+      box-shadow: var(--shadow);
+    }
+    h2 {
+      margin-top: 0;
+      color: var(--accent);
+    }
+    h3 {
+      margin-bottom: 0.25rem;
+      color: var(--fg);
+    }
+    p {
+      margin-top: 0.25rem;
+    }
+    ul {
+      padding-left: 1.25rem;
+    }
+    code {
+      background: #f1f5f9;
+      padding: 0.15rem 0.35rem;
+      border-radius: 4px;
+      font-size: 0.9em;
+    }
+    footer {
+      text-align: center;
+      font-size: 0.85rem;
+      color: var(--muted);
+      padding: 2rem;
+    }
+    .badge {
+      display: inline-block;
+      background: var(--accent);
+      color: white;
+      padding: 0.25rem 0.6rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      margin-right: 0.5rem;
+    }
+    .status-ok { background: var(--ok); }
+    .status-warn { background: var(--warn); }
+    .status-err { background: var(--err); }
+  </style>
+</head>
+
+<body>
+  <header>
+    <h1>AI Design and Modeling — SpectraMind V50</h1>
+    <div>
+      <span class="badge">NeurIPS 2025 Ariel Challenge</span>
+      <span class="badge status-ok">Reproducible</span>
+    </div>
+  </header>
+
+  <main>
+    <section>
+      <h2>North Star</h2>
+      <p>
+        From raw Ariel telescope **FGS1/AIRS frames** → calibrated light curves → 
+        mean (<code>μ</code>) and uncertainty (<code>σ</code>) spectra across 283 bins → 
+        diagnostics dashboards → leaderboard-ready submission.
+      </p>
+    </section>
+
+    <section>
+      <h2>Architecture Overview</h2>
+      <ul>
+        <li><strong>FGS1 Encoder:</strong> Mamba SSM for long-sequence temporal structure.</li>
+        <li><strong>AIRS Encoder:</strong> Graph Neural Network (edges = wavelength proximity, molecule type, detector region).</li>
+        <li><strong>Decoders:</strong> Dual-head for <code>μ</code> and <code>σ</code>, optional diffusion/quantile variants.</li>
+        <li><strong>Curriculum:</strong> MAE pretraining → contrastive fine-tuning → GLL + symbolic optimization.</li>
+        <li><strong>Losses:</strong> GLL, FFT smoothness, asymmetry, symbolic alignment, COREL uncertainty calibration.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Uncertainty & Symbolic Integration</h2>
+      <p>
+        The pipeline integrates multiple layers of calibration:
+      </p>
+      <ul>
+        <li><strong>Temperature Scaling:</strong> Global calibration of predictive uncertainty.</li>
+        <li><strong>Conformal Prediction (COREL):</strong> Binwise coverage guarantees.</li>
+        <li><strong>Symbolic Constraints:</strong> Smoothness, non-negativity, FFT symmetry, photonic alignment.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Explainability & Dashboard</h2>
+      <ul>
+        <li>SHAP overlays for AIRS and FGS1 features.</li>
+        <li>Latent → symbolic rule mapping with UMAP/t-SNE plots.</li>
+        <li>Fusion of decoder attention and symbolic influence scores.</li>
+        <li>Interactive HTML dashboard with spectrum overlays, CLI log summaries, and symbolic violation heatmaps.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Engineering & Reproducibility</h2>
+      <ul>
+        <li><strong>Configs:</strong> Hydra YAMLs with defaults and overrides.</li>
+        <li><strong>Data:</strong> DVC + lakeFS for full dataset versioning.</li>
+        <li><strong>Experiments:</strong> MLflow logging with config hashes and runtime capture.</li>
+        <li><strong>Runtime:</strong> Docker + Poetry + CUDA for guaranteed reproducibility.</li>
+        <li><strong>CI/CD:</strong> GitHub Actions with diagnostics validation, leaderboard packaging, and smoke tests.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Kaggle Integration</h2>
+      <p>
+        Pipeline constrained to ≤9 hours across 1,100 planets on Kaggle GPU.  
+        FGS1 transit shape is leveraged for AIRS alignment and jitter augmentation.  
+        Submission workflow: <code>spectramind submit</code> runs prediction, validation, COREL calibration, and packaging.
+      </p>
+    </section>
+
+    <section>
+      <h2>References</h2>
+      <ul>
+        <li>SpectraMind V50 Technical Plan:contentReference[oaicite:0]{index=0}</li>
+        <li>Kaggle Platform Technical Guide:contentReference[oaicite:1]{index=1}</li>
+        <li>Comparison of Kaggle Models:contentReference[oaicite:2]{index=2}</li>
+        <li>Scientific Modeling and Simulation Guide:contentReference[oaicite:3]{index=3}</li>
+      </ul>
+    </section>
+  </main>
+
+  <footer>
+    SpectraMind V50 — AI Design & Modeling Document.  
+    Built for NeurIPS 2025 Ariel Data Challenge.  
+    <br/>© 2025, MIT License.
+  </footer>
+</body>
+</html>
+```
+
+---
