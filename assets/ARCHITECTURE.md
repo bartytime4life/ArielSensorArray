@@ -36,32 +36,46 @@ SpectraMind V50 integrates lessons from publicly shared Kaggle baselines:
 
 ---
 
-## 🖼 Architecture Diagram
+## 🖼 Pipeline Overview
 
-High-level stack (rendered from `assets/diagrams/architecture_stack.mmd`):
+The full end-to-end flow of SpectraMind V50:  
 
-![Architecture Stack](diagrams/architecture_stack.svg)
+![Pipeline Overview](diagrams/pipeline_overview.svg)
+
+**Stages:**  
+1. **Ingestion** → FGS1/AIRS frames + metadata.  
+2. **Calibration** → Bias/dark/flat/CDS, trace extraction, jitter correction, normalization.  
+3. **Modeling** → Encoders (Mamba SSM + GNN), latent fusion, μ/σ decoders.  
+4. **Uncertainty Calibration** → Temperature scaling + COREL GNN.  
+5. **Diagnostics** → Metrics, SHAP, symbolic overlays, latent projections.  
+6. **Submission** → Validator → bundle → Kaggle upload.  
+7. **Reproducibility & Ops** → Hydra, DVC, CI, logs.  
 
 ---
 
-## ⚙️ Pipeline Layers
+## 🖼 Architecture Stack
 
-1. **Entry Points (UX)** — Typer CLI, lightweight console, optional GUI dashboard hooks.  
-2. **Configuration & Orchestration** — Hydra configs, Makefile targets, Poetry/Docker environments.  
-3. **Data & Versioning** — DVC pipelines/remotes, Git commits, artifact tracking.  
-4. **Calibration & Feature Build** — Bias/dark/flat/CDS correction, trace extraction, jitter correction, normalization.  
-5. **Modeling** — FGS1 Mamba SSM, AIRS GNN, latent fusion, μ/σ decoders.  
-6. **Uncertainty Calibration** — Temperature scaling + COREL conformal GNN.  
-7. **Diagnostics & Explainability** — Metrics (GLL, RMSE, MAE), FFT/smoothness, SHAP/attention, symbolic logic, latent UMAP/t-SNE projections.  
-8. **Packaging & Submission** — Validator → CSV/ZIP bundle → Kaggle submission.  
-9. **Observability & CI** — Structured telemetry (JSONL), audit logs, GitHub Actions CI, artifact registry.  
-10. **Runtime & Integrations** — CUDA/cuDNN, Kaggle GPUs, Hugging Face, Ollama LLM explainers.  
+Layered architecture view of the system:  
+
+![Architecture Stack](diagrams/architecture_stack.svg)
+
+**Layers:**  
+- L0 Entry Points — CLI, console, optional GUI.  
+- L1 Orchestration — Hydra configs, Makefiles, Poetry/Docker.  
+- L2 Data/Versioning — DVC pipelines, remotes, Git.  
+- L3 Calibration — Light curve preparation.  
+- L4 Modeling — Encoders, fusion, decoders.  
+- L5 UQ — Temperature scaling + COREL.  
+- L6 Diagnostics — Metrics, FFT, SHAP, symbolic, UMAP/t-SNE.  
+- L7 Submission — Validator, bundler, Kaggle artifact.  
+- L8 Observability/CI — Logs, telemetry, CI workflows.  
+- L9 Runtime/Integrations — CUDA, Kaggle GPUs, Hugging Face, Ollama.  
 
 ---
 
 ## 📑 Reports & Dashboards
 
-- **`report.html`** — Compact reproducibility report with pipeline + config snapshots.  
+- **`report.html`** — Compact reproducibility log with pipeline + config snapshots.  
 - **`diagnostics_dashboard.html`** — Rich interactive dashboard (symbolic overlays, SHAP, latent projections, calibration).  
 
 ---
@@ -78,7 +92,8 @@ High-level stack (rendered from `assets/diagrams/architecture_stack.mmd`):
 
 ## 🔗 References
 
-- [Pipeline Overview](diagrams/pipeline_overview.svg)  
+- [Pipeline Overview Diagram](diagrams/pipeline_overview.svg)  
+- [Architecture Stack Diagram](diagrams/architecture_stack.svg)  
 - [Symbolic Logic Layers](diagrams/symbolic_logic_layers.svg)  
 - [Kaggle CI Pipeline](diagrams/kaggle_ci_pipeline.svg)  
 
