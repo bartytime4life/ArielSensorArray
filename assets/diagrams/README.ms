@@ -1,90 +1,88 @@
+# assets/
 
-# assets/diagrams
-
-**SpectraMind V50 — ArielSensorArray**  
-*Repository diagrams, system schematics, and visualization sources*
+**SpectraMind V50 — Ariel Data Challenge 2025**  
+*Central repository assets: diagrams, dashboards, reports, and reproducibility visuals*
 
 ---
 
 ## 📌 Purpose
 
-This directory centralizes all **Mermaid diagrams, SVG schematics, PNG exports, and supporting visuals** used throughout the SpectraMind V50 project. It ensures that every architectural drawing, pipeline flow, and symbolic diagnostic graphic is:
+This directory consolidates all **visual artifacts** used across SpectraMind V50.  
+It ensures the system is **self-documented, reproducible, and leaderboard-ready**:
 
-- **Source-tracked** (Mermaid `.mmd` is the canonical source)
-- **Exportable** (to `.svg`, `.png`, `.pdf` via GitHub Actions or `make diagrams`)
-- **Reproducible** (diagram generation logged in CI, hashes stored in `v50_debug_log.md`)
-- **Dashboard-ready** (HTML reports and notebooks load diagrams directly from here)
-
----
-
-## 📂 Structure
-
-assets/diagrams/
-├── README.md                 # This file
-├── architecture.mmd          # High-level pipeline architecture (Mermaid source)
-├── architecture.svg          # Exported vector diagram
-├── architecture.png          # Exported raster preview
-├── cli_map.mmd               # CLI command → file/component map
-├── cli_map.svg
-├── cli_map.png
-├── pipeline_flow.mmd         # DVC/Hydra/CLI pipeline flowchart
-├── pipeline_flow.svg
-├── pipeline_flow.png
-├── symbolic_logic.mmd        # Symbolic logic engine, constraint graph
-├── symbolic_logic.svg
-├── symbolic_logic.png
-└── test_diagrams.py          # Unit tests to validate .mmd → .svg/.png export integrity
+- **Source-tracked** (Mermaid `.mmd` is canonical)  
+- **Auto-exported** (`.svg`, `.png`, `.pdf` via CI or `make diagrams`)  
+- **CI-validated** (`test_diagrams.py`, mermaid-export workflow)  
+- **Dashboard-ready** (`report.html`, `diagnostics_dashboard.html`)  
 
 ---
 
-## 🛠️ Workflow
+## 📂 Contents
 
-1. **Edit Source**  
-   Update the `.mmd` (Mermaid) file using any text editor or IDE with Mermaid preview.
+- **`diagrams/`** — Mermaid diagrams (`.mmd` sources) + rendered `.svg`/`.png`.  
+  Used in `ARCHITECTURE.md`, reports, and dashboards.  
+- **`report.html`** — Compact reproducibility log (pipeline + configs).  
+- **`diagnostics_dashboard.html`** — Interactive dashboard (UMAP/t-SNE, SHAP overlays, symbolic rule tables).  
+- **`sample_plots/`** *(optional)* — Example PNGs for testing (`sample_spectrum.png`, `umap_clusters.png`, `shap_overlay.png`).  
 
-2. **Export**  
-   Run:
-   ```bash
-   make diagrams
+---
 
-or directly:
+## 📊 Kaggle Model Insights
 
-npx @mermaid-js/mermaid-cli -i assets/diagrams/architecture.mmd -o assets/diagrams/architecture.svg
+SpectraMind V50 integrates lessons from Kaggle baselines in the NeurIPS 2025 Ariel Data Challenge:
 
-	3.	Verify
-Run the test:
+- **Thang Do Duc “0.329 LB”**  
+  • Residual MLP, simple preprocessing.  
+  • No σ (uncertainty) estimation.  
+  • Robust and reproducible reference design.  
 
-pytest assets/diagrams/test_diagrams.py
+- **V1ctorious3010 “80bl-128hd-impact”**  
+  • Extremely deep (80 residual blocks, 128 hidden).  
+  • Captures subtle features but prone to overfitting.  
+  • Strong LB score (0.322) but less interpretable.  
 
-This ensures:
-	•	All .mmd have matching .svg/.png exports
-	•	Files are referenced in ARCHITECTURE.md and report.html
+- **Fawad Awan “Spectrum Regressor”**  
+  • Multi-output regressor predicts entire spectrum.  
+  • Stable, interpretable, consistent across bins.  
+  • Slightly weaker LB (0.318) but leaderboard-stable.  
 
-⸻
+**Takeaways embedded in V50:**  
+- Residual-style encoders (Mamba SSM for FGS1, GNN for AIRS).  
+- Physics-informed detrending & jitter correction.  
+- Explicit uncertainty (σ) estimation with Temperature Scaling + COREL GNN.  
+- Ensemble shallow + deep networks, fused with symbolic overlays.  
 
-📊 Integration
-	•	Documentation
-Diagrams are embedded in ARCHITECTURE.md, README.md, and docs in /docs/.
-	•	Diagnostics Dashboard
-HTML outputs (report.html, diagnostics_dashboard.html) include these diagrams inline.
-	•	CI/CD
-.github/workflows/mermaid-export.yml auto-renders .mmd sources to .svg/.png on PRs and pushes.
+---
 
-⸻
+## 📐 Diagrams
 
-✅ Best Practices
-	•	Always commit both the .mmd (source) and .svg/.png (exports).
-	•	Keep diagrams minimal, legible, and color-blind safe.
-	•	Use Mermaid class definitions for consistent styling.
-	•	Cross-reference diagrams in ARCHITECTURE.md using relative paths.
-	•	Update test_diagrams.py when adding a new diagram.
+Maintained in `assets/diagrams/` (CI-tested via `test_diagrams.py`):
 
-⸻
+- `pipeline_overview.mmd` → End-to-end flow (FGS1/AIRS → Calibration → Modeling → Diagnostics → Submission)  
+- `architecture_stack.mmd` → Layered view (CLI, configs, DVC, encoders, symbolic logic, CI)  
+- `symbolic_logic_layers.mmd` → Constraint families (smoothness, FFT, asymmetry, molecular alignment)  
+- `gui_integration.mmd` → Optional UI layer (HTML/Jupyter/React)  
+- `kaggle_ci_pipeline.mmd` → GitHub Actions workflow: Train → Diagnose → Package → Kaggle Submit  
 
-🔗 References
-	•	Mermaid Documentation
-	•	SpectraMind V50 ARCHITECTURE.md
-	•	Diagnostics Dashboard
-	•	.github/workflows/mermaid-export.yml
+Rendered `.svg` and `.png` files are committed for portability.  
 
-⸻
+---
+
+## 📑 Reports
+
+- **`report.html`** — Compact reproducibility report.  
+- **`diagnostics_dashboard.html`** — Rich interactive diagnostics (symbolic overlays, SHAP, latent projections, calibration checks).  
+
+---
+
+## 🛠 Reproducibility & CI
+
+- **Hydra Configs:** versioned YAMLs (`configs/`).  
+- **Data:** DVC-tracked datasets and models.  
+- **CI/CD:** GitHub Actions workflows (selftest, diagnostics, mermaid-export).  
+- **Logging:** `logs/v50_debug_log.md` (append-only), JSONL event streams.  
+- **Validation:** `test_diagrams.py` checks that `.mmd` sources render cleanly and are embedded in docs.  
+
+Every artifact here is **versioned, CI-tested, and leaderboard-safe**.  
+
+---
