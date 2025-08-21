@@ -1,0 +1,141 @@
+%% --------------------------------------------------------------------
+%% SpectraMind V50 — Symbolic Logic Layers (Mermaid)
+%% Constraint graph and diagnostic flows over predicted spectra μ, σ.
+%% Shown: rule families, evaluators, aggregation, and violation routing.
+%% --------------------------------------------------------------------
+
+flowchart TD
+
+  %% =========================
+  %% Styling
+  %% =========================
+  classDef hdr fill:#0b3d91,stroke:#0b3d91,color:#ffffff,font-weight:bold;
+  classDef data fill:#f3f3f3,stroke:#9e9e9e,color:#333;
+  classDef rule fill:#fce4ec,stroke:#d81b60,color:#880e4f;
+  classDef ev fill:#e3f2fd,stroke:#1e88e5,color:#0d47a1;
+  classDef agg fill:#fff8e1,stroke:#ffb300,color:#6d4c00;
+  classDef diag fill:#ede7f6,stroke:#7e57c2,color:#4527a0;
+  classDef out fill:#e0f7fa,stroke:#00acc1,color:#006064;
+  classDef op fill:#e8f5e9,stroke:#43a047,color:#1b5e20;
+
+  %% =========================
+  %% Header
+  %% =========================
+  H([Symbolic Logic Layers • Constraint Engine]):::hdr
+
+  %% Inputs (model outputs + context)
+  I1[(Predicted μ(λ))]:::data
+  I2[(Predicted σ(λ))]:::data
+  I3[(Spectral Graph / Masks\nH₂O, CO₂, CH₄ bands; λ adjacency)]:::data
+  I4[(Aux Context\nSNR, transit phase, instrument regions)]:::data
+
+  H-->I1
+  H-->I2
+  H-->I3
+  H-->I4
+
+  %% =========================
+  %% Rule Families
+  %% =========================
+  subgraph RF[Rule Families]
+    direction TB
+    R1[Non‑negativity\nμ(λ) ≥ 0]:::rule
+    R2[Smoothness\n||∇μ||₁/₂ constraints]:::rule
+    R3[Asymmetry Guard\nphysically implausible lobes]:::rule
+    R4[FFT Coherence\nband‑limited / power ratio checks]:::rule
+    R5[Molecular Alignment\npeak positions within band masks]:::rule
+    R6[Monotone Segments (optional)\nlocal monotonicity windows]:::rule
+  end
+
+  I1-->RF
+  I3-->R5
+  I4-->R2
+  I4-->R3
+
+  %% =========================
+  %% Evaluators
+  %% =========================
+  subgraph EV[Evaluators (Per‑λ / window / global)]
+    direction TB
+    E1[Clamp/Barrier Loss\nReLU(-μ) or softplus]:::ev
+    E2[Gradient Penalty\nTV / Sobolev kernel]:::ev
+    E3[Asymmetry Metric\nleft/right energy delta]:::ev
+    E4[FFT Checks\nbandpower ratios; high‑freq penalty]:::ev
+    E5[Band Matching\nargmax/centroid vs expected lines]:::ev
+    E6[Coverage Modulation\nσ‑aware weighting]:::ev
+  end
+
+  R1-->E1
+  R2-->E2
+  R3-->E3
+  R4-->E4
+  R5-->E5
+  R6-->E2
+  I2-->E6
+  E1-->E6
+  E2-->E6
+  E3-->E6
+  E4-->E6
+  E5-->E6
+
+  %% =========================
+  %% Aggregation & Scoring
+  %% =========================
+  subgraph AGG[Aggregation & Scoring]
+    direction TB
+    A1[Per‑λ Violation Map\nv(λ) per rule]:::agg
+    A2[Rule Scores\nweighted by σ, masks]:::agg
+    A3[Global Symbolic Score\nΣ w_r · score_r]:::agg
+    A4[(symbolic_violations.json)]:::out
+  end
+
+  E6-->A1
+  A1-->A2-->A3-->A4
+
+  %% =========================
+  %% Diagnostics & Feedback
+  %% =========================
+  subgraph DG[Diagnostics & Feedback]
+    direction TB
+    D1[Overlay Plots\nv(λ) on μ(λ)]:::diag
+    D2[Band Heatmaps\nper‑molecule violations]:::diag
+    D3[Top‑K Violated Rules\nper planet]:::diag
+    D4[HTML Cards & Tables]:::diag
+    D5[(symbolic_rule_table.html)]:::out
+  end
+
+  A1-->D1
+  A2-->D2
+  A2-->D3
+  A3-->D4
+  D4-->D5
+
+  %% =========================
+  %% Training Hooks (Optional)
+  %% =========================
+  subgraph TR[Training Hooks (Optional)]
+    direction TB
+    T1[Symbolic Loss Term\nλ·A3 added to GLL]:::op
+    T2[Curriculum\nincrease λ over epochs]:::op
+    T3[Selective Backprop\nmask high‑confidence bands]:::op
+  end
+
+  A3-->T1
+  T1-->T2
+  T1-->T3
+
+  %% =========================
+  %% Outputs to Other Systems
+  %% =========================
+  O1[(diagnostic_summary.json)]:::out
+  O2[(report.html overlays)]:::out
+  O3[(dashboard assets)]:::out
+
+  A1-->O1
+  D1-->O2
+  D2-->O3
+  D3-->O3
+  D4-->O2
+
+  %% Helpful labels
+  %% linkStyle etc can be customized if needed; defaults are readable.
