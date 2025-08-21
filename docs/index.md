@@ -35,8 +35,8 @@
 - [Scientific Modeling Guide](../Scientific%20Modeling%20and%20Simulation%20-%20A%20Comprehensive%20NASA-Grade%20Guide.pdf)
 
 ### 4. **Competition Integration**
-- [Kaggle Platform Guide](../Kaggle%20Platform%20-%20Comprehensive%20Technical%20Guide.pdf)  
-- [Kaggle Model Comparisons](comparison.md) — Analysis of public Kaggle models & baselines  
+- [Kaggle Platform Guide](../Kaggle%20Platform%20-%20Comprehensive%20Technical%20Guide.pdf):contentReference[oaicite:0]{index=0}  
+- [Kaggle Model Comparisons](comparison.md) — Analysis of public Kaggle models & baselines:contentReference[oaicite:1]{index=1}  
 - [Competition Data](https://www.kaggle.com/competitions/ariel-data-challenge-2025/data)  
 
 ### 5. **Diagnostics & Explainability**
@@ -61,6 +61,27 @@
 
 ---
 
+## 🖼 Architecture Diagrams
+
+To complement the [Kaggle Model Comparisons](comparison.md), architecture visuals are provided:
+
+<p align="center">
+  <img src="../assets/baseline_mlp.png" alt="Baseline MLP" width="700"><br>
+  <em>Baseline MLP — residual-free, μ-only output</em>
+</p>
+
+<p align="center">
+  <img src="../assets/deep_residual_mlp.png" alt="Very Deep Residual MLP (~80×128)" width="750"><br>
+  <em>Very Deep Residual MLP (~80 blocks × 128 hidden units)</em>
+</p>
+
+<p align="center">
+  <img src="../assets/multi_output_regressor.png" alt="Multi-Output Spectrum Regressor" width="750"><br>
+  <em>Multi-Output Regressor — joint μ prediction across bins</em>
+</p>
+
+---
+
 ## 🧰 Key Tools
 
 - **Hydra Configs:** Flexible parameter management across training/eval/calibration  
@@ -74,9 +95,10 @@
 
 ## 🏆 Competition Notes
 
-- Public LB metrics can shift when private LB is revealed — beware of “Kaggle shake-up”:contentReference[oaicite:0]{index=0}  
-- Medium-depth residual MLPs with symbolic loss constraints may outperform very deep plain MLPs in stability and reproducibility  
-- Top solutions combine **domain-informed preprocessing (detrending, jitter correction)** with **ML ensembles**  
+- **Leaderboard mechanics:** Kaggle public LB is based on ~30–50% of test data; private LB determines winners:contentReference[oaicite:2]{index=2}.  
+- Beware the **“Kaggle shake-up”**: rankings often shuffle when private LB is revealed.  
+- Medium-depth **residual MLPs** with symbolic loss constraints may outperform very deep plain MLPs in stability and reproducibility.  
+- Top solutions combine **domain-informed preprocessing** (detrending, jitter correction) with **ensembles**:contentReference[oaicite:3]{index=3}.  
 
 ---
 
