@@ -9,7 +9,7 @@ Highlights
   • Rich/JSONL logging with global --log-level / --no-rich
   • Safer subprocess wrappers, friendlier errors, consistent exit codes
 
-Design notes are aligned with the V50 plan (CLI-first orchestration, Hydra snapshots, auditable logs). 
+Design notes are aligned with the V50 plan (CLI-first orchestration, Hydra snapshots, auditable logs).
 """
 
 from __future__ import annotations
@@ -27,6 +27,7 @@ import sys
 import textwrap
 import time
 import zipfile
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -192,6 +193,24 @@ def zip_paths(zip_path: Path, paths: List[Path]) -> None:
                             zf.write(sub, arcname=sub.relative_to(REPO))
 
 
+def run_command(cmd: List[str], env: Optional[Dict[str, str]] = None, allow_fail: bool = False) -> int:
+    """
+    Safer subprocess wrapper with nice printing and consistent exit codes.
+    """
+    console.print(f"[dim]$ {' '.join(cmd)}[/dim]")
+    try:
+        rc = subprocess.call(cmd, env=env)
+        if rc != 0 and not allow_fail:
+            console.print(f"[red]Command failed with exit code {rc}[/red]")
+        return rc
+    except FileNotFoundError:
+        console.print(f"[red]Command not found[/red]: {cmd[0]}")
+        return 127
+    except Exception as e:
+        console.print(f"[red]Command error[/red]: {e}")
+        return 1
+
+
 # -----------------------------------------------------------------------------
 # Determinism & run hashing
 # -----------------------------------------------------------------------------
@@ -246,6 +265,18 @@ def append_debug_log(lines: Iterable[str]) -> None:
     DEBUG_LOG.write_text(prefix + header + body, encoding="utf-8")
 
 
+def append_run_jsonl(command: str, extra: Dict[str, Any] | None = None) -> None:
+    rec = {
+        "ts": timestamp(),
+        "git": git_sha_short(),
+        "version": read_version(),
+        "command": command,
+    }
+    if extra:
+        rec.update(extra)
+    append_jsonl(JSONL_LOG, rec)
+
+
 # -----------------------------------------------------------------------------
 # Global options (log level, rich on/off, seed)
 # -----------------------------------------------------------------------------
@@ -273,6 +304,7 @@ def _root_callback(
         t.add_row("Timestamp (UTC)", now)
         console.print(t)
         append_debug_log(["spectramind --version", f"Git SHA: {sha}", f"Version: {ver}", f"Run hash: {rh}"])
+        append_run_jsonl("version", {"run_hash": rh})
         raise typer.Exit()
     # set log level into env for children
     os.environ["SPECTRAMIND_LOG_LEVEL"] = log_level.upper()
@@ -308,11 +340,7 @@ def selftest(
     if deep:
         check("Hydra importable", HYDRA_AVAILABLE)
         check("DVC present (.dvc/)", (REPO / ".dvc").exists())
-        try:
-            subprocess.check_output(["nvidia-smi"])
-            gpu_ok = True
-        except Exception:
-            gpu_ok = False
+        gpu_ok = shutil.which("nvidia-smi") is not None and run_command(["nvidia-smi"], allow_fail=True) == 0
         check("CUDA (nvidia-smi)", gpu_ok)
 
     tb = Table(box=box.SIMPLE_HEAVY)
@@ -324,6 +352,7 @@ def selftest(
     console.print("✅ Environment looks good." if ok else "❌ Selftest failed.")
     rh = persist_run_hash({"invocation": "selftest", "deep": deep})
     append_debug_log([f"spectramind selftest{' --deep' if deep else ''}", f"Result: {'OK' if ok else 'FAIL'}", f"Run: {rh}"])
+    append_run_jsonl("selftest", {"deep": deep, "ok": ok, "run_hash": rh})
     if not ok:
         raise typer.Exit(code=1)
 
@@ -333,7 +362,7 @@ def selftest(
 # -----------------------------------------------------------------------------
 @APP.command("calibrate")
 def calibrate(
-    overrides: List[str] = typer.Argument(None, help="Hydra-style overrides, e.g., data=nominal +calib.version=v1")
+    overrides: Optional[List[str]] = typer.Argument(None, help="Hydra-style overrides, e.g., data=nominal +calib.version=v1")
 ) -> None:
     """Run the calibration kill chain (stubbed)."""
     console.print(Panel.fit("[bold]SpectraMind V50[/bold]\nCalibration", box=box.ROUNDED))
@@ -344,11 +373,12 @@ def calibrate(
     console.print("[green]Calibration done[/green] → outputs/calibrated")
     rh = persist_run_hash({"invocation": "calibrate"})
     append_debug_log(["spectramind calibrate", f"overrides={overrides}", f"Run: {rh}"])
+    append_run_jsonl("calibrate", {"overrides": overrides or [], "run_hash": rh})
 
 
 @APP.command("calibrate-temp")
 def calibrate_temp(
-    overrides: List[str] = typer.Argument(None, help="Hydra overrides for temperature scaling")
+    overrides: Optional[List[str]] = typer.Argument(None, help="Hydra overrides for temperature scaling")
 ) -> None:
     """Apply temperature scaling to logits/σ (stub)."""
     console.print(Panel.fit("[bold]SpectraMind V50[/bold]\nTemperature Scaling", box=box.ROUNDED))
@@ -359,11 +389,12 @@ def calibrate_temp(
     console.print("[green]Temperature scaling complete[/green] → outputs/temperature_scaling.json")
     rh = persist_run_hash({"invocation": "calibrate-temp"})
     append_debug_log(["spectramind calibrate-temp", f"overrides={overrides}", f"Run: {rh}"])
+    append_run_jsonl("calibrate-temp", {"overrides": overrides or [], "run_hash": rh})
 
 
 @APP.command("corel-train")
 def corel_train(
-    overrides: List[str] = typer.Argument(None, help="Hydra overrides for COREL conformal training")
+    overrides: Optional[List[str]] = typer.Argument(None, help="Hydra overrides for COREL conformal training")
 ) -> None:
     """Train COREL (graph conformal calibration) — stubbed."""
     console.print(Panel.fit("[bold]SpectraMind V50[/bold]\nCOREL Conformal Training", box=box.ROUNDED))
@@ -374,11 +405,12 @@ def corel_train(
     console.print("[green]COREL saved[/green] → outputs/corel_model.json")
     rh = persist_run_hash({"invocation": "corel-train"})
     append_debug_log(["spectramind corel-train", f"overrides={overrides}", f"Run: {rh}"])
+    append_run_jsonl("corel-train", {"overrides": overrides or [], "run_hash": rh})
 
 
 @APP.command("train")
 def train(
-    overrides: List[str] = typer.Argument(None, help="Hydra overrides, e.g. +training.epochs=1"),
+    overrides: Optional[List[str]] = typer.Argument(None, help="Hydra overrides, e.g. +training.epochs=1"),
     device: str = typer.Option("cpu", "--device", "-d", help="Device string, e.g., cpu/gpu/cuda:0"),
     outdir: Optional[Path] = typer.Option(None, "--outdir", help="Write artifacts to this dir (default checkpoints/)"),
 ) -> None:
@@ -394,12 +426,13 @@ def train(
     console.print(f"[green]Training done[/green] → {target_dir}/best.ckpt")
     rh = persist_run_hash({"invocation": "train", "device": device, "outdir": str(target_dir)})
     append_debug_log(["spectramind train", f"device={device}", f"overrides={overrides}", f"outdir={target_dir}", f"Run: {rh}"])
+    append_run_jsonl("train", {"device": device, "overrides": overrides or [], "outdir": str(target_dir), "run_hash": rh})
 
 
 @APP.command("predict")
 def predict(
     out_csv: Path = typer.Option(OUTPUTS / "submission.csv", "--out-csv", help="Path to write submission CSV"),
-    overrides: List[str] = typer.Argument(None, help="Hydra overrides for inference"),
+    overrides: Optional[List[str]] = typer.Argument(None, help="Hydra overrides for inference"),
 ) -> None:
     """Run inference and write a submission CSV (stub)."""
     console.print(Panel.fit("[bold]SpectraMind V50[/bold]\nPrediction", box=box.ROUNDED))
@@ -414,6 +447,7 @@ def predict(
     console.print(f"[green]CSV written[/green] → {out_csv}")
     rh = persist_run_hash({"invocation": "predict", "out_csv": str(out_csv)})
     append_debug_log(["spectramind predict", f"out_csv={out_csv}", f"overrides={overrides}", f"Run: {rh}"])
+    append_run_jsonl("predict", {"out_csv": str(out_csv), "overrides": overrides or [], "run_hash": rh})
 
 
 # -----------------------------------------------------------------------------
@@ -436,6 +470,7 @@ def diag_smoothness(
     console.print(f"[green]Smoothness HTML[/green] → {outdir}/smoothness.html")
     rh = persist_run_hash({"invocation": "diagnose.smoothness"})
     append_debug_log(["spectramind diagnose smoothness", f"outdir={outdir}", f"Run: {rh}"])
+    append_run_jsonl("diagnose.smoothness", {"outdir": str(outdir), "run_hash": rh})
 
 
 @DIAG_APP.command("dashboard")
@@ -458,6 +493,10 @@ def diag_dashboard(
     rh = persist_run_hash({"invocation": "diagnose.dashboard", "no_umap": no_umap, "no_tsne": no_tsne})
     append_debug_log(
         ["spectramind diagnose dashboard", f"outdir={outdir}", f"no_umap={no_umap}", f"no_tsne={no_tsne}", f"Run: {rh}"]
+    )
+    append_run_jsonl(
+        "diagnose.dashboard",
+        {"outdir": str(outdir), "no_umap": no_umap, "no_tsne": no_tsne, "run_hash": rh},
     )
 
 
@@ -483,6 +522,7 @@ def submit(
     console.print(f"[green]Bundle created[/green] → {zip_out}")
     rh = persist_run_hash({"invocation": "submit", "zip_out": str(zip_out)})
     append_debug_log(["spectramind submit", f"zip_out={zip_out}", f"Run: {rh}"])
+    append_run_jsonl("submit", {"zip_out": str(zip_out), "run_hash": rh})
 
 
 # -----------------------------------------------------------------------------
@@ -537,11 +577,12 @@ def analyze_log(
     console.print(f"[green]Wrote[/green] {md_out} and {csv_out}")
     rh = persist_run_hash({"invocation": "analyze-log"})
     append_debug_log(["spectramind analyze-log", f"md={md_out}", f"csv={csv_out}", f"rows={len(rows)}", f"Run: {rh}"])
+    append_run_jsonl("analyze-log", {"md": str(md_out), "csv": str(csv_out), "rows": len(rows), "run_hash": rh})
 
 
 @APP.command("analyze-log-short")
 def analyze_log_short(
-    overrides: List[str] = typer.Argument(None, help="Ignored; parity with Make target"),
+    overrides: Optional[List[str]] = typer.Argument(None, help="Ignored; parity with Make target"),
 ) -> None:
     """Short CI-friendly summary: last 5 entries from CSV (auto-runs analyze-log if needed)."""
     console.print(Panel.fit("[bold]SpectraMind V50[/bold]\nAnalyze Log (short)", box=box.ROUNDED))
@@ -561,6 +602,7 @@ def analyze_log_short(
         console.print("::warning::No log_table.csv to summarize")
     rh = persist_run_hash({"invocation": "analyze-log-short"})
     append_debug_log(["spectramind analyze-log-short", f"Run: {rh}"])
+    append_run_jsonl("analyze-log-short", {"run_hash": rh})
 
 
 # -----------------------------------------------------------------------------
@@ -571,15 +613,14 @@ def validate_env() -> None:
     """Validate .env schema if scripts/validate_env.py exists (safe no-op otherwise)."""
     if (REPO / "scripts" / "validate_env.py").exists():
         console.print(">>> Validating .env schema")
-        try:
-            subprocess.check_call([sys.executable, str(REPO / "scripts" / "validate_env.py")])
-        except subprocess.CalledProcessError as e:
-            console.print(f"[red]validate_env.py failed ({e.returncode})[/red]")
-            raise typer.Exit(code=e.returncode)
+        rc = run_command([sys.executable, str(REPO / "scripts" / "validate_env.py")])
+        if rc != 0:
+            raise typer.Exit(code=rc)
     else:
         console.print(">>> Skipping validate-env (scripts/validate_env.py not found)")
     rh = persist_run_hash({"invocation": "validate-env"})
     append_debug_log(["spectramind validate-env", f"Run: {rh}"])
+    append_run_jsonl("validate-env", {"run_hash": rh})
 
 
 # -----------------------------------------------------------------------------
@@ -592,23 +633,19 @@ APP.add_typer(DVC_APP, name="dvc")
 @DVC_APP.command("pull")
 def dvc_pull() -> None:
     """dvc pull || true"""
-    try:
-        subprocess.check_call(["dvc", "pull"])
-    except Exception:
-        pass
-    rh = persist_run_hash({"invocation": "dvc.pull"})
-    append_debug_log(["spectramind dvc pull", f"Run: {rh}"])
+    rc = run_command(["dvc", "pull"], allow_fail=True)
+    rh = persist_run_hash({"invocation": "dvc.pull", "rc": rc})
+    append_debug_log(["spectramind dvc pull", f"rc={rc}", f"Run: {rh}"])
+    append_run_jsonl("dvc.pull", {"rc": rc, "run_hash": rh})
 
 
 @DVC_APP.command("push")
 def dvc_push() -> None:
     """dvc push || true"""
-    try:
-        subprocess.check_call(["dvc", "push"])
-    except Exception:
-        pass
-    rh = persist_run_hash({"invocation": "dvc.push"})
-    append_debug_log(["spectramind dvc push", f"Run: {rh}"])
+    rc = run_command(["dvc", "push"], allow_fail=True)
+    rh = persist_run_hash({"invocation": "dvc.push", "rc": rc})
+    append_debug_log(["spectramind dvc push", f"rc={rc}", f"Run: {rh}"])
+    append_run_jsonl("dvc.push", {"rc": rc, "run_hash": rh})
 
 
 # -----------------------------------------------------------------------------
@@ -629,6 +666,7 @@ def kaggle_run(
     predict(out_csv=PREDICTIONS / "submission.csv", overrides=None)
     rh = persist_run_hash({"invocation": "kaggle.run"})
     append_debug_log(["spectramind kaggle-run", f"outdir={out_dir}", f"Run: {rh}"])
+    append_run_jsonl("kaggle.run", {"outdir": str(out_dir), "run_hash": rh})
 
 
 @KAGGLE_APP.command("submit")
@@ -639,13 +677,15 @@ def kaggle_submit(
 ) -> None:
     """Submit to Kaggle via kaggle CLI (requires kaggle to be installed & authed)."""
     console.print(">>> Submitting to Kaggle competition")
-    try:
-        subprocess.check_call(["kaggle", "competitions", "submit", "-c", comp, "-f", str(file), "-m", message])
-    except FileNotFoundError:
+    if shutil.which("kaggle") is None:
         console.print("[red]kaggle CLI not found. Install and authenticate first.[/red]")
         raise typer.Exit(code=127)
+    rc = run_command(["kaggle", "competitions", "submit", "-c", comp, "-f", str(file), "-m", message])
+    if rc != 0:
+        raise typer.Exit(code=rc)
     rh = persist_run_hash({"invocation": "kaggle.submit", "competition": comp})
     append_debug_log(["spectramind kaggle-submit", f"comp={comp}", f"file={file}", f"Run: {rh}"])
+    append_run_jsonl("kaggle.submit", {"competition": comp, "file": str(file), "run_hash": rh})
 
 
 # -----------------------------------------------------------------------------
@@ -680,14 +720,14 @@ def benchmark_run(
         f"device   : {device}",
         f"epochs   : {epochs}",
     ]
-    if shutil_ := getattr(__import__("shutil"), "which", None):
-        if shutil_("nvidia-smi"):
-            summary.append(subprocess.getoutput("nvidia-smi"))
+    if shutil.which("nvidia-smi"):
+        summary.append(subprocess.getoutput("nvidia-smi"))
     summary.append("\nArtifacts in " + str(outdir) + ":\n" + subprocess.getoutput(f"ls -lh {outdir}"))
     write_text(outdir / "summary.txt", "\n".join(summary))
     console.print(f">>> Benchmark complete → {outdir}/summary.txt")
     rh = persist_run_hash({"invocation": "benchmark.run", "device": device, "epochs": epochs, "outdir": str(outdir)})
     append_debug_log(["spectramind benchmark-run", f"outdir={outdir}", f"Run: {rh}"])
+    append_run_jsonl("benchmark.run", {"device": device, "epochs": epochs, "outdir": str(outdir), "run_hash": rh})
 
 
 @BENCH_APP.command("report")
@@ -703,6 +743,7 @@ def benchmark_report() -> None:
     console.print(">>> Aggregated → aggregated/report.md")
     rh = persist_run_hash({"invocation": "benchmark.report"})
     append_debug_log(["spectramind benchmark-report", f"Run: {rh}"])
+    append_run_jsonl("benchmark.report", {"run_hash": rh})
 
 
 @BENCH_APP.command("clean")
@@ -710,10 +751,11 @@ def benchmark_clean() -> None:
     """Remove benchmarks/ and aggregated/"""
     for p in [Path("benchmarks"), Path("aggregated")]:
         if p.exists():
-            subprocess.call(["rm", "-rf", str(p)])
+            run_command(["rm", "-rf", str(p)], allow_fail=True)
     console.print(">>> Benchmarks cleaned")
     rh = persist_run_hash({"invocation": "benchmark.clean"})
     append_debug_log(["spectramind benchmark-clean", f"Run: {rh}"])
+    append_run_jsonl("benchmark.clean", {"run_hash": rh})
 
 
 # -----------------------------------------------------------------------------
@@ -739,10 +781,13 @@ def diagrams_render(
         env["THEME"] = theme
     env["EXPORT_PNG"] = "1" if export_png else "0"
     console.print(">>> Rendering Mermaid diagrams")
-    subprocess.check_call([sys.executable, str(script), *files], env=env)
+    rc = run_command([sys.executable, str(script), *files], env=env)
+    if rc != 0:
+        raise typer.Exit(code=rc)
     console.print(">>> Output → docs/diagrams")
     rh = persist_run_hash({"invocation": "diagrams.render", "files": files})
     append_debug_log(["spectramind diagrams.render", f"files={files}", f"Run: {rh}"])
+    append_run_jsonl("diagrams.render", {"files": files, "run_hash": rh})
 
 
 # -----------------------------------------------------------------------------
@@ -775,6 +820,7 @@ def check_cli_map() -> None:
     console.print(table)
     rh = persist_run_hash({"invocation": "check-cli-map"})
     append_debug_log(["spectramind check-cli-map", f"Run: {rh}"])
+    append_run_jsonl("check-cli-map", {"run_hash": rh})
 
 
 # -----------------------------------------------------------------------------
