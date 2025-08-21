@@ -1,0 +1,44 @@
+# Path-based label rules for actions/labeler@v5
+
+# Core code areas
+area:cli:
+  - "src/cli/**"
+  - "spectramind/**"
+area:data:
+  - "data/**"
+  - "datasets/**"
+area:modeling:
+  - "src/model/**"
+  - "src/pipelines/**"
+  - "src/features/**"
+area:physics:
+  - "docs/physics/**"
+  - "references/**"
+
+# Languages / stacks
+lang:python:
+  - "**/*.py"
+lang:js:
+  - "**/*.js"
+  - "**/*.ts"
+  - "**/*.tsx"
+
+# Tooling / CI
+ci:
+  - ".github/workflows/**"
+  - "Makefile"
+  - "Dockerfile"
+deps:
+  - "pyproject.toml"
+  - "poetry.lock"
+  - "package.json"
+  - "package-lock.json"
+  - "requirements*.txt"
+
+# Docs & tests
+type:docs:
+  - "README.md"
+  - "docs/**"
+  - "**/*.md"
+type:test:
+  - "tests/**"
