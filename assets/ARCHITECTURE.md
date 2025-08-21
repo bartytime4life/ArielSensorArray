@@ -1,125 +1,85 @@
-🛰️ SpectraMind V50 — Architecture (Assets Directory)
+# SpectraMind V50 — ArielSensorArray Architecture
 
-This document provides a **visual and structural reference** for the SpectraMind V50 pipeline, CLI, and data flows.  
-It is designed to work seamlessly with Mermaid diagrams, GitHub Actions (`mermaid-export.yml`), and the diagnostics dashboard.
-
----
-
-## 🎯 Mission Context
-
-- **Input:** Ariel **FGS1/AIRS** frames (simulated telescope data)  
-- **Pipeline:** Calibration → Training → Prediction → Diagnostics → Submission  
-- **Output:** Mean (μ) and Uncertainty (σ) spectra across 283 bins  
-- **Guarantees:** Full reproducibility (Hydra configs, DVC, CI workflows, Kaggle integration)
+**Neuro-symbolic, physics-informed AI pipeline for the NeurIPS 2025 Ariel Data Challenge**
 
 ---
 
-## 📂 Repository Components
-
-- **`src/`** → Core modeling code (FGS1 Mamba encoder, AIRS GNN, decoders, symbolic logic)  
-- **`configs/`** → Hydra YAML configs (data, model, training, diagnostics)  
-- **`data/`** → DVC-tracked datasets (raw, processed, intermediate)  
-- **`assets/`** → Dashboards, plots, and documentation (this directory)  
-- **`bin/`** → Shell utilities (diagnose.sh, push.sh, kaggle-submit.sh, etc.)  
-- **`logs/`** → Append-only log streams (`v50_debug_log.md`, JSONL traces)  
-- **`.github/workflows/`** → CI/CD (diagnostics, lint, Kaggle submit, Mermaid export)  
+[![Build](https://img.shields.io/badge/CI-GitHub_Actions-blue.svg)](../.github/workflows/ci.yml)
+![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)
+![License](https://img.shields.io/badge/license-MIT-green)
+![Hydra](https://img.shields.io/badge/config-Hydra_1.3-blueviolet)
+![DVC](https://img.shields.io/badge/data-DVC_3.x-945DD6)
+![GPU](https://img.shields.io/badge/CUDA-12.x-orange)
 
 ---
 
-## 📊 Pipeline Flow (Mermaid Diagram)
+## 🚀 North Star
 
-```mermaid
-flowchart TD
-    A[FGS1 Frames] -->|Calibration| B[Calibrated Lightcurves]
-    A2[AIRS Frames] -->|Calibration| B
-    B --> C[Encoders: FGS1 Mamba + AIRS GNN]
-    C --> D[Multi-Scale Decoders]
-    D --> E[μ Spectrum]
-    D --> F[σ Uncertainty]
-    E --> G[Diagnostics: GLL, FFT, Smoothness]
-    F --> G
-    G --> H[Symbolic Logic Engine]
-    H --> I[Diagnostics Dashboard (HTML)]
-    I --> J[Submission Bundle (Kaggle-ready)]
+From **raw Ariel FGS1/AIRS frames** → **calibrated light curves** → **μ/σ spectra across 283 bins** → **diagnostics & symbolic overlays** → **leaderboard-ready submission**.  
+Fully reproducible via CLI, Hydra configs, DVC, CI workflows, and Kaggle integration.
 
+---
 
-⸻
+## 📊 Kaggle Model Insights (Context)
 
-⚙️ CLI Architecture
+SpectraMind V50 integrates lessons from publicly shared Kaggle baselines:
 
-graph TD
-    CLI[Unified CLI: spectramind.py]
-    CLI --> A1[selftest]
-    CLI --> A2[calibrate]
-    CLI --> A3[train]
-    CLI --> A4[predict]
-    CLI --> A5[corel-train]
-    CLI --> A6[diagnose]
-    CLI --> A7[submit]
-    CLI --> A8[analyze-log]
-    CLI --> A9[check-cli-map]
+- **Baseline (0.329 LB)** — Residual MLP, simple and reproducible, but lacked physics/uncertainty.  
+- **80-layer Deep Net (0.322 LB)** — High capacity, captured subtle features, but variance/overfitting risks.  
+- **Spectrum Regressor (0.318 LB)** — Multi-output regression, stable and interpretable.  
 
-    A6 --> D1[dashboard]
-    A6 --> D2[symbolic-rank]
-    A6 --> D3[smoothness]
-    A6 --> D4[cluster-overlay]
+**Design responses in V50:**  
+- Use **Mamba SSM (FGS1)** and **Graph NN (AIRS)** encoders instead of brute-force depth.  
+- Add **physics-informed symbolic losses**: smoothness, FFT coherence, non-negativity, asymmetry, molecular alignment.  
+- Explicit **uncertainty calibration** (temperature scaling + COREL GNN).  
+- Maintain full **reproducibility stack**: Hydra configs, DVC, GitHub CI, selftest.  
 
+---
 
-⸻
+## 🖼 Architecture Diagram
 
-🔬 Symbolic + Explainability System
+High-level stack (rendered from `assets/diagrams/architecture_stack.mmd`):
 
-flowchart LR
-    MU[μ Spectrum] -->|∂L/∂μ| SIM[Symbolic Influence Map]
-    MU -->|SHAP| SHAP[SHAP Overlay]
-    MU -->|FFT| FFT[FFT + Autocorr Analysis]
+![Architecture Stack](diagrams/architecture_stack.svg)
 
-    SIM --> FUSION[Symbolic Fusion Diagnostics]
-    SHAP --> FUSION
-    FFT --> FUSION
+---
 
-    FUSION --> DASH[Diagnostics Dashboard]
+## ⚙️ Pipeline Layers
 
+1. **Entry Points (UX)** — Typer CLI, lightweight console, optional GUI dashboard hooks.  
+2. **Configuration & Orchestration** — Hydra configs, Makefile targets, Poetry/Docker environments.  
+3. **Data & Versioning** — DVC pipelines/remotes, Git commits, artifact tracking.  
+4. **Calibration & Feature Build** — Bias/dark/flat/CDS correction, trace extraction, jitter correction, normalization.  
+5. **Modeling** — FGS1 Mamba SSM, AIRS GNN, latent fusion, μ/σ decoders.  
+6. **Uncertainty Calibration** — Temperature scaling + COREL conformal GNN.  
+7. **Diagnostics & Explainability** — Metrics (GLL, RMSE, MAE), FFT/smoothness, SHAP/attention, symbolic logic, latent UMAP/t-SNE projections.  
+8. **Packaging & Submission** — Validator → CSV/ZIP bundle → Kaggle submission.  
+9. **Observability & CI** — Structured telemetry (JSONL), audit logs, GitHub Actions CI, artifact registry.  
+10. **Runtime & Integrations** — CUDA/cuDNN, Kaggle GPUs, Hugging Face, Ollama LLM explainers.  
 
-⸻
+---
 
-📈 Data Flow & Reproducibility
+## 📑 Reports & Dashboards
 
-sequenceDiagram
-    participant User
-    participant CLI as spectramind CLI
-    participant Hydra as Hydra Config
-    participant DVC as DVC
-    participant Pipeline as V50 Pipeline
-    participant Dashboard as Diagnostics Dashboard
+- **`report.html`** — Compact reproducibility report with pipeline + config snapshots.  
+- **`diagnostics_dashboard.html`** — Rich interactive dashboard (symbolic overlays, SHAP, latent projections, calibration).  
 
-    User->>CLI: spectramind train +overrides
-    CLI->>Hydra: Load config_v50.yaml
-    CLI->>DVC: Fetch correct dataset snapshot
-    CLI->>Pipeline: Run calibration + training
-    Pipeline-->>CLI: μ/σ outputs + logs
-    CLI->>Dashboard: Generate HTML (report.html)
-    Dashboard-->>User: View diagnostics + symbolic overlays
+---
 
+## 🛠 Reproducibility & CI
 
-⸻
+- **Hydra configs** → parameterized runs.  
+- **DVC** → dataset & model versioning.  
+- **GitHub Actions** → diagnostics, selftest, mermaid-export.  
+- **Logs** → append-only (`logs/v50_debug_log.md`, JSONL events).  
+- **CI-tested diagrams** → embedded directly in docs.  
 
-🧩 Integration Notes
-	•	Hydra Configs: Every run is fully parameterized (configs/config_v50.yaml + overrides)
-	•	DVC: Ensures reproducible datasets and model artifacts
-	•	CI Workflows: Run diagnostics, lint, e2e smoke tests, and Mermaid exports automatically
-	•	Assets: This directory provides placeholders so dashboards and reports never break pre-run
+---
 
-⸻
+## 🔗 References
 
-✅ Next Steps
-	•	Run spectramind diagnose dashboard to regenerate live dashboards
-	•	Update mermaid/*.mmd to extend diagrams
-	•	Push changes → GitHub Actions will auto-export .svg and .png versions into artifacts
-
-⸻
-
-SpectraMind V50 — Ariel Data Challenge 2025
-Neuro-symbolic, physics-informed AI pipeline for exoplanet spectroscopy
+- [Pipeline Overview](diagrams/pipeline_overview.svg)  
+- [Symbolic Logic Layers](diagrams/symbolic_logic_layers.svg)  
+- [Kaggle CI Pipeline](diagrams/kaggle_ci_pipeline.svg)  
 
 ---
