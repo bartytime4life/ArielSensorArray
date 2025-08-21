@@ -254,18 +254,8 @@ sbom/
     // Show when this file was last modified (useful for sanity checks)
     document.getElementById('build-ts').textContent = new Date(document.lastModified).toLocaleString();
 
-    // Optional: If you later add a lightweight manifest (artifacts.json), you can auto-link here.
-    // This remains no-op as a seed to avoid fetch/CORS surprises on file://.
-    // Example shape:
-    // {
-    //   "umap": "outputs/diagnostics/umap.html",
-    //   "tsne": "outputs/diagnostics/tsne.html",
-    //   "shap": "outputs/diagnostics/shap_overlay.html",
-    //   "gll": "outputs/diagnostics/gll_heatmap.png",
-    //   "calibration": "outputs/diagnostics/calibration_report.html",
-    //   "sbom": "sbom/2025-08-20/INDEX.txt"
-    // }
-    //
+    // Optional manifest auto-wiring (no-op in seed):
+    // If you emit outputs/diagnostics/artifacts.json, uncomment/fill to autolink artifacts.
     // function wireLinks(manifest){
     //   const map = [
     //     ["latents", ["umap","tsne"]],
@@ -283,7 +273,6 @@ sbom/
     //     }
     //   });
     // }
-    //
     // (async ()=>{
     //   try{
     //     const r = await fetch('./outputs/diagnostics/artifacts.json', {cache:'no-store'});
