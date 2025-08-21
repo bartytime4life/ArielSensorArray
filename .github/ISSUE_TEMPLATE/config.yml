@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: SpectraMind V50 — Discussions
+    url: https://github.com/<your-org>/<your-repo>/discussions
+    about: Ask questions and share ideas here.
+  - name: CI Status (GitHub Actions)
+    url: https://github.com/<your-org>/<your-repo>/actions
+    about: Inspect failing workflows before filing a CI failure.
