@@ -1,13 +1,28 @@
 # dvc.yaml — SpectraMind V50 (NeurIPS 2025 Ariel Data Challenge)
-# DVC pipeline orchestrating: calibrate → train → predict → diagnose → bundle
-# All commands are CLI-first (Typer) and Hydra-aware via config files.
+# CLI-first, Hydra-aware DAG: selftest → calibrate → train → predict → diagnose → bundle
+# Artifacts are DVC-tracked; small metrics/plots remain in Git for diffing.
 
 stages:
+  selftest:
+    desc: "Fast integrity checks before running the full pipeline (shapes, files, CLI map)"
+    cmd: >
+      poetry run spectramind test --mode fast
+      --log logs/v50_debug_log.md
+    deps:
+      - pyproject.toml
+      - poetry.lock
+      - src
+      - configs
+    outs:
+      - path: outputs/selftest
+        persist: true
+
   calibrate:
-    desc: "Run calibration pipeline to produce science‑ready time‑series & spectra"
+    desc: "Run calibration to produce science‑ready time‑series & spectra"
     cmd: >
       poetry run spectramind calibrate
-      --outdir outputs/calibrated
+        --outdir outputs/calibrated
+        --log logs/v50_debug_log.md
     deps:
       - pyproject.toml
       - poetry.lock
@@ -19,10 +34,11 @@ stages:
         persist: true
 
   train:
-    desc: "Train SpectraMind V50 model (SSM + GNN); write checkpoints & run logs"
+    desc: "Train SpectraMind V50 model (Mamba SSM + AIRS GNN); write checkpoints & logs"
     cmd: >
       poetry run spectramind train
-      --outdir outputs/checkpoints
+        --outdir outputs/checkpoints
+        --log logs/v50_debug_log.md
     deps:
       - pyproject.toml
       - poetry.lock
@@ -32,12 +48,28 @@ stages:
     outs:
       - path: outputs/checkpoints
         persist: true
+        checkpoint: true
+    metrics:
+      - outputs/checkpoints/train_metrics.json:
+          cache: false
+    plots:
+      - outputs/checkpoints/loss_curve.csv:
+          x: step
+          y: loss
+          header: true
+      - outputs/checkpoints/val_curve.csv:
+          x: step
+          y: val_loss
+          header: true
 
   predict:
-    desc: "Generate predictions (μ, σ) and submission CSV from trained checkpoints"
+    desc: "Generate μ, σ predictions and submission CSV from trained checkpoints"
     cmd: >
       poetry run spectramind predict
-      --out-csv outputs/submission.csv
+        --checkpoints outputs/checkpoints
+        --out-csv outputs/submission.csv
+        --outdir outputs/predictions
+        --log logs/v50_debug_log.md
     deps:
       - pyproject.toml
       - poetry.lock
@@ -46,19 +78,23 @@ stages:
       - outputs/calibrated
       - outputs/checkpoints
     outs:
+      - path: outputs/predictions
+        persist: true
       - path: outputs/submission.csv
 
   diagnose:
-    desc: "Produce diagnostics (HTML/PNG/JSON) — dashboards, smoothness, heatmaps"
+    desc: "Produce diagnostics (HTML/PNG/JSON): UMAP/t‑SNE, GLL heatmaps, calibration checks"
     cmd: >
       bash -lc '
         poetry run spectramind diagnose dashboard
-          --no-umap --no-tsne
-          --outdir outputs/diagnostics || \
-        poetry run spectramind diagnose dashboard
-          --outdir outputs/diagnostics || true
+          --outdir outputs/diagnostics
+          --log logs/v50_debug_log.md || true
         poetry run spectramind diagnose smoothness
           --outdir outputs/diagnostics
+          --log logs/v50_debug_log.md
+        poetry run spectramind diagnose profile
+          --outdir outputs/diagnostics
+          --log logs/v50_debug_log.md
       '
     deps:
       - pyproject.toml
@@ -70,7 +106,8 @@ stages:
       - path: outputs/diagnostics
         persist: true
     metrics:
-      - outputs/diagnostics/diagnostic_summary.json
+      - outputs/diagnostics/diagnostic_summary.json:
+          cache: false
     plots:
       - outputs/diagnostics/gll_per_bin.csv:
           x: bin
@@ -85,9 +122,10 @@ stages:
     desc: "Create final submission bundle (zip) including CSV and key diagnostics"
     cmd: >
       poetry run spectramind submit
-      --csv outputs/submission.csv
-      --diagnostics outputs/diagnostics
-      --out outputs/submission_bundle.zip
+        --csv outputs/submission.csv
+        --diagnostics outputs/diagnostics
+        --out outputs/submission_bundle.zip
+        --log logs/v50_debug_log.md
     deps:
       - pyproject.toml
       - poetry.lock
@@ -98,3 +136,25 @@ stages:
     outs:
       - path: outputs/submission_bundle.zip
         cache: true
+
+  publish:
+    desc: "Optional: export leaderboard-ready report & manifest for CI artifacts"
+    cmd: >
+      poetry run spectramind diagnose dashboard
+        --outdir outputs/diagnostics
+        --versioned
+        --log logs/v50_debug_log.md &&
+      poetry run spectramind analyze-log
+        --out outputs/diagnostics/log_table.md
+        --csv outputs/diagnostics/log_table.csv
+        --log logs/v50_debug_log.md
+    deps:
+      - pyproject.toml
+      - poetry.lock
+      - src
+      - configs
+      - logs/v50_debug_log.md
+      - outputs/diagnostics
+    outs:
+      - path: outputs/diagnostics/log_table.md
+      - path: outputs/diagnostics/log_table.csv
