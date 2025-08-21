@@ -50,6 +50,7 @@ REQ_CORE          ?= requirements.txt
 REQ_EXTRAS        ?= requirements-extras.txt
 REQ_DEV           ?= requirements-dev.txt
 REQ_KAGGLE        ?= requirements-kaggle.txt
+REQ_MIN           ?= requirements-min.txt
 REQ_FREEZE        ?= requirements.freeze.txt
 
 # Mermaid / diagrams
@@ -86,6 +87,7 @@ RST  := \033[0m
         ci quickstart clean realclean distclean cache-clean \
         export-reqs export-reqs-dev export-kaggle-reqs export-freeze \
         install-core install-extras install-dev install-kaggle \
+        deps deps-min deps-lock verify-deps \
         env-capture hash-config git-clean-check git-status \
         pip-audit audit docs-serve docs-build \
         pyg-install kaggle-pyg-index \
@@ -113,6 +115,8 @@ help:
 	@echo "  $(CYN)kaggle-*$(RST)         : Kaggle run+submit (requires Kaggle CLI login)"
 	@echo "  $(CYN)docker-build/run/shell$(RST) : Dockerized workflow (GPU=$(HAS_NVIDIA))"
 	@echo "  $(CYN)fmt | lint | mypy | test | pre-commit$(RST) : code quality"
+	@echo "  $(CYN)deps$(RST) / $(CYN)deps-min$(RST) / $(CYN)deps-lock$(RST) : install (full vs minimal) / export/lock"
+	@echo "  $(CYN)verify-deps$(RST)      : print key package versions (torch/numpy/sklearn/etc.)"
 	@echo "  $(CYN)env-capture | hash-config$(RST) : reproducibility utilities"
 	@echo "  $(CYN)export-reqs* | install-*(RST)  : requirements export/install helpers"
 	@echo "  $(CYN)docs-serve | docs-build$(RST)  : MkDocs docs helpers (optional)"
@@ -443,6 +447,44 @@ install-dev:
 
 install-kaggle:
 	$(PIP) install -r $(REQ_KAGGLE)
+
+# ---- New: unified dependency workflows (full vs minimal) ----
+deps:
+	@echo ">>> Upgrading pip/setuptools/wheel"
+	$(PIP) install -U pip setuptools wheel
+	@echo ">>> Installing full dev/CI stack from $(REQ_CORE)"
+	@test -f "$(REQ_CORE)" || { echo "$(RED)$(REQ_CORE) not found$(RST)"; exit 1; }
+	$(PIP) install -r $(REQ_CORE)
+	@$(MAKE) verify-deps
+
+deps-min:
+	@echo ">>> Upgrading pip/setuptools/wheel"
+	$(PIP) install -U pip setuptools wheel
+	@echo ">>> Installing minimal Kaggle runtime from $(REQ_MIN)"
+	@test -f "$(REQ_MIN)" || { echo "$(RED)$(REQ_MIN) not found$(RST)"; exit 1; }
+	$(PIP) install -r $(REQ_MIN) || true
+	@$(MAKE) verify-deps
+
+deps-lock:
+	@echo ">>> Lock (Poetry), then export pinned requirements + freeze"
+	$(POETRY) lock --no-update
+	@$(MAKE) export-reqs
+	@$(MAKE) export-reqs-dev
+	@$(MAKE) export-freeze
+	@echo "$(GRN)Locked and exported.$(RST)"
+
+verify-deps:
+	@echo ">>> Key package versions"
+	@python - << 'PY'
+import importlib,sys
+def v(name):
+    try:
+        m=importlib.import_module(name); print(f"{name:>14}: {getattr(m,'__version__','n/a')}")
+    except Exception as e:
+        print(f"{name:>14}: (missing)")
+for pkg in ["torch","torchvision","torchaudio","numpy","scipy","pandas","sklearn","matplotlib","umap","shap","typer","hydra","omegaconf"]:
+    v(pkg if pkg!="sklearn" else "sklearn")
+PY
 
 # ========= CLI utilities (reproducibility) =========
 env-capture:
