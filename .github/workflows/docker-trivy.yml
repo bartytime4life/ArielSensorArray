@@ -1,0 +1,173 @@
+# .github/workflows/docker-trivy.yml
+# ==============================================================================
+# SpectraMind V50 — Trivy Security Scan (FS ✦ Image ✦ Secrets/Misconfig ✦ SBOM)
+# - Scans repository (fs), built Docker image, secrets, and IaC misconfigurations
+# - Uploads SARIF to GitHub Code Scanning
+# - Generates SPDX SBOM artifact
+# - Fails on HIGH/CRITICAL vulnerabilities (configurable)
+# Notes:
+# - Respects .trivyignore if present at repo root
+# - Uses Buildx (no push) and GHCR login (read) for base image pulls if needed
+# ==============================================================================
+
+name: docker-trivy
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+  schedule:
+    # Weekly security scan
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+    inputs:
+      severity:
+        description: "Fail on vulnerabilities at or above these severities (comma-separated)"
+        required: false
+        default: "HIGH,CRITICAL"
+        type: string
+      ignore_unfixed:
+        description: "Ignore unfixed vulnerabilities? (true/false)"
+        required: false
+        default: "true"
+        type: choice
+        options: ["true", "false"]
+
+permissions:
+  contents: read
+  packages: read
+  security-events: write   # required for SARIF/code-scanning upload
+  actions: read
+
+env:
+  # -------- Settings you may customize --------
+  IMAGE_NAME: ghcr.io/${{ github.repository }}:scan-${{ github.sha }}
+  DOCKERFILE: ./Dockerfile
+  CONTEXT: .
+  TRIVY_SEVERITY: ${{ inputs.severity || 'HIGH,CRITICAL' }}
+  TRIVY_IGNORE_UNFIXED: ${{ inputs.ignore_unfixed || 'true' }}
+
+jobs:
+  trivy:
+    name: Build & Scan with Trivy
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ---------- Docker build (no push) ----------
+      - name: Set up QEMU (multi-arch, harmless if single arch)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR (read-only for base layers)
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build Docker image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ env.CONTEXT }}
+          file: ${{ env.DOCKERFILE }}
+          push: false
+          load: true
+          tags: ${{ env.IMAGE_NAME }}
+          # Optional caching to speed up repeated builds
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # ---------- Cache Trivy databases ----------
+      - name: Cache Trivy DB
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/trivy
+          key: trivy-db-${{ runner.os }}-${{ hashFiles('**/Dockerfile', '**/poetry.lock', '**/package-lock.json', '**/requirements*.txt') }}
+          restore-keys: |
+            trivy-db-${{ runner.os }}-
+
+      # ---------- Install Trivy CLI (also enables sbom command) ----------
+      - name: Install Trivy
+        uses: aquasecurity/trivy-action@0.20.0
+        with:
+          version: latest
+          install-only: true
+
+      # ---------- FS scan: vulnerabilities + secrets + misconfig ----------
+      - name: Trivy FS scan (vuln,secret,config)
+        uses: aquasecurity/trivy-action@0.20.0
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-fs.sarif'
+          severity: ${{ env.TRIVY_SEVERITY }}
+          ignore-unfixed: ${{ env.TRIVY_IGNORE_UNFIXED }}
+          # Enable multiple scanners: vuln (default), secret, config
+          vuln-type: 'os,library'
+          security-checks: 'vuln,secret,config'
+          exit-code: '1' # fail job if findings at/above severity
+        env:
+          # Speed up updates (cached) and allow offline if db present
+          TRIVY_DB_REPOSITORY: ghcr.io/aquasecurity/trivy-db
+          TRIVY_JAVA_DB_REPOSITORY: ghcr.io/aquasecurity/trivy-java-db
+
+      # ---------- Image scan: vulnerabilities on built image ----------
+      - name: Trivy Image scan (vuln)
+        uses: aquasecurity/trivy-action@0.20.0
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}
+          format: 'sarif'
+          output: 'trivy-image.sarif'
+          severity: ${{ env.TRIVY_SEVERITY }}
+          ignore-unfixed: ${{ env.TRIVY_IGNORE_UNFIXED }}
+          vuln-type: 'os,library'
+          exit-code: '1'
+        env:
+          TRIVY_DB_REPOSITORY: ghcr.io/aquasecurity/trivy-db
+          TRIVY_JAVA_DB_REPOSITORY: ghcr.io/aquasecurity/trivy-java-db
+
+      # ---------- SBOM generation (SPDX JSON) ----------
+      - name: Generate SBOM (SPDX JSON) for image
+        run: |
+          trivy sbom --format spdx-json --output sbom.spdx.json $IMAGE_NAME
+
+      # ---------- Upload SARIF to GitHub code scanning ----------
+      - name: Upload SARIF (FS)
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-fs.sarif
+
+      - name: Upload SARIF (Image)
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-image.sarif
+
+      # ---------- Upload artifacts ----------
+      - name: Upload artifacts (SARIF + SBOM)
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-reports
+          path: |
+            trivy-fs.sarif
+            trivy-image.sarif
+            sbom.spdx.json
+          retention-days: 21
+
+      # ---------- Summarize ----------
+      - name: Job summary
+        if: always()
+        run: |
+          echo "### Trivy Scan Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- Image: \`${{ env.IMAGE_NAME }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Severity threshold: \`${{ env.TRIVY_SEVERITY }}\` (ignore_unfixed=${{ env.TRIVY_IGNORE_UNFIXED }})" >> $GITHUB_STEP_SUMMARY
+          echo "- SARIF uploaded to Code Scanning" >> $GITHUB_STEP_SUMMARY
+          echo "- SBOM artifact: \`sbom.spdx.json\`" >> $GITHUB_STEP_SUMMARY
