@@ -1,99 +1,295 @@
 <!-- =============================================================================
- SpectraMind V50 — Diagnostics Dashboard (Seed Stub)
+ SpectraMind V50 — Diagnostics Dashboard (Seed)
  -------------------------------------------------------------------------------
- This seeded file ensures that links from README/ARCHITECTURE.md are not broken
- on first clone. Real diagnostics (UMAP, SHAP, FFT, Symbolic, SBOM) will replace
- these placeholders once the CI or CLI generates full reports.
+ Purpose:
+   • Prevents broken README/ARCHITECTURE links on first clone
+   • Provides clear placeholders + expected artifact paths
+   • Looks good in light/dark mode; zero external deps
+   • Safe before artifacts exist; becomes a launcher once they do
+ Generation (later):
+   • spectramind diagnose dashboard
+   • make diagnostics
  ============================================================================== -->
 
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>SpectraMind V50 Diagnostics Dashboard</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta charset="UTF-8" />
+  <title>SpectraMind V50 — Diagnostics Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light dark" />
   <style>
-    body {
-      font-family: system-ui, sans-serif;
-      background: #f9f9fb;
-      color: #222;
-      margin: 0;
-      padding: 0;
+    :root{
+      --bg:#f9f9fb;
+      --card:#ffffff;
+      --ink:#222;
+      --muted:#666;
+      --accent:#2b2d42;
+      --border:#e7e7ee;
+      --dash:#bbbbc4;
+      --placeholder:#fafafa;
+      --shadow:0 2px 4px rgba(0,0,0,.08);
+      --radius:12px;
+      --radius-sm:8px;
+      --space:1rem;
+      --space-lg:2rem;
+      --mono: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;
+      --sans: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
     }
-    header {
-      background: #2b2d42;
-      color: #fff;
-      padding: 1rem;
+    @media (prefers-color-scheme: dark){
+      :root{
+        --bg:#0f1115;
+        --card:#151922;
+        --ink:#e9e9ee;
+        --muted:#9aa3b2;
+        --accent:#5da9ff;
+        --border:#222838;
+        --dash:#334155;
+        --placeholder:#121620;
+        --shadow:0 2px 4px rgba(0,0,0,.35);
+      }
     }
-    header h1 {
-      margin: 0;
-      font-size: 1.5rem;
+    html,body{height:100%;}
+    body{
+      margin:0;
+      font-family:var(--sans);
+      background:var(--bg);
+      color:var(--ink);
+      -webkit-font-smoothing:antialiased;
+      -moz-osx-font-smoothing:grayscale;
     }
-    main {
-      padding: 2rem;
+    header{
+      background:var(--accent);
+      color:#fff;
+      padding:var(--space-lg) var(--space);
+      box-shadow:var(--shadow);
     }
-    section {
-      background: #fff;
-      border-radius: 8px;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-      margin-bottom: 2rem;
-      padding: 1rem 1.5rem;
+    header h1{margin:.25rem 0 0 0;font-size:1.4rem;font-weight:700}
+    header p{margin:.25rem 0 0 0;opacity:.9}
+    .wrap{max-width:1100px;margin:0 auto;padding:var(--space-lg) var(--space)}
+    nav{
+      display:flex;gap:.75rem;flex-wrap:wrap;margin:0 0 var(--space-lg);
     }
-    h2 {
-      margin-top: 0;
+    nav a{
+      text-decoration:none;
+      color:var(--ink);
+      background:var(--card);
+      border:1px solid var(--border);
+      border-radius:999px;
+      padding:.4rem .75rem;
+      box-shadow:var(--shadow);
+      font-size:.92rem;
     }
-    .placeholder {
-      border: 2px dashed #bbb;
-      border-radius: 8px;
-      background: #fafafa;
-      padding: 2rem;
-      text-align: center;
-      color: #777;
-      font-style: italic;
+    main{display:grid;gap:var(--space-lg)}
+    section{
+      background:var(--card);
+      border:1px solid var(--border);
+      border-radius:var(--radius);
+      box-shadow:var(--shadow);
+      padding:var(--space-lg);
     }
-    footer {
-      text-align: center;
-      font-size: 0.9rem;
-      color: #666;
-      padding: 1rem;
+    section h2{margin-top:0}
+    .placeholder{
+      border:2px dashed var(--dash);
+      border-radius:var(--radius-sm);
+      background:var(--placeholder);
+      padding:1.25rem;
+      text-align:center;
+      color:var(--muted);
+      font-style:italic;
     }
+    .hint{
+      margin-top:.75rem;
+      font-size:.95rem;
+      color:var(--muted);
+    }
+    .paths{
+      margin:.75rem 0 0 0;
+      padding:.75rem;
+      border-radius:var(--radius-sm);
+      background:transparent;
+      border:1px dashed var(--border);
+      font-family:var(--mono);
+      font-size:.9rem;
+      overflow:auto;
+    }
+    .kbd{
+      font-family:var(--mono);
+      border:1px solid var(--border);
+      border-bottom-width:2px;
+      padding:.15rem .35rem;
+      border-radius:6px;
+      background:var(--card);
+    }
+    footer{
+      text-align:center;
+      color:var(--muted);
+      padding:var(--space-lg);
+      font-size:.95rem;
+    }
+    .two{
+      display:grid;
+      grid-template-columns:1fr;
+      gap:var(--space);
+    }
+    @media (min-width:900px){
+      .two{grid-template-columns:1fr 1fr;}
+    }
+    .small{font-size:.9rem;color:var(--muted)}
+    .ok{color:#18b86a}
+    .warn{color:#f59e0b}
   </style>
 </head>
 <body>
   <header>
-    <h1>SpectraMind V50 — Diagnostics Dashboard</h1>
-    <p><em>Seeded placeholder • Real diagnostics will populate on pipeline run</em></p>
+    <div class="wrap">
+      <div class="small">SpectraMind V50 • ArielSensorArray</div>
+      <h1>Diagnostics Dashboard</h1>
+      <p><em>Seeded placeholder — will auto‑promote to a live dashboard after your first run.</em></p>
+    </div>
   </header>
 
-  <main>
-    <section>
-      <h2>📊 Leaderboard Snapshot</h2>
-      <div class="placeholder">Leaderboard metrics will be displayed here.</div>
-    </section>
+  <div class="wrap">
+    <!-- Quick Nav -->
+    <nav aria-label="Sections">
+      <a href="#overview">Overview</a>
+      <a href="#leaderboard">Leaderboard</a>
+      <a href="#latents">UMAP / t‑SNE</a>
+      <a href="#shap">SHAP + Symbolic</a>
+      <a href="#gll">GLL & Calibration</a>
+      <a href="#sbom">SBOM</a>
+    </nav>
 
-    <section>
-      <h2>🌌 UMAP / t-SNE Latents</h2>
-      <div class="placeholder">Interactive latent plots will be embedded here.</div>
-    </section>
+    <main>
+      <!-- Overview / How-to -->
+      <section id="overview">
+        <h2>🧭 Overview</h2>
+        <p>This page ships as a <strong>seed</strong> so your README links don’t 404. When you run diagnostics,
+           this page becomes a launchpad to the generated HTML, PNG, and JSON artifacts.</p>
+        <div class="two">
+          <div>
+            <div class="placeholder">No artifacts yet. Generate diagnostics to populate links & charts.</div>
+            <div class="hint">
+              Try:
+              <span class="kbd">spectramind diagnose dashboard</span>
+              or
+              <span class="kbd">make diagnostics</span>
+            </div>
+          </div>
+          <div>
+            <div class="paths">
+# Expected outputs (examples)
+outputs/diagnostics/
+  ├─ report.html
+  ├─ umap.html                  # interactive UMAP
+  ├─ tsne.html                  # interactive t‑SNE
+  ├─ shap_overlay.html          # SHAP overlays (per-planet / aggregate)
+  ├─ gll_heatmap.png            # GLL heatmap (283 bins)
+  ├─ calibration_report.html    # σ coverage / quantiles
+  └─ artifacts.json             # optional manifest / summary
+sbom/
+  ├─ INDEX.json
+  └─ YYYY-MM-DD/…               # SBOM & scan SARIF per run
+            </div>
+          </div>
+        </div>
+        <p class="small">Tip: You can safely commit this seed file; your CI/CLI will overwrite or link out to richer pages later.</p>
+      </section>
 
-    <section>
-      <h2>🔍 SHAP & Symbolic Overlays</h2>
-      <div class="placeholder">SHAP explanations and symbolic overlays will appear here.</div>
-    </section>
+      <!-- Leaderboard -->
+      <section id="leaderboard">
+        <h2>📊 Leaderboard Snapshot</h2>
+        <div class="placeholder">Leaderboard metrics will be displayed here.</div>
+        <p class="hint">Later this can link to <span class="kbd">report.html</span> sections summarizing run hashes, configs, and scores.</p>
+      </section>
 
-    <section>
-      <h2>📈 GLL & Calibration Heatmaps</h2>
-      <div class="placeholder">Heatmaps and calibration plots will appear here.</div>
-    </section>
+      <!-- Latents -->
+      <section id="latents">
+        <h2>🌌 UMAP / t‑SNE Latents</h2>
+        <div class="placeholder">Interactive latent plots will be embedded here.</div>
+        <div class="paths">
+./outputs/diagnostics/umap.html
+./outputs/diagnostics/tsne.html
+        </div>
+        <p class="hint">If those files exist, this section becomes your launcher to interactive plots.</p>
+      </section>
 
-    <section>
-      <h2>📦 SBOM Report</h2>
-      <div class="placeholder">CycloneDX/SPDX SBOM will be embedded here.</div>
-    </section>
-  </main>
+      <!-- SHAP + Symbolic -->
+      <section id="shap">
+        <h2>🔍 SHAP & Symbolic Overlays</h2>
+        <div class="placeholder">SHAP explanations and symbolic overlays will appear here.</div>
+        <div class="paths">./outputs/diagnostics/shap_overlay.html</div>
+        <p class="hint">Consider also linking per‑planet pages (e.g. <span class="kbd">planet_XXXX.html</span>).</p>
+      </section>
 
-  <footer>
-    SpectraMind V50 • ArielSensorArray • Seeded on first render • Generated by CI/CLI
-  </footer>
+      <!-- GLL & Calibration -->
+      <section id="gll">
+        <h2>📈 GLL & Calibration Heatmaps</h2>
+        <div class="placeholder">Heatmaps and calibration plots will appear here.</div>
+        <div class="paths">
+./outputs/diagnostics/gll_heatmap.png
+./outputs/diagnostics/calibration_report.html
+        </div>
+        <p class="hint">GLL heatmap (283 bins) and σ coverage/quantile calibration go here.</p>
+      </section>
+
+      <!-- SBOM -->
+      <section id="sbom">
+        <h2>📦 SBOM Report</h2>
+        <div class="placeholder">CycloneDX/SPDX SBOM will be embedded here.</div>
+        <div class="paths">
+./sbom/INDEX.json
+./sbom/YYYY-MM-DD/INDEX.txt
+        </div>
+        <p class="hint">Use <span class="kbd">sbom-refresh.yml</span> to generate & PR the dated catalog.</p>
+      </section>
+    </main>
+
+    <footer>
+      <div class="small">Build: <span id="build-ts" class="ok">unknown</span> • Seeded on first render • Generated by CI/CLI</div>
+    </footer>
+  </div>
+
+  <script>
+    // Show when this file was last modified (useful for sanity checks)
+    document.getElementById('build-ts').textContent = new Date(document.lastModified).toLocaleString();
+
+    // Optional: If you later add a lightweight manifest (artifacts.json), you can auto-link here.
+    // This remains no-op as a seed to avoid fetch/CORS surprises on file://.
+    // Example shape:
+    // {
+    //   "umap": "outputs/diagnostics/umap.html",
+    //   "tsne": "outputs/diagnostics/tsne.html",
+    //   "shap": "outputs/diagnostics/shap_overlay.html",
+    //   "gll": "outputs/diagnostics/gll_heatmap.png",
+    //   "calibration": "outputs/diagnostics/calibration_report.html",
+    //   "sbom": "sbom/2025-08-20/INDEX.txt"
+    // }
+    //
+    // function wireLinks(manifest){
+    //   const map = [
+    //     ["latents", ["umap","tsne"]],
+    //     ["shap",    ["shap"]],
+    //     ["gll",     ["gll","calibration"]],
+    //     ["sbom",    ["sbom"]]
+    //   ];
+    //   map.forEach(([id, keys])=>{
+    //     const sec = document.getElementById(id);
+    //     if(!sec) return;
+    //     const box = sec.querySelector('.placeholder');
+    //     const found = keys.filter(k => manifest[k]).map(k => `<a href="../${manifest[k]}">${k}</a>`);
+    //     if(found.length && box){
+    //       box.outerHTML = `<div><strong>Artifacts:</strong> ${found.join(" • ")}</div>`;
+    //     }
+    //   });
+    // }
+    //
+    // (async ()=>{
+    //   try{
+    //     const r = await fetch('./outputs/diagnostics/artifacts.json', {cache:'no-store'});
+    //     if(r.ok){ wireLinks(await r.json()); }
+    //   }catch(_){}
+    // })();
+  </script>
 </body>
 </html>
