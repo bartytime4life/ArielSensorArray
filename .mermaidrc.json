@@ -1,12 +1,94 @@
 {
-  "theme": "default",
-  "fontFamily": "Inter, Roboto, Segoe UI, Helvetica Neue, Arial, sans-serif",
+  "theme": "base",
+  "startOnLoad": false,
+  "securityLevel": "strict",
+  "arrowMarkerAbsolute": true,
+
+  // Reproducibility & CI-friendly rendering
+  "deterministicIds": true,
+  "deterministicIDSeed": "spectramind-v50",
+  "logLevel": "error",
+
+  // Typography & colors (light by default; adapt via themeVariables if needed)
+  "fontFamily": "Inter, Roboto, Segoe UI, Helvetica Neue, Arial, ui-sans-serif, system-ui, sans-serif",
+  "themeVariables": {
+    "background": "transparent",
+    "primaryColor": "#0ea5e9",
+    "primaryTextColor": "#0f172a",
+    "primaryBorderColor": "#0284c7",
+    "lineColor": "#334155",
+    "textColor": "#0f172a",
+    "tertiaryColor": "#f1f5f9",
+    "fontFamily": "Inter, Roboto, Segoe UI, Helvetica Neue, Arial, ui-sans-serif, system-ui, sans-serif",
+    "fontSize": "16px"
+  },
+
+  // Flowcharts
   "flowchart": {
-    "diagramPadding": 10,
     "htmlLabels": true,
     "useMaxWidth": true,
+    "diagramPadding": 12,
+    "padding": 8,
+    "nodeSpacing": 35,
+    "rankSpacing": 50,
     "curve": "basis"
   },
-  "sequence": { "mirrorActors": false },
-  "er": { "useMaxWidth": true }
+
+  // Sequence diagrams
+  "sequence": {
+    "useMaxWidth": true,
+    "mirrorActors": false,
+    "showSequenceNumbers": true,
+    "actorMargin": 50,
+    "boxMargin": 10,
+    "noteMargin": 10,
+    "activationWidth": 10,
+    "bottomMarginAdj": 8
+  },
+
+  // ER diagrams
+  "er": {
+    "useMaxWidth": true
+  },
+
+  // Class diagrams
+  "class": {
+    "useMaxWidth": true
+  },
+
+  // State diagrams
+  "state": {
+    "useMaxWidth": true,
+    "padding": 8,
+    "forkWidth": 10,
+    "forkHeight": 10
+  },
+
+  // Gantt charts
+  "gantt": {
+    "useMaxWidth": true,
+    "titleTopMargin": 24,
+    "barHeight": 20,
+    "barGap": 4,
+    "topPadding": 50,
+    "leftPadding": 80,
+    "rightPadding": 24,
+    "gridLineStartPadding": 35,
+    "fontSize": 14,
+    "sectionFontSize": 16,
+    "numberSectionStyles": 4
+  },
+
+  // User journeys
+  "journey": {
+    "useMaxWidth": true,
+    "fontSize": 14
+  },
+
+  // Pie charts
+  "pie": {
+    "useMaxWidth": true,
+    "strokeWidth": 1,
+    "textPosition": "inside"
+  }
 }
