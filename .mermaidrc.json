@@ -3,14 +3,10 @@
   "startOnLoad": false,
   "securityLevel": "strict",
   "arrowMarkerAbsolute": true,
-
-  // Reproducibility & CI-friendly rendering
   "deterministicIds": true,
   "deterministicIDSeed": "spectramind-v50",
   "logLevel": "error",
   "wrap": true,
-
-  // Adaptive Typography & Colors
   "fontFamily": "Inter, Roboto, Segoe UI, Helvetica Neue, Arial, ui-sans-serif, system-ui, sans-serif",
   "themeVariables": {
     "background": "transparent",
@@ -40,8 +36,6 @@
     "errorTextColor": "#fecaca",
     "fontSize": "16px"
   },
-
-  // Flowcharts
   "flowchart": {
     "htmlLabels": true,
     "useMaxWidth": true,
@@ -51,8 +45,6 @@
     "rankSpacing": 60,
     "curve": "basis"
   },
-
-  // Sequence diagrams
   "sequence": {
     "useMaxWidth": true,
     "mirrorActors": false,
@@ -63,28 +55,20 @@
     "activationWidth": 12,
     "bottomMarginAdj": 10
   },
-
-  // ER diagrams
   "er": {
     "useMaxWidth": true,
     "diagramPadding": 12
   },
-
-  // Class diagrams
   "class": {
     "useMaxWidth": true,
     "diagramPadding": 12
   },
-
-  // State diagrams
   "state": {
     "useMaxWidth": true,
     "padding": 10,
     "forkWidth": 12,
     "forkHeight": 12
   },
-
-  // Gantt charts
   "gantt": {
     "useMaxWidth": true,
     "titleTopMargin": 28,
@@ -99,23 +83,17 @@
     "numberSectionStyles": 4,
     "axisFormat": "%m-%d"
   },
-
-  // User journeys
   "journey": {
     "useMaxWidth": true,
     "fontSize": 14,
     "padding": 12
   },
-
-  // Pie charts
   "pie": {
     "useMaxWidth": true,
     "strokeWidth": 1.2,
     "textPosition": "inside",
     "fontSize": 14
   },
-
-  // Mindmaps
   "mindmap": {
     "useMaxWidth": true,
     "padding": 12,
