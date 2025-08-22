@@ -1,11 +1,3 @@
-````markdown
-# `src/` — SpectraMind V50 Core (Ariel Sensor Array)
-
-Mission‑grade, neuro‑symbolic, physics‑informed AI for the **NeurIPS 2025 Ariel Data Challenge**.  
-This folder contains the full pipeline from **data → models → losses → symbolic logic → CLI & diagnostics**, built to run headless, reproducibly, and fast. The system is CLI‑first with Hydra configs (no hidden notebook state) and is designed to meet the challenge’s strict runtime constraints across ~1,100 planets:contentReference[oaicite:0]{index=0},:contentReference[oaicite:1]{index=1}.
-
----
-
 ## 📦 What’s here (current tree)
 
 > Reflects your repository state in `/src` right now.
