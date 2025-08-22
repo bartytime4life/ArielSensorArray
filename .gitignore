@@ -1,9 +1,10 @@
+# ==============================================================================
 # .gitignore — SpectraMind V50 (NeurIPS 2025 Ariel Data Challenge)
-# Purpose: Ignore ephemeral, reproducible, and environment-specific files.
-# Mirrors .dvcignore for consistency between Git and DVC.
+# Purpose: Keep Git history clean (code + configs only). Everything reproducible
+# or environment-specific stays out. Synced with .dvcignore and .dockerignore.
+# ==============================================================================
 
-# ----------------------------------------------------------------------
-# Python build & cache
+# ===== Python / builds / caches =====
 __pycache__/
 *.py[cod]
 *.pyd
@@ -11,9 +12,18 @@ __pycache__/
 *.egg-info/
 *.egg
 *.whl
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
 
-# ----------------------------------------------------------------------
-# Virtual environments & package managers
+# Byte-compiled / optimized / DLL files
+*.dll
+*.pyc
+*.pyo
+*.pdb
+
+# ===== Virtual envs / package managers =====
 .venv/
 venv/
 env/
@@ -22,21 +32,24 @@ ENV/
 pip-wheel-metadata/
 site-packages/
 
-# ----------------------------------------------------------------------
-# IDE/editor settings
+# ===== Node / web toolchains (diagrams, dashboards) =====
+node_modules/
+dist/
+build/
+package-lock.json
+
+# ===== Editors / IDEs =====
 .vscode/
 .idea/
 *.swp
 *.swo
 
-# ----------------------------------------------------------------------
-# OS / system junk
+# ===== OS junk =====
 .DS_Store
 Thumbs.db
 Desktop.ini
 
-# ----------------------------------------------------------------------
-# Logs & temporary artifacts
+# ===== Logs & temp files =====
 logs/
 *.log
 *.tmp
@@ -45,42 +58,24 @@ logs/
 *.pid
 *.lock
 
-# ----------------------------------------------------------------------
-# Intermediate & scratch outputs
+# ===== Datasets, model weights, and heavy artifacts =====
+# Use DVC/lakeFS for versioning; keep pointers (.dvc) in Git, not the data.
+data/**
+!data/.gitkeep
+!*.dvc
+
+# ===== Intermediate & cache outputs (pipeline-generated) =====
 outputs/checkpoints/
 outputs/intermediate/
 outputs/temp/
 outputs/cache/
 outputs/debug/
+outputs/tmp/
 
-# ----------------------------------------------------------------------
-# Model bundles & artifacts (tracked selectively in pipeline)
-*.ckpt
-*.pth
-*.pt
-*.onnx
-*.h5
-
-# ----------------------------------------------------------------------
-# Kaggle / competition specifics
-.kaggle/
-kaggle.json
-*.ipynb  # Kaggle-synced notebooks (prefer notebooks/ dir)
-
-# ----------------------------------------------------------------------
-# Jupyter / notebooks
-.ipynb_checkpoints/
-notebooks/.ipynb_checkpoints/
-
-# ----------------------------------------------------------------------
-# DVC internals (Git tracks only dvc.yaml + .dvc files, not cache)
-.dvc/cache/
-.dvc/tmp/
-.dvc/plots/
-
-# ----------------------------------------------------------------------
-# Diagnostics, reports & dashboards (reproducible)
+# ===== Diagnostics, reports & dashboards (reproducible) =====
 outputs/diagnostics/
+reports/
+dashboards/
 *.html
 *.htm
 *.png
@@ -93,30 +88,61 @@ outputs/diagnostics/
 *.json
 *.md
 
-# ----------------------------------------------------------------------
-# Submission bundles (reproducible via pipeline)
+# ===== Submissions (reproducible via CLI) =====
+submission.csv
+submission.zip
 outputs/submission.csv
 outputs/submission.zip
 outputs/submission_bundle.zip
+outputs/submission/**/*.zip
+outputs/submission/**/*.csv
 
-# ----------------------------------------------------------------------
-# Generated configs & manifests
+# ===== Generated configs & manifests (run-local, not source-of-truth) =====
 hydra_outputs/
 multirun/
 run_logs/
 manifest.json
 diagnostic_summary.json
 run_hash_summary_v50.json
+version_manifest.json
 
-# ----------------------------------------------------------------------
-# Local GUI/UX assets (regenerable)
+# ===== Assets (generated) =====
 assets/screenshots/
 assets/plots/
 assets/tmp/
+assets/diagrams/
+!assets/.gitkeep
 
-# ----------------------------------------------------------------------
-# Hugging Face / MLflow / W&B caches
-.huggingface/
-wandb/
-mlruns/
-*.mlmodel
+# ===== Kaggle / competition specifics =====
+.kaggle/
+kaggle.json
+input/
+working/
+
+# ===== DVC internals (Git tracks only dvc.yaml and *.dvc pointers) =====
+.dvc/cache/
+.dvc/tmp/
+.dvc/plots/
+.dvc/config.local
+
+# ===== Test coverage / reports =====
+coverage/
+.coverage*
+htmlcov/
+
+# ===== Secrets & local environment =====
+.env
+.env.*
+.envrc
+.aws/
+.gcloud/
+.azure/
+
+# ===== Archives / bundles =====
+*.tar
+*.tar.gz
+*.7z
+*.zip
+
+# ===== Keep empty essential dirs in Git =====
+!outputs/.gitkeep
