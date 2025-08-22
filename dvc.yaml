@@ -1,70 +1,96 @@
 # ==============================================================================
 # dvc.yaml — SpectraMind V50 (ArielSensorArray)
 # ------------------------------------------------------------------------------
-# Declarative pipeline for reproducible runs:
-#   • From raw Ariel telescope frames → calibrated light curves → μ/σ spectra
-#   • Physics-informed training (Mamba SSM + GNN)
-#   • Symbolic + SHAP diagnostics, FFT/UMAP/t-SNE overlays
-#   • Submission packaging for Kaggle CI
+# Declarative, CI‑safe pipeline:
+#   • raw → calibrated → train → predict → diagnostics → submit
+#   • Hydra-driven configs, DVC params/plots, Kaggle-ready bundle
+#   • Physics-informed (FGS1 Mamba, AIRS GNN) + neuro‑symbolic diagnostics
 #
-# Run:
-#   dvc repro                # rebuild full pipeline
-#   dvc exp run              # run an experiment
-#   dvc plots diff           # compare metrics between runs
+# Usage:
+#   dvc repro                 # rebuild entire pipeline
+#   dvc exp run               # run an experiment with param overrides
+#   dvc plots show            # render plots configured below
+#   dvc plots diff            # compare plots across commits/experiments
 # ==============================================================================
 
 stages:
+
   # ------------------------------------------------------------------
   calibrate:
     cmd: >
       poetry run spectramind calibrate
-        --input data/raw
-        --output data/calibrated
+        --config-dir config
+        --config-name config_v50.yaml
+        --input ${data.fgs1_path} ${data.airs_path}
+        --output ${data.calibration_path}
         --log logs/calibration.log
     deps:
-      - data/raw
-      - configs/calibration.yaml
+      - config/config_v50.yaml
       - src/pipeline/calibration_pipeline.py
+      - ${data.fgs1_path}
+      - ${data.airs_path}
     outs:
-      - data/calibrated
+      - ${data.calibration_path}
+    params:
+      - data.fgs1_path
+      - data.airs_path
+      - data.calibration_path
     metrics:
       - logs/calibration.json
     plots:
-      - logs/calibration_plots/*.png
+      - logs/calibration_plots
 
   # ------------------------------------------------------------------
   train:
     cmd: >
       poetry run spectramind train
-        --config configs/config_v50.yaml
-        --data data/calibrated
-        --out outputs/model
+        --config-dir config
+        --config-name config_v50.yaml
+        training.epochs=${training.epochs}
+        training.batch_size=${training.batch_size}
+        training.lr=${training.lr}
+        training.seed=${training.seed}
+        model.encoder=${model.encoder}
+        model.gnn=${model.gnn}
+        model.decoder=${model.decoder}
+        data.calibration_path=${data.calibration_path}
+        +outputs.dir=outputs/models
     deps:
-      - data/calibrated
-      - configs/config_v50.yaml
+      - ${data.calibration_path}
+      - config/config_v50.yaml
       - src/train/train_v50.py
       - src/models/fgs1_mamba.py
       - src/models/airs_gnn.py
       - src/models/multi_scale_decoder.py
     outs:
-      - outputs/model
+      - outputs/models
+    params:
+      - training
+      - model
+      - data.calibration_path
     metrics:
-      - outputs/model/metrics.json
+      - outputs/models/metrics.json
     plots:
-      - outputs/model/loss_curve.png
+      - outputs/models/loss_curve.png
 
   # ------------------------------------------------------------------
   predict:
     cmd: >
       poetry run spectramind predict
-        --model outputs/model
-        --data data/calibrated
-        --out outputs/predictions
+        --config-dir config
+        --config-name config_v50.yaml
+        --model outputs/models
+        --input ${data.calibration_path}
+        --output outputs/predictions
     deps:
-      - outputs/model
+      - outputs/models
+      - ${data.calibration_path}
       - src/predict/predict_v50.py
     outs:
       - outputs/predictions
+    params:
+      - data.bins
+      - submission.kaggle_format
     metrics:
       - outputs/predictions/summary.json
 
@@ -72,9 +98,11 @@ stages:
   diagnostics:
     cmd: >
       poetry run spectramind diagnose dashboard
+        --config-dir config
+        --config-name config_v50.yaml
         --pred outputs/predictions
         --out outputs/diagnostics
-        --html outputs/diagnostics/report.html
+        --html-out outputs/diagnostics/report.html
     deps:
       - outputs/predictions
       - src/diagnostics/generate_html_report.py
@@ -85,6 +113,8 @@ stages:
       - src/diagnostics/symbolic_influence_map.py
     outs:
       - outputs/diagnostics
+    params:
+      - diagnostics
     metrics:
       - outputs/diagnostics/diagnostic_summary.json
     plots:
@@ -95,14 +125,61 @@ stages:
   submit:
     cmd: >
       poetry run spectramind submit
+        --config-dir config
+        --config-name config_v50.yaml
         --pred outputs/predictions
         --bundle outputs/submission/bundle.zip
         --meta outputs/submission/manifest.json
+        --validate ${submission.validate_before_zip}
     deps:
       - outputs/predictions
+      - outputs/diagnostics
       - src/cli/cli_submit.py
     outs:
       - outputs/submission/bundle.zip
       - outputs/submission/manifest.json
+    params:
+      - submission
     metrics:
       - outputs/submission/manifest.json
+
+# ------------------------------------------------------------------------------
+# Global metrics/plots (DVC will discover series; HTML/PNG listed for convenience)
+# ------------------------------------------------------------------------------
+metrics:
+  - outputs/diagnostics/diagnostic_summary.json:
+      cache: false
+
+plots:
+  - ROC:
+      path: outputs/diagnostics/roc.csv
+      x: fpr
+      y:
+        - tpr
+      title: "ROC Curve"
+  - Calibration:
+      path: outputs/diagnostics/reliability.csv
+      x: expected
+      y:
+        - observed
+      title: "Uncertainty Calibration (Reliability)"
+  - GLL:
+      path: outputs/diagnostics/binwise.csv
+      x: bin
+      y:
+        - gll
+      title: "Gaussian Log-Likelihood per Bin"
+  - FFT:
+      path: outputs/diagnostics/fft.csv
+      x: frequency
+      y:
+        - power
+      title: "FFT Power Spectrum"
+  - Symbolic:
+      path: outputs/diagnostics/symbolic_violations.csv
+      x: bin
+      y:
+        - violation_score
+      title: "Symbolic Rule Violations"
+
+# ==============================================================================
