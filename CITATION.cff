@@ -1,4 +1,3 @@
-
 cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
 type: software
@@ -21,9 +20,8 @@ date-released: "2025-08-21"
 license: Apache-2.0
 
 repository-code: "https://github.com/bartytime4life/SpectraMindV50"
-url: "https://github.com/bartytime4life/SpectraMindV50"
 repository-artifact: "https://zenodo.org/record/1234567"
-repository: "https://www.kaggle.com/competitions/ariel-data-challenge-2025"
+url: "https://github.com/bartytime4life/SpectraMindV50"
 
 identifiers:
   - type: doi
@@ -61,15 +59,15 @@ keywords:
 authors:
   - given-names: "Andy"
     family-names: "Barta"
-    orcid: "0000-0002-1825-0097"
+    orcid: "https://orcid.org/0000-0002-1825-0097"
     email: "andrew.barta@example.com"
     affiliation: "SpectraMind Research / NeurIPS 2025 Ariel Data Challenge"
   - name: "SpectraMind V50 Team"
     affiliation: "SpectraMind Research / NeurIPS 2025 Ariel Challenge"
 
 contact:
-  - email: "andrew.barta@example.com"
-    name: "Andy Barta"
+  - name: "Andy Barta"
+    email: "andrew.barta@example.com"
 
 preferred-citation:
   type: article
@@ -77,7 +75,7 @@ preferred-citation:
   authors:
     - given-names: "Andy"
       family-names: "Barta"
-      orcid: "0000-0002-1825-0097"
+      orcid: "https://orcid.org/0000-0002-1825-0097"
       affiliation: "SpectraMind Research"
     - name: "SpectraMind V50 Team"
       affiliation: "SpectraMind Research / NeurIPS 2025 Ariel Challenge"
@@ -86,7 +84,3 @@ preferred-citation:
   publisher: "NeurIPS"
   doi: "10.5281/zenodo.1234567"
   url: "https://github.com/bartytime4life/SpectraMindV50"
-```
-
----
-
