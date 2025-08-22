@@ -1,11 +1,11 @@
 # .github/workflows/mermaid-export.yml
 # ==============================================================================
-# SpectraMind V50 — Mermaid Export (v2)
-# Renders Mermaid diagrams (SVG/PNG/PDF) from:
-#  • Markdown-embedded code fences (via scripts/export_mermaid.py)
-#  • Raw .mmd sources (via @mermaid-js/mermaid-cli)
-# Triggers on doc changes, PRs (to validate), and manual dispatch with knobs.
-# Adds caching, matrix formats, theme support, PR previews, and commit gating.
+# SpectraMind V50 — Mermaid Export (light + dark, SVG/PNG/PDF)
+# Renders from:
+#   • Markdown-embedded mermaid fences (optional scripts/export_mermaid.py)
+#   • Raw .mmd sources (via @mermaid-js/mermaid-cli)
+# Triggers on doc changes, PRs (preview), and manual dispatch.
+# Adds deterministic IDs via .mermaidrc, dark variant pass, caching, artifacts, and commit/PR gating.
 # ==============================================================================
 
 name: Mermaid Export
@@ -20,7 +20,8 @@ on:
       - "docs/**/*.mmd"
       - "diagrams/**/*.mmd"
       - "scripts/export_mermaid.py"
-      - ".mermaidrc*"
+      - ".mermaidrc.json"
+      - ".mermaidrc-dark.json"
       - "package.json"
       - "package-lock.json"
   pull_request:
@@ -32,13 +33,14 @@ on:
       - "docs/**/*.mmd"
       - "diagrams/**/*.mmd"
       - "scripts/export_mermaid.py"
-      - ".mermaidrc*"
+      - ".mermaidrc.json"
+      - ".mermaidrc-dark.json"
       - "package.json"
       - "package-lock.json"
   workflow_dispatch:
     inputs:
       files:
-        description: "Space-separated Markdown files to scan (default scans ARCHITECTURE.md README.md)."
+        description: "Space-separated Markdown files to scan (default: ARCHITECTURE.md README.md)."
         required: false
         default: "ARCHITECTURE.md README.md"
         type: string
@@ -47,15 +49,10 @@ on:
         required: false
         default: "svg"
         type: string
-      export_png_scale:
+      png_scale:
         description: "PNG scale (mmdc -s, e.g., 2)."
         required: false
         default: "2"
-        type: string
-      theme:
-        description: "Mermaid theme: default|dark|forest|neutral (blank = .mermaidrc)."
-        required: false
-        default: ""
         type: string
       outdir:
         description: "Output directory."
@@ -87,14 +84,21 @@ jobs:
   render:
     name: Render Mermaid diagrams
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
 
     env:
-      MD_FILES: ${{ inputs.files || 'ARCHITECTURE.md README.md' }}
-      OUT_DIR:  ${{ inputs.outdir || 'docs/diagrams' }}
-      FORMATS:  ${{ inputs.formats || 'svg' }}
-      THEME:    ${{ inputs.theme || '' }}
-      PNG_SCALE: ${{ inputs.export_png_scale || '2' }}
+      # Inputs (with safe fallbacks for push/PR events)
+      MD_FILES:  ${{ inputs.files || 'ARCHITECTURE.md README.md' }}
+      OUT_DIR:   ${{ inputs.outdir || 'docs/diagrams' }}
+      FORMATS:   ${{ inputs.formats || 'svg' }}
+      PNG_SCALE: ${{ inputs.png_scale || '2' }}
+
+      # Config paths (root)
+      RC_LIGHT: .mermaidrc.json
+      RC_DARK:  .mermaidrc-dark.json
+
+      # Render roots
+      RAW_GLOBS: "diagrams/**/*.mmd docs/**/*.mmd"
 
     steps:
       - name: Checkout
@@ -102,24 +106,25 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Ensure output dir
-        run: mkdir -p "${OUT_DIR}"
+      - name: Ensure output directories
+        run: |
+          mkdir -p "${OUT_DIR}/light" "${OUT_DIR}/dark" "${OUT_DIR}/raw/light" "${OUT_DIR}/raw/dark"
 
-      # ---------- Caches ----------
-      - name: Use Node 20
+      # ---------- Runtimes & Caches ----------
+      - name: Setup Node.js (20) with npm cache
         uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: "npm"
 
-      - name: Use Python 3.12
+      - name: Setup Python (3.12) with pip cache
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: "pip"
 
-      # Cache mmdc fonts and puppeteer chromium to speed up runs
-      - name: Cache Mermaid CLI artifacts
+      # Cache puppeteer chromium and npm cache used by @mermaid-js/mermaid-cli
+      - name: Cache Mermaid CLI (puppeteer + npm)
         uses: actions/cache@v4
         with:
           path: |
@@ -130,7 +135,7 @@ jobs:
             mmdc-${{ runner.os }}-
 
       # ---------- Install deps ----------
-      - name: Install npm deps (if package.json present)
+      - name: Install npm deps (with fallback)
         run: |
           if [ -f package.json ]; then
             npm ci
@@ -139,81 +144,94 @@ jobs:
             npm i -D @mermaid-js/mermaid-cli@^10
           fi
 
-      - name: Install Python deps (if script exists)
+      - name: Install Python deps (Markdown fence renderer optional)
         run: |
           python -m pip install --upgrade pip
           if [ -f "scripts/export_mermaid.py" ]; then
-            # Add your Python requirements here if any (e.g., markdown-it, beautifulsoup4)
             python -m pip install markdown-it-py beautifulsoup4
           fi
 
-      # ---------- Render Markdown-embedded diagrams ----------
-      - name: Render Mermaid from Markdown (export_mermaid.py)
+      # ---------- Render Mermaid from Markdown fences (if script present) ----------
+      - name: Render Mermaid from Markdown (light)
+        if: hashFiles('scripts/export_mermaid.py') != ''
         run: |
-          if [ -f "scripts/export_mermaid.py" ]; then
-            echo ">>> Rendering Mermaid fences from Markdown files:"
-            echo "FILES=${MD_FILES}"
-            echo "OUT_DIR=${OUT_DIR}  THEME='${THEME}'  FORMATS='${FORMATS}'"
-            # Respect THEME & FORMATS via env vars if your script supports them.
-            export MERMAID_THEME="${THEME}"
-            export MERMAID_FORMATS="${FORMATS}"
-            export MERMAID_OUTDIR="${OUT_DIR}"
-            python scripts/export_mermaid.py ${MD_FILES}
-          else
-            echo "scripts/export_mermaid.py not found — skipping Markdown rendering"
-          fi
+          echo ">>> Rendering Markdown fences (light): ${MD_FILES}"
+          export MERMAID_RC="${RC_LIGHT}"
+          export MERMAID_OUTDIR="${OUT_DIR}/light"
+          export MERMAID_FORMATS="${FORMATS}"
+          python scripts/export_mermaid.py ${MD_FILES}
 
-      # ---------- Render raw .mmd sources via mmdc ----------
+      - name: Render Mermaid from Markdown (dark)
+        if: hashFiles('scripts/export_mermaid.py') != ''
+        run: |
+          echo ">>> Rendering Markdown fences (dark): ${MD_FILES}"
+          export MERMAID_RC="${RC_DARK}"
+          export MERMAID_OUTDIR="${OUT_DIR}/dark"
+          export MERMAID_FORMATS="${FORMATS}"
+          python scripts/export_mermaid.py ${MD_FILES}
+
+      # ---------- Find raw .mmd ----------
       - name: Find .mmd files
         id: findmmd
         shell: bash
         run: |
-          mapfile -t MMD < <(git ls-files -- 'diagrams/**/*.mmd' 'docs/**/*.mmd' | tr -d '\r' || true)
-          echo "count=${#MMD[@]}" >> $GITHUB_OUTPUT
-          printf '%s\n' "${MMD[@]}" > mmd_list.txt || true
-          echo "mmd_list=$(paste -sd ' ' mmd_list.txt)" >> $GITHUB_OUTPUT
+          shopt -s globstar nullglob
+         files=()
+          for g in $RAW_GLOBS; do
+            for f in $g; do files+=("$f"); done
+          done
+          printf '%s\n' "${files[@]}" > mmd_list.txt
+          echo "count=${#files[@]}" >> $GITHUB_OUTPUT
 
-      - name: Render .mmd to requested formats
+      # ---------- Render raw .mmd via mmdc ----------
+      - name: Render .mmd (light + dark) to requested formats
         if: steps.findmmd.outputs.count != '0'
         shell: bash
         run: |
           set -euo pipefail
-          echo ">>> Rendering raw .mmd files to: ${FORMATS}"
           while IFS= read -r f; do
             [ -z "$f" ] && continue
             base="$(basename "$f" .mmd)"
-            # Theme flag only if provided (else rely on .mermaidrc)
-            THEME_FLAG=""
-            if [ -n "${THEME}" ]; then
-              THEME_FLAG="--theme ${THEME}"
-            fi
+            # Light
             for fmt in ${FORMATS}; do
               case "$fmt" in
                 svg)
-                  npx --yes @mermaid-js/mermaid-cli -i "$f" -o "${OUT_DIR}/${base}.svg" ${THEME_FLAG}
+                  npx --yes @mermaid-js/mermaid-cli -c "${RC_LIGHT}" -i "$f" -o "${OUT_DIR}/raw/light/${base}.light.svg"
                   ;;
                 png)
-                  npx --yes @mermaid-js/mermaid-cli -i "$f" -o "${OUT_DIR}/${base}.png" ${THEME_FLAG} -s "${PNG_SCALE}"
+                  npx --yes @mermaid-js/mermaid-cli -c "${RC_LIGHT}" -i "$f" -o "${OUT_DIR}/raw/light/${base}.light.png" -s "${PNG_SCALE}"
                   ;;
                 pdf)
-                  npx --yes @mermaid-js/mermaid-cli -i "$f" -o "${OUT_DIR}/${base}.pdf" ${THEME_FLAG}
+                  npx --yes @mermaid-js/mermaid-cli -c "${RC_LIGHT}" -i "$f" -o "${OUT_DIR}/raw/light/${base}.light.pdf"
                   ;;
                 *)
-                  echo "Unknown format: $fmt" >&2
-                  exit 1
+                  echo "Unknown format: $fmt" >&2; exit 1;;
+              esac
+            done
+            # Dark
+            for fmt in ${FORMATS}; do
+              case "$fmt" in
+                svg)
+                  npx --yes @mermaid-js/mermaid-cli -c "${RC_DARK}" -i "$f" -o "${OUT_DIR}/raw/dark/${base}.dark.svg"
+                  ;;
+                png)
+                  npx --yes @mermaid-js/mermaid-cli -c "${RC_DARK}" -i "$f" -o "${OUT_DIR}/raw/dark/${base}.dark.png" -s "${PNG_SCALE}"
+                  ;;
+                pdf)
+                  npx --yes @mermaid-js/mermaid-cli -c "${RC_DARK}" -i "$f" -o "${OUT_DIR}/raw/dark/${base}.dark.pdf"
                   ;;
               esac
             done
           done < mmd_list.txt
 
       # ---------- List output ----------
-      - name: List output
+      - name: List rendered outputs
         run: |
           echo ">>> Rendered files in ${OUT_DIR}:"
-          find "${OUT_DIR}" -maxdepth 2 -type f \( -name '*.svg' -o -name '*.png' -o -name '*.pdf' \) -print || true
+          find "${OUT_DIR}" -type f \( -name '*.svg' -o -name '*.png' -o -name '*.pdf' \) -print || true
 
-      # ---------- Upload artifact ----------
-      - name: Upload diagrams artifact
+      # ---------- Upload artifacts ----------
+      - name: Upload rendered diagrams
         uses: actions/upload-artifact@v4
         with:
           name: mermaid-diagrams
@@ -226,14 +244,14 @@ jobs:
         if: github.ref == 'refs/heads/main' && (inputs.auto_commit == 'true' || inputs.auto_commit == '')
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "ci(diagrams): export Mermaid diagrams"
+          commit_message: "ci(diagrams): export Mermaid diagrams (light+dark)"
           file_pattern: |
             ${{ env.OUT_DIR }}/**/*.svg
             ${{ env.OUT_DIR }}/**/*.png
             ${{ env.OUT_DIR }}/**/*.pdf
           branch: main
 
-      # ---------- Detect diagram changes on PR branches ----------
+      # ---------- Detect changes on PR branches ----------
       - name: Detect diagram changes
         id: detect
         if: github.ref != 'refs/heads/main'
@@ -253,22 +271,17 @@ jobs:
           (inputs.create_pr == 'true' || inputs.create_pr == '')
         uses: peter-evans/create-pull-request@v6
         with:
-          commit-message: "ci(diagrams): export Mermaid diagrams"
+          commit-message: "ci(diagrams): export Mermaid diagrams (light+dark)"
           title: "ci(diagrams): update rendered Mermaid diagrams"
           body: |
-            This PR updates rendered Mermaid diagrams from the latest Markdown/mmd sources.
+            This PR updates rendered Mermaid diagrams from Markdown fences and .mmd sources.
 
-            - Renderer: @mermaid-js/mermaid-cli + scripts/export_mermaid.py
             - Formats: `${{ env.FORMATS }}`
-            - Theme: `${{ env.THEME || '.mermaidrc' }}`
             - Output dir: `${{ env.OUT_DIR }}`
+            - Themes: `.mermaidrc.json` (light), `.mermaidrc-dark.json` (dark)
             - Triggered by: ${{ github.event_name }} on `${{ github.ref_name }}`
 
-            <details><summary>Preview links</summary>
-
-            Download the artifact from the workflow run named **mermaid-diagrams** to preview all assets locally.
-
-            </details>
+            Download the workflow artifact **mermaid-diagrams** for local preview.
           add-paths: |
             ${{ env.OUT_DIR }}/**/*.svg
             ${{ env.OUT_DIR }}/**/*.png
