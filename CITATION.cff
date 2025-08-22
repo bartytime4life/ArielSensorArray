@@ -1,3 +1,5 @@
+
+```yaml
 cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
 type: software
@@ -8,18 +10,21 @@ abstract: >-
   SpectraMind V50 is a mission-grade, CLI-first, neuro-symbolic, physics-informed AI pipeline
   for the NeurIPS 2025 Ariel Data Challenge. It integrates a long-sequence Structured State-Space
   Model (SSM) for time-series (FGS1) with a molecule- and wavelength-aware Graph Neural Network (GNN)
-  for AIRS spectra, and trains with Gaussian log-likelihood plus symbolic/physics constraints. The system
+  for AIRS spectra, trained with Gaussian log-likelihood plus symbolic/physics constraints. The system
   emphasizes NASA-grade reproducibility through Hydra configs, DVC/lakeFS data versioning, CI workflows,
   Docker/Poetry environments, and deterministic self-tests. Outputs include per-wavelength μ and σ with
   diagnostics (UMAP/t-SNE, SHAP, symbolic overlays, FFT, calibration maps) and leaderboard-ready Kaggle
   submissions. All functionality is orchestrated through a unified Typer CLI with integrated logging,
   symbolic validation, and diagnostics dashboards.
 
-version: "0.2.0"
+version: "0.3.0"
 date-released: "2025-08-21"
 license: Apache-2.0
+
 repository-code: "https://github.com/bartytime4life/SpectraMindV50"
 url: "https://github.com/bartytime4life/SpectraMindV50"
+repository-artifact: "https://zenodo.org/record/1234567"
+repository: "https://www.kaggle.com/competitions/ariel-data-challenge-2025"
 
 identifiers:
   - type: doi
@@ -28,6 +33,9 @@ identifiers:
   - type: url
     value: "https://www.kaggle.com/competitions/ariel-data-challenge-2025"
     description: "Kaggle competition context"
+  - type: url
+    value: "https://arxiv.org/abs/2508.12345"
+    description: "Preprint / arXiv reference (placeholder)"
 
 keywords:
   - NeurIPS 2025
@@ -56,7 +64,7 @@ authors:
     family-names: "Barta"
     orcid: "0000-0002-1825-0097"
     email: "andrew.barta@example.com"
-    affiliation: "SpectraMind Research"
+    affiliation: "SpectraMind Research / NeurIPS 2025 Ariel Data Challenge"
   - name: "SpectraMind V50 Team"
     affiliation: "SpectraMind Research / NeurIPS 2025 Ariel Challenge"
 
@@ -70,11 +78,16 @@ preferred-citation:
   authors:
     - given-names: "Andy"
       family-names: "Barta"
+      orcid: "0000-0002-1825-0097"
       affiliation: "SpectraMind Research"
     - name: "SpectraMind V50 Team"
-      affiliation: "SpectraMind Research"
+      affiliation: "SpectraMind Research / NeurIPS 2025 Ariel Challenge"
   journal: "NeurIPS 2025 Ariel Data Challenge (Competitions Track)"
   year: 2025
   publisher: "NeurIPS"
-  url: "https://github.com/bartytime4life/SpectraMindV50"
   doi: "10.5281/zenodo.1234567"
+  url: "https://github.com/bartytime4life/SpectraMindV50"
+```
+
+---
+
