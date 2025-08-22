@@ -1,173 +1,167 @@
-
-# SpectraMind V50 — Project Analysis  
+# SpectraMind V50 — Project Analysis
 *(NeurIPS 2025 Ariel Data Challenge)*
 
-> **Purpose**: This file is a *living audit* of the ArielSensorArray / SpectraMind V50 repository.  
-> It compares actual repo contents against the **engineering plan** and **external references** (Kaggle platform mechanics, competitor models), identifying what is implemented, validated, or pending.
+> **Purpose**: Living audit of the ArielSensorArray / SpectraMind V50 repository.  
+> Compares actual repo contents against the **engineering plan** and **external references** (Kaggle mechanics, competitor models), identifying what is implemented, validated, or pending.
 
 ---
 
 ## 0) Philosophy
 
-- **CLI-first**: all operations exposed via Typer CLI, no hidden notebook state.  
-- **Reproducibility**: Hydra configs, DVC data/artifacts, config + dataset hash logging.  
-- **Scientific rigor**: NASA-grade calibration and physics-informed modeling.  
-- **Automation**: CI/CD with self-tests and smoke pipelines on every push.  
-- **Competitive fit**: designed to respect Kaggle’s runtime envelope (~9h GPU limit, quotas) [oai_citation:2‡Kaggle Platform: Comprehensive Technical Guide.pdf](file-service://file-CrgG895i84phyLsyW9FQgf).  
-- **Adaptability**: learns from competitor model archetypes (MLP baselines, deep residual nets, spectrum regressors) [oai_citation:3‡Comparison of Kaggle Models from NeurIPS 2025 Ariel Data Challenge.pdf](file-service://file-CG661XRZ48CnBj69Lf5vTy).
+- **CLI‑first**: all operations via Typer; no hidden notebook state.   
+- **Reproducibility**: Hydra configs, DVC data/artifacts, config + dataset hash logging.   
+- **Scientific rigor**: NASA‑grade calibration and physics‑informed modeling.   
+- **Automation**: CI/CD with preflight tests and smoke runs on every push.   
+- **Competitive fit**: aligned to Kaggle runtime envelope & quotas; LB “shake‑up” aware.    
+- **Adaptability**: lessons absorbed from MLP baselines, deep residual MLPs, spectrum regressors. 
 
 ---
 
-## 1) Repository Structure
+## 1) Repository Structure (as‑built)
 
-| Directory       | Status  | Notes                                                                 |
-|-----------------|---------|-----------------------------------------------------------------------|
-| `src/`          | ✅      | Encoders (Mamba SSM, GNN), decoders, calibration modules, CLI.        |
-| `configs/`      | ✅      | Hydra group configs (`data/`, `model/`, `training/`, `diagnostics/`). |
-| `data/`         | ⚠️ DVC  | Versioned via DVC, placeholders present (`.gitkeep`).                 |
-| `outputs/`      | ✅      | Model checkpoints, predictions, diagnostics, logs.                    |
-| `logs/`         | ✅      | `v50_debug_log.md`, JSONL streams, pytest logs.                       |
-| `docs/`         | ✅      | Markdown docs, MkDocs config, diagrams (Mermaid + SVG export).        |
-| `.github/`      | ✅      | CI workflow with smoke pipeline + tests.                              |
+| Directory       | Status | Notes |
+|-----------------|:-----:|-------|
+| `src/`          | ✅ | Encoders (Mamba SSM, GNN), decoders, calibration, CLI—present per plan.  |
+| `configs/`      | ✅ | Hydra groups (`data/`, `model/`, `training/`, `diagnostics/`) with composition.  |
+| `data/`         | ⚠️ DVC | DVC tracked; pointers/hashes in repo; raw/processed split.  |
+| `outputs/`      | ✅ | Checkpoints, predictions, diagnostics, calibrated artifacts.  |
+| `logs/`         | ✅ | `v50_debug_log.md`, config/dataset hashes per run.  |
+| `.github/`      | ✅ | CI workflows incl. smoke/e2e & submission packaging.  |
+
+**Verdict:** Structure tracks the blueprint and supports auditability. 
 
 ---
 
 ## 2) Configuration & Reproducibility
 
-- Hydra v1.3 used for all runs.  
-- Overrides supported via CLI:  
+- Hydra 1.3 for all runs; CLI overrides supported.  
   ```bash
-  spectramind train data=kaggle model=v50 training=default
+  spectramind train data=kaggle model=v50 training=default +training.seed=1337
+````
 
-	•	DVC v3.x integrated: dvc.yaml defines calibrate→train→predict→diagnose stages.
-	•	Config + dataset + git SHA appended to v50_debug_log.md for every run.
-	•	Dockerfile + Poetry lock guarantee environment reproducibility.
+* DVC v3.x integrated; stages defined for calibrate→train→predict→diagnose.
+* Each run logs config, dataset hash, and Git SHA to `v50_debug_log.md`.
+* Poetry + Docker lock the environment for CI/Kaggle parity.
 
-✅ Implemented fully.
+**Status:** ✅ Fully implemented and verifiable.
 
-⸻
+---
 
-3) CLI Design
-	•	Unified entrypoint: spectramind --help.
-	•	Subcommands include: selftest, calibrate, train, predict, calibrate-temp, corel-train, diagnose, submit, analyze-log, check-cli-map.
-	•	Rich UX: tables, progress bars, CI-friendly error visibility.
-	•	Append-only log: logs/v50_debug_log.md.
+## 3) CLI Design
 
-✅ Strong, production-grade CLI layer.
+* Unified entrypoint `spectramind`; subcommands: `selftest`, `calibrate`, `train`, `predict`, `calibrate-temp`, `corel-train`, `diagnose`, `submit`, `analyze-log`, `check-cli-map`.
+* Rich console UX (progress bars, tables), CI‑friendly logs.
 
-⸻
+**Status:** ✅ Production‑grade CLI; matches design.
 
-4) Calibration Chain
+---
 
-Implements full kill chain:
-	•	Bias/dark subtraction
-	•	Flat-fielding
-	•	Nonlinearity & ADC corrections
-	•	Wavelength alignment
-	•	Normalization
+## 4) Calibration Chain
 
-Artifacts persisted in outputs/calibrated/.
+Implements physics‑grade kill chain (ADC, bias/dark, flat, nonlinearity, wavelength align, jitter, normalization) with artifacts under `outputs/calibrated/`.
 
-✅ Physics-grade calibration present.
+**Status:** ✅ Present and consistent with plan.
 
-⸻
+---
 
-5) Modeling Architecture
-	•	FGS1: Mamba SSM encoder for long lightcurve sequences.
-	•	AIRS: Graph Neural Network with edge types: λ-adjacency, molecule groups, detector regions.
-	•	Fusion: latent concatenation.
-	•	Decoders:
-	•	μ: MLP with smoothness + FFT penalties.
-	•	σ: heteroscedastic head, calibrated via Temp Scaling + COREL.
+## 5) Modeling Architecture
 
-✅ Implemented per design.
+* **FGS1**: Mamba SSM for long light‑curve sequences.
+* **AIRS**: GNN with edge types (λ adjacency, molecule groups, detector regions).
+* **Fusion**: latent concatenation;
+* **Decoders**: μ head (smoothness/FFT priors), σ head (heteroscedastic).
 
-⸻
+**Status:** ✅ Implemented per design (encoders/decoders, fusion).
 
-6) Uncertainty Quantification
-	•	Aleatoric: σ predictions via GLL.
-	•	Epistemic: ensemble & dropout-ready.
-	•	Calibration: Temp scaling; COREL graph-based conformal.
-	•	Coverage logs: JSON + plots.
+---
 
-⚠️ COREL symbolic weighting and temporal edges not yet fully integrated.
+## 6) Uncertainty Quantification
 
-⸻
+* **Aleatoric**: σ via GLL.
+* **Epistemic**: ensemble/MC‑dropout ready.
+* **Calibration**: temperature scaling; **SpectralCOREL** GNN for binwise conformalization.
 
-7) Diagnostics & Explainability
-	•	UMAP & t-SNE latent visualizations.
-	•	SHAP overlays (FGS1 temporal, AIRS spectral).
-	•	FFT of residuals.
-	•	Symbolic constraints: smoothness, nonnegativity, asymmetry, alignment.
-	•	HTML dashboard: aggregates plots, overlays, logs.
+**Gap:** ⚠️ COREL symbolic weighting + temporal edges not fully wired (planned). *(Roadmap below.)*
 
-✅ Implemented; symbolic overlays expanding.
+---
 
-⸻
+## 7) Diagnostics & Explainability
 
-8) Kaggle Platform Integration
-	•	Runtime: 9h GPU/CPU sessions, ~30 GPU hrs/week ￼.
-	•	Notebooks: Kaggle-API compatibility (datasets, predictions, submissions).
-	•	Leaderboards: public LB (partial test split) vs private LB (final eval). Risk of “shake-up” mitigated by symbolic guardrails ￼.
-	•	Submission: spectramind submit packages CSV + ZIP for Kaggle competition rules.
+* UMAP & t‑SNE latents; SHAP overlays; FFT of residuals; symbolic constraints (smoothness, nonnegativity, asymmetry, alignment).
+* HTML dashboard aggregating plots/overlays/logs.
 
-✅ Aligned to Kaggle infra.
+**Status:** ✅ Implemented; symbolic overlays expanding.
 
-⸻
+---
 
-9) Competitive Benchmarking (vs Kaggle Models)
+## 8) Kaggle Platform Integration
 
-Model	Strengths	Weaknesses	Lessons for V50
-Thang Do Duc — 0.329 LB ￼	Simple residual MLP, fast, reproducible baseline	No uncertainty, weak domain priors	Good reference baseline; we exceed by adding physics/symbolics.
-V1ctorious3010 — 80bl-128hd ￼	Very deep (~80-layer) residual MLP, high capacity	Overfit risk, heavy compute	Our Mamba/GNN fusion is leaner, physics-aligned, avoids brute-force depth.
-Fawad Awan — Spectrum Regressor ￼	Multi-output PyTorch regressor, structured outputs	Limited explainability, no physics priors	V50 adds symbolic physics and uncertainty to surpass.
+* Sessions & quotas: GPU runtime and weekly limits accounted; public vs private LB mechanics considered (mitigates “shake‑up”).
+* Notebooks/Artifacts: compatible with datasets and submissions; `spectramind submit` builds competition‑ready ZIP.
 
-✅ V50 goes beyond Kaggle baselines by integrating symbolic constraints, physics priors, and calibrated uncertainty.
+**Status:** ✅ Aligned to Kaggle infra.
 
-⸻
+---
 
-10) Automation & CI/CD
-	•	GitHub Actions runs selftest, toy smoke pipeline.
-	•	Pre-commit: ruff, black, isort, yaml, whitespace.
-	•	Artifacts hashed and logged for audit.
+## 9) Competitive Benchmarking (Kaggle Models)
 
-✅ Robust CI/CD pipeline.
+| Model                               | Strengths                                        | Weaknesses                                | Lessons                                           |
+| ----------------------------------- | ------------------------------------------------ | ----------------------------------------- | ------------------------------------------------- |
+| **Thang Do Duc — 0.329 LB**         | Simple residual MLP; fast; reproducible baseline | No uncertainty; weak domain priors        | Good baseline; V50 adds physics & UQ.             |
+| **V1ctorious3010 — 80bl‑128hd**     | Deep (\~80‑layer) residual MLP; capacity         | Overfit risk; heavy compute               | V50’s Mamba/GNN fusion is leaner/physics‑aligned. |
+| **Fawad Awan — Spectrum Regressor** | Multi‑output structured regressor                | Limited explainability; no physics priors | V50 adds symbolic constraints + calibrated σ.     |
 
-⸻
+**Summary:** ✅ V50 goes beyond baselines with symbolic physics + calibrated UQ.
 
-11) Pending / Roadmap
-	•	GUI dashboard (React/FastAPI).
-	•	Expanded symbolic overlays + violation heatmaps.
-	•	COREL calibration expansion (temporal edges, symbolic weighting).
-	•	Coverage heatmaps per-bin.
-	•	Kaggle leaderboard automation with artifact gates.
+---
 
-⸻
+## 10) Automation & CI/CD
 
-12) Status Matrix
+* GitHub Actions runs unit tests + toy smoke pipeline; logs are hashed/auditable.
+* Pre‑commit/lint toolchain active (ruff/black/isort/yaml). *(As configured in workflows.)*
 
-Area	Status	Notes
-Repo structure	✅ Solid	Hydra/DVC clean.
-CLI	✅ Complete	Typer unified, Rich UX.
-Calibration	✅ Strong	Kill chain implemented.
-Modeling	✅ Physics	Mamba SSM + GNN fusion.
-Uncertainty	⚠️ Partial	COREL symbolic/temporal pending.
-Diagnostics	✅ Active	SHAP, FFT, UMAP, symbolic overlays.
-CI/CD	✅ Robust	Selftest + smoke pipelines.
-Kaggle fit	✅ Aligned	Runtime & submission ready.
-GUI	🚧 Planned	Thin dashboard mirror.
+**Status:** ✅ Robust.
 
+---
 
-⸻
+## 11) Pending / Roadmap
 
-13) Action Items
-	•	Harden COREL with symbolic priors + temporal edges.
-	•	Expand symbolic overlays & violation heatmaps.
-	•	Build GUI dashboard.
-	•	Add Kaggle leaderboard automation job.
-	•	Deepen calibration validation (coverage heatmaps).
+* **COREL**: add symbolic weighting + temporal edge modeling for bin‑correlated coverage.
+* **Symbolic overlays**: expand violation heatmaps and rule leaderboards in the HTML report.
+* **GUI dashboard**: thin React/FastAPI mirror of CLI diagnostics (no hidden state).
+* **Kaggle automation**: gated packaging & upload step in CI.
+* **Coverage plots**: per‑bin coverage heatmaps post‑COREL.
 
-⸻
+---
 
-Maintainers: SpectraMind Team
-Contact: GitHub Issues
+## 12) Status Matrix
+
+| Area           | Status | Notes                                       |
+| -------------- | :----: | ------------------------------------------- |
+| Repo structure |    ✅   | Hydra/DVC clean; plan‑conformant.           |
+| CLI            |    ✅   | Typer unified; Rich UX.                     |
+| Calibration    |    ✅   | Full kill chain.                            |
+| Modeling       |    ✅   | Mamba SSM + GNN fusion.                     |
+| Uncertainty    |   ⚠️   | COREL symbolic/temporal extensions pending. |
+| Diagnostics    |    ✅   | SHAP/FFT/UMAP + symbolic overlays.          |
+| CI/CD          |    ✅   | Selftest + smoke pipelines.                 |
+| Kaggle fit     |    ✅   | Runtime & submission ready.                 |
+| GUI            |   🚧   | Thin dashboard planned.                     |
+
+---
+
+## 13) Action Items
+
+1. Harden **COREL** with symbolic priors + temporal edges → coverage plots + JSON/PNG exports.
+2. Expand **symbolic overlays** & violation heatmaps; surface top‑k rules per planet in HTML.
+3. Build **GUI dashboard** (React/FastAPI) mirroring CLI diagnostics; keep state auditable.
+4. Add **Kaggle leaderboard automation** with artifact integrity gates in CI.
+5. Deepen **calibration validation** with per‑bin coverage heatmaps & region summaries.
+
+---
+
+**Maintainers:** SpectraMind Team
+**Contact:** GitHub Issues
+
+```
+```
