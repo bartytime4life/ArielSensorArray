@@ -1,5 +1,3 @@
-
-````markdown
 # SpectraMind V50 — ArielSensorArray
 
 **Neuro-symbolic, physics-informed AI pipeline for the NeurIPS 2025 Ariel Data Challenge**
