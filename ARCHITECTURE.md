@@ -26,16 +26,16 @@ It integrates **astrophysical calibration**, **symbolic physics-informed modelin
 
 ### 🛰️ Core Highlights
 
-* **Calibration Kill Chain** — ADC, bias, dark, flat, nonlinearity, dead-pixel masking, CDS, wavelength alignment, jitter correction.
-* **Dual Encoders**:
+* **Calibration Kill Chain** — ADC, bias, dark, flat, nonlinearity, dead-pixel masking, CDS, wavelength alignment, jitter correction.  
+* **Dual Encoders**:  
   • **FGS1 → Mamba SSM** (long-sequence transit modeling)  
-  • **AIRS → Graph Neural Network** (edges = wavelength adjacency, molecule priors, detector regions)
-* **Decoders** — μ (mean spectrum), σ (uncertainty), quantile & diffusion heads.
-* **Uncertainty Calibration** — temperature scaling + **SpectralCOREL GNN** with temporal bin correlations.
-* **Diagnostics** — GLL/entropy heatmaps, SHAP overlays, symbolic rule maps, FFT/UMAP/t-SNE, HTML dashboards.
-* **Symbolic Physics Layer** — smoothness, positivity, asymmetry, FFT suppression, radiative transfer, gravitational & micro-lensing corrections.
-* **Reproducibility** — Hydra configs, DVC/lakeFS, deterministic seeds, Git SHA + config hashes, CI pipelines.
-* **Unified CLI** — `spectramind` orchestrates train, predict, calibrate, diagnose, ablate, submit, selftest, analyze-log, check-cli-map.
+  • **AIRS → Graph Neural Network** (edges = wavelength adjacency, molecule priors, detector regions)  
+* **Decoders** — μ (mean spectrum), σ (uncertainty), plus quantile & diffusion heads.  
+* **Uncertainty Calibration** — temperature scaling + **SpectralCOREL GNN** with temporal bin correlations.  
+* **Diagnostics** — GLL/entropy maps, SHAP overlays, symbolic rule scoring, FFT/UMAP/t-SNE, HTML dashboards.  
+* **Symbolic Physics Layer** — smoothness, positivity, asymmetry, FFT suppression, radiative transfer, gravitational & micro-lensing corrections.  
+* **Reproducibility** — Hydra configs, DVC/lakeFS, deterministic seeds, Git SHA + config hashes, CI pipelines.  
+* **Unified CLI** — `spectramind` orchestrates train, predict, calibrate, diagnose, ablate, submit, selftest, analyze-log, check-cli-map.  
 
 ⏱ Optimized for **≤9 hr runtime** on ~1,100 planets with Kaggle A100 GPUs.
 
@@ -61,7 +61,7 @@ flowchart TD
     G --> H4[FFT/UMAP/t-SNE]
     G --> I[HTML Dashboard]
     F --> J[Submission Bundle (Kaggle)]
-````
+```
 
 ---
 
@@ -83,61 +83,61 @@ flowchart LR
     L --> M[Calibrated Cubes & Light Curves]
 ```
 
-* CDS reduces low-frequency drift; cosmic rays detected as temporal outliers.
-* Jitter correction leverages FGS1-driven motion to decorrelate AIRS systematics.
-* All steps parameterized via Hydra and tracked via DVC.
+* CDS reduces low-frequency drift; cosmic rays detected as temporal outliers.  
+* Jitter correction leverages FGS1-driven motion to decorrelate AIRS systematics.  
+* All steps parameterized via Hydra and tracked via DVC.  
 
 ---
 
 ## 3) Modeling & Uncertainty
 
-* **Encoders**
-  • FGS1 → Mamba SSM for long-range transit dynamics.
-  • AIRS → GNN with molecule-informed edges and detector priors.
+* **Encoders**  
+  • FGS1 → Mamba SSM for long-range transit dynamics.  
+  • AIRS → GNN with molecule-informed edges and detector priors.  
 
-* **Decoders**
-  • μ (mean spectrum across 283 bins).
-  • σ (aleatoric uncertainty with symbolic overlay).
+* **Decoders**  
+  • μ (mean spectrum across 283 bins).  
+  • σ (aleatoric uncertainty with symbolic overlay).  
 
-* **Calibration**
-  • Temperature scaling for global confidence.
-  • SpectralCOREL (bin-to-bin conformal calibration).
+* **Calibration**  
+  • Temperature scaling for global calibration.  
+  • SpectralCOREL for bin-to-bin conformal calibration.  
 
 ---
 
 ## 4) Diagnostics & Symbolic Layer
 
-* **Metrics & Maps:** GLL, entropy, calibration plots.
-* **Explainability:** SHAP overlays, attention/attribution traces.
-* **Symbolic Rules:** smoothness, positivity, asymmetry, FFT-band suppression, radiative transfer checks.
-* **Interactive Outputs:** HTML dashboards (UMAP/t-SNE, rule matrices, FFT panels), CSV/JSON exports.
+* **Metrics & Maps:** GLL, entropy, calibration plots.  
+* **Explainability:** SHAP overlays, attention/attribution traces.  
+* **Symbolic Rules:** smoothness, positivity, asymmetry, FFT-band suppression, radiative transfer checks.  
+* **Interactive Outputs:** HTML dashboards (UMAP/t-SNE, rule matrices, FFT panels), CSV/JSON exports.  
 
 ---
 
 ## 5) Reproducibility & CI
 
-* **Hydra** — config groups, overrides, run hashes.
-* **DVC** — versioned datasets, checkpoints, diagnostics.
-* **Poetry + Docker** — environment parity across dev/CI/Kaggle.
-* **GitHub Actions** —
-  • `ci.yml` (unit tests + build)
-  • `diagnostics.yml` (dashboards)
-  • `nightly-e2e.yml` (full smoke test)
-  • `kaggle-submit.yml` (submission bundling)
-  • `lint.yml` (ruff, black, isort, mypy, yaml, md)
-  • `artifact-sweeper.yml` (cache cleanup)
+* **Hydra** — config groups, overrides, run hashes.  
+* **DVC** — versioned datasets, checkpoints, diagnostics.  
+* **Poetry + Docker** — environment parity across dev/CI/Kaggle.  
+* **GitHub Actions** —  
+  • `ci.yml` (unit tests + build)  
+  • `diagnostics.yml` (dashboards)  
+  • `nightly-e2e.yml` (full smoke test)  
+  • `kaggle-submit.yml` (submission bundling)  
+  • `lint.yml` (ruff, black, isort, mypy, yaml, md)  
+  • `artifact-sweeper.yml` (cache cleanup)  
 
 ---
 
 ## 6) Kaggle Benchmarks
 
-We benchmarked against three notable Kaggle models:
+We benchmarked against three notable Kaggle models:contentReference[oaicite:1]{index=1}:
 
-* **Thang Do Duc “0.329 LB” baseline** — shallow residual MLP, quick training, reproducible but no uncertainty.
-* **V1ctorious3010 “80bl-128hd-impact”** — ultra-deep (80 residual blocks), heavy regularization, strong leaderboard score.
-* **Fawad Awan “Spectrum Regressor”** — multi-output regression, efficient training, decent performance.
+* **Thang Do Duc “0.329 LB” baseline** — shallow residual MLP; easy to reproduce, no uncertainty handling.  
+* **V1ctorious3010 “80bl-128hd-impact”** — extremely deep (80 residual blocks); strong leaderboard score but heavy runtime.  
+* **Fawad Awan “Spectrum Regressor”** — multi-output regression; efficient and decently performing.  
 
-**SpectraMind V50** extends beyond them with symbolic physics constraints, uncertainty calibration, and CI-first reproducibility.
+**SpectraMind V50** extends beyond them with symbolic physics constraints, calibrated uncertainty, and CI-first reproducibility.  
 
 ---
 
@@ -157,11 +157,11 @@ ArielSensorArray/
 
 ## 8) Roadmap
 
-* TorchScript/JIT inference.
-* Symbolic rule discovery + overlays.
-* GUI (React + FastAPI).
-* Automated leaderboard registry.
-* Micro-lensing & non-Gaussian calibration.
+* TorchScript/JIT inference.  
+* Symbolic rule discovery + overlays.  
+* GUI (React + FastAPI).  
+* Automated leaderboard registry.  
+* Micro-lensing & non-Gaussian calibration.  
 
 ---
 
@@ -181,5 +181,4 @@ ArielSensorArray/
 ## 10) License
 
 MIT — see [LICENSE](./LICENSE).
-
-```
+````
