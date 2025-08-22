@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+"""
 Unit tests for src/symbolic/symbolic_logic_engine.py
 
 Covers:
@@ -161,4 +163,3 @@ def test_smoothness_window_parameter_affects_result(window: int):
     assert torch.isfinite(s)
     # As a loose sanity check: smoothness should remain small for any reasonable window
     assert s.item() < 0.05
-```
