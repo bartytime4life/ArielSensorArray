@@ -1,56 +1,110 @@
----
+# SpectraMind V50 — Kaggle Model Comparison  
+*NeurIPS 2025 Ariel Data Challenge*
 
-# Comparison of Kaggle Models from NeurIPS 2025 Ariel Data Challenge
+This document reviews three notable Kaggle models that participated in the NeurIPS 2025 Ariel Data Challenge, focused on retrieving **exoplanet transmission spectra** from Ariel telescope simulations.  
 
-The NeurIPS 2025 Ariel Data Challenge focuses on extracting exoplanet atmospheric spectra from simulated telescope data. We compare three notable models:
-
-* **Thang Do Duc’s “0.329 LB” notebook** (a baseline model, forked from V1ctorious3010).
-* **V1ctorious3010’s “80bl-128hd-impact” model** (deep PyTorch, very high capacity).
-* **Fawad Awan’s “Spectrum Regressor”** (multi-output regression).
+We analyze their **architecture, training pipelines, leaderboard performance, and relevance** to the SpectraMind V50 project, and extract best practices for building a **neuro-symbolic, physics-informed, uncertainty-calibrated system**.
 
 ---
 
-## Model 1: Thang Do Duc’s “0.329 LB” Baseline
-
-* **Architecture:** Fully connected deep net with residual connections (ResNet-style MLP). Linear + BN + ReLU with identity skips. Moderate depth.
-* **Training/Preprocessing:** Minimal; basic normalization; no heavy augmentation. Trains quickly on Kaggle T4 GPUs (\~56s run).
-* **Performance:** Public LB \~0.329. Stable but not near SOTA (top \~0.55–0.60). Robust to dataset updates (drop from 0.328→0.287 then stabilized).
-* **Code Quality:** Well-structured Kaggle notebook; upvoted 43×; reproducible and clear.
-* **Relevance:** Simple multi-output regression; no uncertainty, no physics constraints. Captures basics but oversmooths fine details.
-
----
-
-## Model 2: V1ctorious3010’s “80bl-128hd-impact”
-
-* **Architecture:** \~80 residual fully connected blocks, each 128 hidden units. Essentially a deep residual MLP for 1D/tabular input. Uses BN + dropout. No attention; brute force depth.
-* **Training/Preprocessing:** Likely stronger detrending/normalization. May have used noise jitter augmentation. Needs multi-GPU for training.
-* **Performance:** Public LB \~0.322, stronger than baseline. Still below SOTA. Possible overfitting risk due to extreme depth.
-* **Code Quality:** Experienced competitor. Released via Kaggle Models (Model Card + code). Weights downloadable. Reproducible but heavy.
-* **Relevance:** Can resolve fine spectral details. Risk of fitting noise. No explicit uncertainty or physics constraints. Maximizes predictive muscle.
+## 📊 Models Reviewed
+1. **Thang Do Duc — “0.329 LB” Baseline**  
+   Fork of V1ctorious3010’s reference MLP model.  
+2. **V1ctorious3010 — “80bl-128hd-impact”**  
+   Extremely deep residual MLP (~80 blocks × 128 dims).  
+3. **Fawad Awan — “Spectrum Regressor”**  
+   Multi-output PyTorch regressor with moderate complexity.  
 
 ---
 
-## Model 3: Fawad Awan’s “Spectrum Regressor”
+## 🔍 Model Details
 
-* **Architecture:** Multi-output regression. Moderately deep, possibly hybrid (dense + conv/RNN). Outputs full spectrum in one pass.
-* **Training/Preprocessing:** Emphasis on simplicity and reproducibility. Data normalized, possibly detrended.
-* **Performance:** Public LB competitive with others (details truncated, but better than baseline in robustness).
-* **Code Quality:** Shared on Kaggle Models; clean PyTorch regressor; reproducible.
-* **Relevance:** Outputs all wavelengths; flexible and interpretable. Still lacks uncertainty modeling.
+### 1. Thang Do Duc — “0.329 LB” Baseline
+- **Architecture:**  
+  Residual fully connected MLP. Dense layers with BatchNorm + ReLU + skip connections (ResNet-style).  
+- **Training & Preprocessing:**  
+  - Minimal preprocessing (basic normalization).  
+  - Trains quickly (~56 seconds on Kaggle T4 GPU).  
+- **Performance:**  
+  - Public LB ~**0.329**.  
+  - Stable across dataset updates (drop to 0.287, later recovered).  
+- **Strengths:**  
+  - Simple, reproducible, fast.  
+  - Strong reference baseline.  
+- **Weaknesses:**  
+  - No uncertainty (σ).  
+  - No physics-informed constraints (smoothness, asymmetry).  
 
 ---
 
-## Comparative Summary
+### 2. V1ctorious3010 — “80bl-128hd-impact”
+- **Architecture:**  
+  - ~80 residual blocks × 128 hidden units.  
+  - Very deep MLP, relies on BatchNorm + dropout for stability.  
+- **Training & Preprocessing:**  
+  - Strong normalization & detrending.  
+  - Requires multi-GPU for efficient training.  
+- **Performance:**  
+  - Public LB ~**0.322** (slightly above baseline).  
+  - Risk of overfitting due to extreme depth.  
+- **Strengths:**  
+  - Captures fine spectral detail.  
+  - Reproducible (Kaggle Model release with weights).  
+- **Weaknesses:**  
+  - Heavy compute requirements.  
+  - No uncertainty modeling.  
+  - Risk of fitting noise.  
 
-* **Baseline (0.329 LB):** Fast, simple, reproducible; weak performance, no uncertainty.
-* **80bl-128hd (0.322 LB):** Deep capacity, best detail capture, but risk of noise/overfit.
-* **Spectrum Regressor:** Balanced approach, outputs entire spectrum, simpler and robust.
+---
 
-**Best Practices for SpectraMind V50:**
+### 3. Fawad Awan — “Spectrum Regressor”
+- **Architecture:**  
+  - Multi-output regressor, outputs all spectral bins jointly.  
+  - Likely hybrid dense layers with optional conv/recurrent elements.  
+- **Training & Preprocessing:**  
+  - Simpler preprocessing, normalized spectra.  
+  - Focused on robustness and reproducibility.  
+- **Performance:**  
+  - Public LB ~**0.317–0.320**.  
+  - Competitive but not top performing.  
+- **Strengths:**  
+  - Outputs full spectrum in one shot.  
+  - Clean, lighter to train.  
+- **Weaknesses:**  
+  - Less expressive than deep residual nets.  
+  - Still lacks uncertainty modeling.  
 
-* Combine residual depth (from 80bl-128hd) with simplicity/reproducibility (from Spectrum Regressor).
-* Add **physics-informed losses** (smoothness, non-negativity).
-* Incorporate **uncertainty outputs** (μ/σ).
-* Use **ensembling and augmentation** to stabilize.
+---
+
+## 📑 Comparative Summary
+
+| Model                          | Depth/Size     | Score (Public LB) | Strengths                                   | Weaknesses                          |
+|--------------------------------|----------------|-------------------|---------------------------------------------|-------------------------------------|
+| **Thang Do Duc – Baseline**    | Medium (MLP)   | 0.329             | Simple, reproducible, stable reference       | No uncertainty, limited physics      |
+| **V1ctorious – 80bl-128hd**    | Very deep MLP  | 0.322             | Captures fine spectral features              | Risk of overfitting, heavy compute   |
+| **Fawad – Spectrum Regressor** | Moderate MLP   | 0.317–0.320       | Multi-output design, lighter training        | Slightly weaker performance          |
+
+---
+
+## 🚀 Best Practices for SpectraMind V50
+- Use **residual fully-connected blocks** (baseline + deep model).  
+- Add **domain-specific preprocessing**: detrending, jitter correction, smoothing.  
+- Incorporate **uncertainty modeling (μ/σ)** to improve calibration.  
+- Enforce **physics-informed constraints**:  
+  - Non-negativity of spectra.  
+  - Smoothness and asymmetry penalties.  
+  - FFT-based symbolic regularizers.  
+- Use **ensembles of medium-depth models** for generalization over brute-force depth.  
+- Maintain **reproducibility** with Hydra configs, DVC data versioning, and deterministic seeding.  
+
+---
+
+## 📚 Sources
+- Kaggle notebooks & models analyzed in:  
+  - Thang Do Duc — [“0.329 LB” baseline notebook]  
+  - V1ctorious3010 — [“80bl-128hd-impact” model card]  
+  - Fawad Awan — [“Spectrum Regressor” Kaggle model]  
+
+*(See internal file: `Comparison of Kaggle Models from NeurIPS 2025 Ariel Data Challenge.pdf` for detailed notes.)*
 
 ---
