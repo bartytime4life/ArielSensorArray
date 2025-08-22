@@ -1,15 +1,20 @@
-```make
 # ==============================================================================
-# SpectraMind V50 — CI/Kaggle Makefile (Deterministic, Non‑Interactive)
-# Purpose: minimal, reproducible pipeline for CI runners and Kaggle kernels
+# SpectraMind V50 — CI/Kaggle Makefile (Upgraded: deterministic, non‑interactive)
+# Purpose: Minimal, reproducible pipeline for CI runners and Kaggle kernels
+# Notes:
+#   • Zero‑prompt, non‑interactive, CPU‑deterministic defaults
+#   • Emits calibration + run manifests for audit
+#   • Safe no‑ops when optional tools (DVC/pandoc) are absent
 # ==============================================================================
 
 # ========= Shell (strict) =========
-SHELL       := /usr/bin/env bash
+SHELL                  := /usr/bin/env bash
 .ONESHELL:
-.SHELLFLAGS := -euo pipefail -c
+.SHELLFLAGS            := -Eeuo pipefail -c
+MAKEFLAGS             += --warn-undefined-variables --no-builtin-rules --no-print-directory
+.SUFFIXES:
 
-# ========= Environment (lean CI) =========
+# ========= CI Environment knobs =========
 export PIP_DISABLE_PIP_VERSION_CHECK := 1
 export PYTHONUNBUFFERED              := 1
 export SPECTRAMIND_CI                := 1
@@ -22,12 +27,13 @@ export OPENBLAS_NUM_THREADS          := 1
 export NUMEXPR_NUM_THREADS           := 1
 
 # ========= Tooling =========
-PYTHON ?= python3
-POETRY ?= poetry
-CLI    ?= $(POETRY) run spectramind
-DVC    ?= dvc
-GIT    ?= git
+PYTHON     ?= python3
+POETRY     ?= poetry
+CLI        ?= $(POETRY) run spectramind
+DVC        ?= dvc
+GIT        ?= git
 KAGGLE_CLI ?= kaggle
+JQ         ?= jq
 
 # ========= Paths / Artifacts =========
 OUT_DIR    ?= outputs
@@ -35,6 +41,7 @@ LOGS_DIR   ?= logs
 DIAG_DIR   ?= $(OUT_DIR)/diagnostics
 PRED_DIR   ?= $(OUT_DIR)/predictions
 ABLATE_DIR ?= $(OUT_DIR)/ablate
+MANIFEST_DIR ?= $(OUT_DIR)/manifests
 
 # ========= Fixed knobs for CI =========
 DEVICE     ?= cpu
@@ -43,13 +50,18 @@ SEED       ?= 1337
 OVERRIDES  ?=
 EXTRA_ARGS ?=
 
+# ========= Run identity (UTC + git) =========
+GIT_SHA    := $(shell $(GIT) rev-parse --short HEAD 2>/dev/null || echo "nogit")
+RUN_TS     := $(shell date -u +%Y%m%dT%H%M%SZ)
+RUN_ID     := $(RUN_TS)-$(GIT_SHA)
+
 # ========= Kaggle Submit Guard (off by default) =========
 # Enable with:
 #   make kaggle-submit ALLOW_KAGGLE_SUBMIT=1 COMPETITION=neurips-2025-ariel
 ALLOW_KAGGLE_SUBMIT ?= 0
 COMPETITION          ?= neurips-2025-ariel
 
-# ========= Docs (optional, only if pandoc present) =========
+# ========= Docs (optional) =========
 DOC_MD    ?= assets/AI_Design_and_Modeling.md
 DOC_HTML  ?= assets/AI_Design_and_Modeling.html
 DOC_PDF   ?= assets/AI_Design_and_Modeling.pdf
@@ -57,7 +69,7 @@ DOC_TITLE ?= AI Design and Modeling — SpectraMind V50
 DOC_CSS   ?= https://cdn.jsdelivr.net/npm/water.css@2/out/water.css
 
 # ========= PHONY =========
-.PHONY: help ci ci-fast \
+.PHONY: help ci ci-fast ci-calibration \
         guards validate validate-env selftest selftest-deep versions \
         train diagnose analyze analyze-short predict predict-e2e \
         ablate-ci ablate-post \
@@ -65,6 +77,7 @@ DOC_CSS   ?= https://cdn.jsdelivr.net/npm/water.css@2/out/water.css
         kaggle-submit \
         env-capture hash-config git-status ci-artifacts \
         docs docs-html docs-pdf docs-clean \
+        repro-start repro-snapshot repro-verify \
         clean
 
 # ========= Default =========
@@ -72,39 +85,43 @@ DOC_CSS   ?= https://cdn.jsdelivr.net/npm/water.css@2/out/water.css
 
 # ========= Help =========
 help:
-	@echo "SpectraMind V50 — CI/Kaggle Makefile"
-	@echo "Targets:"
+	@echo "SpectraMind V50 — CI/Kaggle Makefile (Upgraded)"
+	@echo ""
+	@echo "Primary pipelines:"
 	@echo "  ci                : validate → validate-env → selftest → train → diagnose → analyze-short → ci-artifacts"
-	@echo "  ci-fast           : validate → selftest → train → analyze-short (no dashboard)"
-	@echo "  validate          : create dirs and perform quick pre-flight"
+	@echo "  ci-fast           : validate → selftest → train → analyze-short → ci-artifacts"
+	@echo "  ci-calibration    : validate → selftest → calibration → analyze-short → ci-artifacts"
+	@echo ""
+	@echo "Core utilities:"
+	@echo "  validate          : create dirs (outputs/ logs/ diagnostics/ predictions/ ablate/ manifests/)"
 	@echo "  validate-env      : run .env schema validator if present"
 	@echo "  selftest          : fast integrity checks (CLI/files)"
 	@echo "  selftest-deep     : deeper checks (Hydra/DVC/GPU visibility)"
 	@echo "  versions          : print tool versions (python/poetry/cli)"
-	@echo "  train             : 1-epoch training to $(OUT_DIR) (DEVICE=$(DEVICE), SEED=$(SEED))"
+	@echo "  train             : 1‑epoch training to $(OUT_DIR) (DEVICE=$(DEVICE), SEED=$(SEED))"
 	@echo "  diagnose          : smoothness + lightweight dashboard → $(DIAG_DIR)"
 	@echo "  analyze           : parse CLI logs to CSV/MD"
 	@echo "  analyze-short     : print last 5 CLI calls (generates CSV if missing)"
 	@echo "  predict           : write submission.csv → $(PRED_DIR)"
-	@echo "  predict-e2e       : predict + assertion that submission.csv exists"
+	@echo "  predict-e2e       : predict + assert submission.csv exists"
 	@echo "  ablate-ci         : fast grid ablation (light profile) + post-process"
-	@echo "  dvc-pull|dvc-push : sync DVC artifacts (no-fail)"
-	@echo "  dvc-status        : DVC DAG drift status (no-fail)"
+	@echo "  dvc-pull|push|status : DVC artifact helpers (no-fail)"
 	@echo "  env-capture       : capture environment snapshot via CLI"
 	@echo "  hash-config       : compute config hash via CLI"
-	@echo "  kaggle-submit     : guarded Kaggle submission (set ALLOW_KAGGLE_SUBMIT=1)"
-	@echo "  docs              : (optional) export assets/AI_Design_and_Modeling.md → HTML/PDF (if pandoc available)"
-	@echo "  git-status        : short git status (branch + changes)"
+	@echo "  kaggle-submit     : guarded Kaggle submission (ALLOW_KAGGLE_SUBMIT=1)"
+	@echo "  docs              : (optional) export AI_Design_and_Modeling.md → HTML/PDF (pandoc)"
+	@echo "  repro-start|snapshot|verify : run manifest snapshot (config/data hashing)"
 	@echo "  ci-artifacts      : list artifacts produced by this run"
 	@echo "  clean             : remove CI artifacts (outputs/, diagnostics/, predictions/)"
 	@echo ""
 	@echo "Vars: DEVICE=$(DEVICE) EPOCHS=$(EPOCHS) SEED=$(SEED) OVERRIDES='$(OVERRIDES)' EXTRA_ARGS='$(EXTRA_ARGS)'"
+	@echo "Run : RUN_ID=$(RUN_ID)"
 
-# ========= Guards (fail fast if CLI not runnable) =========
+# ========= Guards =========
 guards:
 	@command -v $(POETRY) >/dev/null 2>&1 || { echo "::error::Poetry missing"; exit 1; }
 	@$(POETRY) run spectramind --version >/dev/null 2>&1 || { \
-	  echo "::warning::spectramind CLI not runnable; attempting 'poetry install --no-root'"; \
+	  echo "::notice::spectramind CLI not runnable; installing env via 'poetry install --no-root'"; \
 	  $(POETRY) install --no-root || true; \
 	  $(POETRY) run spectramind --version >/dev/null 2>&1 || { echo "::error::spectramind CLI still not runnable"; exit 1; }; \
 	}
@@ -112,10 +129,11 @@ guards:
 # ========= CI Pipelines =========
 ci: guards validate validate-env selftest train diagnose analyze-short ci-artifacts
 ci-fast: guards validate selftest train analyze-short ci-artifacts
+ci-calibration: guards validate selftest calibration analyze-short ci-artifacts
 
 # ========= Validation =========
 validate:
-	mkdir -p "$(OUT_DIR)" "$(LOGS_DIR)" "$(DIAG_DIR)" "$(PRED_DIR)" "$(ABLATE_DIR)"
+	mkdir -p "$(OUT_DIR)" "$(LOGS_DIR)" "$(DIAG_DIR)" "$(PRED_DIR)" "$(ABLATE_DIR)" "$(MANIFEST_DIR)"
 	@echo ">>> Validation complete (dirs ready)."
 
 validate-env:
@@ -137,6 +155,23 @@ selftest:
 
 selftest-deep:
 	$(CLI) selftest --deep
+
+# ========= Calibration (mission‑grade CI) =========
+calibration:
+	@echo ">>> Calibration (deterministic CI)"
+	$(CLI) calibrate $(OVERRIDES) $(EXTRA_ARGS)
+	@# Ensure JSON log exists and is non‑empty
+	@test -s "$(LOGS_DIR)/calibration.json" || { echo "::error::Missing or empty $(LOGS_DIR)/calibration.json"; exit 1; }
+	@# Optional quality gates (if jq is present)
+	@if command -v $(JQ) >/dev/null 2>&1; then \
+	  cov=$$($(JQ) -r '.uncertainty_calibration.achieved_coverage // empty' "$(LOGS_DIR)/calibration.json"); \
+	  smooth=$$($(JQ) -r '.diagnostics.fft_smoothness // empty' "$(LOGS_DIR)/calibration.json"); \
+	  echo "coverage="$$cov "fft_smoothness="$$smooth; \
+	  if [ -n "$$cov" ] && awk 'BEGIN{exit !('"$$cov"' >= 0.90)}'; then echo "Coverage OK"; else echo "::warning::Coverage check skipped/failed"; fi; \
+	  if [ -n "$$smooth" ] && awk 'BEGIN{exit !('"$$smooth"' <= 0.02)}'; then echo "FFT smoothness OK"; else echo "::warning::FFT smoothness check skipped/failed"; fi; \
+	else \
+	  echo "::notice::jq not installed; skipping JSON gate checks"; \
+	fi
 
 # ========= Train / Diagnose / Analyze =========
 train:
@@ -213,10 +248,54 @@ hash-config:
 git-status:
 	$(GIT) status --short --branch || true
 
+repro-start:
+	@echo ">>> Starting reproducible CI run $(RUN_ID)"
+	mkdir -p "$(MANIFEST_DIR)"
+	echo "$(RUN_ID)" > "$(LOGS_DIR)/current_run_id.txt"
+
+repro-snapshot: repro-start
+	@echo ">>> Writing CI run manifest JSON"
+	@$(PYTHON) - <<'PY'
+import json, os, subprocess, time, pathlib
+outdir = os.environ.get("MANIFEST_DIR","outputs/manifests")
+run_id = os.environ.get("RUN_ID","unknown")
+pathlib.Path(outdir).mkdir(parents=True, exist_ok=True)
+def sh(cmd):
+    try:
+        return subprocess.check_output(cmd, shell=True, text=True).strip()
+    except Exception:
+        return ""
+manifest = {
+  "run_id": run_id,
+  "ts_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+  "git": {
+     "commit": sh("git rev-parse --short HEAD 2>/dev/null || echo 'nogit'"),
+     "status": sh("git status --porcelain || true"),
+  },
+  "hydra_config_hash": sh("$(CLI) hash-config 2>/dev/null || echo ''"),
+  "device": os.environ.get("DEVICE",""),
+  "epochs": os.environ.get("EPOCHS",""),
+  "seed": os.environ.get("SEED",""),
+}
+with open(os.path.join(outdir, f"ci_run_manifest_{run_id}.json"), "w") as f:
+    json.dump(manifest, f, indent=2)
+print("Wrote manifest:", os.path.join(outdir, f"ci_run_manifest_{run_id}.json"))
+PY
+
+repro-verify:
+	@echo ">>> CI manifest files:"
+	@ls -lh "$(MANIFEST_DIR)" || true
+	@echo ">>> Show last CI manifest:"
+	@ls -t "$(MANIFEST_DIR)"/ci_run_manifest_*.json 2>/dev/null | head -n1 | xargs -I{} cat {}
+
+# ========= CI artifacts summary =========
 ci-artifacts:
 	@echo ">>> Artifacts summary"
 	@{ \
-	  echo "# CI Artifacts"; \
+	  echo "# CI Artifacts — $(RUN_ID)"; \
+	  echo ""; \
+	  echo "## Calibration log (if any)"; \
+	  find "$(LOGS_DIR)" -maxdepth 1 -type f -name "calibration.json" -print 2>/dev/null || true; \
 	  echo ""; \
 	  echo "## Outputs"; \
 	  find "$(OUT_DIR)" -maxdepth 2 -type f -print 2>/dev/null || true; \
@@ -226,6 +305,9 @@ ci-artifacts:
 	  echo ""; \
 	  echo "## Predictions"; \
 	  find "$(PRED_DIR)" -maxdepth 2 -type f -print 2>/dev/null || true; \
+	  echo ""; \
+	  echo "## Manifests"; \
+	  find "$(MANIFEST_DIR)" -maxdepth 2 -type f -print 2>/dev/null || true; \
 	} | sed 's|^|  |'
 
 # ========= Kaggle Submit (guarded) =========
@@ -243,33 +325,22 @@ kaggle-submit:
 	  exit 1; \
 	fi
 	@echo ">>> Submitting to Kaggle competition '$(COMPETITION)'"
-	$(KAGGLE_CLI) competitions submit -c "$(COMPETITION)" -f "$(PRED_DIR)/submission.csv" -m "SpectraMind V50 CI submit" || true
+	$(KAGGLE_CLI) competitions submit -c "$(COMPETITION)" -f "$(PRED_DIR)/submission.csv" -m "SpectraMind V50 CI submit ($(RUN_ID))" || true
 
-# ========= Docs (optional, no-op if pandoc not installed) =========
+# ========= Docs (optional) =========
 docs: docs-html docs-pdf
 
 docs-html:
 	@command -v pandoc >/dev/null || { echo "::notice::pandoc not found; skipping docs-html"; exit 0; }
 	@test -f "$(DOC_MD)" || { echo "::notice::Missing $(DOC_MD); skipping docs-html"; exit 0; }
 	@mkdir -p assets
-	pandoc "$(DOC_MD)" \
-	  -f markdown+smart \
-	  -t html5 \
-	  -s \
-	  --metadata title="$(DOC_TITLE)" \
-	  -c "$(DOC_CSS)" \
-	  -o "$(DOC_HTML)"
+	pandoc "$(DOC_MD)" -f markdown+smart -t html5 -s --metadata title="$(DOC_TITLE)" -c "$(DOC_CSS)" -o "$(DOC_HTML)"
 	@echo "Wrote $(DOC_HTML)"
 
 docs-pdf:
 	@command -v pandoc >/dev/null || { echo "::notice::pandoc not found; skipping docs-pdf"; exit 0; }
 	@test -f "$(DOC_MD)" || { echo "::notice::Missing $(DOC_MD); skipping docs-pdf"; exit 0; }
-	pandoc "$(DOC_MD)" \
-	  -f markdown+smart \
-	  -V geometry:margin=1in \
-	  -V linkcolor:blue \
-	  -V fontsize=11pt \
-	  -o "$(DOC_PDF)"
+	pandoc "$(DOC_MD)" -f markdown+smart -V geometry:margin=1in -V linkcolor=blue -V fontsize=11pt -o "$(DOC_PDF)"
 	@echo "Wrote $(DOC_PDF)"
 
 docs-clean:
@@ -279,4 +350,3 @@ docs-clean:
 clean:
 	rm -rf "$(OUT_DIR)" "$(DIAG_DIR)" "$(PRED_DIR)"
 	rm -rf .pytest_cache .ruff_cache .mypy_cache || true
-```
