@@ -123,7 +123,6 @@ jobs:
           python-version: "3.12"
           cache: "pip"
 
-      # Cache puppeteer chromium and npm cache used by @mermaid-js/mermaid-cli
       - name: Cache Mermaid CLI (puppeteer + npm)
         uses: actions/cache@v4
         with:
@@ -176,7 +175,7 @@ jobs:
         shell: bash
         run: |
           shopt -s globstar nullglob
-         files=()
+          files=()
           for g in $RAW_GLOBS; do
             for f in $g; do files+=("$f"); done
           done
