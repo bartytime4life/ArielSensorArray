@@ -1,0 +1,92 @@
+{
+  "calibration_run": {
+    "id": "2025-08-22T07-40-00Z",
+    "commit_hash": "abc123def456", 
+    "config_hash": "v50_cfg_8f92c1",
+    "pipeline_stage": "calibration",
+    "environment": {
+      "python_version": "3.11.9",
+      "cuda_version": "12.3",
+      "torch_version": "2.4.0",
+      "device": "NVIDIA RTX 5080",
+      "os": "Ubuntu 24.04 LTS"
+    }
+  },
+  "inputs": {
+    "raw_data": "data/raw/fgs1_airs/",
+    "dvc_hash": "dvc:9f3b2a12c5",
+    "frames": {
+      "fgs1_count": 135000,
+      "airs_count": 11000
+    }
+  },
+  "preprocessing": {
+    "adc_correction": true,
+    "dark_current_subtraction": true,
+    "flat_fielding": true,
+    "cds_correction": true,
+    "nonlinearity_correction": true,
+    "background_subtraction": "dynamic polynomial fit",
+    "phase_alignment": {
+      "reference_instrument": "FGS1",
+      "method": "cross-correlation",
+      "jitter_injection": "synthetic Gaussian (σ=0.002)"
+    },
+    "spectral_masking": {
+      "molecular_regions": ["H2O", "CH4", "CO2"],
+      "mask_strategy": "curriculum (random → molecule-aware)"
+    }
+  },
+  "outputs": {
+    "calibrated_lightcurves": "outputs/calibrated/lightcurves.h5",
+    "preview_plots": [
+      "outputs/diagnostics/calibration_preview.png",
+      "outputs/diagnostics/fft_alignment.png"
+    ],
+    "stats": {
+      "snr_median": 52.7,
+      "snr_p95": 210.4,
+      "residual_dark_current_e/s": 0.008,
+      "phase_jitter_removed_ppm": 21.3,
+      "cosmic_ray_events_flagged": 174
+    }
+  },
+  "diagnostics": {
+    "fft_smoothness": 0.014,
+    "symbolic_constraint_violations": {
+      "nonnegativity_bins": 0,
+      "smoothness_violations": 7,
+      "asymmetry_score": 0.003,
+      "photonic_alignment_score": 0.981
+    },
+    "coverage": {
+      "bins_total": 283,
+      "bins_clean": 276,
+      "bins_flagged": 7
+    }
+  },
+  "uncertainty_calibration": {
+    "method": "COREL + temperature scaling",
+    "binwise_sigma_adjustment": true,
+    "coverage_target": 0.90,
+    "achieved_coverage": 0.903,
+    "per_bin_csv": "outputs/diagnostics/corel_binwise_sigma.csv",
+    "molecule_region_summary": {
+      "H2O": {"coverage": 0.91, "violations": 1},
+      "CH4": {"coverage": 0.89, "violations": 3},
+      "CO2": {"coverage": 0.92, "violations": 2}
+    }
+  },
+  "reproducibility": {
+    "dvc_stage": "calibration",
+    "mlflow_run_id": "mlf_20250822_0740",
+    "hydra_config_used": "configs/calibration/v50.yaml",
+    "artifact_manifest": "outputs/manifests/calibration_manifest.json"
+  },
+  "timing": {
+    "start_time": "2025-08-22T07:40:01Z",
+    "end_time": "2025-08-22T07:46:33Z",
+    "duration_sec": 392
+  },
+  "status": "success"
+}
