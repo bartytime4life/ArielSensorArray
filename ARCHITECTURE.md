@@ -1,6 +1,5 @@
 
----
-
+````markdown
 # SpectraMind V50 — ArielSensorArray
 
 **Neuro-symbolic, physics-informed AI pipeline for the NeurIPS 2025 Ariel Data Challenge**
@@ -17,7 +16,7 @@
 ![GPU](https://img.shields.io/badge/CUDA-12.x-76B900)
 ![Kaggle](https://img.shields.io/badge/platform-Kaggle-20BEFF)
 
-⸻
+---
 
 ## 0) Overview
 
@@ -29,7 +28,7 @@ It integrates **astrophysical calibration**, **symbolic physics-informed modelin
 
 * **Calibration Kill Chain** — ADC, bias, dark, flat, nonlinearity, dead-pixel masking, CDS, wavelength alignment, jitter correction.
 * **Dual Encoders**:
-  • **FGS1 → Mamba SSM** (long-sequence transit modeling)
+  • **FGS1 → Mamba SSM** (long-sequence transit modeling)  
   • **AIRS → Graph Neural Network** (edges = wavelength adjacency, molecule priors, detector regions)
 * **Decoders** — μ (mean spectrum), σ (uncertainty), quantile & diffusion heads.
 * **Uncertainty Calibration** — temperature scaling + **SpectralCOREL GNN** with temporal bin correlations.
@@ -38,7 +37,7 @@ It integrates **astrophysical calibration**, **symbolic physics-informed modelin
 * **Reproducibility** — Hydra configs, DVC/lakeFS, deterministic seeds, Git SHA + config hashes, CI pipelines.
 * **Unified CLI** — `spectramind` orchestrates train, predict, calibrate, diagnose, ablate, submit, selftest, analyze-log, check-cli-map.
 
-⏱ Optimized for **≤9 hr runtime** on \~1,100 planets with Kaggle A100 GPUs.
+⏱ Optimized for **≤9 hr runtime** on ~1,100 planets with Kaggle A100 GPUs.
 
 ---
 
@@ -62,13 +61,11 @@ flowchart TD
     G --> H4[FFT/UMAP/t-SNE]
     G --> I[HTML Dashboard]
     F --> J[Submission Bundle (Kaggle)]
-```
+````
 
 ---
 
-## 2) Calibration Kill Chain (Detailed)
-
-> **Goal:** Transform raw detector frames into science-ready, wavelength-registered, jitter-corrected time–wavelength cubes and light curves with reliable uncertainties.
+## 2) Calibration Kill Chain
 
 ```mermaid
 flowchart LR
@@ -86,36 +83,34 @@ flowchart LR
     L --> M[Calibrated Cubes & Light Curves]
 ```
 
-**Notes:**
-
 * CDS reduces low-frequency drift; cosmic rays detected as temporal outliers.
 * Jitter correction leverages FGS1-driven motion to decorrelate AIRS systematics.
-* All steps parameterized via Hydra and tracked via DVC for auditability.
+* All steps parameterized via Hydra and tracked via DVC.
 
 ---
 
 ## 3) Modeling & Uncertainty
 
 * **Encoders**
-  • **FGS1 → Mamba SSM** for long-range transit dynamics.
-  • **AIRS → GNN** with molecule-informed edges and detector priors.
+  • FGS1 → Mamba SSM for long-range transit dynamics.
+  • AIRS → GNN with molecule-informed edges and detector priors.
 
 * **Decoders**
-  • **μ** (mean spectrum across 283 bins).
-  • **σ** (aleatoric uncertainty with symbolic overlay).
+  • μ (mean spectrum across 283 bins).
+  • σ (aleatoric uncertainty with symbolic overlay).
 
 * **Calibration**
-  • **Temperature scaling** for global confidence.
-  • **SpectralCOREL** — conformal GNN capturing bin-to-bin correlations.
+  • Temperature scaling for global confidence.
+  • SpectralCOREL (bin-to-bin conformal calibration).
 
 ---
 
 ## 4) Diagnostics & Symbolic Layer
 
-* **Metrics & Maps:** GLL, entropy, per-bin calibration, residual distributions.
+* **Metrics & Maps:** GLL, entropy, calibration plots.
 * **Explainability:** SHAP overlays, attention/attribution traces.
 * **Symbolic Rules:** smoothness, positivity, asymmetry, FFT-band suppression, radiative transfer checks.
-* **Interactive Outputs:** HTML dashboards (UMAP/t-SNE, rule matrices, heatmaps, FFT panels), CSV/JSON exports.
+* **Interactive Outputs:** HTML dashboards (UMAP/t-SNE, rule matrices, FFT panels), CSV/JSON exports.
 
 ---
 
@@ -125,64 +120,52 @@ flowchart LR
 * **DVC** — versioned datasets, checkpoints, diagnostics.
 * **Poetry + Docker** — environment parity across dev/CI/Kaggle.
 * **GitHub Actions** —
-  • `ci.yml` (tests)
+  • `ci.yml` (unit tests + build)
   • `diagnostics.yml` (dashboards)
-  • `nightly-e2e.yml` (end-to-end smoke)
-  • `kaggle-submit.yml` (submissions)
-  • `lint.yml` (pre-commit checks)
+  • `nightly-e2e.yml` (full smoke test)
+  • `kaggle-submit.yml` (submission bundling)
+  • `lint.yml` (ruff, black, isort, mypy, yaml, md)
   • `artifact-sweeper.yml` (cache cleanup)
-* **Self-Test** — validates configs, file mapping, symbolic modules, artifacts.
 
 ---
 
-## 6) Repository Layout
+## 6) Kaggle Benchmarks
+
+We benchmarked against three notable Kaggle models:
+
+* **Thang Do Duc “0.329 LB” baseline** — shallow residual MLP, quick training, reproducible but no uncertainty.
+* **V1ctorious3010 “80bl-128hd-impact”** — ultra-deep (80 residual blocks), heavy regularization, strong leaderboard score.
+* **Fawad Awan “Spectrum Regressor”** — multi-output regression, efficient training, decent performance.
+
+**SpectraMind V50** extends beyond them with symbolic physics constraints, uncertainty calibration, and CI-first reproducibility.
+
+---
+
+## 7) Repository Layout
 
 ```
 ArielSensorArray/
-  configs/            # Hydra configs (data/, model/, training/, diagnostics/, calibration/, logging/)
+  configs/            # Hydra configs
   src/                # Modules (calibration/, encoders/, decoders/, symbolic/, cli/, utils/)
-  data/               # DVC-tracked datasets (raw/, processed/, meta/)
+  data/               # raw/, processed/, meta/
   outputs/            # checkpoints/, predictions/, diagnostics/, calibrated/
-  logs/               # v50_debug_log.md (CLI call history)
+  logs/               # v50_debug_log.md
   .github/workflows/  # ci.yml, diagnostics.yml, nightly-e2e.yml, kaggle-submit.yml, lint.yml
 ```
 
 ---
 
-## 7) Unified CLI
+## 8) Roadmap
 
-```bash
-python -m spectramind --help
-```
-
-**Core Commands:**
-`selftest`, `calibrate`, `train`, `predict`, `calibrate-temp`, `corel-train`, `diagnose`, `dashboard`, `ablate`, `submit`, `analyze-log`, `check-cli-map`
-
----
-
-## 8) Kaggle Integration
-
-* Budgeted for **9 hr A100 runtime**.
-* Submissions validated + zipped with manifest.
-* Benchmarked vs Kaggle baselines:
-  • Thang Do Duc baseline (0.329 LB)
-  • V1ctorious3010 “80bl-128hd” (deep MLP)
-  • Fawad Awan “Spectrum Regressor”
-* V50 extends these with symbolic physics, calibrated uncertainty, and reproducibility-first CI.
+* TorchScript/JIT inference.
+* Symbolic rule discovery + overlays.
+* GUI (React + FastAPI).
+* Automated leaderboard registry.
+* Micro-lensing & non-Gaussian calibration.
 
 ---
 
-## 9) Roadmap
-
-* TorchScript/JIT inference
-* Symbolic rule discovery + overlays
-* Web UI (React + FastAPI)
-* Automated leaderboard registry
-* Micro-lensing & non-Gaussian calibration
-
----
-
-## 10) Citation
+## 9) Citation
 
 ```bibtex
 @software{spectramind_v50_2025,
@@ -195,8 +178,8 @@ python -m spectramind --help
 
 ---
 
-## 11) License
+## 10) License
 
 MIT — see [LICENSE](./LICENSE).
 
----
+```
