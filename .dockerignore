@@ -1,9 +1,11 @@
 # ==============================================================================
 # .dockerignore — SpectraMind V50 (NeurIPS 2025 Ariel Data Challenge)
+# ------------------------------------------------------------------------------
 # Purpose:
 #   • Prevent unnecessary files from bloating Docker images
 #   • Mirror .gitignore + .dvcignore for consistency
 #   • Keep Docker context lean, CI-safe, and reproducible
+#   • Ensure only source + configs + required assets make it into the image
 # ==============================================================================
 
 # ----------------------------------------------------------------------
@@ -16,6 +18,7 @@ __pycache__/
 *.egg
 *.whl
 *.pkl
+*.dill
 
 # ----------------------------------------------------------------------
 # Virtual environments & package managers
@@ -26,6 +29,8 @@ ENV/
 .poetry/
 pip-wheel-metadata/
 site-packages/
+.cache/
+.python-version
 
 # ----------------------------------------------------------------------
 # IDE/editor settings
@@ -51,16 +56,17 @@ logs/
 *.lock
 
 # ----------------------------------------------------------------------
-# Intermediate & scratch outputs
+# Intermediate & scratch outputs (pipeline-generated)
 outputs/checkpoints/
 outputs/intermediate/
 outputs/temp/
 outputs/cache/
 outputs/debug/
 outputs/tmp/
+outputs/sandbox/
 
 # ----------------------------------------------------------------------
-# Model bundles & artifacts (selectively managed by pipeline)
+# Model bundles & artifacts (selectively managed by pipeline, not baked in images)
 *.ckpt
 *.pth
 *.pt
@@ -72,17 +78,19 @@ outputs/tmp/
 # Kaggle / competition specifics
 .kaggle/
 kaggle.json
-*.ipynb   # auto notebooks (prefer notebooks/ dir)
 input/
 working/
+.kernels/
+kernel-metadata.json
 
 # ----------------------------------------------------------------------
-# Jupyter / notebooks
+# Notebooks (dev only — not needed in runtime image)
+*.ipynb
 .ipynb_checkpoints/
 notebooks/.ipynb_checkpoints/
 
 # ----------------------------------------------------------------------
-# DVC internals (host-managed; never in Docker)
+# DVC internals (host-managed; never ship into container)
 .dvc/cache/
 .dvc/tmp/
 .dvc/plots/
@@ -91,6 +99,8 @@ notebooks/.ipynb_checkpoints/
 # ----------------------------------------------------------------------
 # Diagnostics, reports & dashboards (regenerable)
 outputs/diagnostics/
+reports/
+dashboards/
 *.html
 *.htm
 *.png
@@ -102,14 +112,14 @@ outputs/diagnostics/
 *.csv
 *.json
 *.md
-reports/
-dashboards/
 
 # ----------------------------------------------------------------------
-# Submission bundles (pipeline-reproducible)
+# Submission bundles (regenerable via pipeline)
 outputs/submission.csv
 outputs/submission.zip
 outputs/submission_bundle.zip
+outputs/submission/**/*.zip
+outputs/submission/**/*.csv
 
 # ----------------------------------------------------------------------
 # Generated configs & manifests
@@ -120,13 +130,19 @@ manifest.json
 diagnostic_summary.json
 run_hash_summary_v50.json
 version_manifest.json
+pipeline_consistency_report.json
 
 # ----------------------------------------------------------------------
-# Local GUI/UX assets (regenerable)
+# Local GUI/UX assets (reproducible — avoid shipping large diagrams/images)
 assets/screenshots/
 assets/plots/
 assets/tmp/
 assets/diagrams/
+assets/**.png
+assets/**.svg
+assets/**.jpg
+assets/**.jpeg
+assets/**.gif
 
 # ----------------------------------------------------------------------
 # Hugging Face / MLflow / W&B caches
@@ -134,8 +150,8 @@ assets/diagrams/
 wandb/
 mlruns/
 *.mlmodel
-cache/
 hf_cache/
+cache/
 
 # ----------------------------------------------------------------------
 # Build system artifacts
@@ -158,9 +174,18 @@ pytest_cache/
 .github/
 
 # ----------------------------------------------------------------------
-# Misc (CI/CD + local)
+# Secrets & local creds (must never leak into containers)
 *.env
 .env*
-Dockerfile*
+.envrc
+.aws/
+.gcloud/
+.azure/
+secrets.yaml
+
+# ----------------------------------------------------------------------
+# Misc (CI/CD, local-only overrides)
+Dockerfile.local
+Dockerfile.dev
 docker-compose*.yml
 Makefile.local
