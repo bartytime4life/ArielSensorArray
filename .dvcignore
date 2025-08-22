@@ -1,6 +1,12 @@
+# ==============================================================================
 # .dvcignore — SpectraMind V50 (NeurIPS 2025 Ariel Data Challenge)
-# Purpose: Prevent DVC from scanning files that are ephemeral, reproducible, or managed elsewhere.
-# NOTE: This affects DVC's file discovery only (not Git). Keep .gitignore in sync for VCS hygiene.
+# Purpose:
+#   • Prevent DVC from scanning ephemeral / reproducible files and heavy caches
+#   • Keep DVC’s file discovery fast, lean, and CI‑safe
+# NOTE:
+#   • This affects DVC collection only (NOT Git). Keep .gitignore /.dockerignore in sync.
+#   • Prefer scoping ignores to generated folders to avoid masking real inputs.
+# ==============================================================================
 
 # ----------------------------------------------------------------------
 # Python build & cache
@@ -11,6 +17,7 @@ __pycache__/
 *.egg-info/
 *.egg
 *.whl
+*.pkl
 
 # ----------------------------------------------------------------------
 # Virtual environments & package managers
@@ -48,12 +55,26 @@ logs/
 *.lock
 
 # ----------------------------------------------------------------------
-# Intermediate & scratch outputs
+# Test/coverage caches & build artifacts
+dist/
+build/
+.eggs/
+coverage/
+.coverage*
+pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.tox/
+.nox/
+
+# ----------------------------------------------------------------------
+# Intermediate & scratch outputs (pipeline-generated)
 outputs/checkpoints/
 outputs/intermediate/
 outputs/temp/
 outputs/cache/
 outputs/debug/
+outputs/tmp/
 
 # ----------------------------------------------------------------------
 # Model bundles & artifacts (tracked selectively by pipeline)
@@ -62,25 +83,30 @@ outputs/debug/
 *.pt
 *.onnx
 *.h5
+*.tar.gz
 
 # ----------------------------------------------------------------------
 # Kaggle / competition specifics
 .kaggle/
 kaggle.json
-# If you keep notebooks in repo, prefer Git; DVC doesn't need to scan them.
+input/
+working/
+
+# Notebooks: keep in Git/VCS, DVC does not need to scan
 *.ipynb
 .ipynb_checkpoints/
 notebooks/.ipynb_checkpoints/
 
 # ----------------------------------------------------------------------
-# DVC internal (never scan your own cache/plots)
+# DVC internals (never scan your own cache/plots)
 .dvc/cache/
 .dvc/tmp/
 .dvc/plots/
+.dvc/config.local
 
 # ----------------------------------------------------------------------
 # Diagnostics, reports & dashboards (regenerable)
-# IMPORTANT: Scope these to generated folders to avoid hiding real input data.
+# IMPORTANT: Scope to generated folders to avoid hiding real input data.
 outputs/diagnostics/
 outputs/**.html
 outputs/**.htm
@@ -127,6 +153,7 @@ run_logs/
 manifest.json
 diagnostic_summary.json
 run_hash_summary_v50.json
+version_manifest.json
 
 # ----------------------------------------------------------------------
 # Secrets & local creds (keep out of DVC scans)
@@ -142,3 +169,10 @@ run_hash_summary_v50.json
 wandb/
 mlruns/
 *.mlmodel
+
+# ----------------------------------------------------------------------
+# Git/CI scaffolding (no need for DVC to scan)
+.git/
+.github/
+.gitattributes
+.gitignore
