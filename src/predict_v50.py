@@ -6,19 +6,19 @@ predict_v50.py — SpectraMind V50 (NeurIPS 2025 Ariel Data Challenge)
 End-to-end inference for SpectraMind V50:
   • Loads Hydra config (config_v50.yaml) or CLI overrides
   • Restores best checkpoint (or provided weights)
-  • Runs forward pass on the test/eval split to produce μ and σ
-  • Optionally applies uncertainty calibration (temperature / COREL)
+  • Runs forward pass on the test/eval split to produce μ and σ (shape: [N, 283])
+  • Optionally applies uncertainty calibration (temperature / COREL stub)
   • Writes submission CSV/Parquet and diagnostics artifacts
-  • Logs a full, reproducible telemetry trail (JSONL + metrics.json)
+  • Logs a reproducible telemetry trail (JSONL + metrics.json + config snapshot)
 
 Typical usage via CLI wrapper:
     spectramind predict \
         runtime.weights=outputs/checkpoints/best_xxxxx.pt \
         data.test_path=data/test.csv \
-        outputs.submission_path=outputs/submission/submission.csv
+        outputs.submission_filename=submission.csv
 
 Or direct:
-    python -m src.predict_v50 runtime.weights=... data.test_path=...
+    python predict_v50.py runtime.weights=... data.test_path=...
 """
 
 from __future__ import annotations
@@ -26,11 +26,10 @@ from __future__ import annotations
 import os
 import sys
 import json
-import math
 import time
+import zipfile
 import hashlib
 import logging
-import zipfile
 import traceback
 from pathlib import Path
 from dataclasses import dataclass
@@ -52,28 +51,25 @@ from omegaconf import DictConfig, OmegaConf
 
 # Optional MLflow
 try:
-    import mlflow
+    import mlflow  # type: ignore
     _HAS_MLFLOW = True
 except Exception:  # pragma: no cover
     _HAS_MLFLOW = False
 
 # -----------------------------
-# Local project imports
+# Local project imports (must exist in your repo)
 # -----------------------------
-# Encoders / decoders should match train_v50.py shapes and config fields
 from src.models.fgs1_mamba import FGS1MambaEncoder
 from src.models.airs_gnn import AIRSGNNEncoder
 from src.models.multi_scale_decoder import MultiScaleDecoder
 
-# If you have COREL or temperature calibration modules, import here (optional)
-# from src.calibration.temperature import TemperatureScaler
-# from src.corel.corel_inference import CORELCalibrator
 
 # -----------------------------
-# Logging utilities (lightweight)
+# Logging & small utilities
 # -----------------------------
 
 LOG = logging.getLogger("predict_v50")
+
 
 def _setup_logging(log_dir: Path, level: str = "INFO") -> Path:
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -85,14 +81,29 @@ def _setup_logging(log_dir: Path, level: str = "INFO") -> Path:
     )
     return path
 
+
 def _hash_config(cfg: DictConfig) -> str:
     s = OmegaConf.to_yaml(cfg, resolve=True)
     return hashlib.sha256(s.encode("utf-8")).hexdigest()[:16]
+
 
 def _write_json(path: Path, data: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, sort_keys=True)
+
+
+def _open_events(path: Path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path.open("a", encoding="utf-8")
+
+
+def _event(fp, **fields):
+    rec = {"time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    rec.update(fields)
+    fp.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    fp.flush()
+
 
 # -----------------------------
 # Minimal dataset for inference
@@ -141,6 +152,7 @@ class CsvInferenceDataset(Dataset):
             out["id"] = torch.tensor(self.ids[idx])
         return out
 
+
 # -----------------------------
 # Model wrapper to keep parity with train_v50.py
 # -----------------------------
@@ -168,6 +180,7 @@ class V50Model(nn.Module):
         mu, sigma = self.decoder(fgs1_out, airs_out)  # [B, 283] each
         return mu, sigma
 
+
 # -----------------------------
 # Utility: load checkpoint
 # -----------------------------
@@ -178,17 +191,19 @@ def _restore_weights(model: nn.Module, ckpt_path: Path) -> None:
     model.load_state_dict(state, strict=False)
     LOG.info("Restored weights from %s", ckpt_path)
 
+
 # -----------------------------
 # Optional calibration stubs (keep modular)
 # -----------------------------
 
-def _apply_temperature_scaling(sigmas: np.ndarray, T: float) -> np.ndarray:
+def _apply_temperature_scaling(sigmas: np.ndarray, T: Optional[float]) -> np.ndarray:
     """
     Simple global temperature scaling for σ (uncertainty).
     """
-    if T is None or T == 1.0:
+    if T is None or float(T) == 1.0:
         return sigmas
     return np.clip(sigmas * float(T), 1e-8, 1e8)
+
 
 def _apply_corel_calibration(mu: np.ndarray,
                              sigma: np.ndarray,
@@ -197,10 +212,13 @@ def _apply_corel_calibration(mu: np.ndarray,
     Placeholder for COREL or other correlation-aware calibration.
     Replace with real implementation if available in src.corel.
     """
-    if not cfg.calibration.corel.enable:
+    corel_cfg = cfg.calibration.get("corel", {})
+    enabled = bool(corel_cfg.get("enable", False))
+    if not enabled:
         return mu, sigma
     LOG.warning("COREL calibration is enabled but no runtime implementation was provided; returning inputs.")
     return mu, sigma
+
 
 # -----------------------------
 # Inference core
@@ -213,14 +231,14 @@ class InferenceArtifacts:
     metrics_json: Path
     bundle_zip: Optional[Path]
 
-def _build_inference_loaders(cfg: DictConfig) -> Tuple[DataLoader, Optional[List[Any]]]:
+
+def _build_inference_loaders(cfg: DictConfig) -> DataLoader:
     """
     Build test/eval dataloader(s). This stub assumes two input views:
        - FGS1 columns set in cfg.data.fgs1_cols
        - AIRS columns set in cfg.data.airs_cols
     If your test file already concatenates both, adapt loader accordingly.
     """
-    # Load the same CSV twice with different views, then zip in collation.
     test_ds_fgs1 = CsvInferenceDataset(
         csv_path=Path(cfg.data.test_path),
         input_cols=list(cfg.data.fgs1_cols),
@@ -263,14 +281,15 @@ def _build_inference_loaders(cfg: DictConfig) -> Tuple[DataLoader, Optional[List
 
     loader = DataLoader(
         ds,
-        batch_size=cfg.infer.batch_size,
+        batch_size=int(cfg.infer.batch_size),
         shuffle=False,
-        num_workers=cfg.infer.num_workers,
+        num_workers=int(cfg.infer.num_workers),
         pin_memory=True,
         collate_fn=_collate,
         drop_last=False,
     )
-    return loader, None
+    return loader
+
 
 @torch.no_grad()
 def _run_batches(model: V50Model,
@@ -297,6 +316,7 @@ def _run_batches(model: V50Model,
     ids_all = np.concatenate(id_list, axis=0).reshape(-1) if id_list else None
     return mu_all, sg_all, ids_all
 
+
 def _write_submission(mu: np.ndarray,
                       sigma: np.ndarray,
                       ids: Optional[np.ndarray],
@@ -308,7 +328,7 @@ def _write_submission(mu: np.ndarray,
     """
     import pandas as pd
 
-    out_dir = Path(cfg.outputs.submission_dir)
+    out_dir = Path(cfg.outputs.get("submission_dir", "outputs/submission"))
     out_dir.mkdir(parents=True, exist_ok=True)
     sub_path = out_dir / cfg.outputs.submission_filename
 
@@ -328,7 +348,7 @@ def _write_submission(mu: np.ndarray,
             for j in range(d):
                 recs.append({
                     cfg.data.get("id_col", "id"): int(ids[i]),
-                    "bin": j,
+                    "bin": int(j),
                     "mu": float(mu[i, j]),
                     "sigma": float(sigma[i, j]),
                 })
@@ -346,6 +366,7 @@ def _write_submission(mu: np.ndarray,
 
     LOG.info("Submission written: %s  (shape=%s)", sub_path, tuple(df.shape))
     return sub_path
+
 
 def _quick_plot(mu: np.ndarray, out_dir: Path) -> Optional[Path]:
     """Optional quick diagnostic plot of a few spectra."""
@@ -369,29 +390,30 @@ def _quick_plot(mu: np.ndarray, out_dir: Path) -> Optional[Path]:
         LOG.warning("Failed to write quick preview plot.", exc_info=True)
         return None
 
+
 # -----------------------------
 # Main inference pipeline
 # -----------------------------
 
 def run_inference(cfg: DictConfig) -> InferenceArtifacts:
     # Prepare paths
-    out_dir = Path(cfg.runtime.out_dir).absolute()
+    out_dir = Path(cfg.runtime.get("out_dir", "outputs/infer")).absolute()
     logs_dir = out_dir / "logs"
     plots_dir = out_dir / "plots"
     preds_dir = out_dir / "predictions"
     sub_dir = out_dir / "submission"
 
     # Logging
-    log_path = _setup_logging(logs_dir, cfg.runtime.log_level)
+    log_path = _setup_logging(logs_dir, cfg.runtime.get("log_level", "INFO"))
     LOG.info("Predict logs at %s", log_path)
 
     # Device & seeds
-    device = torch.device("cuda" if (torch.cuda.is_available() and cfg.runtime.cuda) else "cpu")
-    torch.manual_seed(int(cfg.runtime.seed))
-    np.random.seed(int(cfg.runtime.seed))
+    device = torch.device("cuda" if (torch.cuda.is_available() and bool(cfg.runtime.get("cuda", True))) else "cpu")
+    torch.manual_seed(int(cfg.runtime.get("seed", 1337)))
+    np.random.seed(int(cfg.runtime.get("seed", 1337)))
     LOG.info("Using device: %s", device)
 
-    # Config hash
+    # Config hash & snapshot
     run_hash = _hash_config(cfg)
     cfg_out = out_dir / "config_infer.yaml"
     cfg_out.parent.mkdir(parents=True, exist_ok=True)
@@ -399,8 +421,12 @@ def run_inference(cfg: DictConfig) -> InferenceArtifacts:
         f.write(OmegaConf.to_yaml(cfg, resolve=True))
     LOG.info("Config snapshot written: %s | run_hash=%s", cfg_out, run_hash)
 
+    # Events JSONL
+    events_fp = _open_events(out_dir / f"events_{run_hash}.jsonl")
+    _event(events_fp, event="predict_start", run_hash=run_hash, device=str(device))
+
     # Dataloader(s)
-    loader, _ = _build_inference_loaders(cfg)
+    loader = _build_inference_loaders(cfg)
 
     # Build model
     model = V50Model(cfg)
@@ -411,10 +437,12 @@ def run_inference(cfg: DictConfig) -> InferenceArtifacts:
     model.to(device)
 
     # Inference
-    mu, sigma, ids = _run_batches(model, loader, device, amp=bool(cfg.runtime.amp))
+    t0 = time.time()
+    mu, sigma, ids = _run_batches(model, loader, device, amp=bool(cfg.runtime.get("amp", True)))
+    _event(events_fp, event="predict_forward_done", elapsed_s=time.time() - t0, n_samples=int(mu.shape[0]))
 
     # Calibration (temperature / COREL)
-    sigma = _apply_temperature_scaling(sigma, cfg.calibration.temperature)
+    sigma = _apply_temperature_scaling(sigma, cfg.calibration.get("temperature", None))
     mu, sigma = _apply_corel_calibration(mu, sigma, cfg)
 
     # Persist raw predictions (NumPy)
@@ -426,7 +454,7 @@ def run_inference(cfg: DictConfig) -> InferenceArtifacts:
     LOG.info("Saved raw predictions: %s, %s", mu_path, sg_path)
 
     # Submission
-    cfg.outputs.submission_dir = str(sub_dir)
+    cfg.outputs["submission_dir"] = str(sub_dir)
     submission_path = _write_submission(mu, sigma, ids, cfg)
 
     # Quick plot (optional)
@@ -439,33 +467,36 @@ def run_inference(cfg: DictConfig) -> InferenceArtifacts:
         "weights": str(weights),
         "submission": str(submission_path),
         "run_hash": run_hash,
+        "elapsed_s": round(time.time() - t0, 3),
     }
     metrics_path = out_dir / "metrics_infer.json"
     _write_json(metrics_path, metrics)
+    _event(events_fp, event="predict_end", **metrics)
 
     # Optional MLflow
-    if cfg.mlflow.enable and _HAS_MLFLOW:
-        mlflow.set_tracking_uri(cfg.mlflow.tracking_uri)
-        mlflow.set_experiment(cfg.mlflow.experiment)
-        mlflow.start_run(run_name=cfg.mlflow.run_name or f"predict_v50_{run_hash}")
+    if bool(cfg.mlflow.get("enable", False)) and _HAS_MLFLOW:
+        mlflow.set_tracking_uri(cfg.mlflow.get("tracking_uri", "file:./mlruns"))
+        mlflow.set_experiment(cfg.mlflow.get("experiment", "v50_infer"))
+        mlflow.start_run(run_name=cfg.mlflow.get("run_name", f"predict_v50_{run_hash}"))
         mlflow.log_params({
             "weights": str(weights),
-            "batch_size": cfg.infer.batch_size,
-            "num_workers": cfg.infer.num_workers,
-            "temperature": cfg.calibration.temperature,
-            "corel_enable": cfg.calibration.corel.enable,
-            "outputs_format": cfg.outputs.format,
+            "batch_size": int(cfg.infer.get("batch_size", 32)),
+            "num_workers": int(cfg.infer.get("num_workers", 0)),
+            "temperature": cfg.calibration.get("temperature", None),
+            "corel_enable": bool(cfg.calibration.get("corel", {}).get("enable", False)),
+            "outputs_format": cfg.outputs.get("format", "wide"),
         })
         mlflow.log_artifact(str(cfg_out))
-        if (plots_dir / "preview_spectra.png").exists():
-            mlflow.log_artifact(str(plots_dir / "preview_spectra.png"))
+        plot_path = plots_dir / "preview_spectra.png"
+        if plot_path.exists():
+            mlflow.log_artifact(str(plot_path))
         mlflow.log_artifact(str(submission_path))
         mlflow.log_artifact(str(metrics_path))
         mlflow.end_run()
 
     # Bundle (zip) convenience
     bundle_path = None
-    if cfg.runtime.bundle_zip:
+    if bool(cfg.runtime.get("bundle_zip", False)):
         bundle_dir = out_dir / "bundle"
         bundle_dir.mkdir(parents=True, exist_ok=True)
         bundle_path = bundle_dir / f"predict_bundle_{run_hash}.zip"
@@ -473,18 +504,21 @@ def run_inference(cfg: DictConfig) -> InferenceArtifacts:
             zf.write(submission_path, arcname=submission_path.name)
             zf.write(mu_path, arcname=mu_path.name)
             zf.write(sg_path, arcname=sg_path.name)
-            if (plots_dir / "preview_spectra.png").exists():
-                zf.write(plots_dir / "preview_spectra.png", arcname="preview_spectra.png")
+            plot_path = plots_dir / "preview_spectra.png"
+            if plot_path.exists():
+                zf.write(plot_path, arcname="preview_spectra.png")
             zf.write(metrics_path, arcname=metrics_path.name)
             zf.write(cfg_out, arcname=cfg_out.name)
         LOG.info("Bundle created: %s", bundle_path)
 
+    events_fp.close()
     return InferenceArtifacts(
         submission=submission_path,
         predictions_npy=mu_path,
         metrics_json=metrics_path,
         bundle_zip=bundle_path
     )
+
 
 # -----------------------------
 # Hydra entrypoint
@@ -495,12 +529,12 @@ def main(cfg: DictConfig) -> None:
     """
     In-code defaults are assumed to be defined in configs/config_v50.yaml.
     You can override via CLI, e.g.:
-      python -m src.predict_v50 \
+      python predict_v50.py \
           runtime.weights=outputs/checkpoints/best_abcdef.pt \
           data.test_path=data/test.csv \
           outputs.submission_filename=submission.csv
     """
-    out_dir = Path(cfg.runtime.out_dir).absolute()
+    out_dir = Path(cfg.runtime.get("out_dir", "outputs/infer")).absolute()
     out_dir.mkdir(parents=True, exist_ok=True)
     try:
         artifacts = run_inference(cfg)
