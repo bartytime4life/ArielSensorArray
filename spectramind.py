@@ -81,6 +81,7 @@ VERSION_FILE = REPO / "VERSION"
 RUN_HASH_JSON = OUTPUTS / "run_hash_summary_v50.json"
 
 CONFIG_SNAPSHOT = OUTPUTS / "config_snapshot.yaml"
+METRICS_JSON = OUTPUTS / "metrics.json"
 
 # -----------------------------------------------------------------------------
 # Global runtime context
@@ -133,9 +134,12 @@ def write_text(path: Path, text: str) -> None:
 
 
 def write_json(path: Path, data: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True
-                      )
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def read_json(path: Path) -> Any:
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
 
 
 def append_jsonl(path: Path, record: Dict[str, Any]) -> None:
@@ -249,6 +253,92 @@ def run_command(cmd: List[str], env: Optional[Dict[str, str]] = None, allow_fail
 
 
 # -----------------------------------------------------------------------------
+# Metrics template & updater (auto-wired to CLI)
+# -----------------------------------------------------------------------------
+def _metrics_template() -> Dict[str, Any]:
+    return {
+        "metadata": {
+            "project": "SpectraMind V50 — Ariel Data Challenge 2025",
+            "version": read_version(),
+            "git_sha": git_sha_short(),
+            "run_hash": None,
+            "timestamp_utc": timestamp(),
+            "environment": {
+                "python": sys.version.split()[0],
+                "cuda": os.environ.get("CUDA_VERSION", "unknown"),
+                "hydra": "1.3" if HYDRA_AVAILABLE else "unavailable",
+                "dvc": os.environ.get("DVC_VERSION", "unknown")
+            }
+        },
+        "leaderboard_metrics": {
+            "public_lb_score": None,
+            "private_lb_score": None,
+            "score_direction": "maximize",
+            "baseline_ref": 0.329,
+            "top_models_ref": {}
+        },
+        "core_metrics": {
+            "gll": {"mean": None, "per_bin": str(DIAG / "gll_heatmap.json")},
+            "mae": None,
+            "rmse": None,
+            "r2": None
+        },
+        "uncertainty_metrics": {
+            "nll": None,
+            "ece": None,
+            "quantile_coverage": {"90": None, "95": None, "99": None},
+            "corel_coverage": str(OUTPUTS / "corel_coverage.csv")
+        },
+        "physics_informed_metrics": {
+            "fft_power": str(DIAG / "fft_power.json"),
+            "autocorr": str(DIAG / "autocorr.json"),
+            "smoothness_l2": None,
+            "spectral_entropy": None,
+            "asymmetry_score": None
+        },
+        "symbolic_metrics": {
+            "rule_violations": str(DIAG / "symbolic_violations.json"),
+            "influence_map": str(DIAG / "symbolic_influence.json"),
+            "fusion_score": None
+        },
+        "explainability": {
+            "shap_summary": str(DIAG / "shap_summary.json"),
+            "shap_overlay": str(DIAG / "shap_overlay.png"),
+            "latent_umap": str(DIAG / "umap.json"),
+            "latent_tsne": str(DIAG / "tsne.json")
+        },
+        "diagnostics": {
+            "dashboard_html": None,
+            "log_table": str(OUTPUTS / "log_table.csv"),
+            "debug_log": str(DEBUG_LOG),
+            "artifacts": {}
+        }
+    }
+
+
+def _deep_update(dst: Dict[str, Any], src: Dict[str, Any]) -> Dict[str, Any]:
+    for k, v in src.items():
+        if isinstance(v, dict) and isinstance(dst.get(k), dict):
+            _deep_update(dst[k], v)
+        else:
+            dst[k] = v
+    return dst
+
+
+def update_metrics(patch: Dict[str, Any]) -> None:
+    """Create or update outputs/metrics.json with a deep merge of `patch`."""
+    ensure_dirs()
+    current = read_json(METRICS_JSON) or _metrics_template()
+    # always refresh minimal metadata
+    current["metadata"]["git_sha"] = git_sha_short()
+    current["metadata"]["timestamp_utc"] = timestamp()
+    _deep_update(current, patch)
+    if not CTX.dry_run:
+        write_json(METRICS_JSON, current)
+        console.print(f"[green]metrics.json updated[/green] → {METRICS_JSON}")
+
+
+# -----------------------------------------------------------------------------
 # Determinism & run hashing
 # -----------------------------------------------------------------------------
 def seed_everything(seed: int = 42) -> None:
@@ -287,6 +377,8 @@ def persist_run_hash(extra: Dict[str, Any] | None = None) -> str:
     rh = dict_hash(info)
     if not CTX.dry_run:
         write_json(RUN_HASH_JSON, {"run_hash": rh, "meta": info})
+    # also reflect into metrics.json
+    update_metrics({"metadata": {"run_hash": rh}})
     return rh
 
 
@@ -420,6 +512,8 @@ def calibrate(
     rh = persist_run_hash({"invocation": "calibrate"})
     append_debug_log(["spectramind calibrate", f"overrides={overrides}", f"Run: {rh}"])
     append_run_jsonl("calibrate", {"overrides": overrides or [], "run_hash": rh})
+    # metrics: just note artifacts
+    update_metrics({"diagnostics": {"artifacts": {"calibration_summary": str(CALIB / "calibration_summary.json")}}})
 
 
 @APP.command("calibrate-temp")
@@ -431,12 +525,14 @@ def calibrate_temp(
     ensure_dirs()
     cfg = hydra_compose_or_stub(REPO / "configs", "calibration=temperature", overrides)
     simulate_progress("Calibrating temperature", steps=4)
+    temp_file = OUTPUTS / "temperature_scaling.json"
     if not CTX.dry_run:
-        write_json(OUTPUTS / "temperature_scaling.json", {"cfg": cfg, "temp": 1.23, "note": "stub"})
-    console.print("[green]Temperature scaling complete[/green] → outputs/temperature_scaling.json")
+        write_json(temp_file, {"cfg": cfg, "temp": 1.23, "note": "stub"})
+    console.print(f"[green]Temperature scaling complete[/green] → {temp_file}")
     rh = persist_run_hash({"invocation": "calibrate-temp"})
     append_debug_log(["spectramind calibrate-temp", f"overrides={overrides}", f"Run: {rh}"])
     append_run_jsonl("calibrate-temp", {"overrides": overrides or [], "run_hash": rh})
+    update_metrics({"diagnostics": {"artifacts": {"temperature_scaling": str(temp_file)}}})
 
 
 @APP.command("corel-train")
@@ -448,12 +544,14 @@ def corel_train(
     ensure_dirs()
     cfg = hydra_compose_or_stub(REPO / "configs", "uncertainty=corel", overrides)
     simulate_progress("Training COREL", steps=8)
+    model_file = OUTPUTS / "corel_model.json"
     if not CTX.dry_run:
-        write_json(OUTPUTS / "corel_model.json", {"cfg": cfg, "coverage": 0.95, "note": "stub"})
-    console.print("[green]COREL saved[/green] → outputs/corel_model.json")
+        write_json(model_file, {"cfg": cfg, "coverage": 0.95, "note": "stub"})
+    console.print(f"[green]COREL saved[/green] → {model_file}")
     rh = persist_run_hash({"invocation": "corel-train"})
     append_debug_log(["spectramind corel-train", f"overrides={overrides}", f"Run: {rh}"])
     append_run_jsonl("corel-train", {"overrides": overrides or [], "run_hash": rh})
+    update_metrics({"uncertainty_metrics": {"quantile_coverage": {"95": 0.95}}, "diagnostics": {"artifacts": {"corel_model": str(model_file)}}})
 
 
 @APP.command("train")
@@ -469,13 +567,20 @@ def train(
     simulate_progress(f"Training on {device}", steps=10)
     target_dir = (outdir or CHECKPOINTS)
     target_dir.mkdir(parents=True, exist_ok=True)
+    ckpt = target_dir / "best.ckpt"
+    summary_path = target_dir / "train_summary.json"
     if not CTX.dry_run:
-        write_text(target_dir / "best.ckpt", "stub-model-weights")
-        write_json(target_dir / "train_summary.json", {"cfg": cfg, "device": device, "note": "stub"})
-    console.print(f"[green]Training done[/green] → {target_dir}/best.ckpt")
+        write_text(ckpt, "stub-model-weights")
+        write_json(summary_path, {"cfg": cfg, "device": device, "note": "stub"})
+    console.print(f"[green]Training done[/green] → {ckpt}")
     rh = persist_run_hash({"invocation": "train", "device": device, "outdir": str(target_dir)})
     append_debug_log(["spectramind train", f"device={device}", f"overrides={overrides}", f"outdir={target_dir}", f"Run: {rh}"])
     append_run_jsonl("train", {"device": device, "overrides": overrides or [], "outdir": str(target_dir), "run_hash": rh})
+    # metrics update
+    update_metrics({
+        "metadata": {"run_hash": rh},
+        "diagnostics": {"artifacts": {"checkpoint": str(ckpt), "train_summary": str(summary_path)}}
+    })
 
 
 @APP.command("predict")
@@ -498,6 +603,11 @@ def predict(
     rh = persist_run_hash({"invocation": "predict", "out_csv": str(out_csv)})
     append_debug_log(["spectramind predict", f"out_csv={out_csv}", f"overrides={overrides}", f"Run: {rh}"])
     append_run_jsonl("predict", {"out_csv": str(out_csv), "overrides": overrides or [], "run_hash": rh})
+    # metrics update: record predictions artifact (LB scores unknown at runtime)
+    update_metrics({
+        "leaderboard_metrics": {"public_lb_score": None, "private_lb_score": None},
+        "diagnostics": {"artifacts": {"submission_csv": str(out_csv)}}
+    })
 
 # -----------------------------------------------------------------------------
 # Diagnose (group)
@@ -515,12 +625,14 @@ def diag_smoothness(
     ensure_dirs()
     simulate_progress("Computing smoothness", steps=4)
     outdir.mkdir(parents=True, exist_ok=True)
+    smooth_html = outdir / "smoothness.html"
     if not CTX.dry_run:
-        write_stub_html(outdir / "smoothness.html", "Smoothness Map (stub)", "<p>No real data — stub output.</p>")
-    console.print(f"[green]Smoothness HTML[/green] → {outdir}/smoothness.html")
+        write_stub_html(smooth_html, "Smoothness Map (stub)", "<p>No real data — stub output.</p>")
+    console.print(f"[green]Smoothness HTML[/green] → {smooth_html}")
     rh = persist_run_hash({"invocation": "diagnose.smoothness"})
     append_debug_log(["spectramind diagnose smoothness", f"outdir={outdir}", f"Run: {rh}"])
     append_run_jsonl("diagnose.smoothness", {"outdir": str(outdir), "run_hash": rh})
+    update_metrics({"physics_informed_metrics": {"smoothness_l2": None}, "diagnostics": {"artifacts": {"smoothness_html": str(smooth_html)}}})
 
 
 @DIAG_APP.command("dashboard")
@@ -550,6 +662,7 @@ def diag_dashboard(
         "diagnose.dashboard",
         {"outdir": str(outdir), "no_umap": no_umap, "no_tsne": no_tsne, "run_hash": rh},
     )
+    update_metrics({"diagnostics": {"dashboard_html": str(out_file)}})
 
 # -----------------------------------------------------------------------------
 # Submit (bundle)
@@ -574,6 +687,7 @@ def submit(
     rh = persist_run_hash({"invocation": "submit", "zip_out": str(zip_out)})
     append_debug_log(["spectramind submit", f"zip_out={zip_out}", f"Run: {rh}"])
     append_run_jsonl("submit", {"zip_out": str(zip_out), "run_hash": rh})
+    update_metrics({"diagnostics": {"artifacts": {"bundle_zip": str(zip_out), "submission_csv": str(sub_csv)}}})
 
 # -----------------------------------------------------------------------------
 # Analyze log + short
@@ -630,6 +744,7 @@ def analyze_log(
     rh = persist_run_hash({"invocation": "analyze-log"})
     append_debug_log(["spectramind analyze-log", f"md={md_out}", f"csv={csv_out}", f"rows={len(rows)}", f"Run: {rh}"])
     append_run_jsonl("analyze-log", {"md": str(md_out), "csv": str(csv_out), "rows": len(rows), "run_hash": rh})
+    update_metrics({"diagnostics": {"log_table": str(csv_out)}})
 
 
 @APP.command("analyze-log-short")
@@ -735,6 +850,7 @@ def kaggle_run(
     rh = persist_run_hash({"invocation": "kaggle.run"})
     append_debug_log(["spectramind kaggle-run", f"outdir={out_dir}", f"Run: {rh}"])
     append_run_jsonl("kaggle.run", {"outdir": str(out_dir), "run_hash": rh})
+    update_metrics({"diagnostics": {"artifacts": {"kaggle_run": "ok"}}})
 
 
 @KAGGLE_APP.command("submit")
@@ -754,6 +870,7 @@ def kaggle_submit(
     rh = persist_run_hash({"invocation": "kaggle.submit", "competition": comp})
     append_debug_log(["spectramind kaggle-submit", f"comp={comp}", f"file={file}", f"Run: {rh}"])
     append_run_jsonl("kaggle.submit", {"competition": comp, "file": str(file), "run_hash": rh})
+    update_metrics({"diagnostics": {"artifacts": {"kaggle_submission": str(file)}}, "leaderboard_metrics": {"public_lb_score": None}})
 
 # -----------------------------------------------------------------------------
 # Benchmark helpers (parity with Make)
@@ -796,6 +913,7 @@ def benchmark_run(
     rh = persist_run_hash({"invocation": "benchmark.run", "device": device, "epochs": epochs, "outdir": str(outdir)})
     append_debug_log(["spectramind benchmark-run", f"outdir={outdir}", f"Run: {rh}"])
     append_run_jsonl("benchmark.run", {"device": device, "epochs": epochs, "outdir": str(outdir), "run_hash": rh})
+    update_metrics({"diagnostics": {"artifacts": {"benchmark_summary": str(outdir / "summary.txt")}}})
 
 
 @BENCH_APP.command("report")
