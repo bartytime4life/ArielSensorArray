@@ -1,6 +1,7 @@
 # ------------------------------------------------------------------------------
 # docker-compose.yml — SpectraMind V50 (ArielSensorArray)
-# One‑command dev/runtime with GPU/CPU profiles, live docs, TensorBoard, and CI.
+# One‑command dev/runtime with GPU/CPU profiles, live docs, TensorBoard, Jupyter,
+# optional local LLM (Ollama), and CI runner. Caches (pip/poetry/HF) are persisted.
 #
 #  Build all images:        docker compose build
 #  GPU shell:               docker compose --profile gpu up -d spectramind-gpu && \
@@ -9,14 +10,15 @@
 #                           docker compose exec spectramind-cpu bash
 #  Live docs:               docker compose --profile docs up docs
 #  TensorBoard:             docker compose --profile viz up tensorboard
+#  JupyterLab:              docker compose --profile lab up jupyter
+#  Local LLM (Ollama):      docker compose --profile llm up ollama
 #  CI (headless):           docker compose --profile ci up --abort-on-container-exit ci
 #
 # Notes
 #  • All services mount the repo at /workspace (Poetry + Typer CLI ready).
 #  • GPU via NVIDIA Container Toolkit (device_requests); CPU services run without it.
-#  • Caches (pip/poetry/HF) are persisted in named volumes to speed up builds.
 #  • Align with .dockerignore / .gitignore / .dvcignore to keep images lean.
-#  • To avoid root-owned files on host, uncomment the user: lines (requires matching UID/GID).
+#  • To avoid root-owned files on host, uncomment user: lines (ensure matching UID/GID).
 # ------------------------------------------------------------------------------
 
 version: "3.9"
@@ -32,11 +34,11 @@ x-common-env: &common-env
   # Hugging Face caches (aligned with .dockerignore)
   TRANSFORMERS_CACHE: /workspace/.hf_cache
   HF_HOME: /workspace/.hf_cache
-  # Optional: deterministic hashing (helps CI reproducibility)
+  # Determinism (helps CI reproducibility)
   PYTHONHASHSEED: "0"
 
-# If you keep secrets/API keys in an .env, uncomment:
-# x-common-envfile: &common-envfile
+# If you keep secrets/API keys in an .env, uncomment the next two lines on services:
+# env_file:
 #   - .env
 
 x-common-volumes: &common-volumes
@@ -59,15 +61,19 @@ x-hc-poetry: &hc-poetry
   interval: 10s
   timeout: 5s
   retries: 15
-  start_period: 15s
+  start_period: 20s
   test: ["CMD-SHELL","poetry --version >/dev/null 2>&1 || exit 1"]
 
 x-hc-cli: &hc-cli
   interval: 20s
   timeout: 5s
   retries: 10
-  start_period: 20s
+  start_period: 25s
   test: ["CMD-SHELL","python -c 'import importlib; importlib.import_module(\"spectramind\")' >/dev/null 2>&1 || exit 1"]
+
+networks:
+  spectramind-net:
+    driver: bridge
 
 # ---------- Services -----------------------------------------------------------
 services:
@@ -79,10 +85,8 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        # CUDA runtime image with cuDNN (tuned in Dockerfile by BASE_IMAGE)
         BASE_IMAGE: ${GPU_BASE_IMAGE:-nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04}
         POETRY_VERSION: ${POETRY_VERSION:-1.8.3}
-        # Torch wheel index for CUDA 12.1 (empty for CPU)
         TORCH_WHL_INDEX: ${TORCH_WHL_INDEX:-https://download.pytorch.org/whl/cu121}
     image: spectramindv50:gpu
     container_name: spectramind-gpu
@@ -93,7 +97,6 @@ services:
     shm_size: "16gb"
     environment:
       <<: *common-env
-      # Prefer device_requests, fallback deploy.resources for Swarm-like runtimes
       NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
       NVIDIA_DRIVER_CAPABILITIES: compute,utility
     volumes: *common-volumes
@@ -105,6 +108,7 @@ services:
     logging: *common-logging
     # user: "${UID:-1000}:${GID:-1000}"
     restart: unless-stopped
+    networks: [spectramind-net]
     profiles: ["gpu"]
 
   # ----------------------------------------------------------------
@@ -131,11 +135,12 @@ services:
     logging: *common-logging
     # user: "${UID:-1000}:${GID:-1000}"
     restart: unless-stopped
+    networks: [spectramind-net]
     profiles: ["cpu"]
 
   # ----------------------------------------------------------------
   # Live docs server (MkDocs) — http://localhost:8000
-  # Uses GPU image by default; switch to cpu image by setting DOCS_IMAGE
+  # Uses GPU image by default; switch to CPU via DOCS_IMAGE
   # ----------------------------------------------------------------
   docs:
     image: ${DOCS_IMAGE:-spectramindv50:gpu}
@@ -154,6 +159,7 @@ services:
       test: ["CMD-SHELL","curl -fsS http://localhost:8000/ >/dev/null || exit 1"]
     logging: *common-logging
     restart: unless-stopped
+    networks: [spectramind-net]
     profiles: ["docs"]
 
   # ----------------------------------------------------------------
@@ -182,7 +188,64 @@ services:
       test: ["CMD-SHELL","curl -fsS http://localhost:6006/ >/dev/null || exit 1"]
     logging: *common-logging
     restart: unless-stopped
+    networks: [spectramind-net]
     profiles: ["viz"]
+
+  # ----------------------------------------------------------------
+  # JupyterLab — http://localhost:8888 (token printed in logs)
+  # ----------------------------------------------------------------
+  jupyter:
+    image: ${LAB_IMAGE:-spectramindv50:gpu}
+    container_name: spectramind-lab
+    working_dir: /workspace
+    command: >
+      bash -lc "poetry run jupyter lab
+      --ip=0.0.0.0 --port=8888 --no-browser --NotebookApp.token='${JUPYTER_TOKEN:-spectra}'"
+    ports:
+      - "8888:8888"
+    environment:
+      <<: *common-env
+      # Prevent Jupyter writing large caches in image layers
+      JUPYTER_CONFIG_DIR: /workspace/.jupyter
+    volumes: *common-volumes
+    depends_on:
+      spectramind-gpu:
+        condition: service_started
+    healthcheck:
+      <<: *hc-poetry
+      test: ["CMD-SHELL","curl -fsS http://localhost:8888/api || exit 1"]
+    logging: *common-logging
+    restart: unless-stopped
+    networks: [spectramind-net]
+    profiles: ["lab"]
+
+  # ----------------------------------------------------------------
+  # Local LLM runtime (Ollama) — http://localhost:11434 (REST)
+  # Pull models once; persists under ollama-data volume
+  # ----------------------------------------------------------------
+  ollama:
+    image: ollama/ollama:latest
+    container_name: spectramind-ollama
+    environment:
+      OLLAMA_HOST: 0.0.0.0
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    device_requests:
+      - driver: "nvidia"
+        count: -1
+        capabilities: ["gpu"]
+    healthcheck:
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 25s
+      test: ["CMD-SHELL","curl -fsS http://localhost:11434/api/tags >/dev/null || exit 1"]
+    logging: *common-logging
+    restart: unless-stopped
+    networks: [spectramind-net]
+    profiles: ["llm"]
 
   # ----------------------------------------------------------------
   # Headless CI runner (deterministic, non‑interactive)
@@ -192,20 +255,20 @@ services:
     image: ${CI_IMAGE:-spectramindv50:cpu}
     container_name: spectramind-ci
     working_dir: /workspace
-    command: bash -lc 'if [ -f makefile.ci ] || [ -f Makefile.ci ]; then make -f makefile.ci ci || make -f Makefile.ci ci; else make ci; fi'
+    command: >
+      bash -lc 'if [ -f makefile.ci ] || [ -f Makefile.ci ];
+      then make -f makefile.ci ci || make -f Makefile.ci ci;
+      else make ci; fi'
     environment:
       <<: *common-env
       SPECTRAMIND_CI: "1"
       DEVICE: "${DEVICE:-cpu}"
       EPOCHS: "${EPOCHS:-1}"
     volumes: *common-volumes
-    # For CI flows that build images first:
-    # depends_on:
-    #   spectramind-cpu:
-    #     condition: service_started
     healthcheck: *hc-cli
     logging: *common-logging
     restart: "no"
+    networks: [spectramind-net]
     profiles: ["ci"]
 
 # ---------- Volumes ------------------------------------------------------------
@@ -215,5 +278,6 @@ volumes:
   spectramind-cache:
   hf-cache:
   tb-logs:
+  ollama-data:
   # logs:
   # outputs:
