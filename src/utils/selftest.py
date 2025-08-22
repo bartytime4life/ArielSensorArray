@@ -1,3 +1,8 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+SpectraMind V50 — Self-Test & Integrity Validator
+Location: src/utils/selftest.py
 
 Purpose
 -------
