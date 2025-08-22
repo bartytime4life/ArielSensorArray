@@ -1,42 +1,43 @@
 # ==============================================================================
 # .gitignore — SpectraMind V50 (NeurIPS 2025 Ariel Data Challenge)
-# Purpose: Keep Git history clean (code + configs only). Everything reproducible
-# or environment-specific stays out. Synced with .dvcignore and .dockerignore.
+# Purpose: Keep Git history clean and reproducible (code + configs only).
+# Data, models, and generated artifacts are managed via DVC/lakeFS and CI.
+# Synchronized conceptually with .dvcignore and .dockerignore.
 # ==============================================================================
 
-# ===== Python / builds / caches =====
+# ===== Python / builds / bytecode =====
 __pycache__/
 *.py[cod]
 *.pyd
 *.so
-*.egg-info/
-*.egg
-*.whl
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.ipynb_checkpoints/
-
-# Byte-compiled / optimized / DLL files
 *.dll
 *.pyc
 *.pyo
 *.pdb
+*.egg-info/
+*.egg
+*.whl
+build/
+dist/
+
+# ===== Python tooling caches =====
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
 
 # ===== Virtual envs / package managers =====
 .venv/
 venv/
 env/
 ENV/
-.poetry/
-pip-wheel-metadata/
 site-packages/
+# Poetry internals (lockfile should be tracked)
+.poetry/
 
 # ===== Node / web toolchains (diagrams, dashboards) =====
 node_modules/
-dist/
-build/
-package-lock.json
+# Track lockfiles for deterministic builds (do NOT ignore package-lock.json / pnpm-lock.yaml / yarn.lock)
 
 # ===== Editors / IDEs =====
 .vscode/
@@ -57,25 +58,40 @@ logs/
 *.old
 *.pid
 *.lock
+tmp/
+temp/
 
-# ===== Datasets, model weights, and heavy artifacts =====
-# Use DVC/lakeFS for versioning; keep pointers (.dvc) in Git, not the data.
+# ===== Datasets, model weights, large binaries =====
+# Use DVC/lakeFS for data artifacts; keep only pointer files (*.dvc) and dvc.yaml in Git.
 data/**
 !data/.gitkeep
 !*.dvc
+# Common model/artifact roots (still governed by DVC or LFS)
+models/**
+!models/.gitkeep
 
 # ===== Intermediate & cache outputs (pipeline-generated) =====
-outputs/checkpoints/
-outputs/intermediate/
-outputs/temp/
-outputs/cache/
-outputs/debug/
-outputs/tmp/
+outputs/**
+!outputs/.gitkeep
+# Optionally keep “final” submission bundle pointers elsewhere (see below)
 
-# ===== Diagnostics, reports & dashboards (reproducible) =====
-outputs/diagnostics/
+# Fine-grained excludes for typical pipeline subdirs (redundant if outputs/** ignored)
+# outputs/checkpoints/
+# outputs/intermediate/
+# outputs/temp/
+# outputs/cache/
+# outputs/debug/
+# outputs/tmp/
+
+# ===== Diagnostics, reports & dashboards (reproducible build artifacts) =====
 reports/
 dashboards/
+assets/screenshots/
+assets/plots/
+assets/tmp/
+assets/diagrams/
+!assets/.gitkeep
+# Generated visuals and docs (built by CLI/CI)
 *.html
 *.htm
 *.png
@@ -97,7 +113,7 @@ outputs/submission_bundle.zip
 outputs/submission/**/*.zip
 outputs/submission/**/*.csv
 
-# ===== Generated configs & manifests (run-local, not source-of-truth) =====
+# ===== Run products, manifests, and local logs =====
 hydra_outputs/
 multirun/
 run_logs/
@@ -105,13 +121,6 @@ manifest.json
 diagnostic_summary.json
 run_hash_summary_v50.json
 version_manifest.json
-
-# ===== Assets (generated) =====
-assets/screenshots/
-assets/plots/
-assets/tmp/
-assets/diagrams/
-!assets/.gitkeep
 
 # ===== Kaggle / competition specifics =====
 .kaggle/
@@ -125,6 +134,12 @@ working/
 .dvc/plots/
 .dvc/config.local
 
+# ===== ML experiment trackers (local) =====
+mlruns/
+wandb/
+.tensorboard/
+.lightning_logs/
+
 # ===== Test coverage / reports =====
 coverage/
 .coverage*
@@ -137,8 +152,11 @@ htmlcov/
 .aws/
 .gcloud/
 .azure/
+ssh_known_hosts
+*.pem
+*.key
 
-# ===== Archives / bundles =====
+# ===== Archives / bundles (reproducible by CI/CLI) =====
 *.tar
 *.tar.gz
 *.7z
@@ -146,3 +164,5 @@ htmlcov/
 
 # ===== Keep empty essential dirs in Git =====
 !outputs/.gitkeep
+!assets/.gitkeep
+!models/.gitkeep
