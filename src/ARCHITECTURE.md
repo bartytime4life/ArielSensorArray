@@ -1,16 +1,3 @@
-Got it. Based on the actual `src/` tree you shared and the conventions from the other upgraded Markdown docs in your repo, here’s a **polished `ARCHITECTURE.md` for the `src/` directory**. It matches the style/quality of your root `ARCHITECTURE.md` and other subsystem docs:
-
-```markdown
-# SpectraMind V50 — `src/` Architecture
-
-**Core source code for the neuro-symbolic, physics-informed AI pipeline (Ariel Data Challenge 2025).**
-
-This directory houses all **mission-grade training, inference, diagnostics, and symbolic reasoning code**.
-It is the heart of the V50 system: from data ingestion → model encoders → loss functions →
-symbolic constraints → diagnostics dashboards.
-
----
-
 ## 📂 Directory Map
 
 ```
