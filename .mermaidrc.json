@@ -8,8 +8,9 @@
   "deterministicIds": true,
   "deterministicIDSeed": "spectramind-v50",
   "logLevel": "error",
+  "wrap": true,
 
-  // Typography & colors (light by default; adapt via themeVariables if needed)
+  // Adaptive Typography & Colors
   "fontFamily": "Inter, Roboto, Segoe UI, Helvetica Neue, Arial, ui-sans-serif, system-ui, sans-serif",
   "themeVariables": {
     "background": "transparent",
@@ -19,7 +20,24 @@
     "lineColor": "#334155",
     "textColor": "#0f172a",
     "tertiaryColor": "#f1f5f9",
-    "fontFamily": "Inter, Roboto, Segoe UI, Helvetica Neue, Arial, ui-sans-serif, system-ui, sans-serif",
+    "noteBkgColor": "#fef9c3",
+    "noteTextColor": "#1f2937",
+    "errorBkgColor": "#fee2e2",
+    "errorTextColor": "#991b1b",
+    "fontSize": "16px"
+  },
+  "darkModeThemeVariables": {
+    "background": "transparent",
+    "primaryColor": "#38bdf8",
+    "primaryTextColor": "#f8fafc",
+    "primaryBorderColor": "#0ea5e9",
+    "lineColor": "#94a3b8",
+    "textColor": "#e2e8f0",
+    "tertiaryColor": "#1e293b",
+    "noteBkgColor": "#1e3a8a",
+    "noteTextColor": "#e0f2fe",
+    "errorBkgColor": "#450a0a",
+    "errorTextColor": "#fecaca",
     "fontSize": "16px"
   },
 
@@ -27,10 +45,10 @@
   "flowchart": {
     "htmlLabels": true,
     "useMaxWidth": true,
-    "diagramPadding": 12,
+    "diagramPadding": 16,
     "padding": 8,
-    "nodeSpacing": 35,
-    "rankSpacing": 50,
+    "nodeSpacing": 40,
+    "rankSpacing": 60,
     "curve": "basis"
   },
 
@@ -39,56 +57,68 @@
     "useMaxWidth": true,
     "mirrorActors": false,
     "showSequenceNumbers": true,
-    "actorMargin": 50,
-    "boxMargin": 10,
-    "noteMargin": 10,
-    "activationWidth": 10,
-    "bottomMarginAdj": 8
+    "actorMargin": 60,
+    "boxMargin": 12,
+    "noteMargin": 12,
+    "activationWidth": 12,
+    "bottomMarginAdj": 10
   },
 
   // ER diagrams
   "er": {
-    "useMaxWidth": true
+    "useMaxWidth": true,
+    "diagramPadding": 12
   },
 
   // Class diagrams
   "class": {
-    "useMaxWidth": true
+    "useMaxWidth": true,
+    "diagramPadding": 12
   },
 
   // State diagrams
   "state": {
     "useMaxWidth": true,
-    "padding": 8,
-    "forkWidth": 10,
-    "forkHeight": 10
+    "padding": 10,
+    "forkWidth": 12,
+    "forkHeight": 12
   },
 
   // Gantt charts
   "gantt": {
     "useMaxWidth": true,
-    "titleTopMargin": 24,
-    "barHeight": 20,
-    "barGap": 4,
-    "topPadding": 50,
-    "leftPadding": 80,
-    "rightPadding": 24,
-    "gridLineStartPadding": 35,
+    "titleTopMargin": 28,
+    "barHeight": 22,
+    "barGap": 6,
+    "topPadding": 56,
+    "leftPadding": 96,
+    "rightPadding": 28,
+    "gridLineStartPadding": 40,
     "fontSize": 14,
     "sectionFontSize": 16,
-    "numberSectionStyles": 4
+    "numberSectionStyles": 4,
+    "axisFormat": "%m-%d"
   },
 
   // User journeys
   "journey": {
     "useMaxWidth": true,
-    "fontSize": 14
+    "fontSize": 14,
+    "padding": 12
   },
 
   // Pie charts
   "pie": {
     "useMaxWidth": true,
-    "strokeWidth": 1,
-    "textPosition": "inside"
+    "strokeWidth": 1.2,
+    "textPosition": "inside",
+    "fontSize": 14
+  },
+
+  // Mindmaps
+  "mindmap": {
+    "useMaxWidth": true,
+    "padding": 12,
+    "maxNodeWidth": 300
   }
 }
