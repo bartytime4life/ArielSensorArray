@@ -1,414 +1,692 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-src/diagnostics/spectral_smoothness_map.py
+tools/spectral_smoothness_map.py
 
-SpectraMind V50 — Spectral Smoothness Map (Upgraded, Challenge‑Grade)
-=====================================================================
+SpectraMind V50 — Spectral Smoothness Map & Diagnostics
 
 Purpose
 -------
-Quantify and visualize spectral smoothness/roughness of predicted μ(λ) across planets and bins.
-Produces per‑planet scalar metrics and per‑planet×bin roughness maps, with optional FFT high‑freq
-fraction and total variation (TV). Exports JSON/CSV summaries and diagnostic PNGs ready for the
-unified HTML dashboard. CLI‑first, CI/Kaggle‑friendly, with audit logging.
+Quantify and visualize spectral smoothness for predicted μ(λ) across samples and bins.
+This tool produces:
+  • Per-sample smoothness metrics: TV (|Δμ|), curvature (|Δ²μ|), rolling-std, FFT high‑freq ratio
+  • Per-bin smoothness maps averaged over samples (hotspots of roughness)
+  • Heatmaps (samples × bins) of |Δμ| and |Δ²μ|, sorted by smoothness score
+  • Scatter overlays comparing smoothness vs entropy, GLL, SHAP, symbolic violations
+  • Interactive Plotly HTML for quick exploration
+  • CSV tables + a compact HTML report to embed into the unified diagnostics dashboard
 
-Metrics
--------
-• Curvature (C2): mean squared second‑difference across bins (per‑planet scalar)
-• Total Variation (TV1): mean absolute first‑difference across bins (per‑planet scalar)
-• FFT High‑Frequency Fraction (HF_frac): fraction of power above a cutoff (per‑planet scalar)
-• Roughness Map (|Δ²μ|): per‑planet×bin (aligned to inner bins) used for heatmap
+Design
+------
+• CLI-first (Typer), reproducible, seed-stable for projections
+• No heavy deps (NumPy/Pandas/Matplotlib/Plotly; UMAP optional for 2D embeddings)
+• Aligns with V50 diagnostics ecosystem and audit logging (logs/v50_debug_log.md)
 
 Inputs
 ------
-• --mu:           .npy of shape [N_planets, N_bins] (predicted μ)
-• --wavelengths:  optional .npy [N_bins] for X‑axis ticks in plots
-• --planet-ids:   .txt (one per line) or .csv (first column) with N_planets IDs
-• --labels-csv:   optional CSV with columns: planet_id,label (categorical)
-• --confidence-csv: optional CSV with columns: planet_id,confidence in [0,1]
-• --outdir:       output directory (JSON/CSV/PNGs saved here)
+--mu           N×B .npy of predicted μ (required)
+--wavelengths  B .npy of λ values (optional; else uses bin index)
+--sigma        N×B .npy predicted σ (optional; for GLL calc when --y provided)
+--y            N×B .npy ground truth (optional; enables per-sample GLL)
+--symbolic     JSON per-sample symbolic violation summary (optional)
+--shap-bins    N×B .npy per-bin SHAP magnitudes (optional; for overlay correlation)
+--outdir       Output directory (will be created)
 
-Outputs
--------
-• outdir/smoothness_summary.json        (per‑planet metrics dictionary)
-• outdir/smoothness_summary.csv         (per‑planet table)
-• outdir/roughness_map.npy              (|Δ²μ| map [N, B-2])
-• outdir/plots/roughness_heatmap.png    (per‑planet×bin heatmap)
-• outdir/plots/metrics_hist.png         (histograms of C2/TV1/HF_frac)
-• outdir/plots/c2_vs_confidence.png     (if confidence available)
-• outdir/plots/c2_by_label.png          (if labels available)
-• logs/v50_debug_log.md                 (appended audit line)
+Key Metrics (lower = smoother unless stated otherwise)
+------------------------------------------------------
+TV1: mean(|Δμ|)                     — first-difference total variation average
+TV2: mean(|Δ²μ|)                    — curvature / second-difference variation average
+RSTD[w]: mean(rolling std, window)  — average local volatility (window configurable)
+HF_Ratio[k]: FFT high‑freq power / total (k = number of low freqs "kept")
+Entropy: Shannon entropy of μ (overlay; not a smoothness metric)
+GLL: mean Gaussian log-likelihood per sample (overlay; needs y and σ)
+SHAP_mean: mean(|SHAP|) across bins (overlay; if SHAP provided)
+Symbolic_violations: optional overlay (if JSON provided)
 
-Typical usage
--------------
-python -m src.diagnostics.spectral_smoothness_map run \
-  --mu outputs/predictions/mu.npy \
-  --wavelengths data/metadata/wavelengths.npy \
-  --planet-ids data/metadata/planet_ids.csv \
-  --labels-csv outputs/labels.csv \
-  --confidence-csv outputs/diagnostics/confidence.csv \
-  --fft-cut 0.25 \
-  --normalize \
-  --title "Spectral Smoothness — SpectraMind V50" \
-  --outdir outputs/smoothness \
-  --open-plots
+Outputs (in --outdir)
+---------------------
+tables/
+  smoothness_per_sample.csv
+  smoothness_per_bin.csv
+  overlays_pairwise_corr.csv
+plots/
+  heatmap_tv1.png / heatmap_tv2.png
+  heatmap_tv1.html / heatmap_tv2.html
+  mean_bin_tv1.png / mean_bin_tv2.png (+ .html)
+  scatter_smoothness_overlays_*.html
+report_spectral_smoothness_map.html  (if --html)
+summary.json
+
+Examples
+--------
+# Minimal
+python -m tools.spectral_smoothness_map --mu outputs/predictions/mu.npy --outdir outputs/smoothness
+
+# With overlays & HTML
+python -m tools.spectral_smoothness_map \
+  --mu mu.npy --sigma sigma.npy --y labels.npy \
+  --symbolic outputs/diagnostics/symbolic_results.json \
+  --shap-bins outputs/diagnostics/shap_bins.npy \
+  --wavelengths data/wavelengths.npy \
+  --window 21 --fft-keep 32 --html --save-png
 """
+
 from __future__ import annotations
 
-import csv
 import json
-import datetime as dt
+import math
+import os
+import sys
+import time
+import warnings
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
+import pandas as pd
 import typer
 from rich.console import Console
 from rich.panel import Panel
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
+from rich.theme import Theme
+
+# Plotting
 import matplotlib
-matplotlib.use("Agg")  # headless
+matplotlib.use("Agg")  # headless-safe
 import matplotlib.pyplot as plt
+import plotly.express as px
+import plotly.graph_objects as go
+import plotly.io as pio
 
-app = typer.Typer(add_completion=False, no_args_is_help=True)
-console = Console()
+# Optional UMAP for embedding of sample metrics
+try:
+    import umap  # type: ignore
+    _HAS_UMAP = True
+except Exception:
+    _HAS_UMAP = False
 
-# ======================================================================================
-# I/O helpers
-# ======================================================================================
+app = typer.Typer(add_completion=False, help="SpectraMind V50 — Spectral Smoothness Map & Diagnostics")
+console = Console(theme=Theme({"info": "cyan", "warn": "yellow", "err": "bold red"}))
 
-def _read_npy(path: Optional[Path]) -> Optional[np.ndarray]:
+
+# ============================================================
+# Utilities
+# ============================================================
+
+def ensure_dir(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+
+
+def load_npy(path: Optional[str]) -> Optional[np.ndarray]:
     if not path:
         return None
-    if not path.exists():
-        console.print(f"[yellow]WARN[/] npy not found: {path}")
-        return None
-    return np.load(str(path))
+    arr = np.load(path)
+    if not isinstance(arr, np.ndarray):
+        raise ValueError(f"{path} did not contain an ndarray")
+    return arr
 
-def _read_planet_ids(path: Path) -> List[str]:
-    if not path.exists():
-        raise FileNotFoundError(f"Missing planet_ids file: {path}")
-    if path.suffix.lower() == ".txt":
-        return [ln.strip() for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
-    # CSV first column
-    out: List[str] = []
-    with path.open("r", encoding="utf-8") as f:
-        r = csv.reader(f)
-        for row in r:
-            if not row:
-                continue
-            out.append(str(row[0]).strip())
+
+def append_audit_log(msg: str) -> None:
+    try:
+        logs = Path("logs")
+        logs.mkdir(parents=True, exist_ok=True)
+        with open(logs / "v50_debug_log.md", "a", encoding="utf-8") as f:
+            f.write(msg.rstrip() + "\n")
+    except Exception:
+        pass
+
+
+def now_str() -> str:
+    import datetime as dt
+    return dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def set_global_seed(seed: int) -> None:
+    try:
+        import random
+        random.seed(seed)
+    except Exception:
+        pass
+    try:
+        np.random.seed(seed)
+    except Exception:
+        pass
+
+
+# ============================================================
+# Core metrics
+# ============================================================
+
+def first_diff(mu: np.ndarray) -> np.ndarray:
+    # mu: (N, B) -> returns (N, B-1)
+    return np.diff(mu, axis=1)
+
+
+def second_diff(mu: np.ndarray) -> np.ndarray:
+    # mu: (N, B) -> returns (N, B-2)
+    return mu[:, 2:] - 2 * mu[:, 1:-1] + mu[:, :-2]
+
+
+def rolling_std(x: np.ndarray, win: int = 21) -> np.ndarray:
+    """1D rolling std with reflect padding, odd window."""
+    w = int(win) | 1
+    pad = w // 2
+    xr = np.pad(x, (pad, pad), mode="reflect")
+    out = np.empty_like(x, dtype=float)
+    for i in range(len(x)):
+        seg = xr[i:i + w]
+        out[i] = float(np.std(seg))
     return out
 
-def _read_labels_csv(path: Optional[Path]) -> Dict[str, str]:
-    if not path: return {}
-    if not path.exists():
-        console.print(f"[yellow]WARN[/] labels csv not found: {path}")
-        return {}
-    out: Dict[str, str] = {}
-    with path.open("r", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            pid = str(row.get("planet_id","")).strip()
-            lab = str(row.get("label","")).strip()
-            if pid: out[pid] = lab
-    return out
 
-def _read_confidence_csv(path: Optional[Path]) -> Dict[str, float]:
-    if not path: return {}
-    if not path.exists():
-        console.print(f"[yellow]WARN[/] confidence csv not found: {path}")
-        return {}
-    out: Dict[str, float] = {}
-    with path.open("r", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            pid = str(row.get("planet_id","")).strip()
-            try:
-                val = float(row.get("confidence",""))
-            except Exception:
-                val = float("nan")
-            if pid and np.isfinite(val):
-                out[pid] = float(np.clip(val, 0.0, 1.0))
-    return out
+def entropy_row(mu_row: np.ndarray, eps: float = 1e-12) -> float:
+    v = mu_row.astype(float)
+    v = v - np.min(v)
+    v = v + eps
+    p = v / np.sum(v)
+    return float(-np.sum(p * np.log(p + eps)))
 
-def _append_audit(log_path: Path, message: str):
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    with log_path.open("a", encoding="utf-8") as f:
-        f.write(f"- [{dt.datetime.now().isoformat(timespec='seconds')}] spectral_smoothness_map: {message}\n")
 
-# ======================================================================================
-# Smoothness metrics
-# ======================================================================================
+def gll_row(mu_row: np.ndarray, sigma_row: np.ndarray, y_row: np.ndarray, eps: float = 1e-12) -> float:
+    s2 = np.maximum(sigma_row.astype(float) ** 2, eps)
+    resid2 = (y_row.astype(float) - mu_row.astype(float)) ** 2
+    ll = -0.5 * (np.log(2 * np.pi * s2) + resid2 / s2)
+    return float(np.mean(ll))
 
-def _second_diff(mu: np.ndarray) -> np.ndarray:
-    """Δ²μ along wavelength axis: shape [N, B-2]."""
-    return np.diff(mu, n=2, axis=1)
 
-def curvature_c2(mu: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+def fft_highfreq_ratio(mu_row: np.ndarray, keep: int = 32) -> float:
+    fx = np.fft.rfft(mu_row)
+    mag2 = (fx.real ** 2 + fx.imag ** 2)
+    k = max(1, min(keep, len(mag2)))
+    low = float(np.sum(mag2[:k]))
+    high = float(np.sum(mag2[k:])) if k < len(mag2) else 0.0
+    denom = low + high
+    return float(high / denom) if denom > 0 else 0.0
+
+
+@dataclass
+class SmoothnessConfig:
+    window: int = 21
+    fft_keep: int = 32
+    normalize_by_range: bool = False  # if True, scale μ row to [0,1] before metrics
+
+
+def compute_smoothness_maps(
+    mu: np.ndarray,
+    cfg: SmoothnessConfig,
+) -> Dict[str, Any]:
     """
+    Compute per-sample and per-bin smoothness metrics.
     Returns:
-        roughness_map = |Δ²μ| (N, B-2)
-        c2_per_planet = mean( (Δ²μ)^2 ) per planet (N,)
-    """
-    d2 = _second_diff(mu)
-    rough = np.abs(d2)
-    c2 = np.mean(d2 ** 2, axis=1)
-    return rough, c2
-
-def total_variation_tv1(mu: np.ndarray) -> np.ndarray:
-    """TV1 per planet: mean |Δμ| across bins."""
-    d1 = np.diff(mu, n=1, axis=1)
-    return np.mean(np.abs(d1), axis=1)
-
-def fft_highfreq_fraction(mu: np.ndarray, cut_ratio: float = 0.25) -> np.ndarray:
-    """
-    Fraction of rFFT power above a normalized cutoff in (0, 0.5].
-    For each planet, rFFT over bins, compute sum(power[f>=fc]) / sum(power[all]).
+      {
+        "tv1_map": |Δμ| (N×B-1),
+        "tv2_map": |Δ²μ| (N×B-2),
+        "rstd_map": rolling-std (N×B),
+        "per_sample": DataFrame with summary metrics per sample,
+        "per_bin": DataFrame with mean tv1/tv2 per bin across samples,
+      }
     """
     N, B = mu.shape
-    if B < 4:
-        return np.zeros(N, dtype=float)
-    # center each spectrum
-    mu_c = mu - np.mean(mu, axis=1, keepdims=True)
-    # rFFT along bins
-    fft_vals = np.fft.rfft(mu_c, axis=1)
-    power = (fft_vals * np.conj(fft_vals)).real
-    # frequency index cutoff (exclude DC at index 0)
-    max_idx = power.shape[1] - 1
-    fc_idx = int(np.floor(cut_ratio * max_idx))
-    fc_idx = max(1, min(fc_idx, max_idx))
-    high = np.sum(power[:, fc_idx:], axis=1)
-    total = np.sum(power[:, 1:], axis=1) + 1e-12
-    return (high / total).astype(float)
+    M = mu.astype(float).copy()
 
-def normalize_per_planet(mu: np.ndarray) -> np.ndarray:
-    """Optional normalization: zero‑mean, unit‑std per planet (robust to constant spectra)."""
-    m = np.mean(mu, axis=1, keepdims=True)
-    s = np.std(mu, axis=1, keepdims=True)
-    s = np.where(s <= 1e-12, 1.0, s)
-    return (mu - m) / s
+    if cfg.normalize_by_range:
+        # avoid division by zero; normalize each row by (max-min)
+        row_min = np.nanmin(M, axis=1, keepdims=True)
+        row_max = np.nanmax(M, axis=1, keepdims=True)
+        denom = np.clip(row_max - row_min, 1e-12, None)
+        M = (M - row_min) / denom
 
-# ======================================================================================
-# Plotting
-# ======================================================================================
+    d1 = first_diff(M)
+    d2 = second_diff(M)
+    tv1_map = np.abs(d1)                      # (N, B-1)
+    tv2_map = np.abs(d2)                      # (N, B-2)
 
-def _save_heatmap(rough_map: np.ndarray, out_png: Path, wavelengths: Optional[np.ndarray], planet_ids: List[str], title: str):
-    out_png.parent.mkdir(parents=True, exist_ok=True)
-    fig, ax = plt.subplots(figsize=(12, 6))
-    im = ax.imshow(rough_map, aspect="auto", interpolation="nearest", cmap="magma")
-    ax.set_title(title)
-    ax.set_ylabel("Planet index")
-    ax.set_xlabel("Bin index (inner, after Δ²)")
-    if wavelengths is not None and wavelengths.size == rough_map.shape[1]:
-        # label some ticks
-        ticks = np.linspace(0, rough_map.shape[1]-1, num=min(10, rough_map.shape[1]), dtype=int)
-        ax.set_xticks(ticks)
-        ax.set_xticklabels([f"{wavelengths[t]:.2f}" for t in ticks], rotation=45, ha="right")
-        ax.set_xlabel("Wavelength (μm)")
-    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="|Δ²μ|")
-    fig.tight_layout()
-    fig.savefig(out_png, dpi=180)
-    plt.close(fig)
+    # Rolling std per sample
+    rstd_map = np.empty_like(M)
+    for i in range(N):
+        rstd_map[i] = rolling_std(M[i], win=cfg.window)
 
-def _save_hist(c2: np.ndarray, tv1: np.ndarray, hf: np.ndarray, out_png: Path, title: str):
-    out_png.parent.mkdir(parents=True, exist_ok=True)
-    fig, axes = plt.subplots(1, 3, figsize=(14, 4))
-    axes[0].hist(c2, bins=40, color="#4f83cc", alpha=0.9)
-    axes[0].set_title("C2 (curvature)")
-    axes[1].hist(tv1, bins=40, color="#10b981", alpha=0.9)
-    axes[1].set_title("TV1 (total variation)")
-    axes[2].hist(hf, bins=40, color="#eab308", alpha=0.9)
-    axes[2].set_title("HF_frac (FFT)")
-    fig.suptitle(title)
-    for ax in axes:
-        ax.grid(alpha=0.25, ls="--")
-        ax.set_ylabel("Count")
-    fig.tight_layout(rect=[0,0,1,0.95])
-    fig.savefig(out_png, dpi=180)
-    plt.close(fig)
+    # Summary per sample
+    tv1_mean = np.mean(tv1_map, axis=1)
+    tv2_mean = np.mean(tv2_map, axis=1) if tv2_map.shape[1] > 0 else np.zeros(N)
+    rstd_mean = np.mean(rstd_map, axis=1)
+    hf_ratio = np.array([fft_highfreq_ratio(M[i], keep=cfg.fft_keep) for i in range(N)], dtype=float)
 
-def _save_scatter_c2_conf(c2: np.ndarray, planet_ids: List[str], conf_map: Dict[str, float], out_png: Path):
-    vals = np.array([conf_map.get(pid, np.nan) for pid in planet_ids], dtype=float)
-    mask = np.isfinite(vals)
-    if not np.any(mask):
-        return
-    out_png.parent.mkdir(parents=True, exist_ok=True)
-    fig, ax = plt.subplots(figsize=(5,4))
-    ax.scatter(vals[mask], c2[mask], s=18, alpha=0.8)
-    ax.set_xlabel("confidence")
-    ax.set_ylabel("C2 curvature")
-    ax.grid(alpha=0.25, ls="--")
-    fig.tight_layout()
-    fig.savefig(out_png, dpi=170)
-    plt.close(fig)
+    per_sample = pd.DataFrame({
+        "sample": np.arange(N),
+        "TV1_mean": tv1_mean,
+        "TV2_mean": tv2_mean,
+        "RSTD_mean": rstd_mean,
+        "HF_Ratio": hf_ratio,
+    })
 
-def _save_c2_by_label(c2: np.ndarray, planet_ids: List[str], labels: Dict[str, str], out_png: Path):
-    if not labels:
-        return
-    labvals: Dict[str, List[float]] = {}
-    for i, pid in enumerate(planet_ids):
-        lab = labels.get(pid, "unknown")
-        labvals.setdefault(lab, []).append(float(c2[i]))
-    if not labvals:
-        return
-    out_png.parent.mkdir(parents=True, exist_ok=True)
-    labs = sorted(labvals.keys())
-    data = [labvals[k] for k in labs]
-    fig, ax = plt.subplots(figsize=(8,4))
-    ax.boxplot(data, labels=labs, showfliers=False)
-    ax.set_ylabel("C2 curvature")
-    ax.set_title("C2 by label")
-    ax.grid(alpha=0.25, ls="--", axis="y")
-    fig.tight_layout()
-    fig.savefig(out_png, dpi=170)
-    plt.close(fig)
+    # Per-bin mean TV1/TV2 across samples (align to original bin grid)
+    tv1_bin = np.mean(tv1_map, axis=0) if N > 0 else np.array([])
+    tv2_bin = np.mean(tv2_map, axis=0) if N > 0 and tv2_map.shape[1] > 0 else np.array([])
+    # Align TV1 (B-1) and TV2 (B-2) to a common B-length index via padding for plotting
+    per_bin = pd.DataFrame({
+        "bin": np.arange(B),
+        "TV1_mean_bin": np.concatenate([[tv1_bin[0]], 0.5 * (tv1_bin[:-1] + tv1_bin[1:])]) if B > 1 else np.array([0.0]),
+        "TV2_mean_bin": np.concatenate([[tv2_bin[0] if tv2_bin.size else 0.0],
+                                        np.pad(tv2_bin, (0, max(0, B - 1 - tv2_bin.size)), constant_values=(tv2_bin[-1] if tv2_bin.size else 0.0))]),
+    })
 
-# ======================================================================================
-# Save artifacts
-# ======================================================================================
+    return {
+        "tv1_map": tv1_map,
+        "tv2_map": tv2_map,
+        "rstd_map": rstd_map,
+        "per_sample": per_sample,
+        "per_bin": per_bin,
+    }
 
-def _save_json(path: Path, obj: Dict[str, Any]):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(obj, indent=2), encoding="utf-8")
 
-def _save_csv(path: Path, header: List[str], rows: List[List[Any]]):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(header)
-        w.writerows(rows)
+# ============================================================
+# Visualization
+# ============================================================
 
-# ======================================================================================
-# CLI
-# ======================================================================================
+def plot_heatmap_png(
+    mat: np.ndarray,
+    title: str,
+    out_png: Path,
+    xlabel: str = "Bin",
+    ylabel: str = "Sample (sorted)",
+    cmap: str = "magma",
+) -> None:
+    plt.figure(figsize=(10, 6), dpi=120)
+    plt.imshow(mat, aspect="auto", cmap=cmap, interpolation="nearest")
+    plt.colorbar()
+    plt.title(title)
+    plt.xlabel(xlabel)
+    plt.ylabel(ylabel)
+    plt.tight_layout()
+    plt.savefig(out_png)
+    plt.close()
+
+
+def plot_heatmap_html(
+    mat: np.ndarray,
+    title: str,
+    out_html: Path,
+) -> None:
+    # Build a z dataframe to avoid huge HTML; downsample if enormous
+    Z = mat
+    max_w = 1800
+    if Z.shape[1] > max_w:
+        step = math.ceil(Z.shape[1] / max_w)
+        Z = Z[:, ::step]
+    fig = go.Figure(data=go.Heatmap(z=Z, colorscale="Magma"))
+    fig.update_layout(title=title, xaxis_title="Bin (downsampled)" if Z is not mat else "Bin", yaxis_title="Sample (sorted)", height=520, template="plotly_white")
+    pio.write_html(fig, file=str(out_html), include_plotlyjs="cdn", full_html=True)
+
+
+def plot_mean_bin_curves(
+    per_bin: pd.DataFrame,
+    wavelengths: Optional[np.ndarray],
+    out_png_tv1: Path,
+    out_png_tv2: Path,
+    out_html_tv1: Path,
+    out_html_tv2: Path,
+) -> None:
+    x = wavelengths if wavelengths is not None else per_bin["bin"].values
+
+    # TV1
+    plt.figure(figsize=(10, 3.3), dpi=120)
+    plt.plot(x, per_bin["TV1_mean_bin"].values, lw=2.0)
+    plt.title("Mean |Δμ| per bin (TV1)")
+    plt.xlabel("Wavelength" if wavelengths is not None else "Bin")
+    plt.ylabel("TV1")
+    plt.grid(alpha=0.25)
+    plt.tight_layout()
+    plt.savefig(out_png_tv1)
+    plt.close()
+
+    fig1 = go.Figure()
+    fig1.add_trace(go.Scatter(x=x, y=per_bin["TV1_mean_bin"].values, mode="lines", name="TV1"))
+    fig1.update_layout(title="Mean |Δμ| per bin (TV1)", xaxis_title="Wavelength" if wavelengths is not None else "Bin", yaxis_title="TV1", template="plotly_white", height=320)
+    pio.write_html(fig1, file=str(out_html_tv1), include_plotlyjs="cdn", full_html=True)
+
+    # TV2
+    plt.figure(figsize=(10, 3.3), dpi=120)
+    plt.plot(x, per_bin["TV2_mean_bin"].values, lw=2.0)
+    plt.title("Mean |Δ²μ| per bin (TV2)")
+    plt.xlabel("Wavelength" if wavelengths is not None else "Bin")
+    plt.ylabel("TV2")
+    plt.grid(alpha=0.25)
+    plt.tight_layout()
+    plt.savefig(out_png_tv2)
+    plt.close()
+
+    fig2 = go.Figure()
+    fig2.add_trace(go.Scatter(x=x, y=per_bin["TV2_mean_bin"].values, mode="lines", name="TV2"))
+    fig2.update_layout(title="Mean |Δ²μ| per bin (TV2)", xaxis_title="Wavelength" if wavelengths is not None else "Bin", yaxis_title="TV2", template="plotly_white", height=320)
+    pio.write_html(fig2, file=str(out_html_tv2), include_plotlyjs="cdn", full_html=True)
+
+
+def scatter_pair_html(
+    df: pd.DataFrame,
+    x_col: str,
+    y_col: str,
+    hover: Optional[pd.DataFrame],
+    title: str,
+    out_html: Path,
+) -> None:
+    plot_df = df[[x_col, y_col]].copy()
+    if hover is not None:
+        for c in hover.columns:
+            plot_df[c] = hover[c]
+    fig = px.scatter(plot_df, x=x_col, y=y_col, hover_data=hover.columns.tolist() if hover is not None else None, title=title, template="plotly_white")
+    fig.update_traces(marker=dict(opacity=0.85))
+    pio.write_html(fig, file=str(out_html), include_plotlyjs="cdn", full_html=True)
+
+
+# ============================================================
+# HTML report
+# ============================================================
+
+def build_html_report(
+    outdir: Path,
+    summary: Dict[str, Any],
+    tables: Dict[str, str],
+    plots_png: List[str],
+    plots_html: List[str],
+) -> str:
+    report = outdir / "report_spectral_smoothness_map.html"
+    css = """
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Arial, sans-serif; margin: 16px; color: #0e1116; }
+    h1 { font-size: 20px; margin: 8px 0 12px; }
+    h2 { font-size: 16px; margin: 16px 0 8px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 12px; }
+    .card { border: 1px solid #e5e7eb; border-radius: 12px; padding: 12px; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,0.04); }
+    a { color: #0b5fff; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code { background: #f3f4f6; padding: 2px 4px; border-radius: 6px; }
+    """
+    imgs = "".join([f'<div class="card"><img src="plots/{fn}" style="width:100%;height:auto" alt="{fn}"/></div>' for fn in plots_png])
+    links = "".join([f'<div class="card"><a href="plots/{fn}">{fn}</a></div>' for fn in plots_html])
+    tbls = "".join([f'<div class="card"><a href="tables/{v}">{k}: {v}</a></div>' for k, v in tables.items()])
+
+    html = f"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>SpectraMind V50 — Spectral Smoothness Map</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>{css}</style>
+</head>
+<body>
+  <h1>SpectraMind V50 — Spectral Smoothness Map</h1>
+  <div class="card"><pre>{json.dumps(summary, indent=2)}</pre></div>
+
+  <h2>Static Plots</h2>
+  <div class="grid">{imgs}</div>
+
+  <h2>Interactive Plots</h2>
+  <div class="grid">{links}</div>
+
+  <h2>Tables</h2>
+  <div class="grid">{tbls}</div>
+</body>
+</html>
+"""
+    report.write_text(html, encoding="utf-8")
+    return str(report.name)
+
+
+# ============================================================
+# Orchestration
+# ============================================================
+
+def run_smoothness_map(
+    mu_path: str,
+    outdir: str,
+    wavelengths_path: Optional[str] = None,
+    sigma_path: Optional[str] = None,
+    y_path: Optional[str] = None,
+    symbolic_path: Optional[str] = None,
+    shap_bins_path: Optional[str] = None,
+    window: int = 21,
+    fft_keep: int = 32,
+    normalize_by_range: bool = False,
+    save_png: bool = False,
+    html_report: bool = False,
+    seed: int = 42,
+) -> None:
+    t0 = time.time()
+    set_global_seed(seed)
+
+    out = Path(outdir)
+    plots = out / "plots"
+    tables = out / "tables"
+    ensure_dir(out)
+    ensure_dir(plots)
+    ensure_dir(tables)
+
+    console.rule("[info]SpectraMind V50 — Spectral Smoothness Map")
+    console.print(f"[info]μ: {mu_path}")
+    if wavelengths_path: console.print(f"[info]λ: {wavelengths_path}")
+    if sigma_path: console.print(f"[info]σ: {sigma_path}")
+    if y_path: console.print(f"[info]y: {y_path}")
+    if symbolic_path: console.print(f"[info]symbolic: {symbolic_path}")
+    if shap_bins_path: console.print(f"[info]shap-bins: {shap_bins_path}")
+
+    # Load
+    with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), BarColumn(), TimeElapsedColumn(), transient=True) as progress:
+        t_load = progress.add_task("Loading arrays", total=None)
+        mu = load_npy(mu_path)
+        if mu is None:
+            raise FileNotFoundError("--mu is required")
+        wavelengths = load_npy(wavelengths_path) if wavelengths_path else None
+        sigma = load_npy(sigma_path) if sigma_path else None
+        y = load_npy(y_path) if y_path else None
+        shap_bins = load_npy(shap_bins_path) if shap_bins_path else None
+
+        symbolic_json = None
+        if symbolic_path and Path(symbolic_path).exists():
+            symbolic_json = json.loads(Path(symbolic_path).read_text())
+        progress.update(t_load, advance=1, visible=False)
+
+    N, B = mu.shape
+    console.print(f"[info]Loaded μ shape: {N}×{B}")
+
+    # Compute smoothness maps & summaries
+    cfg = SmoothnessConfig(window=window, fft_keep=fft_keep, normalize_by_range=normalize_by_range)
+    maps = compute_smoothness_maps(mu, cfg)
+
+    per_sample = maps["per_sample"]  # contains TV1_mean, TV2_mean, RSTD_mean, HF_Ratio
+
+    # Overlays: entropy, GLL, SHAP_mean, symbolic_violations
+    ent = np.array([entropy_row(mu[i]) for i in range(N)], dtype=float)
+    per_sample["Entropy"] = ent
+
+    if sigma is not None and y is not None:
+        gll_vec = np.array([gll_row(mu[i], sigma[i], y[i]) for i in range(N)], dtype=float)
+        per_sample["GLL"] = gll_vec
+    else:
+        gll_vec = None
+
+    if shap_bins is not None:
+        shap_mean = np.mean(np.abs(shap_bins), axis=1)
+        per_sample["SHAP_mean"] = shap_mean
+
+    sym_vec = None
+    if symbolic_json is not None:
+        try:
+            if isinstance(symbolic_json, list) and len(symbolic_json) == N:
+                sym_vec = np.array([float(d.get("violations_total", 0.0)) for d in symbolic_json], dtype=float)
+            elif isinstance(symbolic_json, dict) and all(k.isdigit() for k in symbolic_json.keys()):
+                sym_vec = np.array([float(symbolic_json.get(str(i), {}).get("violations_total", 0.0)) for i in range(N)], dtype=float)
+        except Exception:
+            sym_vec = None
+    if sym_vec is not None:
+        per_sample["Symbolic_violations"] = sym_vec
+
+    # Define a composite "SmoothnessScore" (lower is smoother)
+    # Weighted sum (tunable): TV1_mean + 0.5*TV2_mean + 0.25*RSTD_mean + HF_Ratio
+    per_sample["SmoothnessScore"] = (
+        per_sample["TV1_mean"].values
+        + 0.5 * per_sample["TV2_mean"].values
+        + 0.25 * per_sample["RSTD_mean"].values
+        + 1.0 * per_sample["HF_Ratio"].values
+    )
+
+    # Save tables
+    per_sample_csv = tables / "smoothness_per_sample.csv"
+    per_sample.to_csv(per_sample_csv, index=False)
+
+    per_bin_csv = tables / "smoothness_per_bin.csv"
+    maps["per_bin"].to_csv(per_bin_csv, index=False)
+
+    # Pairwise correlations (quick sanity)
+    corr_cols = [c for c in ["TV1_mean", "TV2_mean", "RSTD_mean", "HF_Ratio", "Entropy", "GLL", "SHAP_mean", "Symbolic_violations", "SmoothnessScore"] if c in per_sample.columns]
+    corr = per_sample[corr_cols].corr(numeric_only=True)
+    corr_csv = tables / "overlays_pairwise_corr.csv"
+    corr.to_csv(corr_csv)
+
+    # Heatmaps: sort rows by SmoothnessScore descending (roughest first)
+    order = np.argsort(-per_sample["SmoothnessScore"].values)
+    tv1_sorted = maps["tv1_map"][order, :]
+    tv2_sorted = maps["tv2_map"][order, :]
+
+    # Plots — PNG
+    pngs: List[str] = []
+    if save_png:
+        plot_heatmap_png(tv1_sorted, "Heatmap |Δμ| (TV1), samples sorted by roughness", plots / "heatmap_tv1.png")
+        pngs.append("heatmap_tv1.png")
+        if tv2_sorted.shape[1] > 0:
+            plot_heatmap_png(tv2_sorted, "Heatmap |Δ²μ| (TV2), samples sorted by roughness", plots / "heatmap_tv2.png")
+            pngs.append("heatmap_tv2.png")
+
+    # Plots — HTML heatmaps
+    plot_heatmap_html(tv1_sorted, "Heatmap |Δμ| (TV1), samples sorted by roughness", plots / "heatmap_tv1.html")
+    plot_heatmap_html(tv2_sorted, "Heatmap |Δ²μ| (TV2), samples sorted by roughness", plots / "heatmap_tv2.html")
+    htmls: List[str] = ["heatmap_tv1.html", "heatmap_tv2.html"]
+
+    # Mean per-bin curves (PNG + HTML)
+    plot_mean_bin_curves(
+        per_bin=maps["per_bin"],
+        wavelengths=wavelengths,
+        out_png_tv1=plots / "mean_bin_tv1.png",
+        out_png_tv2=plots / "mean_bin_tv2.png",
+        out_html_tv1=plots / "mean_bin_tv1.html",
+        out_html_tv2=plots / "mean_bin_tv2.html",
+    )
+    if save_png:
+        pngs += ["mean_bin_tv1.png", "mean_bin_tv2.png"]
+    htmls += ["mean_bin_tv1.html", "mean_bin_tv2.html"]
+
+    # Scatter overlays: SmoothnessScore vs overlays
+    hover_df = None  # attach custom hover later if desired
+    def maybe_scatter(col: str, label: str):
+        if col in per_sample.columns:
+            out = plots / f"scatter_smoothness_vs_{col.lower()}.html"
+            scatter_pair_html(per_sample, "SmoothnessScore", col, hover_df, f"SmoothnessScore vs {label}", out)
+            htmls.append(out.name)
+
+    for col, lbl in [("Entropy", "Entropy"),
+                     ("GLL", "GLL"),
+                     ("SHAP_mean", "mean(|SHAP|)"),
+                     ("Symbolic_violations", "Symbolic Violations")]:
+        maybe_scatter(col, lbl)
+
+    # Summary JSON
+    summary = {
+        "timestamp": now_str(),
+        "mu_path": mu_path,
+        "wavelengths_path": wavelengths_path,
+        "sigma_path": sigma_path,
+        "y_path": y_path,
+        "symbolic_path": symbolic_path,
+        "shap_bins_path": shap_bins_path,
+        "N": int(N),
+        "B": int(B),
+        "window": int(window),
+        "fft_keep": int(fft_keep),
+        "normalize_by_range": bool(normalize_by_range),
+        "tables": {
+            "smoothness_per_sample.csv": per_sample_csv.name,
+            "smoothness_per_bin.csv": per_bin_csv.name,
+            "overlays_pairwise_corr.csv": corr_csv.name,
+        },
+        "plots": {
+            "png": pngs,
+            "html": htmls,
+        },
+        "timing_sec": round(time.time() - t0, 3),
+    }
+    with open(out / "summary.json", "w", encoding="utf-8") as f:
+        json.dump(summary, f, indent=2)
+
+    # HTML report
+    if html_report:
+        report_name = build_html_report(
+            outdir=out,
+            summary=summary,
+            tables={
+                "per_sample": per_sample_csv.name,
+                "per_bin": per_bin_csv.name,
+                "pairwise_corr": corr_csv.name,
+            },
+            plots_png=pngs,
+            plots_html=htmls,
+        )
+        console.print(f"[info]Wrote HTML report → {out / report_name}")
+
+    # Audit log (best-effort)
+    append_audit_log(f"- {now_str()} | spectral_smoothness_map | mu={mu_path} out={outdir} N={N} B={B} window={window} fft_keep={fft_keep} normalize={normalize_by_range}")
+
+    console.rule("[info]Done")
+    console.print(f"[info]Elapsed: {round(time.time() - t0, 2)} s")
+    console.print(f"[info]Artifacts in: {outdir}")
+
+
+# ============================================================
+# Typer CLI
+# ============================================================
 
 @app.command("run")
 def cli_run(
-    mu: Path = typer.Option(..., help="Path to μ.npy [N,B]"),
-    wavelengths: Optional[Path] = typer.Option(None, help="Optional wavelengths.npy [B] (for X ticks)"),
-    planet_ids: Path = typer.Option(..., help="Planet IDs file (.txt or first col .csv)"),
-    labels_csv: Optional[Path] = typer.Option(None, help="Optional labels CSV (planet_id,label)"),
-    confidence_csv: Optional[Path] = typer.Option(None, help="Optional confidence CSV (planet_id,confidence∈[0,1])"),
-    fft_cut: float = typer.Option(0.25, help="Normalized FFT cutoff ratio in (0,0.5] for HF fraction."),
-    normalize: bool = typer.Option(False, "--normalize/--no-normalize", help="Zero-mean/unit-std per planet before metrics."),
-    title: str = typer.Option("Spectral Smoothness — SpectraMind V50", help="Plot title prefix."),
-    outdir: Path = typer.Option(Path("outputs/smoothness"), help="Output directory."),
-    open_plots: bool = typer.Option(False, "--open-plots/--no-open-plots", help="Open generated plots in default viewer."),
-    log_path: Path = typer.Option(Path("logs/v50_debug_log.md"), help="Append audit line here."),
+    mu: str = typer.Option(..., help="Path to μ.npy (N×B)"),
+    outdir: str = typer.Option(..., help="Output directory for artifacts"),
+    wavelengths: Optional[str] = typer.Option(None, help="Path to wavelengths.npy (B,)"),
+    sigma: Optional[str] = typer.Option(None, help="Path to σ.npy (N×B) for GLL"),
+    y: Optional[str] = typer.Option(None, help="Path to labels.npy (N×B) for GLL"),
+    symbolic: Optional[str] = typer.Option(None, help="Path to symbolic overlay JSON"),
+    shap_bins: Optional[str] = typer.Option(None, help="Path to per-bin SHAP magnitudes .npy (N×B)"),
+    window: int = typer.Option(21, help="Rolling std window (odd)"),
+    fft_keep: int = typer.Option(32, help="Low-frequency count to keep for HF ratio"),
+    normalize_by_range: bool = typer.Option(False, help="Normalize each μ row to [0,1] before metrics"),
+    save_png: bool = typer.Option(False, help="Also save static PNGs"),
+    html: bool = typer.Option(False, help="Emit compact HTML report"),
+    seed: int = typer.Option(42, help="Random seed"),
 ):
     """
-    Compute spectral smoothness metrics/maps and export JSON/CSV/PNGs.
+    Compute smoothness maps and export heatmaps, curves, and overlay comparisons.
     """
     try:
-        console.print(Panel.fit("Loading inputs...", style="cyan"))
-        MU = _read_npy(mu)
-        if MU is None:
-            raise FileNotFoundError(f"Missing mu: {mu}")
-        N, B = MU.shape
-        pids = _read_planet_ids(planet_ids)
-        if len(pids) != N:
-            raise ValueError(f"Row mismatch: mu N={N} vs planet_ids={len(pids)}")
-        WL = _read_npy(wavelengths)
-        labels = _read_labels_csv(labels_csv)
-        conf = _read_confidence_csv(confidence_csv)
-
-        if normalize:
-            MU = normalize_per_planet(MU)
-
-        console.print(Panel.fit("Computing smoothness metrics...", style="cyan"))
-        rough_map, c2 = curvature_c2(MU)            # (N, B-2), (N,)
-        tv1 = total_variation_tv1(MU)               # (N,)
-        hf = fft_highfreq_fraction(MU, cut_ratio=float(fft_cut))  # (N,)
-
-        # Save arrays and metrics
-        outdir.mkdir(parents=True, exist_ok=True)
-        plots_dir = outdir / "plots"
-        plots_dir.mkdir(parents=True, exist_ok=True)
-
-        np.save(outdir / "roughness_map.npy", rough_map)
-
-        # JSON summary
-        summary_dict: Dict[str, Any] = {
-            "timestamp": dt.datetime.utcnow().isoformat(),
-            "shape": {"planets": int(N), "bins": int(B), "rough_bins": int(rough_map.shape[1])},
-            "fft_cut": float(fft_cut),
-            "normalize": bool(normalize),
-            "metrics": {
-                "c2_mean": float(np.mean(c2)),
-                "c2_median": float(np.median(c2)),
-                "tv1_mean": float(np.mean(tv1)),
-                "tv1_median": float(np.median(tv1)),
-                "hf_mean": float(np.mean(hf)),
-                "hf_median": float(np.median(hf)),
-            }
-        }
-        _save_json(outdir / "smoothness_summary.json", summary_dict)
-
-        # CSV per-planet
-        rows = []
-        for i, pid in enumerate(pids):
-            rows.append([pid, float(c2[i]), float(tv1[i]), float(hf[i])])
-        _save_csv(outdir / "smoothness_summary.csv", ["planet_id", "c2", "tv1", "hf_frac"], rows)
-
-        # Heatmap of |Δ²μ| (N, B-2)
-        wl_inner = None
-        if WL is not None and WL.size == B:
-            wl_inner = WL[1:-1]  # align with B-2 interior after Δ²
-        _save_heatmap(
-            rough_map=rough_map,
-            out_png=plots_dir / "roughness_heatmap.png",
-            wavelengths=wl_inner,
-            planet_ids=pids,
-            title=f"{title}: |Δ²μ| heatmap"
+        run_smoothness_map(
+            mu_path=mu,
+            outdir=outdir,
+            wavelengths_path=wavelengths,
+            sigma_path=sigma,
+            y_path=y,
+            symbolic_path=symbolic,
+            shap_bins_path=shap_bins,
+            window=window,
+            fft_keep=fft_keep,
+            normalize_by_range=normalize_by_range,
+            save_png=save_png,
+            html_report=html,
+            seed=seed,
         )
-
-        # Histograms of scalar metrics
-        _save_hist(c2, tv1, hf, plots_dir / "metrics_hist.png", title=f"{title}: metrics hist")
-
-        # Scatter against confidence (if present)
-        if conf:
-            _save_scatter_c2_conf(c2, pids, conf, plots_dir / "c2_vs_confidence.png")
-
-        # Boxplot C2 by label (if present)
-        if labels:
-            _save_c2_by_label(c2, pids, labels, plots_dir / "c2_by_label.png")
-
-        # Audit and finish
-        _append_audit(log_path, f"outdir={outdir.as_posix()} N={N} B={B} normalize={normalize} fft_cut={fft_cut}")
-        console.print(Panel.fit(f"Smoothness artifacts written to: {outdir}", style="green"))
-
-        if open_plots:
-            try:
-                import webbrowser
-                for p in [
-                    plots_dir / "roughness_heatmap.png",
-                    plots_dir / "metrics_hist.png",
-                    plots_dir / "c2_vs_confidence.png",
-                    plots_dir / "c2_by_label.png",
-                ]:
-                    if p.exists():
-                        webbrowser.open(f"file://{p.resolve().as_posix()}")
-            except Exception:
-                pass
-
-    except KeyboardInterrupt:
-        console.print("\n[red]Interrupted by user.[/]")
-        raise typer.Exit(code=130)
     except Exception as e:
-        console.print(Panel.fit(f"ERROR: {e}", style="red"))
+        console.print(Panel.fit(str(e), title="Error", style="err"))
         raise typer.Exit(code=1)
 
-@app.callback()
-def _cb():
-    """
-    SpectraMind V50 — Spectral Smoothness Map:
-    • Curvature C2, TV1, FFT high‑frequency fraction
-    • |Δ²μ| heatmap, per‑planet CSV/JSON, plots for dashboard
-    • Optional normalization and wavelength tick labeling
-    • Labels/confidence overlays, CLI audit logging
-    """
-    pass
+
+def main():
+    app()
+
 
 if __name__ == "__main__":
-    app()
+    main()
