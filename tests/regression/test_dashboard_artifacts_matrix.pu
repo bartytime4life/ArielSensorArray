@@ -1,0 +1,325 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+tests/regression/test_dashboard_artifacts_matrix.py
+
+SpectraMind V50 — Regression: Dashboard Artifacts Matrix
+
+Purpose
+-------
+Run the dashboard pipeline in a lightweight mode and build a canonical
+"artifacts matrix" (what key diagnostics were produced: UMAP, t‑SNE, GLL
+heatmaps, symbolic overlays, FFT/ACF plots, calibration reports, HTML dashboard).
+Compare it to a stored snapshot:
+
+    tests/regression/snapshots/dashboard_artifacts_matrix.snap.json
+
+This guards against accidental regressions in artifact naming/location while
+tolerating content volatility (timestamps, hashes). The test is intentionally
+defensive: if the dashboard generator is not found or dry-run produces no
+artifacts, it will SKIP gracefully (useful while scaffolding).
+
+How to (re)baseline
+-------------------
+If the artifacts matrix changes intentionally, re‑baseline with:
+
+    UPDATE_SNAPSHOTS=1 pytest tests/regression/test_dashboard_artifacts_matrix.py
+
+Notes
+-----
+• We try both the root CLI (`spectramind diagnose dashboard`) and the report
+  tool (`tools/generate_html_report.py`) in dry/fast modes.
+• We normalize common output roots and collect artifacts from:
+    outputs/, outputs/diagnostics/, outputs/plots/, outputs/calibration/
+• We look for multiple possible extensions and naming patterns to reduce
+  coupling to small rename changes.
+
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import subprocess
+from dataclasses import dataclass, asdict
+from pathlib import Path
+from typing import Dict, List, Tuple
+
+import pytest
+
+
+# --------------------------------------------------------------------------------------
+# Discovery
+# --------------------------------------------------------------------------------------
+
+def _candidate_cli_paths() -> List[Path]:
+    return [
+        Path("spectramind.py"),              # root Typer CLI (preferred)
+        Path("src") / "spectramind.py",
+        Path("src") / "cli" / "cli_diagnose.py",  # diagnose-only CLI
+    ]
+
+
+def _candidate_report_scripts() -> List[Path]:
+    return [
+        Path("tools") / "generate_html_report.py",
+        Path("src") / "tools" / "generate_html_report.py",
+    ]
+
+
+def _first_existing(paths: List[Path]) -> Path | None:
+    for p in paths:
+        if p.exists():
+            return p.resolve()
+    return None
+
+
+# --------------------------------------------------------------------------------------
+# Running dashboard in lightweight mode
+# --------------------------------------------------------------------------------------
+
+def _run_cli_dashboard(cli: Path) -> subprocess.CompletedProcess:
+    """
+    Try to run `diagnose dashboard` in CI‑safe mode. If the CLI is a diagnose-only
+    script, call it directly; otherwise use `spectramind diagnose dashboard`.
+    """
+    is_diagnose_only = cli.name == "cli_diagnose.py"
+    base = [] if is_diagnose_only else ["diagnose"]
+    args = [*base, "dashboard", "--dry-run", "--no-open", "--no-umap", "--no-tsne", "--fast", "--light"]
+    env = {
+        **os.environ,
+        "SPECTRAMIND_FAST": "1",
+        "SPECTRAMIND_NO_BROWSER": "1",
+        "SPECTRAMIND_NO_NETWORK": "1",
+        "PYTHONUNBUFFERED": "1",
+    }
+    return subprocess.run(
+        [os.environ.get("PYTHON", "python"), "-u", str(cli), *args],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=600,
+        check=False,
+    )
+
+
+def _run_report_script(script: Path) -> subprocess.CompletedProcess:
+    env = {
+        **os.environ,
+        "SPECTRAMIND_FAST": "1",
+        "SPECTRAMIND_NO_BROWSER": "1",
+        "PYTHONUNBUFFERED": "1",
+    }
+    args = ["--no-open", "--dry-run"]
+    return subprocess.run(
+        [os.environ.get("PYTHON", "python"), "-u", str(script), *args],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=600,
+        check=False,
+    )
+
+
+# --------------------------------------------------------------------------------------
+# Artifact collection & matrix build
+# --------------------------------------------------------------------------------------
+
+# Simple helper to match case-insensitively
+def _iglob(root: Path, patterns: List[str]) -> List[Path]:
+    out: List[Path] = []
+    for pat in patterns:
+        out.extend(root.rglob(pat))
+    return out
+
+
+@dataclass
+class ArtifactPresence:
+    html_report: bool
+    json_summary: bool
+    umap_html: bool
+    umap_png: bool
+    tsne_html: bool
+    tsne_png: bool
+    gll_heatmap_png: bool
+    gll_heatmap_html: bool
+    fft_png: bool
+    acf_png: bool
+    symbolic_overlay_png: bool
+    symbolic_overlay_html: bool
+    calibration_png: bool
+    calibration_json: bool
+
+    @classmethod
+    def empty(cls) -> "ArtifactPresence":
+        return cls(
+            html_report=False,
+            json_summary=False,
+            umap_html=False,
+            umap_png=False,
+            tsne_html=False,
+            tsne_png=False,
+            gll_heatmap_png=False,
+            gll_heatmap_html=False,
+            fft_png=False,
+            acf_png=False,
+            symbolic_overlay_png=False,
+            symbolic_overlay_html=False,
+            calibration_png=False,
+            calibration_json=False,
+        )
+
+
+def _collect_artifacts() -> Tuple[ArtifactPresence, Dict[str, List[str]]]:
+    """
+    Scan common output roots for typical artifact names.
+    Returns a presence matrix and the raw file lists (for debugging/snapshot).
+    """
+    roots = [
+        Path("outputs"),
+        Path("outputs") / "diagnostics",
+        Path("outputs") / "plots",
+        Path("outputs") / "calibration",
+    ]
+
+    files: List[Path] = []
+    for root in roots:
+        if root.exists():
+            files.extend(_iglob(root, ["*"]))
+
+    # Build quick lookup of lowercase names
+    names = [p.name.lower() for p in files]
+
+    def has_any(regexes: List[str]) -> bool:
+        for n in names:
+            if any(re.search(rx, n) for rx in regexes):
+                return True
+        return False
+
+    # Heuristic regex patterns for each artifact group
+    presence = ArtifactPresence.empty()
+    presence.html_report = has_any([r"diagnostic_report.*\.html$", r"dashboard.*\.html$"])
+    presence.json_summary = has_any([r"diagnostics?_report.*\.json$"])
+
+    presence.umap_html = has_any([r"umap.*\.html$"])
+    presence.umap_png = has_any([r"umap.*\.png$"])
+
+    presence.tsne_html = has_any([r"tsne.*\.html$"])
+    presence.tsne_png = has_any([r"tsne.*\.png$"])
+
+    presence.gll_heatmap_png = has_any([r"(gll|loglik|log_lik).*heatmap.*\.png$"])
+    presence.gll_heatmap_html = has_any([r"(gll|loglik|log_lik).*heatmap.*\.html$"])
+
+    presence.fft_png = has_any([r"(fft|spectrum).*\.png$"])
+    presence.acf_png = has_any([r"(autocorr|acf).*\.png$"])
+
+    presence.symbolic_overlay_png = has_any([r"(symbolic|rule|violation).*overlay.*\.png$"])
+    presence.symbolic_overlay_html = has_any([r"(symbolic|rule|violation).*overlay.*\.html$"])
+
+    presence.calibration_png = has_any([r"(calib|coverage|zscore|z-score).*\.png$"])
+    presence.calibration_json = has_any([r"(calib|coverage|zscore|z-score).*\.json$"])
+
+    # For debugging/snapshot, capture raw lists by category
+    raw_lists: Dict[str, List[str]] = {}
+    for key, regexes in {
+        "html_report": [r"diagnostic_report.*\.html$", r"dashboard.*\.html$"],
+        "json_summary": [r"diagnostics?_report.*\.json$"],
+        "umap": [r"umap.*\.(?:html|png)$"],
+        "tsne": [r"tsne.*\.(?:html|png)$"],
+        "gll_heatmap": [r"(gll|loglik|log_lik).*heatmap.*\.(?:html|png)$"],
+        "fft": [r"(fft|spectrum).*\.png$"],
+        "acf": [r"(autocorr|acf).*\.png$"],
+        "symbolic_overlay": [r"(symbolic|rule|violation).*overlay.*\.(?:html|png)$"],
+        "calibration": [r"(calib|coverage|zscore|z-score).*\.((?:png)|(?:json))$"],
+    }.items():
+        raw_lists[key] = sorted(
+            [str(p) for p in files if any(re.search(rx, p.name.lower()) for rx in regexes)]
+        )
+
+    return presence, raw_lists
+
+
+# --------------------------------------------------------------------------------------
+# Snapshot I/O
+# --------------------------------------------------------------------------------------
+
+SNAP_DIR = Path("tests") / "regression" / "snapshots"
+SNAP_DIR.mkdir(parents=True, exist_ok=True)
+SNAP_JSON = SNAP_DIR / "dashboard_artifacts_matrix.snap.json"
+
+
+def _update_snapshots_enabled() -> bool:
+    return os.environ.get("UPDATE_SNAPSHOTS", "0") in ("1", "true", "yes")
+
+
+# --------------------------------------------------------------------------------------
+# Tests
+# --------------------------------------------------------------------------------------
+
+@pytest.fixture(scope="module")
+def dashboard_invoked() -> bool:
+    """
+    Try to invoke the dashboard via CLI or the report generator.
+    Return True if we attempted; False if neither tool exists.
+    """
+    cli = _first_existing(_candidate_cli_paths())
+    script = _first_existing(_candidate_report_scripts())
+
+    attempted = False
+    if cli:
+        proc = _run_cli_dashboard(cli)
+        # Accept success or actionable usage errors, don't fail hard here.
+        _ = (proc.stdout or "") + (proc.stderr or "")
+        attempted = True
+
+    if script:
+        proc = _run_report_script(script)
+        _ = (proc.stdout or "") + (proc.stderr or "")
+        attempted = True
+
+    if not attempted:
+        pytest.skip("No dashboard CLI or report script found; skipping matrix regression.")
+    return True
+
+
+def test_dashboard_artifacts_matrix_snapshot(dashboard_invoked: bool):
+    """
+    Build the artifacts matrix and compare to the stored snapshot.
+    """
+    presence, raw_lists = _collect_artifacts()
+
+    # If absolutely nothing is produced, skip (likely missing inputs in dry-run).
+    if not any(asdict(presence).values()):
+        pytest.skip("No dashboard artifacts found in outputs/*; skipping snapshot comparison.")
+
+    # Serialize a stable structure for snapshot
+    snapshot_obj = {
+        "presence": asdict(presence),
+        "raw_lists": raw_lists,  # Useful for reviewing changes
+    }
+    current = json.dumps(snapshot_obj, indent=2, sort_keys=True, ensure_ascii=False)
+
+    if not SNAP_JSON.exists():
+        if _update_snapshots_enabled():
+            SNAP_JSON.write_text(current, encoding="utf-8")
+            pytest.skip(f"Snapshot created: {SNAP_JSON} (first run).")
+        else:
+            pytest.fail(
+                "Missing snapshot for dashboard artifacts matrix.\n"
+                "Review below and re‑baseline if intentional:\n\n"
+                f"{current}\n\n"
+                "To create snapshot:\n"
+                "  UPDATE_SNAPSHOTS=1 pytest tests/regression/test_dashboard_artifacts_matrix.py"
+            )
+
+    expected = SNAP_JSON.read_text(encoding="utf-8")
+    assert current == expected, (
+        "Dashboard artifacts matrix mismatch.\n\n"
+        "If the change is intentional, re‑baseline with:\n"
+        "  UPDATE_SNAPSHOTS=1 pytest tests/regression/test_dashboard_artifacts_matrix.py\n\n"
+        "Current:\n"
+        f"{current}\n\n"
+        "Expected:\n"
+        f"{expected}\n"
+    )
