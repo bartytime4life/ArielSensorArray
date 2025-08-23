@@ -55,10 +55,12 @@ This directory hosts **diagnostics, calibration, visualization, and ablation too
 ## 🔗 Workflow Integration
 
 ```
+
 Raw Frames → Calibration → μ/σ Prediction
-          ↘ tools/diagnostics ↙
-          generate_diagnostic_summary.py → generate_html_report.py → dashboard.html
-```
+↘ tools/diagnostics ↙
+generate\_diagnostic\_summary.py → generate\_html\_report.py → dashboard.html
+
+````
 
 ---
 
@@ -68,31 +70,36 @@ Raw Frames → Calibration → μ/σ Prediction
 flowchart TD
     A[Raw Frames] --> B[Calibration]
     B --> C[Prediction (μ, σ)]
-    C --> D[Tools/Diagnostics]
+    C --> D[Tools Layer]
 
     subgraph Tools
-      D1[FFT: fft_power_compare.py]
-      D2[Calibration: check_calibration.py]
-      D3[SHAP: shap_overlay.py]
-      D4[Symbolic: symbolic_influence_map.py]
-      D5[Latents: plot_umap_v50.py, plot_tsne_interactive.py]
-      D6[Clusters: spectral_absorption_overlay_clustered.py]
+      T1[FFT<br/>fft_power_compare.py]
+      T2[Calibration<br/>check_calibration.py]
+      T3[SHAP<br/>shap_overlay.py]
+      T4[Symbolic<br/>symbolic_influence_map.py]
+      T5[Latents<br/>plot_umap_v50.py<br/>plot_tsne_interactive.py]
+      T6[Clusters<br/>spectral_absorption_overlay_clustered.py]
     end
 
-    D --> D1
-    D --> D2
-    D --> D3
-    D --> D4
-    D --> D5
-    D --> D6
+    D --> T1
+    D --> T2
+    D --> T3
+    D --> T4
+    D --> T5
+    D --> T6
 
-    D --> E[generate_diagnostic_summary.py]
+    T1 --> E[generate_diagnostic_summary.py]
+    T2 --> E
+    T3 --> E
+    T4 --> E
+    T5 --> E
+    T6 --> E
+
     E --> F[generate_html_report.py]
-    F --> G[Dashboard.html]
-
+    F --> G[Diagnostics Dashboard (HTML)]
     G --> H[validate_submission.py]
     H --> I[Kaggle Leaderboard]
-```
+````
 
 ---
 
