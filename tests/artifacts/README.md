@@ -1,25 +1,10 @@
-# 🧪 Tests — Artifacts Directory
+# 🧪 Tests — Artifacts Validation Suite
 
-**SpectraMind V50** · *Neuro-symbolic, physics-informed AI pipeline for the NeurIPS 2025 Ariel Data Challenge*:contentReference[oaicite:0]{index=0}
+**SpectraMind V50** · *Neuro-symbolic, physics-informed AI pipeline for the NeurIPS 2025 Ariel Data Challenge*
 
-This directory contains **unit + integrity tests** for all **artifact-level reproducibility files**.  
-Artifacts here are *not models or spectra*, but the **audit trail** that guarantees every run can be  
-**reproduced, validated, and trusted** — the backbone of our *NASA-grade reproducibility mandate*:contentReference[oaicite:1]{index=1}.
-
----
-
-## 🎯 Purpose
-
-The `/tests/artifacts` suite ensures:
-
-1. **Submission Validity** — Submissions pass formatting, metric, and hash checks before Kaggle upload:contentReference[oaicite:2]{index=2}.  
-2. **Manifest Integrity** — Every file in `/artifacts/` (submissions, logs, manifests) matches its declared hash:contentReference[oaicite:3]{index=3}.  
-3. **Run Hash Coherence** — Config hash (`run_hash_summary_v50.json`) and pipeline outputs are cryptographically consistent:contentReference[oaicite:4]{index=4}.  
-4. **Log Auditing** — CLI logs (`logs/v50_debug_log.md`, `logs/v50_runs.jsonl`) are append-only, well-formed, and timestamp-aligned.  
-5. **Dummy Data Assurance** — Synthetic test data generators produce valid AIRS/FGS1 cubes for CI regression runs.  
-
-These tests are central to **continuous integration (CI)** — any failed artifact integrity check blocks merges,  
-treating the pipeline like a *scientific instrument under calibration*:contentReference[oaicite:5]{index=5}.
+This directory contains **unit and regression tests** for validating the **integrity of pipeline artifacts**.  
+Artifacts in this context are the **diagnostic bundles, manifests, hashes, and dummy data** produced by the pipeline.  
+These tests ensure that **reproducibility, auditability, and leaderboard-ready compliance** are maintained at all times.
 
 ---
 
@@ -27,51 +12,71 @@ treating the pipeline like a *scientific instrument under calibration*:contentRe
 
 | Test Script                          | Purpose                                                                 |
 | ------------------------------------ | ----------------------------------------------------------------------- |
-| `test_submission_validator.py`       | Verifies CSV submissions: schema, μ/σ bins = 283, numeric validity, size limits:contentReference[oaicite:6]{index=6}. |
-| `test_manifest_hashes.py`            | Ensures manifests (`manifest_v50.json/csv`) match file checksums.        |
-| `test_log_integrity.py`              | Validates CLI logs: no missing timestamps, duplicate entries, or truncation. |
-| `test_dummy_data_generator.py`       | Confirms synthetic AIRS/FGS1 cubes conform to shape + metadata specs.   |
-| `test_cli_version_stamp.py`          | Verifies CLI `--version` outputs correct build hash + timestamp.        |
-| `test_report_manifest_integrity.py`  | Cross-checks diagnostic reports vs manifest hashes for dashboard exports. |
-| `test_run_hash_summary_contents.py`  | Validates run hash JSON: config/env/git commit all captured reproducibly. |
+| `test_submission_validator.py`       | Ensures generated Kaggle submission files have correct shape & schema.   |
+| `test_manifest_hashes.py`            | Validates that run hashes and manifests match across pipeline artifacts. |
+| `test_log_integrity.py`              | Checks that `logs/v50_debug_log.md` entries are consistent & complete.   |
+| `test_dummy_data_generator.py`       | Verifies that synthetic test data is reproducible & schema-aligned.      |
+| `test_cli_version_stamp.py`          | Confirms CLI `--version` stamps are recorded in manifests & logs.        |
+| `test_report_manifest_integrity.py`  | Ensures HTML/Markdown/JSON reports reference correct artifact hashes.    |
+| `test_run_hash_summary_contents.py`  | Validates structure and correctness of `run_hash_summary_v50.json`.      |
 
 ---
 
-## 🔬 How to Run
+## 🧭 Testing Philosophy
 
-Run all artifact tests from project root:
+- **Reproducibility First**: All tests assert **hash consistency** across runs.  
+- **Auditability**: Logs and manifests are validated as append-only audit trails.  
+- **CLI-Driven**: Every artifact tested here is created via `spectramind` CLI commands.  
+- **Fail Fast**: Tests provide clear errors for missing, corrupt, or mismatched artifacts.
+
+---
+
+## 🚀 Running Tests
+
+To execute only the artifacts validation suite:
 
 ```bash
-poetry run pytest tests/artifacts -v
+pytest tests/artifacts -v
 ````
 
-Or run a specific test:
+Or run **all tests** in the repository (integration + diagnostics + regression):
 
 ```bash
-poetry run pytest tests/artifacts/test_submission_validator.py::test_valid_submission
-```
-
-CI automatically runs these on **every commit** via GitHub Actions.
-
----
-
-## 🛡️ Scientific & Competition Guardrails
-
-* **Reproducibility First**: Every artifact carries cryptographic fingerprints.
-* **Kaggle Compliance**: Submissions pre-validated to avoid format errors or leaderboard rejection.
-* **Fail-Fast Principle**: Any log or manifest corruption blocks merges, preventing silent drift.
-* **Audit Ready**: Each test outputs machine-parsable JSON + human-readable Markdown for archives.
-
----
-
-## 🌌 Philosophy
-
-Artifacts are the **DNA of experiments**: logs, manifests, hashes, and submissions.
-The `/tests/artifacts` directory enforces that this DNA is **untainted, traceable, and regenerable** —
-critical for **mission-grade exoplanet spectroscopy research**.
-
----
-
+make test
+# or
+pytest -v
 ```
 
 ---
+
+## ✅ Example Outputs
+
+* **Submission Validation**: Ensures `submission.csv` has `(1100, 566)` shape with no NaNs.
+* **Manifest Integrity**: Confirms every artifact listed in `manifest.json` exists and hash-matches.
+* **Log Consistency**: Detects duplicate or missing CLI entries in `logs/v50_debug_log.md`.
+* **Dummy Data**: Confirms `generate_dummy_data.py` output is deterministic under fixed seed.
+* **Version Stamps**: Cross-checks CLI version metadata against `run_hash_summary_v50.json`.
+
+---
+
+## 🔒 CI Integration
+
+These tests run automatically in the **GitHub Actions CI pipeline**:
+
+* On each commit, artifacts are generated in a sandbox run.
+* All artifact tests (`/tests/artifacts/`) must pass before merging.
+* Failures block merges, preserving **leaderboard-safe reproducibility**.
+
+---
+
+## 🏆 Mission Alignment
+
+Artifact validation is central to SpectraMind V50’s mission:
+
+* **NASA-grade rigor** (hashes, manifests, logs must match)
+* **Challenge compliance** (submission files always Kaggle-ready)
+* **Audit trail integrity** (no silent drift in configs or artifacts)
+
+This ensures every run of SpectraMind V50 can be trusted, reproduced, and submitted with confidence.
+
+```
