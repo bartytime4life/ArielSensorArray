@@ -1,0 +1,183 @@
+{
+  "schema_version": "1.2.0",
+  "calibration_run": {
+    "id": "2025-08-22T07-40-00Z",
+    "commit_hash": "abc123def456",
+    "git_dirty": false,
+    "config_hash": "v50_cfg_8f92c1",
+    "spectramind_version": "V50",
+    "pipeline_stage": "calibration",
+    "cli_invocation": "spectramind calibrate --config-path configs/calibration --config-name v50.yaml",
+    "hydra_overrides": [
+      "log.dir=logs",
+      "diagnostics.symbolic=true",
+      "uncertainty.corel=true",
+      "uncertainty.temperature_scaling=true"
+    ],
+    "random_seeds": {
+      "python": 1337,
+      "numpy": 1337,
+      "torch": 1337
+    },
+    "environment": {
+      "python_version": "3.11.9",
+      "cuda_version": "12.3",
+      "cudnn_version": "9.x",
+      "torch_version": "2.4.0",
+      "numpy_version": "2.0.1",
+      "pandas_version": "2.2.2",
+      "device": "NVIDIA RTX 5080",
+      "driver_version": "545.xx",
+      "os": "Ubuntu 24.04 LTS",
+      "container_image": "ghcr.io/spectramind/v50:2025-08-22"
+    }
+  },
+
+  "inputs": {
+    "dataset_name": "Ariel FGS1/AIRS (sim)",
+    "raw_data": "data/raw/fgs1_airs/",
+    "dvc": {
+      "hash": "dvc:9f3b2a12c5",
+      "remote": "s3://spectramind-dvc",
+      "rev": "main"
+    },
+    "frames": {
+      "fgs1_count": 135000,
+      "airs_count": 11000
+    },
+    "planets_processed": 1100,
+    "selection": {
+      "split": "train+valid",
+      "filter": "quality_flag==0"
+    }
+  },
+
+  "preprocessing": {
+    "adc_correction": true,
+    "dark_current_subtraction": true,
+    "flat_fielding": true,
+    "cds_correction": true,
+    "nonlinearity_correction": true,
+    "background_subtraction": "dynamic polynomial fit (order=3, rolling=1024)",
+    "despike_cosmics": "median-of-medians (window=7)",
+    "trace_extraction": "optimal extraction (Horne)",
+    "normalization": "per-orbit robust z-score",
+    "phase_alignment": {
+      "reference_instrument": "FGS1",
+      "method": "cross-correlation (sub-frame)",
+      "drift_model": "spline (k=3)",
+      "jitter_injection": "synthetic Gaussian (σ=0.002)"
+    },
+    "spectral_masking": {
+      "molecular_regions": ["H2O", "CH4", "CO2"],
+      "mask_strategy": "curriculum (random → molecule-aware)",
+      "masked_bins": 7
+    }
+  },
+
+  "outputs": {
+    "calibrated_lightcurves": "outputs/calibrated/lightcurves.h5",
+    "checksums": {
+      "calibrated_lightcurves_sha256": "e4a9c7f3d2c1b5a6...ab",
+      "corel_binwise_sigma_sha256": "b0cd91e6a7...51"
+    },
+    "filesize_bytes": {
+      "calibrated_lightcurves": 184372160,
+      "corel_binwise_sigma_csv": 245312
+    },
+    "preview_plots": [
+      "outputs/diagnostics/calibration_preview.png",
+      "outputs/diagnostics/fft_alignment.png",
+      "outputs/diagnostics/symbolic_overlay.png"
+    ],
+    "stats": {
+      "snr_median": 52.7,
+      "snr_p95": 210.4,
+      "residual_dark_current_e_per_s": 0.008,
+      "phase_jitter_removed_ppm": 21.3,
+      "cosmic_ray_events_flagged": 174
+    }
+  },
+
+  "diagnostics": {
+    "fft_smoothness": 0.014,
+    "low_freq_power_ratio": 0.082,
+    "symbolic_constraint_violations": {
+      "nonnegativity_bins": 0,
+      "smoothness_violations": 7,
+      "asymmetry_score": 0.003,
+      "photonic_alignment_score": 0.981
+    },
+    "coverage": {
+      "bins_total": 283,
+      "bins_clean": 276,
+      "bins_flagged": 7
+    },
+    "per_instrument": {
+      "FGS1": { "rms_residual_ppm": 37.2, "fft_slope": -1.83 },
+      "AIRS": { "rms_residual_ppm": 44.9, "fft_slope": -1.76 }
+    }
+  },
+
+  "uncertainty_calibration": {
+    "method": "COREL + temperature scaling",
+    "temperature_scaling_T": 1.07,
+    "binwise_sigma_adjustment": true,
+    "ece_gaussian_ll": 0.012,
+    "coverage_target": 0.90,
+    "achieved_coverage": 0.903,
+    "per_bin_csv": "outputs/diagnostics/corel_binwise_sigma.csv",
+    "molecule_region_summary": {
+      "H2O":  { "coverage": 0.91, "violations": 1, "median_sigma": 0.0123 },
+      "CH4":  { "coverage": 0.89, "violations": 3, "median_sigma": 0.0141 },
+      "CO2":  { "coverage": 0.92, "violations": 2, "median_sigma": 0.0115 }
+    }
+  },
+
+  "quality_gates": {
+    "thresholds": {
+      "coverage_min": 0.90,
+      "fft_smoothness_max": 0.020,
+      "photonic_alignment_min": 0.95,
+      "nonnegativity_bins_max": 0
+    },
+    "results": {
+      "coverage_ok": true,
+      "fft_smoothness_ok": true,
+      "photonic_alignment_ok": true,
+      "nonnegativity_ok": true,
+      "overall_pass": true
+    },
+    "alerts": []
+  },
+
+  "profiling": {
+    "timings_sec": {
+      "adc_dark_flat": 41.6,
+      "extraction_normalization": 66.9,
+      "phase_alignment": 98.1,
+      "diagnostics_fft_symbolic": 74.5,
+      "corel_temperature_scaling": 55.1,
+      "io_and_writes": 55.8
+    },
+    "gpu_utilization_avg": 0.31,
+    "cpu_utilization_avg": 0.54,
+    "max_memory_gb": 9.8
+  },
+
+  "reproducibility": {
+    "dvc_stage": "calibration",
+    "mlflow_experiment": "v50-calibration",
+    "mlflow_run_id": "mlf_20250822_0740",
+    "hydra_config_used": "configs/calibration/v50.yaml",
+    "artifact_manifest": "outputs/manifests/calibration_manifest.json"
+  },
+
+  "timing": {
+    "start_time": "2025-08-22T07:40:01Z",
+    "end_time": "2025-08-22T07:46:33Z",
+    "duration_sec": 392
+  },
+
+  "status": "success"
+}

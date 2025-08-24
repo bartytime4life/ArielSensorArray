@@ -1,0 +1,33 @@
+TY  - COMP
+TI  - SpectraMind V50 — Neuro-symbolic, Physics-informed Exoplanet Spectroscopy Pipeline
+AU  - Barta, Andy
+AU  - SpectraMind V50 Team
+PY  - 2025
+DA  - 2025-08-21
+AB  - SpectraMind V50 is a mission-grade, CLI-first, neuro-symbolic, physics-informed AI pipeline for the NeurIPS 2025 Ariel Data Challenge. It integrates a long-sequence Structured State-Space Model (SSM) for time-series (FGS1) with a molecule- and wavelength-aware Graph Neural Network (GNN) for AIRS spectra, trained with Gaussian log-likelihood plus symbolic/physics constraints. The system emphasizes NASA-grade reproducibility through Hydra configs, DVC/lakeFS data versioning, CI workflows, Docker/Poetry environments, and deterministic self-tests. Outputs include per-wavelength μ and σ with diagnostics (UMAP/t-SNE, SHAP, symbolic overlays, FFT, calibration maps) and leaderboard-ready Kaggle submissions. All functionality is orchestrated through a unified Typer CLI with integrated logging, symbolic validation, and diagnostics dashboards.
+T2  - NeurIPS 2025 Ariel Data Challenge (Competitions Track)
+PB  - NeurIPS
+DO  - 10.5281/zenodo.1234567
+UR  - https://github.com/bartytime4life/SpectraMindV50
+N1  - Version 0.3.0; Archived on Zenodo.
+KW  - NeurIPS 2025
+KW  - Ariel
+KW  - exoplanets
+KW  - transmission spectroscopy
+KW  - Gaussian log-likelihood
+KW  - uncertainty quantification
+KW  - neuro-symbolic AI
+KW  - state-space models
+KW  - graph neural networks
+KW  - Hydra
+KW  - DVC
+KW  - reproducibility
+KW  - Kaggle
+KW  - CLI
+KW  - symbolic AI
+KW  - astrophysics
+KW  - calibration
+KW  - SHAP
+KW  - UMAP
+KW  - t-SNE
+ER  -

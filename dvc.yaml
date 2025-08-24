@@ -1,64 +1,185 @@
-# Comparison of Kaggle Models from NeurIPS 2025 Ariel Data Challenge
+# ==============================================================================
+# dvc.yaml — SpectraMind V50 (ArielSensorArray)
+# ------------------------------------------------------------------------------
+# Declarative, CI‑safe pipeline:
+#   • raw → calibrated → train → predict → diagnostics → submit
+#   • Hydra-driven configs, DVC params/plots, Kaggle-ready bundle
+#   • Physics-informed (FGS1 Mamba, AIRS GNN) + neuro‑symbolic diagnostics
+#
+# Usage:
+#   dvc repro                 # rebuild entire pipeline
+#   dvc exp run               # run an experiment with param overrides
+#   dvc plots show            # render plots configured below
+#   dvc plots diff            # compare plots across commits/experiments
+# ==============================================================================
 
-The NeurIPS 2025 Ariel Data Challenge focuses on extracting **exoplanet atmospheric spectra** from simulated telescope data. We compare three notable models from this competition:
+stages:
 
-- **Thang Do Duc’s “0.329 LB” notebook** (a baseline model originally by user V1ctorious3010).  
-- **V1ctorious3010’s “80bl-128hd-impact” model** (an improved deep PyTorch model).  
-- **Fawad Awan’s “Spectrum Regressor” model** (multi-output PyTorch regressor).  
+  # ------------------------------------------------------------------
+  calibrate:
+    cmd: >
+      poetry run spectramind calibrate
+        --config-dir config
+        --config-name config_v50.yaml
+        --input ${data.fgs1_path} ${data.airs_path}
+        --output ${data.calibration_path}
+        --log logs/calibration.log
+    deps:
+      - config/config_v50.yaml
+      - src/pipeline/calibration_pipeline.py
+      - ${data.fgs1_path}
+      - ${data.airs_path}
+    outs:
+      - ${data.calibration_path}
+    params:
+      - data.fgs1_path
+      - data.airs_path
+      - data.calibration_path
+    metrics:
+      - logs/calibration.json
+    plots:
+      - logs/calibration_plots
 
-For each model, we analyze their **architecture, training pipeline, performance, code quality, and relevance** to the Ariel spectroscopy task. A comparative summary and recommended best practices for our SpectraMind V50 project are also provided.
+  # ------------------------------------------------------------------
+  train:
+    cmd: >
+      poetry run spectramind train
+        --config-dir config
+        --config-name config_v50.yaml
+        training.epochs=${training.epochs}
+        training.batch_size=${training.batch_size}
+        training.lr=${training.lr}
+        training.seed=${training.seed}
+        model.encoder=${model.encoder}
+        model.gnn=${model.gnn}
+        model.decoder=${model.decoder}
+        data.calibration_path=${data.calibration_path}
+        +outputs.dir=outputs/models
+    deps:
+      - ${data.calibration_path}
+      - config/config_v50.yaml
+      - src/train/train_v50.py
+      - src/models/fgs1_mamba.py
+      - src/models/airs_gnn.py
+      - src/models/multi_scale_decoder.py
+    outs:
+      - outputs/models
+    params:
+      - training
+      - model
+      - data.calibration_path
+    metrics:
+      - outputs/models/metrics.json
+    plots:
+      - outputs/models/loss_curve.png
 
----
+  # ------------------------------------------------------------------
+  predict:
+    cmd: >
+      poetry run spectramind predict
+        --config-dir config
+        --config-name config_v50.yaml
+        --model outputs/models
+        --input ${data.calibration_path}
+        --output outputs/predictions
+    deps:
+      - outputs/models
+      - ${data.calibration_path}
+      - src/predict/predict_v50.py
+    outs:
+      - outputs/predictions
+    params:
+      - data.bins
+      - submission.kaggle_format
+    metrics:
+      - outputs/predictions/summary.json
 
-## Model 1: Thang Do Duc’s “0.329 LB” Baseline
+  # ------------------------------------------------------------------
+  diagnostics:
+    cmd: >
+      poetry run spectramind diagnose dashboard
+        --config-dir config
+        --config-name config_v50.yaml
+        --pred outputs/predictions
+        --out outputs/diagnostics
+        --html-out outputs/diagnostics/report.html
+    deps:
+      - outputs/predictions
+      - src/diagnostics/generate_html_report.py
+      - src/diagnostics/generate_diagnostic_summary.py
+      - src/diagnostics/shap_overlay.py
+      - src/diagnostics/plot_umap_v50.py
+      - src/diagnostics/plot_tsne_interactive.py
+      - src/diagnostics/symbolic_influence_map.py
+    outs:
+      - outputs/diagnostics
+    params:
+      - diagnostics
+    metrics:
+      - outputs/diagnostics/diagnostic_summary.json
+    plots:
+      - outputs/diagnostics/*.png
+      - outputs/diagnostics/*.html
 
-- **Architecture:** Residual multilayer perceptron (dense layers with BN + ReLU + skip connections). Inspired by ResNet-style stabilization.  
-- **Training & Preprocessing:** Minimal. Basic normalization, little augmentation. Light and fast to train (~56s on Kaggle T4s).  
-- **Leaderboard:** Public LB score **0.329**, stable reference baseline. Dropped to 0.287 after dataset update, then stabilized back to 0.329.  
-- **Code Quality:** Well-structured Kaggle notebook, ~43 upvotes, reproducible.  
-- **Relevance:** Captures core regression but lacks uncertainty, physics-informed losses, or domain-specific tricks:contentReference[oaicite:0]{index=0}.
+  # ------------------------------------------------------------------
+  submit:
+    cmd: >
+      poetry run spectramind submit
+        --config-dir config
+        --config-name config_v50.yaml
+        --pred outputs/predictions
+        --bundle outputs/submission/bundle.zip
+        --meta outputs/submission/manifest.json
+        --validate ${submission.validate_before_zip}
+    deps:
+      - outputs/predictions
+      - outputs/diagnostics
+      - src/cli/cli_submit.py
+    outs:
+      - outputs/submission/bundle.zip
+      - outputs/submission/manifest.json
+    params:
+      - submission
+    metrics:
+      - outputs/submission/manifest.json
 
----
+# ------------------------------------------------------------------------------
+# Global metrics/plots (DVC will discover series; HTML/PNG listed for convenience)
+# ------------------------------------------------------------------------------
+metrics:
+  - outputs/diagnostics/diagnostic_summary.json:
+      cache: false
 
-## Model 2: V1ctorious3010’s “80bl-128hd-impact”
+plots:
+  - ROC:
+      path: outputs/diagnostics/roc.csv
+      x: fpr
+      y:
+        - tpr
+      title: "ROC Curve"
+  - Calibration:
+      path: outputs/diagnostics/reliability.csv
+      x: expected
+      y:
+        - observed
+      title: "Uncertainty Calibration (Reliability)"
+  - GLL:
+      path: outputs/diagnostics/binwise.csv
+      x: bin
+      y:
+        - gll
+      title: "Gaussian Log-Likelihood per Bin"
+  - FFT:
+      path: outputs/diagnostics/fft.csv
+      x: frequency
+      y:
+        - power
+      title: "FFT Power Spectrum"
+  - Symbolic:
+      path: outputs/diagnostics/symbolic_violations.csv
+      x: bin
+      y:
+        - violation_score
+      title: "Symbolic Rule Violations"
 
-- **Architecture:** Extremely deep (~80 residual blocks × 128 hidden dims). Pure dense layers, no transformers/convs. Uses BN + dropout to stabilize.  
-- **Training & Preprocessing:** Likely multi-epoch, with normalization, possible detrending, and maybe augmentation. Requires multi-GPU.  
-- **Leaderboard:** Public LB **0.322**, an improvement over baseline. Potential risk of overfitting to public split.  
-- **Code Quality:** Published as a Kaggle Model with weights + card. Reproducible, but retraining is heavy.  
-- **Relevance:** Strong at capturing fine spectral features, but interpretable physics constraints are absent:contentReference[oaicite:1]{index=1}.
-
----
-
-## Model 3: Fawad Awan’s “Spectrum Regressor”
-
-- **Architecture:** Multi-output regression network. Simpler than Model 2, possibly hybrid dense + conv/recurrent. Predicts full spectrum jointly.  
-- **Training & Preprocessing:** Standard Kaggle training with normalization. Emphasis on multi-output consistency.  
-- **Leaderboard:** Public LB score around **0.317–0.320** (competitive but slightly below baseline).  
-- **Code Quality:** Shared as a Kaggle Model with code, lighter to reproduce.  
-- **Relevance:** Pragmatic, easy-to-use baseline extension. Less expressive than Model 2, but cleaner for integration:contentReference[oaicite:2]{index=2}.
-
----
-
-## Comparative Summary
-
-| Model                          | Depth/Size     | Score (Public LB) | Strengths                                   | Weaknesses                          |
-|--------------------------------|----------------|-------------------|---------------------------------------------|-------------------------------------|
-| **Thang Do Duc – Baseline**    | Medium (MLP)   | 0.329             | Simple, reproducible, stable reference       | No uncertainty, limited physics      |
-| **V1ctorious – 80bl-128hd**    | Very deep MLP  | 0.322             | Captures fine spectral features              | Risk of overfitting, heavy compute   |
-| **Fawad – Spectrum Regressor** | Moderate MLP   | 0.317–0.320       | Multi-output design, lighter training        | Slightly weaker performance          |
-
----
-
-## Best Practices for SpectraMind V50
-
-- Use **residual fully-connected blocks** for stability.  
-- Apply **domain-specific preprocessing** (detrending, jitter correction, spectral smoothing).  
-- Incorporate **uncertainty modeling (μ/σ)**, absent in all three Kaggle models.  
-- Enforce **physics-informed constraints** (non-negativity, smoothness, asymmetry) during training.  
-- Prefer **ensembles** of medium-depth models over a single very deep MLP for generalization.  
-- Keep code clean, reproducible, and Kaggle-compatible.  
-
----
-
-*Sources: Kaggle notebooks and model cards analyzed in the “Comparison of Kaggle Models from NeurIPS 2025 Ariel Data Challenge” report:contentReference[oaicite:3]{index=3}:contentReference[oaicite:4]{index=4}:contentReference[oaicite:5]{index=5}.*
+# ==============================================================================

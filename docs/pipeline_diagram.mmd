@@ -1,0 +1,406 @@
+File: docs/pipeline\_diagram.mmd
+graph TD
+%% SpectraMind V50 — High-Level Pipeline (Mermaid source)
+%% This file is rendered by scripts/export\_mermaid.py via Mermaid CLI (mmdc).
+
+%% Nodes
+A\[FGS1/AIRS Raw Frames<br/>• detector cubes<br/>• metadata] --> B\[Calibration Kill Chain<br/>ADC → bias → dark → flat → nonlinearity → CDS → wavelength align → jitter corr]
+B --> C\[Calibrated Light Curves<br/>time × wavelength matrices]
+C --> D\[Dual Encoders]
+D --> E\[μ/σ Decoders]
+E --> F\[Diagnostics & Symbolic Overlays<br/>GLL/entropy/FFT/SHAP/rules]
+F --> G\[Submission Bundle<br/>leaderboard-ready ZIP]
+
+%% Encoders split
+subgraph D0\[Dual Encoders]
+direction LR
+D1\[FGS1 → Mamba SSM<br/>long-sequence transit]:::enc
+D2\[AIRS → GNN<br/>wavelength graph: adjacency + molecules + detector regions]:::enc
+end
+C --> D1
+C --> D2
+D1 --> D
+D2 --> D
+
+%% Styles
+classDef enc fill:#0ea5e9,stroke:#0b82b5,stroke-width:1.2px,color:#fff
+
+%% Notes
+click G "[https://www.kaggle.com/competitions/ariel-data-challenge-2025](https://www.kaggle.com/competitions/ariel-data-challenge-2025)" "\_blank"
+
+File: scripts/export\_mermaid.py
+\#!/usr/bin/env python3
+
+# -*- coding: utf-8 -*-
+
+#
+
+# scripts/export\_mermaid.py — Render Mermaid diagrams from Markdown and .mmd sources
+
+#
+
+# Features
+
+# • Scans Markdown files for \`\`\`mermaid code fences and renders each block
+
+# • Renders standalone .mmd files (e.g., docs/\*.mmd)
+
+# • Supports SVG/PNG/PDF outputs, theme, background, and concurrency
+
+# • Stable file naming with content hashing to avoid collisions
+
+# • Clean logs and non-zero exit on any failed render to satisfy CI
+
+#
+
+# Requirements
+
+# • Node.js + @mermaid-js/mermaid-cli (mmdc) must be installed and on PATH
+
+# npm i -g @mermaid-js/mermaid-cli
+
+#
+
+# Usage
+
+# poetry run python scripts/export\_mermaid.py \\
+
+# --inputs README.md docs \\
+
+# --outdir diagrams \\
+
+# --formats svg png \\
+
+# --theme default \\
+
+# --background transparent \\
+
+# --fail-on-warn
+
+#
+
+# Exit codes
+
+# 0 success, 1 usage, 2 missing mmdc, 3 render failure
+
+from **future** import annotations
+
+import argparse
+import concurrent.futures
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Iterable, List, Optional, Tuple
+
+MERMAID\_FENCE\_RE = re.compile(
+r"(^|\n)`mermaid\s*\n(?P<code>.*?)(?:\n)`",
+re.IGNORECASE | re.DOTALL,
+)
+
+SUPPORTED\_FORMATS = {"svg", "png", "pdf"}
+DEFAULT\_FORMATS = ("svg",)
+DEFAULT\_THEME = "default"  # default | neutral | dark | forest
+DEFAULT\_BG = "transparent"  # e.g., 'transparent' or '#ffffff'
+
+@dataclass(frozen=True)
+class DiagramTask:
+"""A single diagram rendering task."""
+source\_kind: str  # 'fence' or 'file'
+source\_path: Path
+code: str
+out\_stem: str  # base name without extension
+index: int     # block index for fences
+line\_offset: int  # line number where fence starts (for logging)
+
+def log(msg: str) -> None:
+print(msg, file=sys.stderr)
+
+def die(msg: str, code: int = 1) -> None:
+log(f"\[export-mermaid] ERROR: {msg}")
+sys.exit(code)
+
+def which\_mmdc() -> str:
+path = shutil.which("mmdc")
+if not path:
+die("Mermaid CLI (mmdc) not found on PATH. Install with: npm i -g @mermaid-js/mermaid-cli", 2)
+return path
+
+def sha256\_hexdigest(data: bytes) -> str:
+return hashlib.sha256(data).hexdigest()\[:10]
+
+def read\_text\_safe(p: Path) -> str:
+try:
+return p.read\_text(encoding="utf-8")
+except UnicodeDecodeError:
+return p.read\_text(encoding="utf-8", errors="replace")
+
+def discover\_inputs(paths: Iterable\[str]) -> List\[Path]:
+out: List\[Path] = \[]
+for raw in paths:
+p = Path(raw)
+if not p.exists():
+log(f"\[export-mermaid] WARN: Input path not found: {p}")
+continue
+if p.is\_dir():
+for ext in ("*.md", "*.markdown", "\*.mmd"):
+out.extend(sorted(p.rglob(ext)))
+else:
+out.append(p)
+\# De-dup while preserving order
+seen = set()
+uniq: List\[Path] = \[]
+for p in out:
+if p in seen:
+continue
+uniq.append(p)
+seen.add(p)
+return uniq
+
+def extract\_mermaid\_fences(md\_path: Path) -> List\[DiagramTask]:
+content = read\_text\_safe(md\_path)
+tasks: List\[DiagramTask] = \[]
+for i, m in enumerate(MERMAID\_FENCE\_RE.finditer(content), start=1):
+code = m.group("code").strip()
+\# Compute a stable stem: <file>-fence-<i>-<hash>
+digest = sha256\_hexdigest(code.encode("utf-8"))
+stem = f"{md\_path.stem}-fence-{i}-{digest}"
+\# line offset (approx) for logging
+start\_pos = m.start()
+line\_offset = content.count("\n", 0, start\_pos) + 1
+tasks.append(
+DiagramTask(
+source\_kind="fence",
+source\_path=md\_path,
+code=code,
+out\_stem=stem,
+index=i,
+line\_offset=line\_offset,
+)
+)
+return tasks
+
+def load\_mmd\_file(mmd\_path: Path) -> DiagramTask:
+code = read\_text\_safe(mmd\_path)
+digest = sha256\_hexdigest(code.encode("utf-8"))
+stem = f"{mmd\_path.stem}-{digest}"
+return DiagramTask(
+source\_kind="file",
+source\_path=mmd\_path,
+code=code,
+out\_stem=stem,
+index=0,
+line\_offset=1,
+)
+
+def collect\_tasks(inputs: List\[Path]) -> List\[DiagramTask]:
+tasks: List\[DiagramTask] = \[]
+for p in inputs:
+if p.suffix.lower() in (".md", ".markdown"):
+tasks.extend(extract\_mermaid\_fences(p))
+elif p.suffix.lower() == ".mmd":
+tasks.append(load\_mmd\_file(p))
+else:
+\# Ignore other files
+pass
+return tasks
+
+def render\_one(
+mmdc: str,
+task: DiagramTask,
+outdir: Path,
+formats: Tuple\[str, ...],
+theme: str,
+background: str,
+width: Optional\[int],
+height: Optional\[int],
+fail\_on\_warn: bool,
+) -> List\[Path]:
+outdir.mkdir(parents=True, exist\_ok=True)
+written: List\[Path] = \[]
+\# Prepare a temp file with the code
+with tempfile.TemporaryDirectory(prefix="mermaid\_") as tdir:
+tmp\_in = Path(tdir) / f"{task.out\_stem}.mmd"
+tmp\_in.write\_text(task.code, encoding="utf-8")
+
+```
+    for fmt in formats:
+        out_path = outdir / f"{task.out_stem}.{fmt}"
+        cmd = [
+            mmdc,
+            "-i", str(tmp_in),
+            "-o", str(out_path),
+            "-t", theme,
+            "-b", background,
+        ]
+        if width:
+            cmd += ["-w", str(width)]
+        if height:
+            cmd += ["-H", str(height)]
+        # Run render
+        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if proc.returncode != 0:
+            log("[export-mermaid] ----- mmdc stderr -----")
+            log(proc.stderr.strip())
+            log("[export-mermaid] ----- mmdc stdout -----")
+            log(proc.stdout.strip())
+            msg = (
+                f"Render failed (fmt={fmt}) for {task.source_kind} at "
+                f"{task.source_path} (line {task.line_offset}). See logs."
+            )
+            die(msg, 3)
+        if fail_on_warn:
+            # Mermaid CLI sometimes writes warnings to stderr with returncode 0
+            if proc.stderr.strip():
+                log("[export-mermaid] ----- mmdc stderr (warning) -----")
+                log(proc.stderr.strip())
+                die(
+                    f"Render emitted warnings for {task.source_kind} at "
+                    f"{task.source_path} (line {task.line_offset}) with --fail-on-warn.",
+                    3,
+                )
+        written.append(out_path)
+return written
+```
+
+def parse\_args(argv: Optional\[List\[str]] = None) -> argparse.Namespace:
+p = argparse.ArgumentParser(
+prog="export\_mermaid.py",
+description="Render Mermaid diagrams from Markdown fences and .mmd files using Mermaid CLI (mmdc).",
+)
+p.add\_argument(
+"--inputs",
+nargs="+",
+required=True,
+help="Files or directories to scan (Markdown .md/.markdown and .mmd are recognized).",
+)
+p.add\_argument(
+"--outdir",
+default="diagrams",
+help="Output directory for rendered diagrams (default: diagrams).",
+)
+p.add\_argument(
+"--formats",
+nargs="+",
+default=list(DEFAULT\_FORMATS),
+help="Output formats: svg png pdf (default: svg).",
+)
+p.add\_argument(
+"--theme",
+default=DEFAULT\_THEME,
+help="Mermaid theme: default | neutral | dark | forest (default: default).",
+)
+p.add\_argument(
+"--background",
+default=DEFAULT\_BG,
+help="Background: e.g., 'transparent' or '#ffffff' (default: transparent).",
+)
+p.add\_argument(
+"--width",
+type=int,
+default=None,
+help="Width in pixels (optional).",
+)
+p.add\_argument(
+"--height",
+type=int,
+default=None,
+help="Height in pixels (optional).",
+)
+p.add\_argument(
+"--max-workers",
+type=int,
+default=max(1, os.cpu\_count() or 1),
+help="Max concurrent renders (default: CPU count).",
+)
+p.add\_argument(
+"--fail-on-warn",
+action="store\_true",
+help="Treat Mermaid CLI warnings as errors.",
+)
+p.add\_argument(
+"--list-only",
+action="store\_true",
+help="List discovered tasks and exit without rendering.",
+)
+return p.parse\_args(argv)
+
+def main(argv: Optional\[List\[str]] = None) -> None:
+args = parse\_args(argv)
+
+```
+# Validate formats
+formats = tuple(f.lower() for f in args.formats)
+for f in formats:
+    if f not in SUPPORTED_FORMATS:
+        die(f"Unsupported format: {f}. Supported: {', '.join(sorted(SUPPORTED_FORMATS))}", 1)
+
+mmdc = which_mmdc()
+inputs = discover_inputs(args.inputs)
+if not inputs:
+    die("No valid input files discovered (Markdown or .mmd).", 1)
+
+tasks = collect_tasks(inputs)
+if not tasks:
+    log("[export-mermaid] No Mermaid fences or .mmd files found. Nothing to do.")
+    sys.exit(0)
+
+outdir = Path(args.outdir)
+if args.list_only:
+    for t in tasks:
+        print(json.dumps({
+            "source_kind": t.source_kind,
+            "source_path": str(t.source_path),
+            "line_offset": t.line_offset,
+            "out_stem": t.out_stem,
+        }))
+    sys.exit(0)
+
+log(f"[export-mermaid] Mermaid CLI: {mmdc}")
+log(f"[export-mermaid] Inputs: {len(inputs)} files/dirs; Tasks: {len(tasks)}")
+log(f"[export-mermaid] Outdir: {outdir.resolve()}")
+outdir.mkdir(parents=True, exist_ok=True)
+
+# Render concurrently
+written_all: List[Path] = []
+with concurrent.futures.ThreadPoolExecutor(max_workers=args.max_workers) as ex:
+    futures = []
+    for t in tasks:
+        futures.append(
+            ex.submit(
+                render_one,
+                mmdc,
+                t,
+                outdir,
+                formats,
+                args.theme,
+                args.background,
+                args.width,
+                args.height,
+                args.fail_on_warn,
+            )
+        )
+    for fut in concurrent.futures.as_completed(futures):
+        try:
+            written = fut.result()
+            written_all.extend(written)
+        except SystemExit as e:
+            # Re-raise to stop CI early
+            raise
+        except Exception as e:
+            die(f"Unhandled exception during render: {e}", 3)
+
+log(f"[export-mermaid] Wrote {len(written_all)} files.")
+# Print outputs for CI artifacts
+for p in written_all:
+    print(p)
+```
+
+if **name** == "**main**":
+main()

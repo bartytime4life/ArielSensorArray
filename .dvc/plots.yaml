@@ -1,38 +1,165 @@
+# ==============================================================================
 # SpectraMind V50 — Diagnostics & Symbolic Plots for DVC
+# Purpose:
+#   • Central registry for DVC-rendered plots across training, calibration, spectra, and symbolic layers
+#   • All paths point to CSV/TSV/JSONL produced by CLI/diagnostics scripts
+#   • Designed to be Hydra/DVC friendly and CI-safe
+# ==============================================================================
+
 plots:
+
+  # ───────────────────────── Training Dynamics ─────────────────────────
+  - Training/Loss:
+      path: outputs/metrics/training.tsv
+      x: step
+      y:
+        - train_loss
+        - val_loss
+      title: "Training vs Validation Loss"
+      x_label: "Step"
+      y_label: "Loss"
+
+  - Training/Metrics:
+      path: outputs/metrics/metrics.tsv
+      x: epoch
+      y:
+        - val_gll
+        - val_mae
+      title: "Validation Metrics by Epoch"
+      x_label: "Epoch"
+      y_label: "Score"
+
+  # ───────────────────────── Classification-style Quality Curves ─────────────────────────
+  # (Used by certain binary checks/flaggers produced by diagnostics; grouped by class if available)
   - ROC:
+      path: outputs/diagnostics/roc.csv
       template: simple
       x: fpr
       y:
-        eval: tpr
+        - tpr
+      group: class         # optional column; if present, shows per-class traces
       title: "ROC Curve"
       x_label: "False Positive Rate"
       y_label: "True Positive Rate"
 
-  - Calibration:
-      x: expected_calibration
-      y: observed_calibration
-      title: "Uncertainty Calibration Curve"
+  - PR:
+      path: outputs/diagnostics/pr.csv
+      x: recall
+      y:
+        - precision
+      group: class
+      title: "Precision–Recall Curve"
+      x_label: "Recall"
+      y_label: "Precision"
+
+  # ───────────────────────── Uncertainty Calibration ─────────────────────────
+  - Calibration/Reliability:
+      path: outputs/calibration/reliability.csv
+      x: expected
+      y:
+        - observed
+      title: "Uncertainty Calibration (Reliability Curve)"
       x_label: "Expected"
       y_label: "Observed"
 
-  - GLL:
+  - Calibration/Coverage:
+      path: outputs/calibration/coverage.csv
       x: bin
-      y: gll
+      y:
+        - empirical_coverage
+        - target_coverage
+      title: "Conformal Coverage by Spectral Bin"
+      x_label: "Spectral Bin"
+      y_label: "Coverage"
+
+  - Calibration/Width:
+      path: outputs/calibration/interval_width.csv
+      x: bin
+      y:
+        - mean_pi_width
+      title: "Prediction Interval Width by Spectral Bin"
+      x_label: "Spectral Bin"
+      y_label: "Mean Interval Width"
+
+  # ───────────────────────── Likelihood / Residuals by Bin ─────────────────────────
+  - GLL:
+      path: outputs/diagnostics/binwise.csv
+      x: bin
+      y:
+        - gll
       title: "Binwise Gaussian Log-Likelihood"
       x_label: "Spectral Bin"
       y_label: "GLL Score"
 
+  - Residuals:
+      path: outputs/diagnostics/residuals.csv
+      x: bin
+      y:
+        - residual_mean
+      title: "Mean Residual by Spectral Bin"
+      x_label: "Spectral Bin"
+      y_label: "Residual (μ̂ − y)"
+      # If your residual CSV also includes residual_std, add it as another series
+
+  # ───────────────────────── Spectral/FFT Diagnostics ─────────────────────────
   - FFT:
+      path: outputs/diagnostics/fft.csv
       x: frequency
-      y: power
+      y:
+        - power
       title: "FFT Power Spectrum"
       x_label: "Frequency"
       y_label: "Power"
 
-  - Symbolic:
+  - FFT/Autocorr:
+      path: outputs/diagnostics/fft_autocorr.csv
+      x: lag
+      y:
+        - autocorr
+      title: "Autocorrelation of μ̂ Spectrum"
+      x_label: "Lag (bins)"
+      y_label: "Autocorrelation"
+
+  # ───────────────────────── Smoothness / Regularization Footprints ─────────────────────────
+  - Smoothness/L2:
+      path: outputs/diagnostics/smoothness.csv
       x: bin
-      y: violation_score
-      title: "Symbolic Rule Violation Heatmap"
+      y:
+        - l2_smoothness
+      title: "L2 Smoothness Penalty by Bin"
       x_label: "Spectral Bin"
-      y_label: "Violation"
+      y_label: "L2 Smoothness"
+
+  # ───────────────────────── Symbolic Diagnostics ─────────────────────────
+  - Symbolic/Violations:
+      path: outputs/diagnostics/symbolic_violations.csv
+      x: bin
+      y:
+        - violation_score
+      group: rule          # per-rule overlays if `rule` column is present
+      title: "Symbolic Rule Violation by Bin"
+      x_label: "Spectral Bin"
+      y_label: "Violation Score"
+
+  - Symbolic/CoverageShift:
+      path: outputs/diagnostics/symbolic_coverage_shift.csv
+      x: bin
+      y:
+        - coverage_delta
+      title: "Coverage Shift in Symbolic Regions"
+      x_label: "Spectral Bin"
+      y_label: "Δ Coverage (Empirical − Target)"
+
+  # ───────────────────────── End-to-End Quality Summaries ─────────────────────────
+  - Submission/ScoreProgress:
+      path: outputs/metrics/leaderboard.tsv
+      x: run_index
+      y:
+        - public_score
+        - private_score
+      title: "Leaderboard Score per Run (if available)"
+      x_label: "Run Index"
+      y_label: "Score"
+
+  # NOTE: Heatmaps (e.g., true heatmaps for violations or gll) are exported as images
+  # via diagnostics HTML and are not handled by DVC's line plot renderer.

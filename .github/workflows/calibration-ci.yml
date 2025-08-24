@@ -1,0 +1,76 @@
+# .github/workflows/calibration-ci.yml
+# ==============================================================================
+# SpectraMind V50 — Calibration CI
+# Runs the calibration pipeline and uploads mission‑grade logs/calibration.json.
+# Requires Poetry + your existing pipeline code (no internet / Kaggle not needed).
+# ==============================================================================
+
+name: calibration-ci
+
+on:
+  push:
+    branches: [ "main", "release/**" ]
+    paths:
+      - "src/**"
+      - "configs/**"
+      - "pyproject.toml"
+      - "poetry.lock"
+      - ".github/workflows/calibration-ci.yml"
+  pull_request:
+    branches: [ "**" ]
+  workflow_dispatch: {}
+
+jobs:
+  calibrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Poetry
+        run: |
+          python -m pip install --upgrade pip
+          pip install pipx
+          pipx install poetry
+          poetry --version
+
+      - name: Cache Poetry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pypoetry
+          key: poetry-${{ runner.os }}-${{ hashFiles('**/poetry.lock') }}
+
+      - name: Install dependencies
+        run: |
+          poetry install --no-interaction --no-ansi
+
+      - name: Selftest (fast)
+        run: |
+          poetry run spectramind test --mode fast
+
+      - name: Run calibration (Hydra config via CI module)
+        env:
+          SM_LOG_DIR: logs
+        run: |
+          poetry run python -m spectramind_ci.calibrate \
+            --config-path configs/calibration \
+            --config-name v50.yaml \
+            --log-dir "${SM_LOG_DIR}"
+
+      - name: Upload calibration log artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: calibration-logs
+          path: |
+            logs/calibration.json
+            outputs/manifests/calibration_manifest.json
