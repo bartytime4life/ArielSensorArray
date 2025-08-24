@@ -1,494 +1,385 @@
-#!/usr/bin/env python3
+# tests/artifacts/test_dummy_data_generator.py
 # -*- coding: utf-8 -*-
 """
-tests/artifacts/test_dummy_data_generator.py
-
 SpectraMind V50 — Artifact Tests
-Dummy Test Data Generator (tools/generate_dummy_data.py)
+File: tests/artifacts/test_dummy_data_generator.py
 
-Goal
-----
-Validate that the dummy data generator can be invoked (API or CLI), writes a small,
-self-contained synthetic dataset to the requested --outdir, behaves deterministically
-with a fixed seed, and respects audit logging & filesystem hygiene.
+Purpose
+-------
+Validate that the dummy data generator produces well-formed, reproducible,
+challenge-shaped synthetic artifacts for quick pipeline tests.
 
-This suite is **signature-agnostic** and **repo-layout-tolerant**:
-- API discovery attempts several common module paths and callables.
-- CLI discovery attempts `python -m tools.generate_dummy_data`.
-- Direct script execution is attempted as a final fallback.
-- If nothing is found yet, tests skip gracefully with a clear message.
+This test suite will:
+  1) Invoke the generator via Python API if available, else via CLI (fallback).
+  2) Generate a tiny dataset (N=5) with the challenge-standard 283 bins.
+  3) Validate array shapes, finiteness, and physical plausibility:
+       • mu: shape (N, 283)
+       • sigma: shape (N, 283), strictly positive
+  4) Validate identifiers/metadata (if produced).
+  5) Validate reproducibility w/ same seed; and sensitivity w/ different seed.
 
-What we check
--------------
-1) End-to-end generation of a *tiny* dataset into a temp outdir:
-   - At least one expected artifact exists (e.g., mu.npy, sigma.npy, airs.npy, fgs1.npy, metadata.json, labels.csv).
-2) Determinism:
-   - Two runs with the same seed produce byte-identical artifacts.
-3) Outdir discipline:
-   - No stray writes outside the requested --outdir (except logs/ and optional outputs/run_hash_summary*.json).
-4) JSON metadata (if present) is valid JSON and minimally structured.
-5) Audit log append-only behavior across repeated runs.
+Assumptions
+-----------
+• The repository includes a generator at tools/generate_dummy_data.py
+  exposing either:
+    A) API function (any of the following names):
+         - generate_dummy_data(outdir:str, n:int=…, bins:int=…, seed:int=…, **opts)
+         - run(outdir=…, n=…, bins=…, seed=…)
+         - main_generate(outdir=…, n=…, bins=…, seed=…)
+       Return value is optional; artifacts must be written to outdir.
 
-Usage
------
-pytest -q tests/artifacts/test_dummy_data_generator.py
+    B) CLI (one of these entry styles):
+         $ python tools/generate_dummy_data.py --outdir OUT --n 5 --bins 283 --seed 123
+         $ python -m tools.generate_dummy_data --outdir OUT --n 5 --bins 283 --seed 123
+       We try multiple python/flag variants (see CLI_FLAGS_MATRIX below).
+
+• Expected outputs (best-effort discovery; at least mu & sigma arrays must exist):
+    OUT/
+      mu.npy or mu.npz (key 'mu')
+      sigma.npy or sigma.npz (key 'sigma')
+      metadata.json or metadata.csv (optional but preferred)
+
+If your actual generator uses different flags or filenames, you can add variants
+in CLI_FLAGS_MATRIX or in _find_arrays() heuristics below.
 """
 
 from __future__ import annotations
 
+import csv
 import json
 import os
 import re
 import subprocess
 import sys
-from hashlib import sha256
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
 import pytest
 
+# ------------------------------- Constants --------------------------------- #
 
-# ======================================================================================
-# Discovery (API / module / script)
-# ======================================================================================
+BINS = 283
+N_SMALL = 5
 
-# Candidate Python API modules and callables
-API_CANDIDATES: List[Tuple[str, Iterable[str]]] = [
-    ("tools.generate_dummy_data", ("run", "main", "generate", "generate_dummy_data")),
-    ("src.tools.generate_dummy_data", ("run", "main", "generate", "generate_dummy_data")),
-    ("spectramind.tools.generate_dummy_data", ("run", "main", "generate", "generate_dummy_data")),
+GENERATOR_REL = Path("tools") / "generate_dummy_data.py"
+
+PY_BIN_CANDS = [sys.executable, "python", "python3"]
+ENTRY_CANDS = [
+    # module entry
+    ["-m", "tools.generate_dummy_data"],
+    # direct path (resolved against repo root)
+    [str(GENERATOR_REL)],
+]
+CLI_FLAGS_MATRIX = [
+    # preferred
+    dict(outdir="--outdir", n="--n", bins="--bins", seed="--seed"),
+    # alternates
+    dict(outdir="--out", n="--num", bins="--bins", seed="--seed"),
+    dict(outdir="--outdir", n="--count", bins="--bins", seed="--seed"),
 ]
 
-# Candidate module names for `python -m`
-MODULE_CANDIDATES = [
-    "tools.generate_dummy_data",
-    "src.tools.generate_dummy_data",
-    "spectramind.tools.generate_dummy_data",
-]
-
-# Candidate script filenames under tools/
-SCRIPT_CANDIDATES = [
-    "generate_dummy_data.py",
-    "generate_dummy_dataset.py",
-    "generate_dummy_inputs.py",
-]
+# Heuristic filename patterns for arrays and metadata
+MU_PATS = ("mu.npy", "mu.npz")
+SIGMA_PATS = ("sigma.npy", "sigma.npz")
+META_PATS = ("metadata.json", "metadata.csv")
 
 
-def _discover_api() -> Optional[Callable]:
-    """
-    Try to import a callable generator from common module paths.
-    Returns the first callable found, else None.
-    """
-    for mod_name, names in API_CANDIDATES:
-        try:
-            mod = __import__(mod_name, fromlist=list(names))
-        except Exception:
-            continue
-        for nm in names:
-            fn = getattr(mod, nm, None)
-            if callable(fn):
-                return fn
-    return None
+# ------------------------------- Utilities --------------------------------- #
 
-
-def _discover_module() -> Optional[str]:
-    for mod in MODULE_CANDIDATES:
-        try:
-            __import__(mod)
-            return mod
-        except Exception:
-            continue
-    return None
-
-
-def _discover_script(repo_root: Path) -> Optional[Path]:
-    for nm in SCRIPT_CANDIDATES:
-        p = repo_root / "tools" / nm
-        if p.exists():
+def repo_root() -> Path:
+    here = Path(__file__).resolve()
+    for p in [here, *here.parents]:
+        if (p / "pyproject.toml").exists() or (p / ".git").exists():
             return p
+    return Path.cwd().resolve()
+
+
+@dataclass
+class APIGen:
+    func: callable
+    supports: Dict[str, bool]
+
+
+def discover_api() -> Optional[APIGen]:
+    """
+    Try to import a Python API from tools/generate_dummy_data.py
+    """
+    root = repo_root()
+    mod_path = root / GENERATOR_REL
+    if not mod_path.exists():
+        return None
+    sys.path.insert(0, str(root))
+    try:
+        mod = __import__("tools.generate_dummy_data", fromlist=["*"])
+    except Exception:
+        return None
+
+    for name in ("generate_dummy_data", "run", "main_generate"):
+        fn = getattr(mod, name, None)
+        if callable(fn):
+            # best-effort capability sniff
+            sigtxt = (getattr(fn, "__doc__", "") or "") + str(getattr(fn, "__annotations__", ""))
+            supports = {
+                "outdir": "outdir" in sigtxt or "output_dir" in sigtxt,
+                "n": "n" in sigtxt or "num" in sigtxt or "count" in sigtxt,
+                "bins": "bins" in sigtxt,
+                "seed": "seed" in sigtxt,
+            }
+            return APIGen(fn, supports)
     return None
 
 
-# ======================================================================================
-# Helpers
-# ======================================================================================
-
-EXPECTED_FILENAMES = {
-    # Likely names — generator may produce any subset of these
-    "mu.npy",
-    "sigma.npy",
-    "airs.npy",
-    "fgs1.npy",
-    "X.npy",
-    "y.npy",
-    "metadata.json",
-    "labels.csv",
-    "planets.csv",
-}
-
-
-def _sha256_file(p: Path) -> str:
-    h = sha256()
-    with p.open("rb") as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
-def _scan_artifacts(outdir: Path) -> Dict[str, List[Path]]:
-    files = list(outdir.glob("*")) + list(outdir.rglob("*"))
-    # Only files at or under outdir
-    files = [p for p in files if p.is_file()]
-    out: Dict[str, List[Path]] = {"npy": [], "json": [], "csv": [], "other": []}
-    for p in files:
-        ext = p.suffix.lower()
-        if ext == ".npy":
-            out["npy"].append(p)
-        elif ext == ".json":
-            out["json"].append(p)
-        elif ext == ".csv":
-            out["csv"].append(p)
-        else:
-            out["other"].append(p)
-    return out
-
-
-def _pick_expected_paths(outdir: Path) -> List[Path]:
+def run_cli(outdir: Path, n: int, bins: int, seed: int) -> Tuple[bool, List[str]]:
     """
-    Return a set of expected artifact paths found under outdir,
-    based on names we commonly see from the generator.
+    CLI fallback: try multiple python executables / entry styles / flag spellings.
     """
-    found = []
-    for name in EXPECTED_FILENAMES:
+    root = repo_root()
+    logs: List[str] = []
+    for py in PY_BIN_CANDS:
+        for entry in ENTRY_CANDS:
+            for flags in CLI_FLAGS_MATRIX:
+                cmd = [py]
+                if entry and entry[0].endswith(".py"):
+                    cmd.append(str(root / entry[0]))
+                else:
+                    cmd.extend(entry)
+                cmd.extend([flags["outdir"], str(outdir)])
+                cmd.extend([flags["n"], str(n)])
+                cmd.extend([flags["bins"], str(bins)])
+                cmd.extend([flags["seed"], str(seed)])
+
+                try:
+                    proc = subprocess.run(
+                        cmd, cwd=str(root), check=False,
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+                    )
+                except FileNotFoundError:
+                    continue
+                except Exception as e:
+                    logs.append(f"[CLI ERROR] {' '.join(cmd)} → {e}")
+                    continue
+                out = (proc.stdout or "") + (proc.stderr or "")
+                logs.append(f"$ {' '.join(cmd)}\nexit={proc.returncode}\n{out}")
+                if proc.returncode == 0:
+                    return True, logs
+    return False, logs
+
+
+def run_generator(outdir: Path, n: int, bins: int, seed: int) -> Tuple[bool, List[str]]:
+    """
+    Try API first; on failure, run CLI.
+    """
+    api = discover_api()
+    if api:
+        kwargs = {}
+        if api.supports.get("outdir", True):
+            kwargs["outdir"] = str(outdir)
+        if api.supports.get("n", True):
+            kwargs["n"] = n
+        if api.supports.get("bins", True):
+            kwargs["bins"] = bins
+        if api.supports.get("seed", True):
+            kwargs["seed"] = seed
+        try:
+            api.func(**kwargs)  # type: ignore[arg-type]
+            return True, [f"[API] called {api.func.__name__} with {kwargs}"]
+        except TypeError:
+            # signature mismatch → fall back to CLI
+            pass
+        except Exception as e:
+            return False, [f"[API-EXCEPTION] {e!r}"]
+
+    # CLI fallback
+    return run_cli(outdir=outdir, n=n, bins=bins, seed=seed)
+
+
+def _load_npy(p: Path) -> np.ndarray:
+    return np.load(p)
+
+
+def _load_npz(p: Path, key: str) -> Optional[np.ndarray]:
+    with np.load(p) as npz:
+        if key in npz.files:
+            return npz[key]
+        # Tolerate alternate keys
+        for alt in (key.upper(), key.capitalize()):
+            if alt in npz.files:
+                return npz[alt]
+    return None
+
+
+def _find_arrays(outdir: Path) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Locate μ and σ arrays (npy or npz). Return (mu, sigma) as ndarrays.
+    """
+    mu_arr = None
+    sig_arr = None
+
+    # Direct .npy
+    for name in MU_PATS:
         p = outdir / name
-        if p.exists():
-            found.append(p)
-    return sorted(found)
+        if p.exists() and p.suffix == ".npy":
+            mu_arr = _load_npy(p)
+            break
+    for name in SIGMA_PATS:
+        p = outdir / name
+        if p.exists() and p.suffix == ".npy":
+            sig_arr = _load_npy(p)
+            break
+
+    # .npz container
+    if mu_arr is None:
+        for name in MU_PATS:
+            p = outdir / name
+            if p.exists() and p.suffix == ".npz":
+                mu_arr = _load_npz(p, "mu")
+                break
+    if sig_arr is None:
+        for name in SIGMA_PATS:
+            p = outdir / name
+            if p.exists() and p.suffix == ".npz":
+                sig_arr = _load_npz(p, "sigma")
+                break
+
+    if mu_arr is None or sig_arr is None:
+        raise AssertionError(f"Could not find mu/sigma arrays in {outdir}")
+
+    return mu_arr, sig_arr
 
 
-def _ensure_repo_scaffold(repo_root: Path) -> None:
-    (repo_root / "tools").mkdir(parents=True, exist_ok=True)
-    (repo_root / "logs").mkdir(parents=True, exist_ok=True)
-    (repo_root / "outputs").mkdir(parents=True, exist_ok=True)
+def _load_metadata(outdir: Path) -> Optional[dict]:
+    for name in META_PATS:
+        p = outdir / name
+        if p.exists() and p.suffix == ".json":
+            try:
+                return json.loads(p.read_text(encoding="utf-8"))
+            except Exception:
+                return None
+        if p.exists() and p.suffix == ".csv":
+            try:
+                rows = list(csv.DictReader(p.open("r", encoding="utf-8")))
+                return {"rows": rows, "rows_count": len(rows)}
+            except Exception:
+                return None
+    return None
 
 
-# ======================================================================================
-# Runners (API / module / script)
-# ======================================================================================
-
-def _run_via_api(
-    fn: Callable,
-    outdir: Path,
-    seed: int = 123,
-    n_planets: int = 6,
-    n_bins: int = 17,
-    extra_kwargs: Optional[Dict[str, Any]] = None,
-) -> Any:
-    """
-    Call API with flexible kwargs; only pass those the function appears to accept.
-    """
-    import inspect
-
-    kwargs: Dict[str, Any] = {
-        "outdir": str(outdir),
-        "seed": seed,
-        "n_planets": n_planets,
-        "n_bins": n_bins,
-        "quiet": True,
-        "no_browser": True,
-        "overwrite": True,
-    }
-    if extra_kwargs:
-        kwargs.update(extra_kwargs)
-
-    try:
-        sig = inspect.signature(fn)
-        kwargs = {k: v for k, v in kwargs.items() if k in sig.parameters}
-    except Exception:
-        pass
-
-    return fn(**kwargs)
+def _basic_array_checks(mu: np.ndarray, sigma: np.ndarray, n: int, bins: int) -> None:
+    assert mu.shape == (n, bins), f"mu shape {mu.shape} != {(n, bins)}"
+    assert sigma.shape == (n, bins), f"sigma shape {sigma.shape} != {(n, bins)}"
+    assert np.isfinite(mu).all(), "mu contains non‑finite values"
+    assert np.isfinite(sigma).all(), "sigma contains non‑finite values"
+    assert (sigma > 0).all(), "sigma must be strictly positive"
+    # sanity: mu not all constant; per‑planet variance should be > 0 on average
+    per_var = mu.var(axis=1)
+    assert (per_var > 0).mean() > 0.5, "most generated spectra should have non‑zero variance"
+    # magnitude sanity (broad check; adjust if your generator uses a different scale)
+    assert np.abs(mu).max() < 10.0, "mu magnitude looks implausible (>10)"
+    assert sigma.max() < 10.0, "sigma magnitude looks implausible (>10)"
 
 
-def _run_via_module(
-    module_name: str,
-    outdir: Path,
-    seed: int = 123,
-    n_planets: int = 6,
-    n_bins: int = 17,
-    extra_flags: Optional[List[str]] = None,
-) -> subprocess.CompletedProcess:
-    env = os.environ.copy()
-    env.setdefault("PYTHONUNBUFFERED", "1")
-    env.setdefault("MPLBACKEND", "Agg")
-    env.setdefault("SPECTRAMIND_TEST", "1")
+# ------------------------------- Fixtures ---------------------------------- #
 
-    cmd = [
-        sys.executable, "-m", module_name,
-        "--outdir", str(outdir),
-        "--seed", str(seed),
-        "--n-planets", str(n_planets),
-        "--n-bins", str(n_bins),
-        "--overwrite",
-        "--quiet",
-        "--no-browser",
-    ]
-    if extra_flags:
-        cmd += list(extra_flags)
-
-    return subprocess.run(
-        cmd, cwd=str(Path.cwd()), env=env, capture_output=True, text=True, timeout=90
-    )
+@pytest.fixture(scope="module")
+def tmp_out_root(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    return tmp_path_factory.mktemp("dummy_data_gen")
 
 
-def _run_via_script(
-    script_path: Path,
-    outdir: Path,
-    seed: int = 123,
-    n_planets: int = 6,
-    n_bins: int = 17,
-    extra_flags: Optional[List[str]] = None,
-) -> subprocess.CompletedProcess:
-    env = os.environ.copy()
-    env.setdefault("PYTHONUNBUFFERED", "1")
-    env.setdefault("MPLBACKEND", "Agg")
-    env.setdefault("SPECTRAMIND_TEST", "1")
+# --------------------------------- Tests ----------------------------------- #
 
-    cmd = [
-        sys.executable, str(script_path),
-        "--outdir", str(outdir),
-        "--seed", str(seed),
-        "--n-planets", str(n_planets),
-        "--n-bins", str(n_bins),
-        "--overwrite",
-        "--quiet",
-        "--no-browser",
-    ]
-    if extra_flags:
-        cmd += list(extra_flags)
+def test_generate_happy_path(tmp_out_root: Path):
+    out = tmp_out_root / "run1"
+    out.mkdir(parents=True, exist_ok=True)
+    ok, logs = run_generator(outdir=out, n=N_SMALL, bins=BINS, seed=123)
+    if not ok:
+        pytest.fail("Dummy data generator failed to run.\n" + "\n".join(logs))
 
-    return subprocess.run(
-        cmd, cwd=str(script_path.parent.parent if script_path.parent.name == "tools" else Path.cwd()),
-        env=env, capture_output=True, text=True, timeout=90
-    )
+    mu, sigma = _find_arrays(out)
+    _basic_array_checks(mu, sigma, n=N_SMALL, bins=BINS)
 
-
-# ======================================================================================
-# Pytest fixtures
-# ======================================================================================
-
-@pytest.fixture(scope="function")
-def repo_tmp(tmp_path: Path) -> Path:
-    _ensure_repo_scaffold(tmp_path)
-    return tmp_path
-
-
-# ======================================================================================
-# Tests
-# ======================================================================================
-
-@pytest.mark.integration
-def test_generate_tiny_dataset(repo_tmp: Path) -> None:
-    """
-    End-to-end: generate a tiny dataset and confirm at least one expected artifact exists.
-    """
-    outdir = repo_tmp / "outputs" / "dummy" / "tiny"
-    outdir.mkdir(parents=True, exist_ok=True)
-
-    api = _discover_api()
-    mod = _discover_module() if api is None else None
-    script = _discover_script(repo_tmp) if (api is None and mod is None) else None
-
-    if api is not None:
-        _ = _run_via_api(api, outdir=outdir, seed=777, n_planets=5, n_bins=13)
-    elif mod is not None:
-        proc = _run_via_module(mod, outdir=outdir, seed=777, n_planets=5, n_bins=13)
-        if proc.returncode != 0:
-            print("STDOUT:\n", proc.stdout)
-            print("STDERR:\n", proc.stderr)
-        assert proc.returncode == 0
-    elif script is not None:
-        proc = _run_via_script(script, outdir=outdir, seed=777, n_planets=5, n_bins=13)
-        if proc.returncode != 0:
-            print("STDOUT:\n", proc.stdout)
-            print("STDERR:\n", proc.stderr)
-        assert proc.returncode == 0
-    else:
-        pytest.skip("No dummy data generator found. Add tools/generate_dummy_data.py to enable this test.")
-
-    # Verify artifacts
-    arts = _scan_artifacts(outdir)
-    found_named = _pick_expected_paths(outdir)
-    assert arts["npy"] or arts["json"] or arts["csv"] or found_named, \
-        "No expected artifacts produced by dummy data generator."
-
-    # If metadata.json exists, ensure valid JSON
-    meta = outdir / "metadata.json"
-    if meta.exists():
-        j = json.loads(meta.read_text(encoding="utf-8"))
-        assert isinstance(j, dict), "metadata.json must be a JSON object"
-        # Soft expectations (tolerant)
-        maybe_keys = {"n_planets", "n_bins", "seed", "generator"}
-        assert any(k in j for k in maybe_keys), "metadata.json should include basic fields like n_planets/n_bins/seed"
-
-
-@pytest.mark.integration
-def test_determinism_with_fixed_seed(repo_tmp: Path) -> None:
-    """
-    Two runs with the same seed should yield byte-identical artifacts (for all files present).
-    """
-    outA = repo_tmp / "outputs" / "dummy" / "seedA"
-    outB = repo_tmp / "outputs" / "dummy" / "seedB"
-    outA.mkdir(parents=True, exist_ok=True)
-    outB.mkdir(parents=True, exist_ok=True)
-
-    api = _discover_api()
-    mod = _discover_module() if api is None else None
-    script = _discover_script(repo_tmp) if (api is None and mod is None) else None
-
-    # Run A
-    if api is not None:
-        _ = _run_via_api(api, outdir=outA, seed=1234, n_planets=4, n_bins=11)
-    elif mod is not None:
-        assert _run_via_module(mod, outdir=outA, seed=1234, n_planets=4, n_bins=11).returncode == 0
-    elif script is not None:
-        assert _run_via_script(script, outdir=outA, seed=1234, n_planets=4, n_bins=11).returncode == 0
-    else:
-        pytest.skip("No dummy data generator available.")
-
-    # Run B
-    if api is not None:
-        _ = _run_via_api(api, outdir=outB, seed=1234, n_planets=4, n_bins=11)
-    elif mod is not None:
-        assert _run_via_module(mod, outdir=outB, seed=1234, n_planets=4, n_bins=11).returncode == 0
-    elif script is not None:
-        assert _run_via_script(script, outdir=outB, seed=1234, n_planets=4, n_bins=11).returncode == 0
-
-    # Compare overlapping files by name
-    filesA = {p.name: p for p in (list(outA.glob("*")) + list(outA.rglob("*"))) if p.is_file()}
-    filesB = {p.name: p for p in (list(outB.glob("*")) + list(outB.rglob("*"))) if p.is_file()}
-    common = sorted(set(filesA.keys()) & set(filesB.keys()))
-    assert common, "No overlapping artifact filenames to compare for determinism."
-
-    for name in common:
-        hA = _sha256_file(filesA[name])
-        hB = _sha256_file(filesB[name])
-        assert hA == hB, f"Artifact differs between same-seed runs: {name}"
-
-
-@pytest.mark.integration
-def test_outdir_respected_and_no_strays(repo_tmp: Path) -> None:
-    """
-    Ensure the generator writes under --outdir (plus logs/) and does not create stray files.
-    """
-    outdir = repo_tmp / "outputs" / "dummy" / "sandbox"
-    outdir.mkdir(parents=True, exist_ok=True)
-
-    before = set(p.relative_to(repo_tmp).as_posix() for p in repo_tmp.rglob("*") if p.is_file())
-
-    api = _discover_api()
-    mod = _discover_module() if api is None else None
-    script = _discover_script(repo_tmp) if (api is None and mod is None) else None
-
-    if api is not None:
-        _ = _run_via_api(api, outdir=outdir, seed=999, n_planets=3, n_bins=9)
-    elif mod is not None:
-        assert _run_via_module(mod, outdir=outdir, seed=999, n_planets=3, n_bins=9).returncode == 0
-    elif script is not None:
-        assert _run_via_script(script, outdir=outdir, seed=999, n_planets=3, n_bins=9).returncode == 0
-    else:
-        pytest.skip("No dummy data generator available.")
-
-    after = set(p.relative_to(repo_tmp).as_posix() for p in repo_tmp.rglob("*") if p.is_file())
-    new_files = sorted(list(after - before))
-
-    # Allowed: anything under outdir, logs/*, and optionally outputs/run_hash_summary*.json
-    disallowed = []
-    out_rel = outdir.relative_to(repo_tmp).as_posix()
-    for rel in new_files:
-        if rel.startswith("logs/"):
-            continue
-        if rel.startswith(out_rel):
-            continue
-        if rel.startswith("outputs/") and re.search(r"run_hash_summary.*\.json$", rel):
-            continue
-        if "/__pycache__/" in rel or rel.endswith(".pyc"):
-            continue
-        disallowed.append(rel)
-
-    assert not disallowed, f"Generator wrote unexpected files outside --outdir: {disallowed}"
-
-
-@pytest.mark.integration
-def test_metadata_json_if_present(repo_tmp: Path) -> None:
-    """
-    If metadata.json is present, ensure basic fields look sane.
-    """
-    outdir = repo_tmp / "outputs" / "dummy" / "meta_check"
-    outdir.mkdir(parents=True, exist_ok=True)
-
-    api = _discover_api()
-    mod = _discover_module() if api is None else None
-    script = _discover_script(repo_tmp) if (api is None and mod is None) else None
-
-    if api is not None:
-        _ = _run_via_api(api, outdir=outdir, seed=42, n_planets=5, n_bins=15)
-    elif mod is not None:
-        assert _run_via_module(mod, outdir=outdir, seed=42, n_planets=5, n_bins=15).returncode == 0
-    elif script is not None:
-        assert _run_via_script(script, outdir=outdir, seed=42, n_planets=5, n_bins=15).returncode == 0
-    else:
-        pytest.skip("No dummy data generator available.")
-
-    meta = outdir / "metadata.json"
-    if not meta.exists():
-        pytest.xfail("metadata.json not produced — acceptable if the minimal generator omits metadata.")
-    blob = json.loads(meta.read_text(encoding="utf-8"))
-    assert isinstance(blob, dict)
-    # Loose checks
-    if "n_planets" in blob:
-        assert int(blob["n_planets"]) > 0
-    if "n_bins" in blob:
-        assert int(blob["n_bins"]) > 0
-    if "seed" in blob:
-        assert int(blob["seed"]) >= 0
-    # Optional marker about the generator
-    if "generator" in blob:
-        assert isinstance(blob["generator"], str) and blob["generator"].strip()
-
-
-@pytest.mark.integration
-def test_audit_log_append_only(repo_tmp: Path) -> None:
-    """
-    Two invocations should append to logs/v50_debug_log.md (or at least not shrink it).
-    """
-    log_path = repo_tmp / "logs" / "v50_debug_log.md"
-
-    out1 = repo_tmp / "outputs" / "dummy" / "log1"
-    out2 = repo_tmp / "outputs" / "dummy" / "log2"
-    out1.mkdir(parents=True, exist_ok=True)
-    out2.mkdir(parents=True, exist_ok=True)
-
-    api = _discover_api()
-    mod = _discover_module() if api is None else None
-    script = _discover_script(repo_tmp) if (api is None and mod is None) else None
-
-    def _do(outdir: Path, seed: int):
-        if api is not None:
-            _ = _run_via_api(api, outdir=outdir, seed=seed, n_planets=3, n_bins=7)
-        elif mod is not None:
-            assert _run_via_module(mod, outdir=outdir, seed=seed, n_planets=3, n_bins=7).returncode == 0
-        elif script is not None:
-            assert _run_via_script(script, outdir=outdir, seed=seed, n_planets=3, n_bins=7).returncode == 0
+    meta = _load_metadata(out)
+    if meta is not None:
+        # If JSON, expect a small set of keys; be tolerant
+        if "rows" in meta:
+            # CSV-style
+            assert meta["rows_count"] in (0, N_SMALL), "CSV metadata rows_count mismatch"
         else:
-            pytest.skip("No dummy data generator available.")
+            # JSON-style dict
+            # Optional: planet_ids
+            pids = meta.get("planet_ids")
+            if pids is not None:
+                assert isinstance(pids, list) and len(pids) == N_SMALL, "planet_ids length mismatch"
+            # Optional: bins
+            bins_meta = meta.get("bins")
+            if bins_meta is not None:
+                assert int(bins_meta) == BINS, "metadata 'bins' mismatch"
 
-    _do(out1, seed=101)
-    size1 = log_path.stat().st_size if log_path.exists() else 0
-    _do(out2, seed=101)
-    size2 = log_path.stat().st_size if log_path.exists() else 0
 
-    assert size2 >= size1, "Audit log size should not shrink."
-    if size1 > 0:
-        assert size2 > size1, "Audit log should typically grow after a second run."
+def test_reproducible_same_seed(tmp_out_root: Path):
+    out_a = tmp_out_root / "run_seed123_a"
+    out_b = tmp_out_root / "run_seed123_b"
+    out_a.mkdir(parents=True, exist_ok=True)
+    out_b.mkdir(parents=True, exist_ok=True)
+
+    ok_a, log_a = run_generator(outdir=out_a, n=N_SMALL, bins=BINS, seed=123)
+    ok_b, log_b = run_generator(outdir=out_b, n=N_SMALL, bins=BINS, seed=123)
+    if not (ok_a and ok_b):
+        pytest.fail("Generator failed (same seed case):\n" + "\n".join(log_a + log_b))
+
+    mu_a, sigma_a = _find_arrays(out_a)
+    mu_b, sigma_b = _find_arrays(out_b)
+
+    assert np.array_equal(mu_a, mu_b), "mu must be identical for same seed"
+    assert np.array_equal(sigma_a, sigma_b), "sigma must be identical for same seed"
+
+
+def test_different_seed_changes_output(tmp_out_root: Path):
+    out_a = tmp_out_root / "run_seed111"
+    out_b = tmp_out_root / "run_seed222"
+    out_a.mkdir(parents=True, exist_ok=True)
+    out_b.mkdir(parents=True, exist_ok=True)
+
+    ok_a, log_a = run_generator(outdir=out_a, n=N_SMALL, bins=BINS, seed=111)
+    ok_b, log_b = run_generator(outdir=out_b, n=N_SMALL, bins=BINS, seed=222)
+    if not (ok_a and ok_b):
+        pytest.fail("Generator failed (different seed case):\n" + "\n".join(log_a + log_b))
+
+    mu_a, sigma_a = _find_arrays(out_a)
+    mu_b, sigma_b = _find_arrays(out_b)
+
+    # Hamming distance-like check (allow rare equality but expect changes)
+    same_mu = np.array_equal(mu_a, mu_b)
+    same_sigma = np.array_equal(sigma_a, sigma_b)
+    assert not (same_mu and same_sigma), "different seeds should change generated data"
+
+    # Also check global correlation is not trivially 1.0
+    corr = np.corrcoef(mu_a.ravel(), mu_b.ravel())[0, 1]
+    assert corr < 0.999, f"unexpectedly high correlation ({corr:.6f}) for different seeds"
+
+
+def test_bins_argument_respected(tmp_out_root: Path):
+    # Use fewer bins (e.g., 57) to enforce the generator honors the flag
+    alt_bins = 57
+    out = tmp_out_root / "run_bins57"
+    out.mkdir(parents=True, exist_ok=True)
+    ok, logs = run_generator(outdir=out, n=3, bins=alt_bins, seed=7)
+    if not ok:
+        pytest.fail("Generator failed for non-default bins.\n" + "\n".join(logs))
+    mu, sigma = _find_arrays(out)
+    _basic_array_checks(mu, sigma, n=3, bins=alt_bins)
+
+
+# --------------------------- Debug failure context ------------------------- #
+
+def pytest_runtest_makereport(item, call):
+    """
+    On failure, append useful path hints to stderr.
+    """
+    if call.excinfo is not None and call.when == "call":
+        root = repo_root()
+        sys.stderr.write(
+            f"[debug] repo_root={root}\n"
+            f"[debug] generator_exists={(root / GENERATOR_REL).exists()}\n"
+        )
