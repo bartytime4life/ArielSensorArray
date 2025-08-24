@@ -300,7 +300,7 @@
     lines.push(`| ${cols.map(()=> '---').join(' | ')} |`);
     for (let i=0;i<limit;i++){
       const r = filtered[i];
-      lines.push(`| ${cols.map(c => String(r[c] ?? '').replace(/\|/g,'\\|')).join(' | ')} |`);
+      lines.push(`| ${cols.map(c => String(r[c] ?? '').replace(/\\/g,'\\\\').replace(/\|/g,'\\|')).join(' | ')} |`);
     }
     const blob = new Blob([lines.join('\n')], {type:'text/markdown'});
     const a = document.createElement('a');
