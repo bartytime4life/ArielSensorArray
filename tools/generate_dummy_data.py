@@ -1,715 +1,1035 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-tools/generate_dummy_data.py
+tools/neural_logic_graph.py
 
-SpectraMind V50 — Ultimate Dummy Data Generator (challenge-grade, CLI-first)
+SpectraMind V50 — Neural Logic Graph (Ultimate, Challenge‑Grade)
 
 Purpose
 -------
-Create a *fully wired* synthetic dataset that mirrors the shapes, file formats, and
-diagnostics hooks used by SpectraMind V50 for the NeurIPS 2025 Ariel Data Challenge.
+Render, analyze, and export an interactive **neuro‑symbolic logic graph** that connects:
+  • Molecule/group nodes  →  Rule nodes  →  (optional) spectral bin nodes,
+  • Weighted by per‑planet **influence** (e.g., |∂L/∂μ| masks, SHAP×rules, or precomputed tables),
+  • Annotated with **symbolic violations** if available,
+  • Laid out with spring / Kamada‑Kawai / circular coordinates,
+  • Exported as HTML (Plotly), PNG (if Matplotlib), and CSV (nodes/edges/positions).
 
-This generator is designed to unblock end-to-end pipeline development, CI, and
-diagnostics without needing the real challenge data. It produces:
+The tool ingests flexible inputs:
+  1) A symbolic **rules JSON** (masks per rule, optional rule groups),
+  2) An optional **program JSON/YAML** describing node relationships,
+  3) An **influence** table (e.g., from `symbolic_influence_map.py` or `shap_symbolic_overlay.py`),
+  4) Optional **violations JSON** (per‑planet/per‑rule scores),
+  5) Optional **SHAP** + **rules** to compute influence if no table is provided.
 
-  • Spectral products (N × B):
-      - y.npy         : "ground-truth" mean spectrum μ* per sample
-      - mu.npy        : "predicted" mean spectrum with controllable noise/bias
-      - sigma.npy     : per-bin predicted uncertainty (>0), correlated with SNR
-      - shap_bins.npy : optional per-bin |SHAP| magnitudes (proxy)
-      - latents.npy   : optional N × D latent vectors (diagnostics)
-
-  • Axes / metadata:
-      - wavelengths.npy : B-length wavelength axis (μm, default 0.9–5.0)
-      - metadata.csv    : tabular per-sample metadata (planet/star/instrument knobs)
-
-  • Symbolic & diagnostics:
-      - symbolic_results.json : per-sample symbolic summary (violations_total, hints)
-      - (optional) calibrated lightcurves HDF5 with simple FGS1/AIRS groups
-        -> outputs formatted as: calibrated/lightcurves.h5 (see --write-h5)
-
-  • Logs / summary:
-      - summary.json   : generator configuration & quick stats
-      - logs/v50_debug_log.md (append-only audit entry)
-
-Design Principles
------------------
-• Reproducibility first: deterministic RNG seed; JSON summary of all inputs.
-• Physics-informed shape: compose absorption bands (H2O/CO2/CH4-like) as Gaussians
-  on a sloped continuum, add per-sample temperature / gravity trends and aerosol haze.
-• Noise realism: heteroscedastic noise tied to SNR & stellar magnitude; σ follows.
-• Symbolic viability: includes basic rule-like signals so our symbolic tools have
-  something meaningful to chew on.
-• Safety: no external deps beyond numpy/pandas/h5py (optional), typer, rich, plotly-kaleido (optional).
-
-CLI Examples
+Design Notes
 ------------
-# Minimal, quick:
-python -m tools.generate_dummy_data --outdir outputs/dummy --n 128 --b 283
+• Deterministic (seeded), no network calls, graceful dependency fallbacks (Plotly/Matplotlib optional).
+• Append‑only audit logs to `logs/v50_debug_log.md` and `logs/v50_runs.jsonl`.
+• Manifest + run hash to ensure reproducibility (`run_hash_summary_v50.json`).
+• Outputs integrate with V50 diagnostics dashboard (HTML embeddable).
 
-# Heavier with latents, SHAP, HDF5, and JSON symbolic overlays:
-python -m tools.generate_dummy_data \
-  --outdir outputs/dummy \
-  --n 256 --b 283 --latent-d 32 \
-  --write-shap --write-h5 --seed 123
+Typical Usage
+-------------
+poetry run python tools/neural_logic_graph.py \
+  --rules configs/symbolic_rules.json \
+  --influence outputs/symbolic_influence_v50/symbolic_influence_per_planet_rule.csv \
+  --violations outputs/diagnostics/symbolic_results.json \
+  --planet-id planet_0007 \
+  --wavelengths data/wavelengths.npy \
+  --layout spring --show-bins --bin-step 8 \
+  --outdir outputs/logic_graph --open-browser
 
-# Wide spectrum and noisier predictions:
-python -m tools.generate_dummy_data \
-  --outdir outputs/dummy_wide --b 356 \
-  --lam-min 0.6 --lam-max 7.8 \
-  --noise 0.0008 --bias 0.0002 --sigma-scale 1.2
+If you don’t have an influence table:
+  add --shap outputs/shap/shap_values.npy and we’ll integrate |SHAP| over rule masks.
 
-File Layout (generated)
------------------------
-<outdir>/
-  mu.npy
-  sigma.npy
-  y.npy
-  wavelengths.npy
-  latents.npy                 (optional)
-  shap_bins.npy               (optional)
-  metadata.csv
-  symbolic_results.json
-  summary.json
-  calibrated/lightcurves.h5   (optional if --write-h5)
-  plots/preview_spectra.png   (quick sanity plot, if --save-png)
+Outputs
+-------
+outdir/
+  logic_nodes.csv                 # node_id, label, type, score, extra...
+  logic_edges.csv                 # src, dst, weight, kind
+  logic_positions.csv             # node_id, x, y
+  logic_graph.html                # interactive Plotly network (if Plotly available)
+  logic_graph.png                 # static PNG (if Matplotlib available)
+  neural_logic_graph_manifest.json
+  run_hash_summary_v50.json       # append‑only reproducibility log
+  dashboard.html                  # quick links + preview
 
-Author
-------
-SpectraMind V50 — Architect & Master Programmer
+Node Types
+----------
+• "group"     : symbolic rule group (e.g., water, carbon, ...), optional
+• "molecule"  : molecule/node alias for grouping (if present in program or groups)
+• "rule"      : symbolic rule from rules JSON
+• "bin"       : spectral bin node (optional; downsampled by --bin-step)
+• "root"      : synthetic root (optional, when helpful for disconnected components)
+
+Edge Types
+----------
+• "group→rule"     : membership of rule in group
+• "molecule→rule"  : from program/mapping if provided (or same as group)
+• "rule→bin"       : rule mask coverage for bin (weight ~ mask weight)
+• "root→*"         : synthetic, to ensure connectivity when needed
+
 """
 
 from __future__ import annotations
 
+import argparse
+import datetime as _dt
+import hashlib
 import json
 import math
 import os
-from dataclasses import dataclass, asdict
+import sys
+import textwrap
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
-import pandas as pd
-import typer
-from rich.console import Console
-from rich.panel import Panel
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
-from rich.theme import Theme
 
-# Optional: HDF5 writer for simple lightcurves stub
+# --------------------------
+# Required tabular dependency
+# --------------------------
 try:
-    import h5py  # type: ignore
-    _HAS_H5PY = True
+    import pandas as pd
+except Exception as e:
+    raise RuntimeError("pandas is required. Please `pip install pandas`.") from e
+
+# --------------------------
+# Optional viz dependencies
+# --------------------------
+try:
+    import plotly.graph_objects as go
+    import plotly.io as pio
+    _PLOTLY_OK = True
 except Exception:
-    _HAS_H5PY = False
+    _PLOTLY_OK = False
 
-# Optional: PNG preview (headless-safe)
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
+try:
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    _MPL_OK = True
+except Exception:
+    _MPL_OK = False
 
-app = typer.Typer(add_completion=False, help="SpectraMind V50 — Dummy Data Generator")
-console = Console(theme=Theme({"info": "cyan", "warn": "yellow", "err": "bold red"}))
-
-
-# ============================================================
-# Utilities / IO
-# ============================================================
-
-def ensure_dir(path: Path) -> None:
-    """Create a directory (parents OK)."""
-    path.mkdir(parents=True, exist_ok=True)
-
-
-def write_npy(path: Path, arr: np.ndarray) -> None:
-    """Atomic-ish write for .npy arrays."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    np.save(str(path), arr)
+# --------------------------
+# Optional layout dependency
+# --------------------------
+try:
+    import networkx as nx
+    _NX_OK = True
+except Exception:
+    _NX_OK = False
 
 
-def append_audit_log(entry: str) -> None:
-    """Append an audit log line to logs/v50_debug_log.md (best-effort)."""
-    try:
-        logs = Path("logs")
-        logs.mkdir(parents=True, exist_ok=True)
-        with open(logs / "v50_debug_log.md", "a", encoding="utf-8") as f:
-            f.write(entry.rstrip() + "\n")
-    except Exception:
-        pass
+# ==============================================================================
+# Utilities: time, dirs, hashing, audit logging
+# ==============================================================================
+
+def _now_iso() -> str:
+    return _dt.datetime.now().astimezone().isoformat(timespec="seconds")
 
 
-def now_str() -> str:
-    import datetime as dt
-    return dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+def _ensure_dir(p: Path) -> None:
+    p.mkdir(parents=True, exist_ok=True)
 
 
-def set_global_seed(seed: int) -> None:
-    """Deterministic RNG for numpy (and Python stdlib if available)."""
-    try:
-        import random
-        random.seed(seed)
-    except Exception:
-        pass
-    try:
-        np.random.seed(seed)
-    except Exception:
-        pass
-
-
-# ============================================================
-# Spectral model (dummy but physics-inspired)
-# ============================================================
-
-@dataclass
-class BandSpec:
-    """Simple Gaussian absorption band specification."""
-    center_um: float
-    width_um: float
-    depth_scale: float  # typical per-band depth scaling
+def _hash_jsonable(obj: Any) -> str:
+    b = json.dumps(obj, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(b).hexdigest()
 
 
 @dataclass
-class GenConfig:
-    """All knobs for the generator (keep in summary.json)."""
-    n: int = 128
-    b: int = 283
-    lam_min: float = 0.9
-    lam_max: float = 5.0
-    latent_d: int = 0
-    noise: float = 6e-4         # additive mu noise stdev for prediction
-    bias: float = 1.0e-4        # additive small bias on mu wrt y
-    sigma_scale: float = 1.0     # multiplier for sigma baseline
-    snr_floor: float = 50.0      # baseline SNR for bright stars (higher = lower sigma)
-    snr_ceiling: float = 200.0   # upper SNR bound for the best cases
-    shap_scale: float = 0.02     # scale factor for synthetic |SHAP| (relative)
-    symbolic_noise: float = 0.3  # noise on symbolic violations
-    haze_strength: float = 0.015 # amplitude of aerosol haze curvature
-    # Band templates (H2O/CO2/CH4-like regions; configurable if needed)
-    bands: Tuple[BandSpec, ...] = (
-        BandSpec(center_um=1.40, width_um=0.08, depth_scale=0.035),  # H2O-ish
-        BandSpec(center_um=1.90, width_um=0.10, depth_scale=0.025),  # H2O-ish
-        BandSpec(center_um=2.00, width_um=0.06, depth_scale=0.020),  # CO2-ish
-        BandSpec(center_um=3.30, width_um=0.10, depth_scale=0.030),  # CH4-ish
-        BandSpec(center_um=4.30, width_um=0.08, depth_scale=0.018),  # CO2-ish
-    )
-    # Time-series (HDF5) stub sizes — NOT the real challenge sizes, just lightweight demo
-    fgs1_time: int = 1200       # number of time samples for FGS1 lightcurve
-    airs_time: int = 400        # number of time samples for AIRS single channel
-    write_h5: bool = False
-    write_shap: bool = False
-    save_png: bool = False
-    seed: int = 42
+class AuditLogger:
+    md_path: Path
+    jsonl_path: Path
+
+    def log(self, event: Dict[str, Any]) -> None:
+        _ensure_dir(self.md_path.parent)
+        _ensure_dir(self.jsonl_path.parent)
+        row = dict(event)
+        row.setdefault("timestamp", _now_iso())
+        # JSONL (machine‑readable)
+        with open(self.jsonl_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        # Markdown (human‑readable)
+        md = textwrap.dedent(f"""
+        ---
+        time: {row["timestamp"]}
+        tool: neural_logic_graph
+        action: {row.get("action","run")}
+        status: {row.get("status","ok")}
+        rules: {row.get("rules","")}
+        program: {row.get("program","")}
+        influence: {row.get("influence","")}
+        violations: {row.get("violations","")}
+        shap: {row.get("shap","")}
+        wavelengths: {row.get("wavelengths","")}
+        planet: {row.get("planet_id","")}#{row.get("planet_index","")}
+        layout: {row.get("layout","spring")}
+        show_bins: {row.get("show_bins","False")}
+        outdir: {row.get("outdir","")}
+        message: {row.get("message","")}
+        """).strip() + "\n"
+        with open(self.md_path, "a", encoding="utf-8") as f:
+            f.write(md)
 
 
-def make_wavelengths(b: int, lam_min: float, lam_max: float) -> np.ndarray:
-    """Uniform wavelength grid (μm)."""
-    return np.linspace(float(lam_min), float(lam_max), int(b), dtype=np.float64)
-
-
-def gaussian(x: np.ndarray, mu: float, sigma: float) -> np.ndarray:
-    """Gaussian function."""
-    return np.exp(-0.5 * ((x - mu) / max(1e-9, sigma)) ** 2)
-
-
-def synth_baseline(lam: np.ndarray, teff: float, haze_strength: float) -> np.ndarray:
-    """
-    Build a smooth baseline continuum:
-      - slight slope driven by stellar Teff
-      - very gentle curvature term for aerosol haze
-      - returns around ~1.0 with small trends
-    """
-    x = (lam - lam.min()) / max(1e-9, (lam.max() - lam.min()))
-    slope = (5800.0 - teff) / 5800.0 * 0.02     # cooler stars -> slightly steeper slope
-    curve = haze_strength * (x - 0.5) ** 2
-    base = 1.0 + slope * (x - 0.5) - curve
-    return base
-
-
-def synth_absorption(lam: np.ndarray, bands: Tuple[BandSpec, ...], abundances: np.ndarray) -> np.ndarray:
-    """
-    Compose Gaussian absorptions with per-molecule abundance scaling.
-    abundances has length == len(bands); depths additively subtract from baseline.
-    """
-    y = np.zeros_like(lam, dtype=np.float64)
-    for (bspec, a) in zip(bands, abundances):
-        # Convert width_um (approx stddev) to sigma
-        g = gaussian(lam, bspec.center_um, bspec.width_um)
-        y += a * bspec.depth_scale * g
-    return y
-
-
-def synth_true_spectrum(
-    lam: np.ndarray,
-    teff: float,
-    logg: float,
-    haze_strength: float,
-    bands: Tuple[BandSpec, ...],
-    rng: np.random.Generator,
-) -> Tuple[np.ndarray, Dict[str, float]]:
-    """
-    Produce a "ground-truth" μ* using baseline + molecular absorptions.
-    Abundances are drawn log-uniform-ish and modulated by gravity/temperature.
-    """
-    base = synth_baseline(lam, teff=teff, haze_strength=haze_strength)
-    k = len(bands)
-    # Random "molecular abundances" (unitless proxy), lightly tied to teff/logg
-    # Lower teff → stronger H2O; higher logg → slightly weaker features
-    raw = rng.lognormal(mean=-3.0, sigma=0.6, size=k)  # ~[0.01 .. 0.2] typical
-    mod_teff = np.clip((6500.0 - teff) / 2500.0, 0.0, 1.0)  # cooler => up to +1
-    mod_logg = np.clip((logg - 3.0) / 2.0, 0.0, 1.0)        # higher g => up to +1
-    abund = raw * (1.0 + 0.8 * mod_teff) * (1.0 - 0.25 * mod_logg)
-    # Compose absorption "depths" then subtract from baseline (transmission dip)
-    depth = synth_absorption(lam, bands, abundances=abund)
-    mu_star = base - depth
-    # Enforce non-negativity and light clamp near [0, 1.2]
-    mu_star = np.clip(mu_star, 0.0, 1.2)
-    return mu_star, {
-        "h2o_like": float(abund[0] + abund[1]),
-        "co2_like": float(abund[2] + abund[4]),
-        "ch4_like": float(abund[3]),
-    }
-
-
-def add_prediction_noise(
-    y_true: np.ndarray,
-    noise: float,
-    bias: float,
-    rng: np.random.Generator,
-) -> np.ndarray:
-    """
-    Synthesize "predicted" μ by adding small bias + Gaussian noise; clamp to [0, 1.2].
-    """
-    mu_pred = y_true + bias + rng.normal(loc=0.0, scale=noise, size=y_true.shape)
-    return np.clip(mu_pred, 0.0, 1.2)
-
-
-def synth_sigma_from_snr(
-    y_true: np.ndarray,
-    snr: float,
-    sigma_scale: float,
-    rng: np.random.Generator,
-) -> np.ndarray:
-    """
-    Build σ that loosely matches an SNR (larger SNR -> smaller sigma).
-    Add light heteroscedastic variation across bins.
-    """
-    B = y_true.shape[-1]
-    base = (1.0 / max(1.0, snr)) * sigma_scale
-    trend = 0.6 + 0.4 * np.sin(np.linspace(0, 2 * np.pi, B))  # gentle wiggle
-    jitter = rng.uniform(0.9, 1.1, size=B)
-    sigma = base * trend * jitter
-    sigma = np.clip(sigma, 1e-6, None)
-    return sigma.astype(np.float64)
-
-
-def synth_symbolic_violations(
-    lam: np.ndarray,
-    mu_row: np.ndarray,
-    y_row: np.ndarray,
-    teff: float,
-    logg: float,
-    rng: np.random.Generator,
-    cfg: GenConfig,
-) -> Dict[str, Any]:
-    """
-    Very lightweight symbolic "violations_total" proxy so that symbolic tools
-    don't see a constant zero vector. Heuristics:
-      - Nonnegativity pass unless numerical jitter; we won't punish that here.
-      - If band depth at ~1.4 μm (H2O-ish) is shallow, add small penalty.
-      - If σ would be too small for given residual (mu - y), add penalty-like term.
-    Returns a dict keyed for convenience by our dashboards.
-    """
-    # Depth around 1.4 μm (±0.05)
-    mask = (lam >= 1.35) & (lam <= 1.45)
-    if mask.sum() == 0:
-        depth_14 = 0.0
-    else:
-        cont = float(np.mean(mu_row[~mask])) if (~mask).sum() > 0 else 1.0
-        depth_14 = float(cont - np.mean(mu_row[mask]))
-
-    # Residual energy (proxy for calibration failure)
-    resid = float(np.mean(np.abs(mu_row - y_row)))
-
-    # Temperature prior penalty (too hot with deep H2O)
-    teff_pen = float(max(0.0, (teff - 6200.0) / 1000.0) * max(0.0, 0.02 - depth_14) * 100.0)
-    # Residual penalty scaled
-    resid_pen = 1000.0 * resid
-
-    noise = rng.normal(0.0, cfg.symbolic_noise)
-    total = max(0.0, 0.25 + teff_pen + resid_pen + noise)
-
-    return {
-        "violations_total": float(total),
-        "depth_h2o_1p4": depth_14,
-        "residual_abs_mean": resid,
-        "star_teff": float(teff),
-        "logg": float(logg),
-    }
-
-
-def synth_shap_bins(mu_row: np.ndarray, y_row: np.ndarray, lam: np.ndarray, scale: float, rng: np.random.Generator) -> np.ndarray:
-    """
-    Produce a rough per-bin |SHAP| proxy:
-      - larger where |mu - y| is large or spectral curvature is higher
-      - smoothed and scaled to a friendly dynamic range
-    """
-    B = mu_row.shape[-1]
-    resid = np.abs(mu_row - y_row)
-    curv = np.zeros_like(mu_row)
-    if B > 2:
-        curv[1:-1] = np.abs(mu_row[2:] - 2 * mu_row[1:-1] + mu_row[:-2])
-    proto = 0.6 * resid + 0.4 * curv
-    # Smooth by simple convolution
-    k = np.array([0.25, 0.5, 0.25])
-    proto = np.convolve(proto, k, mode="same")
-    # Scale and small noise
-    out = scale * (proto / (proto.max() + 1e-9))
-    out += rng.normal(0.0, scale * 0.03, size=B)
-    return np.clip(out, 0.0, None).astype(np.float64)
-
-
-def synth_metadata_row(i: int, teff: float, logg: float, snr: float, rng: np.random.Generator) -> Dict[str, Any]:
-    """
-    Make a friendly metadata row per sample; extend as needed.
-    """
-    planet_id = f"PL_{i:04d}"
-    star_mag = float(np.clip(10.0 - math.log10(max(1.0, snr)) * 2.5 + rng.normal(0, 0.2), 4.0, 14.0))
-    inst_profile = rng.choice(["AIRS-CH0", "AIRS-CH1", "FGS1"], p=[0.45, 0.25, 0.30])
-    return {
-        "planet_id": planet_id,
-        "star_teff": float(teff),
-        "logg": float(logg),
-        "snr_proxy": float(snr),
-        "star_mag": star_mag,
-        "instrument_profile": inst_profile,
-    }
-
-
-# ============================================================
-# HDF5 lightcurves (optional stub)
-# ============================================================
-
-def write_lightcurves_h5(
-    path: Path,
-    lam: np.ndarray,
-    mu: np.ndarray,
-    rng: np.random.Generator,
-    fgs1_time: int,
-    airs_time: int,
-) -> None:
-    """
-    Create a *lightweight* HDF5 file with stubbed groups:
-
-      /FGS1/time        (T1,)
-      /FGS1/cal         (T1,)      — synthetic white-light lightcurve
-      /AIRS/time        (T2,)
-      /AIRS/cal         (T2, B)    — synthetic spectroscopic lightcurves
-
-    This is a demo scaffold, not a physically rigorous simulation.
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    T1 = int(fgs1_time)
-    T2 = int(airs_time)
-    B = lam.shape[0]
-
-    t1 = np.linspace(-3.0, 3.0, T1, dtype=np.float64)
-    t2 = np.linspace(-3.0, 3.0, T2, dtype=np.float64)
-
-    # Transit-like dip model (toy)
-    def transit(t, depth=0.005, width=0.8):
-        return 1.0 - depth * np.exp(-0.5 * (t / max(1e-9, width)) ** 2)
-
-    # White-light FGS1
-    fgs1 = transit(t1) + rng.normal(0.0, 5e-4, size=T1)
-
-    # AIRS spectroscopic (depth varies with wavelength band)
-    # Use smaller depth near clear regions, larger where absorption templates hit.
-    depth_vec = 0.003 + 0.004 * np.sin(2 * np.pi * (lam - lam.min()) / (lam.max() - lam.min()))
-    airs = np.vstack([transit(t2, depth=float(d)) + rng.normal(0.0, 8e-4, size=T2) for d in depth_vec]).T
-
-    with h5py.File(str(path), "w") as h:
-        g1 = h.create_group("FGS1")
-        g1.create_dataset("time", data=t1, compression="gzip")
-        g1.create_dataset("cal", data=fgs1, compression="gzip")
-
-        g2 = h.create_group("AIRS")
-        g2.create_dataset("time", data=t2, compression="gzip")
-        g2.create_dataset("cal", data=airs, compression="gzip")
-        g2.create_dataset("wavelengths", data=lam, compression="gzip")
-
-
-# ============================================================
-# Main generation orchestration
-# ============================================================
-
-def generate_dummy_dataset(cfg: GenConfig, outdir: Path) -> Dict[str, Any]:
-    """
-    Generate a complete, pipeline-ready dummy dataset.
-
-    Returns a summary dict that is also written to summary.json.
-    """
-    set_global_seed(cfg.seed)
-    rng = np.random.default_rng(cfg.seed)
-
-    # Prepare outputs
-    ensure_dir(outdir)
-    ensure_dir(outdir / "plots")
-    if cfg.write_h5:
-        ensure_dir(outdir / "calibrated")
-
-    # 1) Axes
-    lam = make_wavelengths(cfg.b, cfg.lam_min, cfg.lam_max)  # (B,)
-    write_npy(outdir / "wavelengths.npy", lam)
-
-    # 2) Allocate arrays
-    y = np.zeros((cfg.n, cfg.b), dtype=np.float64)
-    mu = np.zeros_like(y)
-    sigma = np.zeros_like(y)
-
-    if cfg.latent_d > 0:
-        latents = np.zeros((cfg.n, cfg.latent_d), dtype=np.float64)
-    else:
-        latents = None
-
-    shap_bins = np.zeros_like(y) if cfg.write_shap else None
-
-    # 3) Per-sample metadata and symbolic
-    meta_rows: List[Dict[str, Any]] = []
-    symbolic_list: List[Dict[str, Any]] = []
-
-    # Sampling distributions for star/planet knobs
-    teff_dist = lambda: float(rng.normal(5500.0, 500.0))     # Kelvin
-    logg_dist = lambda: float(rng.normal(4.0, 0.3))          # cgs
-    snr_dist  = lambda: float(rng.uniform(cfg.snr_floor, cfg.snr_ceiling))
-
-    # 4) Generate rows
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TimeElapsedColumn(),
-        transient=True,
-    ) as progress:
-        task = progress.add_task("Synthesizing samples", total=cfg.n)
-
-        for i in range(cfg.n):
-            teff = teff_dist()
-            logg = np.clip(logg_dist(), 3.0, 5.0)
-            snr  = snr_dist()
-
-            # True spectrum
-            y_i, molec = synth_true_spectrum(
-                lam=lam,
-                teff=teff,
-                logg=logg,
-                haze_strength=cfg.haze_strength,
-                bands=cfg.bands,
-                rng=rng,
-            )
-
-            # Predicted mu + sigma
-            mu_i = add_prediction_noise(y_i, noise=cfg.noise, bias=cfg.bias, rng=rng)
-            sig_i = synth_sigma_from_snr(y_i, snr=snr, sigma_scale=cfg.sigma_scale, rng=rng)
-
-            # Store
-            y[i, :] = y_i
-            mu[i, :] = mu_i
-            sigma[i, :] = sig_i
-
-            # Latents (optional): encode coarse molecule/teff/logg info + noise
-            if latents is not None:
-                # A simplest "meaningful" latent: [teff_z, logg_z, h2o, co2, ch4, ...noise]
-                teff_z = (teff - 5500.0) / 500.0
-                logg_z = (logg - 4.0) / 0.3
-                seed_lat = np.array([teff_z, logg_z, molec["h2o_like"], molec["co2_like"], molec["ch4_like"]], dtype=np.float64)
-                if cfg.latent_d <= seed_lat.size:
-                    latents[i, :] = seed_lat[:cfg.latent_d]
-                else:
-                    latents[i, :seed_lat.size] = seed_lat
-                    latents[i, seed_lat.size:] = rng.normal(0.0, 0.33, size=cfg.latent_d - seed_lat.size)
-
-            # SHAP proxy (optional)
-            if shap_bins is not None:
-                shap_bins[i, :] = synth_shap_bins(mu_row=mu_i, y_row=y_i, lam=lam, scale=cfg.shap_scale, rng=rng)
-
-            # Symbolic summary
-            sym = synth_symbolic_violations(lam=lam, mu_row=mu_i, y_row=y_i, teff=teff, logg=logg, rng=rng, cfg=cfg)
-            symbolic_list.append(sym)
-
-            # Metadata row
-            meta_rows.append({**synth_metadata_row(i, teff, logg, snr, rng), **molec})
-
-            progress.advance(task)
-
-    # 5) Save arrays
-    write_npy(outdir / "y.npy", y)
-    write_npy(outdir / "mu.npy", mu)
-    write_npy(outdir / "sigma.npy", sigma)
-    if latents is not None:
-        write_npy(outdir / "latents.npy", latents)
-    if shap_bins is not None:
-        write_npy(outdir / "shap_bins.npy", shap_bins)
-
-    # 6) Save metadata & symbolic
-    meta_df = pd.DataFrame(meta_rows)
-    meta_df.to_csv(outdir / "metadata.csv", index=False)
-    with open(outdir / "symbolic_results.json", "w", encoding="utf-8") as f:
-        json.dump(symbolic_list, f, indent=2)
-
-    # 7) Optional HDF5 lightcurves
-    if cfg.write_h5:
-        if not _HAS_H5PY:
-            console.print("[warn]h5py not installed; skipping HDF5 lightcurves.")
-        else:
-            write_lightcurves_h5(
-                path=outdir / "calibrated" / "lightcurves.h5",
-                lam=lam,
-                mu=mu,
-                rng=rng,
-                fgs1_time=cfg.fgs1_time,
-                airs_time=cfg.airs_time,
-            )
-
-    # 8) Optional quick PNG preview (few random spectra)
-    if cfg.save_png:
+def _update_run_hash_summary(outdir: Path, manifest: Dict[str, Any]) -> None:
+    path = outdir / "run_hash_summary_v50.json"
+    payload = {"runs": []}
+    if path.exists():
         try:
-            sel = np.random.default_rng(cfg.seed + 1).choice(cfg.n, size=min(8, cfg.n), replace=False)
-            plt.figure(figsize=(10, 4), dpi=120)
-            for j in sel:
-                plt.plot(lam, y[j], alpha=0.85, lw=1.2)
-            plt.title("Dummy ground-truth μ* (random subset)")
-            plt.xlabel("Wavelength (μm)")
-            plt.ylabel("μ*")
-            plt.grid(alpha=0.25)
-            plt.tight_layout()
-            plt.savefig(outdir / "plots" / "preview_spectra.png")
-            plt.close()
+            with open(path, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+            if not isinstance(payload, dict) or "runs" not in payload:
+                payload = {"runs": []}
         except Exception:
-            console.print("[warn]Failed to save preview PNG; continuing.")
-
-    # 9) Build summary
-    summary: Dict[str, Any] = {
-        "timestamp": now_str(),
-        "outdir": str(outdir),
-        "config": asdict(cfg),
-        "shapes": {
-            "mu": list(mu.shape),
-            "sigma": list(sigma.shape),
-            "y": list(y.shape),
-            "wavelengths": list(lam.shape),
-            "latents": list(latents.shape) if latents is not None else None,
-            "shap_bins": list(shap_bins.shape) if shap_bins is not None else None,
-        },
-        "stats": {
-            "mu_min": float(mu.min()),
-            "mu_max": float(mu.max()),
-            "sigma_mean": float(sigma.mean()),
-            "y_mean": float(y.mean()),
-            "symbolic_mean": float(np.mean([d["violations_total"] for d in symbolic_list])),
-        },
-        "artifacts": {
-            "mu.npy": "mu.npy",
-            "sigma.npy": "sigma.npy",
-            "y.npy": "y.npy",
-            "wavelengths.npy": "wavelengths.npy",
-            "latents.npy": "latents.npy" if latents is not None else None,
-            "shap_bins.npy": "shap_bins.npy" if shap_bins is not None else None,
-            "metadata.csv": "metadata.csv",
-            "symbolic_results.json": "symbolic_results.json",
-            "calibrated/lightcurves.h5": ("calibrated/lightcurves.h5" if (cfg.write_h5 and _HAS_H5PY) else None),
-            "plots/preview_spectra.png": ("plots/preview_spectra.png" if cfg.save_png else None),
-        },
-    }
-    with open(outdir / "summary.json", "w", encoding="utf-8") as f:
-        json.dump(summary, f, indent=2)
-
-    # 10) Audit log
-    append_audit_log(f"- {now_str()} | generate_dummy_data | out={outdir} N={cfg.n} B={cfg.b} seed={cfg.seed} latents={cfg.latent_d} shap={cfg.write_shap} h5={cfg.write_h5}")
-
-    return summary
+            payload = {"runs": []}
+    payload["runs"].append({"hash": _hash_jsonable(manifest), "timestamp": _now_iso(), "manifest": manifest})
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
 
 
-# ============================================================
-# Typer CLI
-# ============================================================
+# ==============================================================================
+# Loaders: arrays, wavelengths, rules, program, influence, violations, metadata
+# ==============================================================================
 
-@app.command("run")
-def cli_run(
-    outdir: str = typer.Option(..., help="Output directory for the dummy dataset"),
-    n: int = typer.Option(128, help="Number of samples (planets)"),
-    b: int = typer.Option(283, help="Number of spectral bins"),
-    lam_min: float = typer.Option(0.9, help="Minimum wavelength (μm)"),
-    lam_max: float = typer.Option(5.0, help="Maximum wavelength (μm)"),
-    latent_d: int = typer.Option(0, help="Latent embedding dimensionality (0 to disable)"),
-    noise: float = typer.Option(6e-4, help="Prediction noise stdev for μ"),
-    bias: float = typer.Option(1e-4, help="Small additive bias on μ vs y"),
-    sigma_scale: float = typer.Option(1.0, help="Multiplier for σ baseline"),
-    snr_floor: float = typer.Option(50.0, help="Lower SNR bound (bigger → smaller σ)"),
-    snr_ceiling: float = typer.Option(200.0, help="Upper SNR bound"),
-    shap_scale: float = typer.Option(0.02, help="Scale factor for synthetic per-bin |SHAP|"),
-    symbolic_noise: float = typer.Option(0.3, help="Noise on symbolic violations_total"),
-    haze_strength: float = typer.Option(0.015, help="Aerosol haze curvature amplitude"),
-    write_h5: bool = typer.Option(False, help="Also write a small HDF5 lightcurves file"),
-    write_shap: bool = typer.Option(False, help="Also write shap_bins.npy (proxy magnitudes)"),
-    save_png: bool = typer.Option(False, help="Save quick preview PNG of a few ground-truth spectra"),
-    fgs1_time: int = typer.Option(1200, help="FGS1 time samples in HDF5 (stub)"),
-    airs_time: int = typer.Option(400, help="AIRS time samples in HDF5 (stub)"),
-    seed: int = typer.Option(42, help="RNG seed"),
-):
+def _load_array_any(path: Path) -> np.ndarray:
+    s = path.suffix.lower()
+    if s == ".npy":
+        return np.asarray(np.load(path, allow_pickle=False))
+    if s == ".npz":
+        z = np.load(path, allow_pickle=False)
+        for k in z.files:
+            return np.asarray(z[k])
+        raise ValueError(f"No arrays found in {path}")
+    if s in {".csv", ".tsv"}:
+        df = pd.read_csv(path) if s == ".csv" else pd.read_csv(path, sep="\t")
+        return df.to_numpy()
+    if s == ".parquet":
+        return pd.read_parquet(path).to_numpy()
+    if s == ".feather":
+        return pd.read_feather(path).to_numpy()
+    raise ValueError(f"Unsupported array format: {path}")
+
+
+def _load_wavelengths(path: Optional[Path], B_hint: Optional[int]) -> Optional[np.ndarray]:
+    if path is None:
+        return None
+    arr = _load_array_any(path)
+    vec = arr.reshape(-1).astype(float)
+    if B_hint is not None and vec.shape[0] != B_hint:
+        out = np.zeros(B_hint, dtype=float)
+        copy = min(B_hint, vec.shape[0])
+        out[:copy] = vec[:copy]
+        return out
+    return vec
+
+
+@dataclass
+class RuleSet:
+    rule_names: List[str]
+    rule_masks: np.ndarray   # R×B (>=0)
+    groups: Dict[str, List[str]]
+
+
+def _as_mask_vector(spec: Any, B: int) -> np.ndarray:
+    mask = np.zeros(B, dtype=float)
+    if isinstance(spec, list):
+        if len(spec) == B and all(isinstance(x, (int, float, bool, np.integer, np.floating)) for x in spec):
+            arr = np.array(spec, dtype=float)
+            mask = np.maximum(np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0), 0.0)
+        else:
+            for x in spec:
+                if isinstance(x, (int, np.integer)) and 0 <= int(x) < B:
+                    mask[int(x)] = 1.0
+    elif isinstance(spec, dict):
+        for k, v in spec.items():
+            try:
+                idx = int(k)
+                if 0 <= idx < B:
+                    mask[idx] = max(float(v), 0.0)
+            except Exception:
+                continue
+    else:
+        raise ValueError("Unsupported rule mask spec; must be list or dict.")
+    return mask
+
+
+def _load_rules_json(path: Path, B_hint: Optional[int]) -> RuleSet:
+    with open(path, "r", encoding="utf-8") as f:
+        obj = json.load(f)
+    if "rule_masks" not in obj or not isinstance(obj["rule_masks"], dict):
+        raise ValueError("Rules JSON must contain a 'rule_masks' mapping name→mask")
+    # Determine B
+    B = B_hint
+    if B is None:
+        for _, spec in obj["rule_masks"].items():
+            if isinstance(spec, list) and len(spec) > 0:
+                if all(isinstance(x, (int, float, bool, np.number)) for x in spec):
+                    B = len(spec)
+                    break
+            if isinstance(spec, dict) and spec:
+                B = max(int(k) for k in spec.keys() if str(k).isdigit()) + 1
+                break
+        if B is None:
+            raise ValueError("Unable to infer #bins (B); provide dense vector for at least one rule or pass SHAP/μ.")
+    names, mats = [], []
+    for name, spec in obj["rule_masks"].items():
+        names.append(str(name))
+        mats.append(_as_mask_vector(spec, B))
+    rule_masks = np.vstack(mats) if mats else np.zeros((0, B), dtype=float)
+    groups: Dict[str, List[str]] = {}
+    if "rule_groups" in obj and isinstance(obj["rule_groups"], dict):
+        for gname, lst in obj["rule_groups"].items():
+            groups[str(gname)] = [str(x) for x in lst if str(x) in names]
+    return RuleSet(rule_names=names, rule_masks=rule_masks, groups=groups)
+
+
+def _load_program(path: Optional[Path]) -> Dict[str, Any]:
     """
-    Generate a complete, pipeline-ready dummy dataset under --outdir.
-
-    Artifacts: mu.npy, sigma.npy, y.npy, wavelengths.npy, metadata.csv,
-               symbolic_results.json, summary.json, (optional) latents.npy,
-               shap_bins.npy, calibrated/lightcurves.h5, preview PNG.
+    Program schema is flexible. We accept either:
+      • JSON/YAML with {"nodes":[{"id","type","label",...},...], "edges":[{"src","dst","kind","weight"},...]}
+      • Or {"molecules":{"H2O":["ruleA","ruleB"], ...}} (we will generate edges)
     """
-    try:
-        cfg = GenConfig(
-            n=int(n),
-            b=int(b),
-            lam_min=float(lam_min),
-            lam_max=float(lam_max),
-            latent_d=int(latent_d),
-            noise=float(noise),
-            bias=float(bias),
-            sigma_scale=float(sigma_scale),
-            snr_floor=float(snr_floor),
-            snr_ceiling=float(snr_ceiling),
-            shap_scale=float(shap_scale),
-            symbolic_noise=float(symbolic_noise),
-            haze_strength=float(haze_strength),
-            write_h5=bool(write_h5),
-            write_shap=bool(write_shap),
-            save_png=bool(save_png),
-            fgs1_time=int(fgs1_time),
-            airs_time=int(airs_time),
-            seed=int(seed),
+    if path is None:
+        return {}
+    text = path.read_text(encoding="utf-8")
+    if path.suffix.lower() in {".yaml", ".yml"}:
+        try:
+            import yaml  # lazy
+        except Exception as e:
+            raise RuntimeError("YAML program given but PyYAML not installed. `pip install pyyaml`.") from e
+        return yaml.safe_load(text)
+    return json.loads(text)
+
+
+def _load_influence_table(path: Optional[Path]) -> Optional[pd.DataFrame]:
+    """
+    Accepts:
+      • CSV with columns: planet_id, rule, importance[, fraction, ...]
+      • JSON {rows:[{planet_id, rule, importance, ...}, ...]}
+    """
+    if path is None:
+        return None
+    s = path.suffix.lower()
+    if s in {".csv", ".tsv"}:
+        df = pd.read_csv(path) if s == ".csv" else pd.read_csv(path, sep="\t")
+        return df
+    with open(path, "r", encoding="utf-8") as f:
+        obj = json.load(f)
+    if isinstance(obj, dict) and "rows" in obj and isinstance(obj["rows"], list):
+        return pd.DataFrame(obj["rows"])
+    return pd.DataFrame(obj)
+
+
+def _load_violations(path: Optional[Path]) -> Optional[pd.DataFrame]:
+    """
+    Try to coerce flexible symbolic JSON to table with (planet_id, rule, violation or score).
+    Accept patterns:
+      • {"planets": {"pid": {"rule_scores":{"r1":val,...}}}}
+      • {"rows":[{"planet_id","rule","violation" or "score"}, ...]}
+    """
+    if path is None:
+        return None
+    with open(path, "r", encoding="utf-8") as f:
+        obj = json.load(f)
+    rows: List[Dict[str, Any]] = []
+    if isinstance(obj, dict):
+        if "rows" in obj and isinstance(obj["rows"], list):
+            for r in obj["rows"]:
+                if isinstance(r, dict) and "planet_id" in r and "rule" in r:
+                    val = r.get("violation", r.get("score", r.get("value", 0.0)))
+                    rows.append({"planet_id": str(r["planet_id"]), "rule": str(r["rule"]), "violation": float(val)})
+        elif "planets" in obj and isinstance(obj["planets"], dict):
+            for pid, payload in obj["planets"].items():
+                if isinstance(payload, dict) and "rule_scores" in payload and isinstance(payload["rule_scores"], dict):
+                    for rname, val in payload["rule_scores"].items():
+                        if isinstance(val, (int, float)):
+                            rows.append({"planet_id": str(pid), "rule": str(rname), "violation": float(val)})
+    return pd.DataFrame(rows) if rows else None
+
+
+def _load_metadata_any(path: Optional[Path], n_planets: int) -> pd.DataFrame:
+    if path is None:
+        return pd.DataFrame({"planet_id": [f"planet_{i:04d}" for i in range(n_planets)]})
+    s = path.suffix.lower()
+    if s in {".csv", ".tsv"}:
+        df = pd.read_csv(path) if s == ".csv" else pd.read_csv(path, sep="\t")
+    elif s == ".json":
+        df = pd.read_json(path)
+    elif s == ".parquet":
+        df = pd.read_parquet(path)
+    elif s == ".feather":
+        df = pd.read_feather(path)
+    else:
+        raise ValueError(f"Unsupported metadata format: {path}")
+    if "planet_id" not in df.columns:
+        df = df.copy()
+        df["planet_id"] = [f"planet_{i:04d}" for i in range(len(df))]
+    return df.iloc[:n_planets].copy()
+
+
+# ==============================================================================
+# Influence computation (fallback via SHAP×rules)
+# ==============================================================================
+
+def _prepare_shap(shap: np.ndarray, P: int, B: int) -> np.ndarray:
+    a = np.asarray(shap, dtype=float)
+    if a.ndim == 1:
+        a = np.repeat(a[None, :], P, axis=0)
+    elif a.ndim == 2:
+        if a.shape[0] != P and a.shape[1] == P:
+            a = a.T
+        if a.shape[0] != P:
+            if a.shape[0] == 1:
+                a = np.repeat(a, P, axis=0)
+            else:
+                raise ValueError(f"SHAP planets mismatch; got {a.shape}, expected P={P}")
+    elif a.ndim == 3:
+        if a.shape[0] != P:
+            raise ValueError(f"SHAP leading dim != P; got {a.shape}, P={P}")
+        a = np.sum(np.abs(a), axis=1)
+    else:
+        raise ValueError(f"Unsupported SHAP shape: {a.shape}")
+    if a.shape[1] != B:
+        out = np.zeros((P, B), dtype=float)
+        copyB = min(B, a.shape[1])
+        out[:, :copyB] = a[:, :copyB]
+        a = out
+    a = np.abs(a)
+    return np.nan_to_num(a, nan=0.0, posinf=0.0, neginf=0.0)
+
+
+def _compute_influence_from_shap(shap_abs: np.ndarray, rule_masks: np.ndarray, power: float = 1.0, eps: float = 1e-12) -> np.ndarray:
+    """
+    Influence[p, r] = sum_b |SHAP|[p,b] * mask[r,b]^power
+    """
+    W = np.power(np.maximum(rule_masks, 0.0), power)  # R×B
+    return shap_abs @ W.T  # (P×B)@(B×R) → P×R
+
+
+# ==============================================================================
+# Graph construction
+# ==============================================================================
+
+@dataclass
+class GraphConfig:
+    show_bins: bool
+    bin_step: int
+    min_edge_weight: float
+    attach_root: bool
+
+
+def _downsample_bins(B: int, step: int) -> np.ndarray:
+    if step <= 1:
+        return np.arange(B, dtype=int)
+    return np.arange(0, B, step, dtype=int)
+
+
+def _build_nodes_edges(
+    rules: RuleSet,
+    wl: Optional[np.ndarray],
+    influence_row: Optional[pd.Series],
+    violation_row: Optional[pd.Series],
+    cfg: GraphConfig,
+    program: Dict[str, Any]
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Build node/edge tables.
+
+    Node columns:
+      node_id, label, type, score (influence/violation composite), influence, violation, extra...
+
+    Edge columns:
+      src, dst, weight, kind
+    """
+    rule_names = rules.rule_names
+    rule_masks = np.maximum(rules.rule_masks, 0.0)
+    R, B = rule_masks.shape
+    # scores per rule (influence & violation)
+    infl = pd.Series(0.0, index=rule_names)
+    viol = pd.Series(0.0, index=rule_names)
+    if influence_row is not None:
+        for r in rule_names:
+            if r in influence_row.index:
+                infl[r] = float(influence_row[r])
+    if violation_row is not None:
+        for r in rule_names:
+            if r in violation_row.index:
+                viol[r] = float(violation_row[r])
+
+    # base nodes (rules)
+    nodes: List[Dict[str, Any]] = []
+    for r, name in enumerate(rule_names):
+        nodes.append({
+            "node_id": f"rule::{name}",
+            "label": name,
+            "type": "rule",
+            "influence": float(infl[name]),
+            "violation": float(viol[name]),
+            "score": float(infl[name]) if infl[name] > 0 else float(viol[name]),
+            "coverage": int(np.count_nonzero(rule_masks[r] > 0.0)),
+        })
+
+    # group/molecule nodes from rules.groups or program
+    edges: List[Dict[str, Any]] = []
+    group_to_rules: Dict[str, List[str]] = {}
+
+    # From rules.groups
+    for g, members in (rules.groups or {}).items():
+        group_to_rules.setdefault(g, [])
+        for m in members:
+            if m in rule_names:
+                group_to_rules[g].append(m)
+
+    # From program shortcut: {"molecules":{"H2O":["ruleA","ruleB"], ...}}
+    if "molecules" in program and isinstance(program["molecules"], dict):
+        for mol, members in program["molecules"].items():
+            group_to_rules.setdefault(str(mol), [])
+            for m in members:
+                if m in rule_names:
+                    group_to_rules[str(mol)].append(m)
+
+    # Emit group nodes and edges
+    for g, members in group_to_rules.items():
+        nodes.append({
+            "node_id": f"group::{g}",
+            "label": g,
+            "type": "group",
+            "influence": float(sum(infl.get(m, 0.0) for m in members)),
+            "violation": float(sum(viol.get(m, 0.0) for m in members)),
+            "score": float(sum(infl.get(m, 0.0) for m in members)),
+        })
+        for m in members:
+            edges.append({
+                "src": f"group::{g}",
+                "dst": f"rule::{m}",
+                "weight": float(max(infl.get(m, 0.0), 1e-12)),
+                "kind": "group→rule",
+            })
+
+    # Bin nodes (optional; downsample)
+    bin_index = _downsample_bins(B, cfg.bin_step) if cfg.show_bins else np.array([], dtype=int)
+    if cfg.show_bins:
+        for b in bin_index:
+            label = f"{wl[b]:.6g} μm" if wl is not None else f"bin {b}"
+            nodes.append({
+                "node_id": f"bin::{b}",
+                "label": label,
+                "type": "bin",
+                "influence": 0.0,
+                "violation": 0.0,
+                "score": 0.0,
+            })
+        # rule→bin edges (weight = mask[r,b])
+        for r, name in enumerate(rule_names):
+            mask = rule_masks[r]
+            for b in bin_index:
+                w = float(mask[b])
+                if w <= 0:
+                    continue
+                if w < cfg.min_edge_weight:
+                    continue
+                edges.append({
+                    "src": f"rule::{name}",
+                    "dst": f"bin::{b}",
+                    "weight": w,
+                    "kind": "rule→bin",
+                })
+
+    # Synthetic root if graph disconnected and no groups defined
+    if cfg.attach_root and not group_to_rules:
+        nodes.append({
+            "node_id": "root::logic",
+            "label": "ROOT",
+            "type": "root",
+            "influence": float(infl.sum()),
+            "violation": float(viol.sum()),
+            "score": float(infl.sum()),
+        })
+        for name in rule_names:
+            edges.append({
+                "src": "root::logic",
+                "dst": f"rule::{name}",
+                "weight": float(max(infl.get(name, 0.0), 1e-12)),
+                "kind": "root→rule",
+            })
+
+    nodes_df = pd.DataFrame(nodes)
+    edges_df = pd.DataFrame(edges) if edges else pd.DataFrame(columns=["src", "dst", "weight", "kind"])
+    return nodes_df, edges_df
+
+
+# ==============================================================================
+# Layout & Rendering
+# ==============================================================================
+
+def _layout_positions(nodes_df: pd.DataFrame, edges_df: pd.DataFrame, layout: str, seed: int) -> pd.DataFrame:
+    """
+    Compute 2D positions for nodes. Use NetworkX if available; otherwise fallback to simple circular layout.
+    """
+    ids = nodes_df["node_id"].tolist()
+    if _NX_OK:
+        G = nx.Graph()
+        for nid in ids:
+            G.add_node(nid)
+        for _, e in edges_df.iterrows():
+            G.add_edge(e["src"], e["dst"], weight=float(e.get("weight", 1.0)))
+        if layout == "spring":
+            pos = nx.spring_layout(G, seed=seed, k=None, weight="weight", iterations=200)
+        elif layout == "kk":
+            pos = nx.kamada_kawai_layout(G, weight="weight")
+        elif layout == "circular":
+            pos = nx.circular_layout(G)
+        else:
+            pos = nx.spring_layout(G, seed=seed, weight="weight", iterations=200)
+        rows = [{"node_id": nid, "x": float(p[0]), "y": float(p[1])} for nid, p in pos.items()]
+        return pd.DataFrame(rows)
+    # Fallback: circular
+    n = len(ids)
+    theta = np.linspace(0, 2*np.pi, num=n, endpoint=False)
+    rows = [{"node_id": ids[i], "x": float(np.cos(theta[i])), "y": float(np.sin(theta[i]))} for i in range(n)]
+    return pd.DataFrame(rows)
+
+
+def _render_plotly(nodes: pd.DataFrame, edges: pd.DataFrame, pos: pd.DataFrame, title: str, out_html: Path) -> None:
+    if not _PLOTLY_OK:
+        # Fallback: write CSV only
+        return
+    # Merge positions
+    nodes = nodes.merge(pos, on="node_id", how="left")
+    id2xy = {r["node_id"]: (r["x"], r["y"]) for _, r in nodes.iterrows()}
+
+    # Edge segments
+    edge_traces = []
+    for _, e in edges.iterrows():
+        u, v = e["src"], e["dst"]
+        if u not in id2xy or v not in id2xy:
+            continue
+        x0, y0 = id2xy[u]
+        x1, y1 = id2xy[v]
+        edge_traces.append(go.Scatter(
+            x=[x0, x1], y=[y0, y1],
+            mode="lines",
+            line=dict(width=1.0, color="rgba(120,120,120,0.45)"),
+            hoverinfo="skip",
+            showlegend=False
+        ))
+
+    # Node scatter by type
+    def _mk_trace(df: pd.DataFrame, name: str, size_scale: float, symbol: str):
+        return go.Scatter(
+            x=df["x"], y=df["y"],
+            mode="markers",
+            marker=dict(
+                size=np.clip(6 + size_scale * (df["score"].fillna(0.0).to_numpy()), 6, 32),
+                color=df["score"].fillna(0.0),
+                colorscale="Viridis",
+                showscale=True if name == "rule" else False,
+                line=dict(width=1, color="rgba(20,20,20,0.6)"),
+                symbol=symbol,
+            ),
+            text=[
+                f"{r['label']}<br>type: {r['type']}<br>influence: {r.get('influence',0):.4g}<br>violation: {r.get('violation',0):.4g}"
+                for _, r in df.iterrows()
+            ],
+            hoverinfo="text",
+            name=name
         )
 
-        console.rule("[info]SpectraMind V50 — Dummy Data Generator")
-        console.print(f"[info]Outdir: {outdir}")
-        console.print(f"[info]N={cfg.n}, B={cfg.b}, λ∈[{cfg.lam_min},{cfg.lam_max}] μm, seed={cfg.seed}")
-        if cfg.latent_d > 0:
-            console.print(f"[info]Latents: D={cfg.latent_d}")
-        if cfg.write_shap:
-            console.print("[info]Writing SHAP proxy: shap_bins.npy")
-        if cfg.write_h5:
-            console.print("[info]Writing HDF5 stub: calibrated/lightcurves.h5")
+    layers = []
+    for t, symbol in [("group", "square"), ("rule", "circle"), ("bin", "diamond"), ("root", "cross")]:
+        sub = nodes[nodes["type"] == t]
+        if not sub.empty:
+            layers.append(_mk_trace(sub, t, size_scale=12.0 if t == "rule" else 8.0, symbol=symbol))
 
-        summary = generate_dummy_dataset(cfg, Path(outdir))
-        console.rule("[info]Done")
-        console.print(f"[info]Artifacts written to: {outdir}")
-        console.print(Panel.fit(json.dumps(summary["shapes"], indent=2), title="Shapes", subtitle="(quick view)"))
+    fig = go.Figure(data=[*edge_traces, *layers])
+    fig.update_layout(
+        title=title,
+        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        template="plotly_white",
+        width=1080, height=720,
+        margin=dict(l=10, r=10, t=50, b=10)
+    )
+    pio.write_html(fig, file=str(out_html), auto_open=False, include_plotlyjs="cdn")
 
+
+def _render_matplotlib(nodes: pd.DataFrame, edges: pd.DataFrame, pos: pd.DataFrame, title: str, out_png: Path) -> None:
+    if not _MPL_OK:
+        return
+    nodes = nodes.merge(pos, on="node_id", how="left")
+    id2xy = {r["node_id"]: (r["x"], r["y"]) for _, r in nodes.iterrows()}
+    plt.figure(figsize=(12, 8))
+    # Edges
+    for _, e in edges.iterrows():
+        u, v = e["src"], e["dst"]
+        if u not in id2xy or v not in id2xy:
+            continue
+        x0, y0 = id2xy[u]; x1, y1 = id2xy[v]
+        plt.plot([x0, x1], [y0, y1], color="0.6", alpha=0.45, lw=0.8, zorder=1)
+    # Nodes by type
+    for t, marker, z in [("group", "s", 3), ("rule", "o", 4), ("bin", "D", 2), ("root", "x", 5)]:
+        sub = nodes[nodes["type"] == t]
+        if sub.empty:
+            continue
+        sizes = np.clip(20 + 80 * sub["score"].fillna(0.0).to_numpy(), 20, 240)
+        plt.scatter(sub["x"], sub["y"], s=sizes, marker=marker, label=t, zorder=z, alpha=0.9, edgecolor="k", linewidths=0.5)
+    plt.legend(loc="upper right")
+    plt.title(title)
+    plt.axis("off")
+    plt.tight_layout()
+    plt.savefig(out_png, dpi=170)
+    plt.close()
+
+
+# ==============================================================================
+# Orchestration
+# ==============================================================================
+
+@dataclass
+class Config:
+    rules_path: Path
+    program_path: Optional[Path]
+    influence_path: Optional[Path]
+    violations_path: Optional[Path]
+    shap_path: Optional[Path]
+    wavelengths_path: Optional[Path]
+    metadata_path: Optional[Path]
+    planet_id: Optional[str]
+    planet_index: Optional[int]
+    mask_power: float
+    layout: str
+    show_bins: bool
+    bin_step: int
+    min_edge_weight: float
+    attach_root: bool
+    outdir: Path
+    html_name: str
+    open_browser: bool
+    seed: int
+
+
+def run(cfg: Config, audit: AuditLogger) -> int:
+    _ensure_dir(cfg.outdir)
+
+    # Load rules first to know B
+    rules = _load_rules_json(cfg.rules_path, B_hint=None)
+    R, B = rules.rule_masks.shape
+
+    # Wavelengths & metadata
+    wl = _load_wavelengths(cfg.wavelengths_path, B_hint=B)
+    # Influence table & violations
+    infl_df = _load_influence_table(cfg.influence_path)
+    viol_df = _load_violations(cfg.violations_path)
+
+    # Planet identification
+    P_guess = 0
+    if infl_df is not None and "planet_id" in infl_df.columns:
+        P_guess = max(P_guess, infl_df["planet_id"].nunique())
+    meta_df = _load_metadata_any(cfg.metadata_path, n_planets=max(P_guess, 1))
+    planet_ids = meta_df["planet_id"].astype(str).tolist()
+    # Choose planet
+    focus_pid: str
+    if cfg.planet_id:
+        focus_pid = cfg.planet_id
+    elif cfg.planet_index is not None and 0 <= cfg.planet_index < len(planet_ids):
+        focus_pid = planet_ids[cfg.planet_index]
+    else:
+        focus_pid = planet_ids[0]
+
+    # Select per-planet influence row: wide pivot (columns=rule)
+    influence_row = None
+    if infl_df is not None and not infl_df.empty:
+        if {"planet_id", "rule"}.issubset(infl_df.columns):
+            if "importance" not in infl_df.columns:
+                # Try alternative column names
+                alt = [c for c in infl_df.columns if c not in {"planet_id", "rule"}]
+                if alt:
+                    infl_df = infl_df.rename(columns={alt[0]: "importance"})
+                else:
+                    infl_df["importance"] = 0.0
+            wide = infl_df.pivot_table(index="planet_id", columns="rule", values="importance", aggfunc="mean").fillna(0.0)
+            if focus_pid in wide.index:
+                influence_row = wide.loc[focus_pid]
+    # If missing, compute from SHAP if provided
+    if influence_row is None and cfg.shap_path is not None:
+        shap_raw = _load_array_any(cfg.shap_path)
+        # Guess P from metadata (>=1)
+        P = len(planet_ids)
+        shap_abs = _prepare_shap(shap_raw, P=P, B=B)
+        infl = _compute_influence_from_shap(shap_abs, rules.rule_masks, power=cfg.mask_power)  # P×R
+        w = pd.DataFrame(infl, index=planet_ids, columns=rules.rule_names)
+        influence_row = w.loc[focus_pid]
+
+    # Violations per rule per planet (optional)
+    violation_row = None
+    if viol_df is not None and not viol_df.empty:
+        if {"planet_id", "rule"}.issubset(viol_df.columns):
+            val_col = "violation" if "violation" in viol_df.columns else ("score" if "score" in viol_df.columns else None)
+            if val_col:
+                wide = viol_df.pivot_table(index="planet_id", columns="rule", values=val_col, aggfunc="mean").fillna(0.0)
+                if focus_pid in wide.index:
+                    violation_row = wide.loc[focus_pid]
+
+    # Program (optional)
+    program = _load_program(cfg.program_path)
+
+    # Build graph
+    gcfg = GraphConfig(
+        show_bins=bool(cfg.show_bins),
+        bin_step=int(cfg.bin_step),
+        min_edge_weight=float(cfg.min_edge_weight),
+        attach_root=bool(cfg.attach_root),
+    )
+    nodes_df, edges_df = _build_nodes_edges(
+        rules=rules,
+        wl=wl,
+        influence_row=influence_row,
+        violation_row=violation_row,
+        cfg=gcfg,
+        program=program
+    )
+
+    # Layout
+    pos_df = _layout_positions(nodes_df, edges_df, layout=cfg.layout, seed=cfg.seed)
+
+    # Save core tables
+    nodes_csv = cfg.outdir / "logic_nodes.csv"
+    edges_csv = cfg.outdir / "logic_edges.csv"
+    pos_csv = cfg.outdir / "logic_positions.csv"
+    nodes_df.to_csv(nodes_csv, index=False)
+    edges_df.to_csv(edges_csv, index=False)
+    pos_df.to_csv(pos_csv, index=False)
+
+    # Render
+    title = f"Neural Logic Graph — planet {focus_pid}"
+    html_path = cfg.outdir / (cfg.html_name if cfg.html_name.endswith(".html") else "logic_graph.html")
+    _render_plotly(nodes_df, edges_df, pos_df, title=title, out_html=html_path)
+    png_path = cfg.outdir / "logic_graph.png"
+    _render_matplotlib(nodes_df, edges_df, pos_df, title=title, out_png=png_path)
+
+    # Dashboard
+    dash_html = cfg.outdir / "dashboard.html"
+    preview = nodes_df.head(30).to_html(index=False)
+    quick_links = textwrap.dedent(f"""
+    <ul>
+      <li><a href="{nodes_csv.name}" target="_blank" rel="noopener">{nodes_csv.name}</a></li>
+      <li><a href="{edges_csv.name}" target="_blank" rel="noopener">{edges_csv.name}</a></li>
+      <li><a href="{pos_csv.name}" target="_blank" rel="noopener">{pos_csv.name}</a></li>
+      <li><a href="{html_path.name}" target="_blank" rel="noopener">{html_path.name}</a></li>
+      <li><a href="{png_path.name}" target="_blank" rel="noopener">{png_path.name}</a></li>
+    </ul>
+    """).strip()
+    dash = f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>SpectraMind V50 — Neural Logic Graph</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="light dark" />
+<style>
+  :root {{ --bg:#0b0e14; --fg:#e6edf3; --muted:#9aa4b2; --card:#111827; --border:#2b3240; --brand:#0b5fff; }}
+  body {{ background:var(--bg); color:var(--fg); font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; margin:2rem; line-height:1.5; }}
+  .card {{ background:var(--card); border:1px solid var(--border); border-radius:14px; padding:1rem 1.25rem; margin-bottom:1rem; }}
+  a {{ color:var(--brand); text-decoration:none; }} a:hover {{ text-decoration:underline; }}
+  table {{ border-collapse: collapse; width: 100%; font-size: .95rem; }}
+  th, td {{ border:1px solid var(--border); padding:.4rem .5rem; }} th {{ background:#0f172a; }}
+  .pill {{ display:inline-block; padding:.15rem .6rem; border-radius:999px; background:#0f172a; border:1px solid var(--border); }}
+</style>
+</head>
+<body>
+  <header class="card">
+    <h1>Neural Logic Graph — SpectraMind V50</h1>
+    <div>Generated: <span class="pill">{_now_iso()}</span> • Planet: <b>{focus_pid}</b> • Layout: <b>{cfg.layout}</b> • Bins shown: <b>{cfg.show_bins}</b></div>
+  </header>
+
+  <section class="card">
+    <h2>Quick Links</h2>
+    {quick_links}
+  </section>
+
+  <section class="card">
+    <h2>Preview — First 30 Nodes</h2>
+    {preview}
+  </section>
+
+  <footer class="card">
+    <small>© SpectraMind V50 • mask_power={cfg.mask_power} • min_edge_weight={cfg.min_edge_weight} • bin_step={cfg.bin_step}</small>
+  </footer>
+</body>
+</html>
+"""
+    dash_html.write_text(dash, encoding="utf-8")
+
+    # Manifest + hash
+    manifest = {
+        "tool": "neural_logic_graph",
+        "timestamp": _now_iso(),
+        "inputs": {
+            "rules": str(cfg.rules_path),
+            "program": str(cfg.program_path) if cfg.program_path else None,
+            "influence": str(cfg.influence_path) if cfg.influence_path else None,
+            "violations": str(cfg.violations_path) if cfg.violations_path else None,
+            "shap": str(cfg.shap_path) if cfg.shap_path else None,
+            "wavelengths": str(cfg.wavelengths_path) if cfg.wavelengths_path else None,
+            "metadata": str(cfg.metadata_path) if cfg.metadata_path else None,
+        },
+        "params": {
+            "planet_id": focus_pid,
+            "mask_power": cfg.mask_power,
+            "layout": cfg.layout,
+            "show_bins": cfg.show_bins,
+            "bin_step": cfg.bin_step,
+            "min_edge_weight": cfg.min_edge_weight,
+            "attach_root": cfg.attach_root,
+            "seed": cfg.seed,
+        },
+        "shapes": {
+            "R": int(R),
+            "B": int(B),
+            "nodes": int(len(nodes_df)),
+            "edges": int(len(edges_df)),
+        },
+        "outputs": {
+            "nodes_csv": str(nodes_csv),
+            "edges_csv": str(edges_csv),
+            "positions_csv": str(pos_csv),
+            "graph_html": str(html_path),
+            "graph_png": str(png_path),
+            "dashboard_html": str(dash_html),
+        }
+    }
+    with open(cfg.outdir / "neural_logic_graph_manifest.json", "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2)
+    _update_run_hash_summary(cfg.outdir, manifest)
+
+    # Audit success
+    audit.log({
+        "action": "run",
+        "status": "ok",
+        "rules": str(cfg.rules_path),
+        "program": str(cfg.program_path) if cfg.program_path else "",
+        "influence": str(cfg.influence_path) if cfg.influence_path else "",
+        "violations": str(cfg.violations_path) if cfg.violations_path else "",
+        "shap": str(cfg.shap_path) if cfg.shap_path else "",
+        "wavelengths": str(cfg.wavelengths_path) if cfg.wavelengths_path else "",
+        "planet_id": focus_pid,
+        "layout": cfg.layout,
+        "show_bins": cfg.show_bins,
+        "outdir": str(cfg.outdir),
+        "message": f"Built logic graph with {len(nodes_df)} nodes / {len(edges_df)} edges; HTML={html_path.name}",
+    })
+
+    if cfg.open_browser and html_path.exists() and _PLOTLY_OK:
+        try:
+            import webbrowser
+            webbrowser.open_new_tab(html_path.as_uri())
+        except Exception:
+            pass
+
+    return 0
+
+
+# ==============================================================================
+# CLI
+# ==============================================================================
+
+def build_argparser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="neural_logic_graph",
+        description="Build and render a neuro‑symbolic logic graph (groups/molecules → rules → bins) weighted by influence."
+    )
+    p.add_argument("--rules", type=Path, required=True, help="Rules JSON with 'rule_masks' and optional 'rule_groups'.")
+    p.add_argument("--program", type=Path, default=None, help="Optional program JSON/YAML (nodes/edges or molecules mapping).")
+    p.add_argument("--influence", type=Path, default=None, help="Optional influence table (CSV/JSON) with columns planet_id, rule, importance.")
+    p.add_argument("--violations", type=Path, default=None, help="Optional symbolic violations JSON with per‑planet/per‑rule scores.")
+    p.add_argument("--shap", type=Path, default=None, help="Optional SHAP array to compute influence if table missing.")
+    p.add_argument("--wavelengths", type=Path, default=None, help="Optional wavelength vector (B,).")
+    p.add_argument("--metadata", type=Path, default=None, help="Optional metadata with 'planet_id'.")
+    p.add_argument("--planet-id", type=str, default=None, help="Planet ID focus for per‑rule scores.")
+    p.add_argument("--planet-index", type=int, default=None, help="Planet index focus (if ID not provided).")
+
+    p.add_argument("--mask-power", type=float, default=1.0, help="Exponent for rule mask weights when integrating SHAP.")
+    p.add_argument("--layout", type=str, default="spring", choices=["spring", "kk", "circular"], help="Graph layout algorithm.")
+    p.add_argument("--show-bins", action="store_true", help="Include spectral bin nodes.")
+    p.add_argument("--bin-step", type=int, default=8, help="Downsample bins by this step when --show-bins is used (>=1).")
+    p.add_argument("--min-edge-weight", type=float, default=0.0, help="Drop rule→bin edges with weight below this threshold.")
+    p.add_argument("--attach-root", action="store_true", help="Attach a synthetic root to all rules if no groups present.")
+
+    p.add_argument("--outdir", type=Path, required=True, help="Output directory.")
+    p.add_argument("--html-name", type=str, default="logic_graph.html", help="HTML filename.")
+    p.add_argument("--open-browser", action="store_true", help="Open the HTML graph in your default browser.")
+    p.add_argument("--seed", type=int, default=7, help="Layout seed (deterministic).")
+    return p
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    args = build_argparser().parse_args(argv)
+
+    cfg = Config(
+        rules_path=args.rules.resolve(),
+        program_path=args.program.resolve() if args.program else None,
+        influence_path=args.influence.resolve() if args.influence else None,
+        violations_path=args.violations.resolve() if args.violations else None,
+        shap_path=args.shap.resolve() if args.shap else None,
+        wavelengths_path=args.wavelengths.resolve() if args.wavelengths else None,
+        metadata_path=args.metadata.resolve() if args.metadata else None,
+        planet_id=str(args.planet_id) if args.planet_id else None,
+        planet_index=int(args.planet_index) if args.planet_index is not None else None,
+        mask_power=float(args.mask_power),
+        layout=str(args.layout),
+        show_bins=bool(args.show_bins),
+        bin_step=max(1, int(args.bin_step)),
+        min_edge_weight=float(args.min_edge_weight),
+        attach_root=bool(args.attach_root),
+        outdir=args.outdir.resolve(),
+        html_name=str(args.html_name),
+        open_browser=bool(args.open_browser),
+        seed=int(args.seed),
+    )
+
+    audit = AuditLogger(
+        md_path=Path("logs") / "v50_debug_log.md",
+        jsonl_path=Path("logs") / "v50_runs.jsonl",
+    )
+    audit.log({
+        "action": "start",
+        "status": "running",
+        "rules": str(cfg.rules_path),
+        "program": str(cfg.program_path) if cfg.program_path else "",
+        "influence": str(cfg.influence_path) if cfg.influence_path else "",
+        "violations": str(cfg.violations_path) if cfg.violations_path else "",
+        "shap": str(cfg.shap_path) if cfg.shap_path else "",
+        "wavelengths": str(cfg.wavelengths_path) if cfg.wavelengths_path else "",
+        "planet_id": cfg.planet_id if cfg.planet_id else "",
+        "planet_index": cfg.planet_index if cfg.planet_index is not None else "",
+        "layout": cfg.layout,
+        "show_bins": cfg.show_bins,
+        "outdir": str(cfg.outdir),
+        "message": "Starting neural_logic_graph",
+    })
+
+    try:
+        rc = run(cfg, audit)
+        return rc
     except Exception as e:
-        console.print(Panel.fit(str(e), title="Error", style="err"))
-        raise typer.Exit(code=1)
-
-
-def main():
-    app()
+        import traceback
+        traceback.print_exc()
+        audit.log({
+            "action": "run",
+            "status": "error",
+            "rules": str(cfg.rules_path),
+            "program": str(cfg.program_path) if cfg.program_path else "",
+            "influence": str(cfg.influence_path) if cfg.influence_path else "",
+            "outdir": str(cfg.outdir),
+            "message": f"{type(e).__name__}: {e}",
+        })
+        return 2
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
