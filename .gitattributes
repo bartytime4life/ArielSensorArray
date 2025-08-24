@@ -1,6 +1,7 @@
 # ==============================================================================
 # SpectraMind V50 — .gitattributes
-# Mission-grade Git attributes for reproducibility, CI safety, and Kaggle export
+# Mission-grade Git attributes for reproducibility, CI safety, Kaggle export,
+# and cross-platform scientific AI development.
 # ==============================================================================
 
 # -----------------------
@@ -9,92 +10,122 @@
 # Normalize line endings across platforms
 * text=auto eol=lf
 
-# Ensure Windows batch files keep CRLF
+# Windows batch files keep CRLF
 *.bat text eol=crlf
 
 # -----------------------
 # Jupyter Notebooks
 # -----------------------
-# Strip notebook outputs on commit (nbstripout must be installed & configured)
+# Strip notebook outputs on commit (requires nbstripout installed & configured)
 *.ipynb filter=nbstripout text eol=lf
 
 # -----------------------
 # Source Code & Configs
 # -----------------------
-*.py text diff=python
-*.pyi text
-*.toml text
-*.yaml text
-*.yml text
-*.json text
-*.md text
-*.rst text
-*.html text
-*.css text
-*.js text
-*.ts text
-*.sh text eol=lf
+*.py     text diff=python
+*.pyi    text
+*.toml   text
+*.yaml   text
+*.yml    text
+*.json   text
+*.jsonl  text
+*.md     text
+*.rst    text
+*.html   text
+*.css    text
+*.js     text
+*.ts     text
+*.sh     text eol=lf
 *.dockerfile text
-Dockerfile text
+Dockerfile   text
+Makefile     text
 
 # -----------------------
 # Data Files
 # -----------------------
-*.csv text diff=csv
-*.tsv text
-*.txt text
-*.dat text
-*.npy binary
-*.npz binary
-*.pkl binary
+*.csv    text diff=csv
+*.tsv    text
+*.txt    text
+*.dat    text
+*.ini    text
+*.cfg    text
+*.npy    binary
+*.npz    binary
+*.pkl    binary
 *.joblib binary
+*.feather binary
+*.parquet binary
+*.hdf5   binary
 
 # -----------------------
 # Binary Assets
 # -----------------------
-*.png binary
-*.jpg binary
-*.jpeg binary
-*.gif binary
-*.svg text
-*.pdf binary
-*.docx binary
-*.pptx binary
-*.xlsx binary
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.bmp    binary
+*.ico    binary
+*.tif    binary
+*.tiff   binary
+*.svg    text
+*.pdf    binary
+*.docx   binary
+*.pptx   binary
+*.xlsx   binary
+*.odt    binary
+*.ods    binary
+*.odp    binary
 
 # -----------------------
 # Git LFS (Large Files)
 # -----------------------
-# Route large data through Git LFS to keep repo lean
-*.npy filter=lfs diff=lfs merge=lfs -text
-*.npz filter=lfs diff=lfs merge=lfs -text
-*.pt  filter=lfs diff=lfs merge=lfs -text
-*.pth filter=lfs diff=lfs merge=lfs -text
-*.h5  filter=lfs diff=lfs merge=lfs -text
-*.ckpt filter=lfs diff=lfs merge=lfs -text
-*.onnx filter=lfs diff=lfs merge=lfs -text
-*.zip filter=lfs diff=lfs merge=lfs -text
-*.tar filter=lfs diff=lfs merge=lfs -text
-*.tar.gz filter=lfs diff=lfs merge=lfs -text
+# Route large data & models through Git LFS to keep repo lean
+*.npy     filter=lfs diff=lfs merge=lfs -text
+*.npz     filter=lfs diff=lfs merge=lfs -text
+*.pt      filter=lfs diff=lfs merge=lfs -text
+*.pth     filter=lfs diff=lfs merge=lfs -text
+*.h5      filter=lfs diff=lfs merge=lfs -text
+*.ckpt    filter=lfs diff=lfs merge=lfs -text
+*.onnx    filter=lfs diff=lfs merge=lfs -text
+*.zip     filter=lfs diff=lfs merge=lfs -text
+*.tar     filter=lfs diff=lfs merge=lfs -text
+*.tar.gz  filter=lfs diff=lfs merge=lfs -text
+*.7z      filter=lfs diff=lfs merge=lfs -text
+*.bz2     filter=lfs diff=lfs merge=lfs -text
 
 # -----------------------
 # Logs & Artifacts
 # -----------------------
-*.log text
-*.jsonl text
-*.md text
+*.log     text
+*.md      text
 outputs/** -diff -merge
-logs/** -diff -merge
+logs/**    -diff -merge
+artifacts/** -diff -merge
+checkpoints/** filter=lfs diff=lfs merge=lfs -text
 
 # -----------------------
-# Documentation Diagrams
+# Documentation & Diagrams
 # -----------------------
-docs/diagrams/**.svg text
-docs/diagrams/**.png binary
+docs/**/*.svg   text
+docs/**/*.png   binary
+diagrams/**/*.mmd text
+diagrams/**/*.png binary
 
 # -----------------------
 # CI / Security
 # -----------------------
 # Ensure env files are never diffed (protects secrets)
-.env -diff -merge
-.env.* -diff -merge
+.env       -diff -merge
+.env.*     -diff -merge
+secrets/** -diff -merge
+
+# -----------------------
+# Special: Scripts
+# -----------------------
+bin/** text eol=lf
+scripts/** text eol=lf
+
+# ==============================================================================
+# End of .gitattributes
+# ==============================================================================

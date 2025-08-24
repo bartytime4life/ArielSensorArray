@@ -5,51 +5,31 @@
   <title>SpectraMind V50 — Diagnostics</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light dark" />
+  <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+  <meta http-equiv="Referrer-Policy" content="no-referrer" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27%3E%3Cg fill=%27%230b5fff%27%3E%3Ccircle cx=%2750%27 cy=%2750%27 r=%2738%27/%3E%3C/g%3E%3C/svg%3E">
   <style>
     :root{
-      --bg: #fff;
-      --fg: #0e1116;
-      --muted:#6b7280;
-      --card:#f8fafc;
-      --border:#e5e7eb;
-      --brand:#0b5fff;
-      --brand-700:#0a4ee0;
-      --ok:#10b981;
-      --warn:#f59e0b;
-      --err:#ef4444;
-      --shadow: 0 8px 20px rgba(2,6,23,.08);
-      --radius: 14px;
+      --bg: #fff; --fg: #0e1116; --muted:#6b7280; --card:#f8fafc; --border:#e5e7eb;
+      --brand:#0b5fff; --brand-700:#0a4ee0; --ok:#10b981; --warn:#f59e0b; --err:#ef4444;
+      --shadow: 0 8px 20px rgba(2,6,23,.08); --radius: 14px;
       --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
     }
     @media (prefers-color-scheme: dark){
       :root{
-        --bg:#0b1220;
-        --fg:#eef2ff;
-        --muted:#9aa8c7;
-        --card:#0e182b;
-        --border:#1f2a44;
+        --bg:#0b1220; --fg:#eef2ff; --muted:#9aa8c7; --card:#0e182b; --border:#1f2a44;
         --shadow: 0 12px 28px rgba(0,0,0,.35);
       }
     }
     *{box-sizing:border-box}
     html,body{height:100%}
     body{
-      margin:0;
-      background:var(--bg);
-      color:var(--fg);
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
-      line-height:1.55;
+      margin:0; background:var(--bg); color:var(--fg);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; line-height:1.55;
     }
-    .wrap{
-      max-width:1200px;
-      margin:0 auto;
-      padding:2rem 1.25rem 4rem;
-    }
+    .wrap{max-width:1200px; margin:0 auto; padding:2rem 1.25rem 4rem;}
     header{
-      position:sticky;
-      top:0;
-      z-index:30;
+      position:sticky; top:0; z-index:30;
       backdrop-filter: saturate(120%) blur(6px);
       background: color-mix(in oklab, var(--bg) 85%, transparent);
       border-bottom:1px solid var(--border);
@@ -62,15 +42,11 @@
     }
     h1{font-size:clamp(1.35rem, 1rem + 1.3vw, 1.9rem);margin:0}
     .sub{color:var(--muted);font-size:.95rem}
-    .toolbar{
-      margin-left:auto; display:flex; gap:.5rem; flex-wrap:wrap;
-    }
+    .toolbar{margin-left:auto; display:flex; gap:.5rem; flex-wrap:wrap;}
     .btn{
-      display:inline-flex; align-items:center; gap:.5rem;
-      padding:.6rem .9rem; border-radius:.65rem;
-      text-decoration:none; color:#fff; background:var(--brand);
-      box-shadow: var(--shadow); transition:.18s transform ease, .18s background ease;
-      border:1px solid color-mix(in oklab, var(--brand) 70%, #fff 30%);
+      display:inline-flex; align-items:center; gap:.5rem; padding:.6rem .9rem; border-radius:.65rem;
+      text-decoration:none; color:#fff; background:var(--brand); box-shadow: var(--shadow);
+      transition:.18s transform ease, .18s background ease; border:1px solid color-mix(in oklab, var(--brand) 70%, #fff 30%);
       white-space:nowrap;
     }
     .btn:hover{background:var(--brand-700); transform: translateY(-1px)}
@@ -79,59 +55,33 @@
     main{padding-top:1.25rem}
     section{margin-top:2rem}
     h2{font-size:1.15rem; margin:.25rem 0 1rem}
-    .grid{
-      display:grid;
-      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-      gap:1rem;
-    }
-    .card{
-      background:var(--card); border:1px solid var(--border);
-      border-radius:var(--radius); overflow:hidden; box-shadow: var(--shadow);
-    }
-    .thumb{
-      aspect-ratio: 16/10;
-      display:block; width:100%; object-fit:cover; background:linear-gradient(135deg,#0b5fff11,transparent);
-    }
+    .grid{display:grid;grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));gap:1rem;}
+    .card{background:var(--card); border:1px solid var(--border); border-radius:var(--radius); overflow:hidden; box-shadow: var(--shadow);}
+    .thumb{aspect-ratio: 16/10; display:block; width:100%; object-fit:cover; background:linear-gradient(135deg,#0b5fff11,transparent);}
     figure{margin:0}
-    figcaption{
-      padding:.75rem .9rem .8rem; border-top:1px solid var(--border);
-      display:flex; align-items:center; justify-content:space-between; gap:.5rem;
-    }
+    figcaption{padding:.75rem .9rem .8rem; border-top:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; gap:.5rem;}
     figcaption .meta{color:var(--muted); font-size:.85rem}
-    .list{
-      background:var(--card); border:1px solid var(--border);
-      border-radius:var(--radius); overflow:hidden; box-shadow: var(--shadow);
-    }
-    .row{
-      display:flex; align-items:center; justify-content:space-between; gap:1rem;
-      padding:.85rem 1rem; border-top:1px solid var(--border);
-    }
+    .list{background:var(--card); border:1px solid var(--border); border-radius:var(--radius); overflow:hidden; box-shadow: var(--shadow);}
+    .row{display:flex; align-items:center; justify-content:space-between; gap:1rem; padding:.85rem 1rem; border-top:1px solid var(--border);}
     .row:first-child{border-top:0}
     .row a{color:inherit; text-decoration:none}
     .mono{font-family:var(--mono); font-size:.85rem}
-    .pill{
-      font-size:.75rem; padding:.22rem .5rem; border-radius:999px;
-      border:1px solid var(--border); background:color-mix(in oklab, var(--card) 70%, transparent);
-      color:var(--muted);
-    }
+    .pill{font-size:.75rem; padding:.22rem .5rem; border-radius:999px; border:1px solid var(--border); background:color-mix(in oklab, var(--card) 70%, transparent); color:var(--muted);}
     .bad{color:var(--err)}
-    footer{
-      margin-top:2.5rem; padding-top:1rem; border-top:1px solid var(--border);
-      color:var(--muted); font-size:.9rem;
-      display:flex; align-items:center; gap:.6rem; flex-wrap:wrap;
-    }
+    footer{margin-top:2.5rem; padding-top:1rem; border-top:1px solid var(--border); color:var(--muted); font-size:.9rem; display:flex; align-items:center; gap:.6rem; flex-wrap:wrap;}
     .kbd{font-family:var(--mono); border:1px solid var(--border); border-bottom-width:2px; border-radius:6px; padding:.05rem .35rem; background:var(--card); color:var(--fg)}
     .hint{color:var(--muted); font-size:.9rem}
     .sr-only{position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0}
   </style>
 </head>
 <body>
+  <a class="sr-only" href="#manifests">Skip to Manifests</a>
   <header>
     <div class="wrap">
       <div class="logo" aria-hidden="true"></div>
       <div>
         <h1>SpectraMind V50 — Diagnostics</h1>
-        <div class="sub">Unified quick-look landing page for HTML dashboards, static plots, and manifests.</div>
+        <div class="sub">Unified quick‑look landing page for HTML dashboards, static plots, and manifests.</div>
       </div>
       <nav class="toolbar" aria-label="Primary">
         <a class="btn" id="openDashboard" href="../outputs/diagnostics/v50_report_v1.html" target="_blank" rel="noopener">Open Full Dashboard</a>
@@ -140,7 +90,7 @@
     </div>
   </header>
 
-  <main class="wrap">
+  <main class="wrap" id="mainContent">
     <section aria-labelledby="thumbs-title">
       <h2 id="thumbs-title">Static Thumbnails</h2>
       <div id="thumbGrid" class="grid" role="list"></div>
@@ -165,7 +115,9 @@
           <div class="hint" id="manSize">size —</div>
         </div>
       </div>
-      <div class="hint" style="margin-top:.75rem">Tip: press <span class="kbd">O</span> to open the dashboard, <span class="kbd">G</span> to jump here.</div>
+      <div class="hint" style="margin-top:.75rem">
+        Tip: press <span class="kbd">O</span> to open the dashboard, <span class="kbd">G</span> to jump here.
+      </div>
     </section>
 
     <footer>
@@ -175,11 +127,14 @@
       <span>•</span>
       <span>Report:</span>
       <a class="mono" id="reportLink" href="../outputs/diagnostics/v50_report_v1.html" target="_blank" rel="noopener">v50_report_v1.html</a>
+      <span id="hashWrap" class="hint" style="display:none">• Config Hash: <span id="cfgHash" class="mono"></span></span>
     </footer>
   </main>
 
   <script>
-    // ---------- Configuration ----------
+    // ------------------------------
+    // Configuration
+    // ------------------------------
     const DASHBOARD_PATH = "../outputs/diagnostics/v50_report_v1.html";
     const THUMBNAILS = [
       { file: "umap.png",                label: "UMAP Embedding" },
@@ -195,7 +150,11 @@
       { idMeta:"manMeta", idSize:"manSize", url:"../outputs/diagnostics/manifest.json" }
     ];
 
-    // ---------- Utilities ----------
+    const RUN_HASH_JSON = "../outputs/run_hash_summary_v50.json"; // optional; if missing, footer remains minimal
+
+    // ------------------------------
+    // Utilities
+    // ------------------------------
     const fmtBytes = n => {
       if (!Number.isFinite(n) || n <= 0) return "—";
       const u = ["B","KB","MB","GB","TB"]; let i = 0;
@@ -206,16 +165,24 @@
 
     async function headMeta(url) {
       try {
-        const res = await fetch(url, { method: "HEAD" });
+        const res = await fetch(url, { method: "HEAD", cache: "no-store" });
         if (!res.ok) throw new Error(res.status);
         return {
-          size: +res.headers.get("Content-Length") || null,
+          size: +(res.headers.get("Content-Length") || 0),
           date: res.headers.get("Last-Modified")
         };
       } catch { return { size: null, date: null }; }
     }
 
-    // ---------- Render Thumbnails ----------
+    // Cache-busting helper for images (avoid stale browser cache on new runs)
+    function withBust(u) {
+      const ts = Date.now().toString(36);
+      return u + (u.includes("?") ? "&" : "?") + "v=" + ts;
+    }
+
+    // ------------------------------
+    // Thumbnails
+    // ------------------------------
     const grid = document.getElementById("thumbGrid");
     for (const t of THUMBNAILS) {
       const card = document.createElement("figure");
@@ -225,4 +192,95 @@
       const img = document.createElement("img");
       img.loading = "lazy";
       img.className = "thumb";
-     
+      img.alt = t.label;
+      img.decoding = "async";
+      img.src = withBust(t.href);
+      img.onerror = () => card.remove(); // hide broken images entirely
+
+      const cap = document.createElement("figcaption");
+      const title = document.createElement("strong");
+      title.textContent = t.label;
+      const meta = document.createElement("span");
+      meta.className = "meta";
+      meta.textContent = "—";
+      cap.append(title, meta);
+
+      // Click opens full image in a new tab
+      img.style.cursor = "zoom-in";
+      img.addEventListener("click", () => window.open(t.href, "_blank", "noopener"));
+
+      card.append(img, cap);
+      grid.append(card);
+
+      // Fill figcaption meta with HEAD size / date
+      (async () => {
+        const { size, date } = await headMeta(t.href);
+        const pieces = [];
+        if (size) pieces.push(fmtBytes(size));
+        if (date) pieces.push(fmtDate(date));
+        meta.textContent = pieces.length ? pieces.join(" • ") : "—";
+      })();
+    }
+
+    // ------------------------------
+    // Manifests (HEAD metadata)
+    // ------------------------------
+    for (const m of MANIFESTS) {
+      (async () => {
+        const { size, date } = await headMeta(m.url);
+        const metaEl = document.getElementById(m.idMeta);
+        const sizeEl = document.getElementById(m.idSize);
+        metaEl.textContent = date ? fmtDate(date) : "—";
+        sizeEl.textContent = "size " + (size ? fmtBytes(size) : "—");
+      })();
+    }
+
+    // ------------------------------
+    // Optional run hash metadata
+    // ------------------------------
+    (async () => {
+      try {
+        const res = await fetch(RUN_HASH_JSON, { cache: "no-store" });
+        if (!res.ok) return;
+        const data = await res.json();
+        // Expected (flexible): { build_time, config_hash, cli_version } or similar
+        const buildTime = data.build_time || data.timestamp || data.date || null;
+        const cfgHash   = data.config_hash || data.hash || data.run_hash || null;
+
+        const timeEl = document.getElementById("buildTime");
+        if (buildTime) timeEl.textContent = fmtDate(buildTime);
+        const hashWrap = document.getElementById("hashWrap");
+        const cfgEl = document.getElementById("cfgHash");
+        if (cfgHash) {
+          hashWrap.style.display = "";
+          cfgEl.textContent = cfgHash;
+        }
+      } catch {
+        /* optional file not found or unreadable; ignore */
+      }
+    })();
+
+    // ------------------------------
+    // Keyboard shortcuts
+    // ------------------------------
+    document.addEventListener("keydown", (e) => {
+      const tag = (e.target && e.target.tagName || "").toLowerCase();
+      if (tag === "input" || tag === "textarea") return; // don't hijack typing
+      if (e.key === "o" || e.key === "O") {
+        window.open(DASHBOARD_PATH, "_blank", "noopener"); e.preventDefault();
+      } else if (e.key === "g" || e.key === "G") {
+        document.getElementById("manifests").scrollIntoView({ behavior:"smooth", block:"start" });
+        e.preventDefault();
+      }
+    });
+
+    // ------------------------------
+    // Button behavior
+    // ------------------------------
+    document.getElementById("openDashboard")?.addEventListener("click", (e) => {
+      // allow default open in new tab but ensure path stays in sync
+      e.currentTarget.href = DASHBOARD_PATH;
+    });
+  </script>
+</body>
+</html>

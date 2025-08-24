@@ -1,0 +1,67 @@
+{
+  "metadata": {
+    "project": "SpectraMind V50 — Ariel Data Challenge 2025",
+    "version": "1.0.0",
+    "git_sha": "HEAD",
+    "run_hash": "auto-filled",
+    "timestamp_utc": "2025-08-22T00:00:00Z",
+    "environment": {
+      "python": "3.10+",
+      "cuda": "12.x",
+      "hydra": "1.3",
+      "dvc": "3.x"
+    }
+  },
+  "leaderboard_metrics": {
+    "public_lb_score": 0.000,          // Kaggle public LB (log-likelihood baseline)
+    "private_lb_score": null,          // Filled after competition close
+    "score_direction": "maximize",     // GLL is higher-is-better
+    "baseline_ref": 0.329,             // Example baseline (Thang Do Duc notebook) [oai_citation:0‡Comparison of Kaggle Models from NeurIPS 2025 Ariel Data Challenge.pdf](file-service://file-CG661XRZ48CnBj69Lf5vTy)
+    "top_models_ref": {
+      "v1ctorious3010_80bl_128hd": 0.55,
+      "spectrum_regressor": 0.60
+    }
+  },
+  "core_metrics": {
+    "gll": {
+      "mean": null,
+      "per_bin": "outputs/diagnostics/gll_heatmap.json"
+    },
+    "mae": null,
+    "rmse": null,
+    "r2": null
+  },
+  "uncertainty_metrics": {
+    "nll": null,
+    "ece": null,
+    "quantile_coverage": {
+      "90": null,
+      "95": null,
+      "99": null
+    },
+    "corel_coverage": "outputs/corel_coverage.csv"
+  },
+  "physics_informed_metrics": {
+    "fft_power": "outputs/diagnostics/fft_power.json",
+    "autocorr": "outputs/diagnostics/autocorr.json",
+    "smoothness_l2": null,
+    "spectral_entropy": null,
+    "asymmetry_score": null
+  },
+  "symbolic_metrics": {
+    "rule_violations": "outputs/diagnostics/symbolic_violations.json",
+    "influence_map": "outputs/diagnostics/symbolic_influence.json",
+    "fusion_score": null
+  },
+  "explainability": {
+    "shap_summary": "outputs/diagnostics/shap_summary.json",
+    "shap_overlay": "outputs/diagnostics/shap_overlay.png",
+    "latent_umap": "outputs/diagnostics/umap.json",
+    "latent_tsne": "outputs/diagnostics/tsne.json"
+  },
+  "diagnostics": {
+    "dashboard_html": "outputs/diagnostics/report_latest.html",
+    "log_table": "outputs/log_table.csv",
+    "debug_log": "logs/v50_debug_log.md"
+  }
+}

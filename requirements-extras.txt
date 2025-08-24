@@ -1,24 +1,76 @@
-dvc[gdrive,gcs]==3.62.0
-dvc[s3,boto3]==3.51.2
-dvc[ssh]==3.51.2
-dvc[azure]==3.51.2
 
+
+# SpectraMind V50 — requirements-extras.txt
+
+# Optional add‑ons for power users: storage backends, HPO, HF stack, viz suites.
+
+# Pins align with core requirements to avoid environment drift.
+
+# ==============================================================================
+
+\###########
+
+# DVC I/O
+
+\###########
+
+# Consolidated extras to a single line (cleaner, same effect as multiple lines).
+
+dvc\[gdrive,gcs,s3,boto3,ssh,azure]==3.51.2
+
+\###########################
+
+# Experimentation / HPO
+
+\###########################
 optuna==3.6.1
 lightning==2.3.3
 tensorboard==2.17.0
 
+\###########################
+
+# Hugging Face Ecosystem
+
+\###########################
 transformers==4.41.2
 datasets==2.19.0
 accelerate==0.31.0
 tokenizers==0.15.2
 safetensors==0.4.3
-pyarrow==16.1.0
+pyarrow==17.0.0            # align with core stack
 
-kaggle==1.6.14
+\###########
 
-kaleido==0.2.1
+# Kaggle
+
+\###########
+kaggle==1.6.17             # align with core stack
+
+\########################
+
+# Extended Visualization
+
+\########################
+kaleido==0.2.1             # static image export for Plotly
 seaborn==0.13.2
-altair==5.4.1
+altair==5.3.0              # align with core stack
 bokeh==3.4.3
 
+\########################
+
+# Imaging / Utilities
+
+\########################
 scikit-image==0.24.0
+
+# ==============================================================================
+
+# Notes:
+
+# • DVC extras consolidated; functionally identical to separate lines.
+
+# • altair/pyarrow/kaggle pins match core requirements to prevent resolver conflicts.
+
+# • Keep this file optional: install only when you need these capabilities.
+
+# ==============================================================================

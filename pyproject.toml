@@ -1,7 +1,7 @@
 # ==============================================================================
 # pyproject.toml — SpectraMind V50
-# Neuro-symbolic, physics-informed AI for NeurIPS 2025 Ariel Data Challenge
-# CLI-first, Hydra configs, DVC, diagnostics, CI/Kaggle safe
+# Neuro‑symbolic, physics‑informed AI for NeurIPS 2025 Ariel Data Challenge
+# CLI‑first, Hydra configs, DVC, diagnostics, CI/Kaggle‑safe
 # ==============================================================================
 
 [build-system]
@@ -10,8 +10,8 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry]
 name = "spectramindv50"
-version = "0.2.0"
-description = "SpectraMind V50: Neuro-symbolic, physics-informed exoplanet spectroscopy with Typer CLI, Hydra configs, DVC, diagnostics, CI, and Kaggle-ready runtime."
+version = "0.3.0"
+description = "SpectraMind V50: Neuro‑symbolic, physics‑informed exoplanet spectroscopy with Typer CLI, Hydra configs, DVC, diagnostics, CI, and Kaggle‑ready runtime."
 readme = "README.md"
 license = "MIT"
 authors = ["SpectraMind Team", "Andy Barta"]
@@ -37,7 +37,7 @@ spectramind = "spectramind:app"
 python = ">=3.10,<3.13"
 
 # ---- Core runtime ----
-typer = { version = "0.12.3", extras = ["all"] }
+typer = { version = "0.12.4", extras = ["all"] }
 rich = "13.7.1"
 hydra-core = "1.3.2"
 omegaconf = "2.3.0"
@@ -57,6 +57,8 @@ scikit-learn = "1.4.2"
 torch = "2.2.2"
 torchvision = "0.17.2"
 torchaudio = "2.2.2"
+torchmetrics = "1.4.0.post0"
+einops = "0.8.0"
 
 # Graph/SSM stack
 networkx = "3.3"
@@ -67,6 +69,8 @@ matplotlib = "3.8.4"
 plotly = "5.22.0"
 umap-learn = "0.5.6"
 shap = "0.45.0"
+seaborn = "0.13.2"
+kaleido = "0.2.1"
 
 tqdm = "4.66.4"
 joblib = "1.4.2"
@@ -98,10 +102,20 @@ yamllint = "1.35.1"
 markdownlint-cli2 = "0.14.0"
 
 [tool.poetry.group.viz.dependencies]
-kaleido = "0.2.1"
-seaborn = "0.13.2"
 altair = "5.3.0"
 bokeh = "3.5.1"
+
+[tool.poetry.group.docs.dependencies]
+mkdocs = "1.6.0"
+mkdocs-material = "9.5.27"
+mkdocs-awesome-pages-plugin = "2.9.3"
+mkdocs-git-revision-date-localized-plugin = "1.2.4"
+mkdocs-section-index = "0.3.9"
+mkdocs-glightbox = "0.4.0"
+mkdocs-mermaid2-plugin = "1.1.1"
+mkdocs-minify-plugin = "0.7.2"
+mkdocs-redirects = "1.2.1"
+mkdocs-include-markdown-plugin = "6.2.2"
 
 [tool.poetry.group.hf.dependencies]
 transformers = "4.41.2"
@@ -110,6 +124,7 @@ accelerate = "0.31.0"
 tokenizers = "0.15.2"
 safetensors = "0.4.3"
 pyarrow = "16.1.0"
+bitsandbytes = { version = "0.43.1", markers = "platform_system == 'Linux'" }
 
 [tool.poetry.group.hpo.dependencies]
 optuna = "3.6.1"
@@ -242,5 +257,5 @@ pretty = true
 #   poetry install --with dev,viz,hf,astro,symbolic
 #   poetry install --with kaggle
 #
-# Production install (minimal):
+# Production/minimal:
 #   poetry install --without dev,viz,hf,hpo,lightning,astro,symbolic,web,kaggle
