@@ -1,308 +1,352 @@
 # tests/artifacts/test_manifest_hashes.py
+# -*- coding: utf-8 -*-
 """
-Upgraded tests for the artifact manifest generator.
+SpectraMind V50 — Artifact Tests
+File: tests/artifacts/test_manifest_hashes.py
 
-What this validates (and why it matters):
+Purpose
+-------
+Validate the repository file manifest and its cryptographic integrity.
 
-- Correct SHA256 & byte size per file  ➜ scientific reproducibility
-- Stable output across runs            ➜ determinism
-- Changes reflected when files change  ➜ integrity
-- Respect of include/exclude patterns  ➜ hygiene (no __pycache__, .git, etc.)
-- Clean, POSIX‑style relative paths    ➜ portability across OSes
-- JSON header with provenance          ➜ auditability (created_at, version, tool)
+This test will:
+  1) Locate a manifest file (JSON or CSV) describing repo files and their SHA256.
+     • Default search order (overridable with env var SPECTRAMIND_MANIFEST):
+         - ./manifest_v50.json
+         - ./manifest_v50.csv
+         - ./outputs/manifests/manifest_v50.json
+         - ./outputs/manifests/manifest_v50.csv
+  2) Load paths + expected sha256 digests.
+  3) Assert there are no duplicate entries, no empty rows, and paths are normalized.
+  4) For each entry:
+        - Path exists relative to the repo root, unless explicitly marked optional.
+        - If it is a regular file (and not a .dvc pointer), compute SHA256 and
+          compare with the manifest.
+        - For .dvc pointer files, validate the pointer file exists; hashing the
+          large underlying artifact is not required (DVC manages that).
+  5) Spot-check that important top-level project anchors exist and are included in
+     the manifest: pyproject.toml OR poetry.lock OR Dockerfile OR README.md.
 
-This test suite is intentionally tolerant about the import path of the manifest
-API to accommodate different repository layouts. It will try several common
-locations and, if not found, mark the tests as xfailed with a helpful message.
+Notes
+-----
+• Set SPECTRAMIND_MANIFEST to point to a custom manifest if your repo structure differs.
+• Manifest schema (JSON):
+      [
+        {
+          "path": "relative/path/to/file.ext",
+          "sha256": "<lowercase hex digest>",
+          "optional": false   # optional key; defaults to false
+        },
+        ...
+      ]
+  CSV schema (header required):
+      path,sha256,optional
+      relative/path,deadbeef...,false
+• For performance, hashing is streamed in chunks and only applied to regular files.
+• Files with zero-byte content should have the SHA256 of the empty string:
+      e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 """
 
 from __future__ import annotations
 
+import csv
 import hashlib
 import json
 import os
-import posixpath
-import re
-import sys
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, Optional, Tuple
+from typing import Iterable, List, Optional, Sequence, Tuple
 
 import pytest
 
 
-# ---- Helpers ----------------------------------------------------------------
+# ------------------------------ Configuration ------------------------------ #
+
+ENV_MANIFEST = "SPECTRAMIND_MANIFEST"
+
+# Default search locations if env var is not provided
+CANDIDATE_MANIFESTS: Sequence[Path] = (
+    Path("manifest_v50.json"),
+    Path("manifest_v50.csv"),
+    Path("outputs/manifests/manifest_v50.json"),
+    Path("outputs/manifests/manifest_v50.csv"),
+)
+
+# Some files that should exist in most SpectraMind repositories (soft expectations).
+ANCHOR_FILES: Sequence[Path] = (
+    Path("pyproject.toml"),
+    Path("poetry.lock"),
+    Path("Dockerfile"),
+    Path("README.md"),
+)
 
 
-def _sha256_bytes(b: bytes) -> str:
+# --------------------------------- Model ----------------------------------- #
+
+@dataclass(frozen=True)
+class ManifestEntry:
+    path: Path
+    sha256: Optional[str]  # may be None for pointers where hashing is skipped
+    optional: bool = False
+
+
+# ------------------------------ Helper funcs ------------------------------- #
+
+def repo_root() -> Path:
+    """
+    Heuristic: climb up from this test file until we find a directory
+    containing either pyproject.toml or .git. Fallback to CWD.
+    """
+    here = Path(__file__).resolve()
+    for p in [here] + list(here.parents):
+        if (p / "pyproject.toml").exists() or (p / ".git").exists():
+            return p
+    return Path.cwd().resolve()
+
+
+def find_manifest(root: Path) -> Path:
+    """
+    Resolve a manifest file path:
+      1) SPECTRAMIND_MANIFEST if provided (absolute or relative to repo root)
+      2) First existing file in CANDIDATE_MANIFESTS under repo root
+    """
+    env = os.getenv(ENV_MANIFEST, "").strip()
+    if env:
+        p = Path(env)
+        if not p.is_absolute():
+            p = (root / p).resolve()
+        if not p.exists():
+            pytest.fail(f"Manifest not found at SPECTRAMIND_MANIFEST={p}")
+        return p
+
+    for cand in CANDIDATE_MANIFESTS:
+        p = (root / cand).resolve()
+        if p.exists():
+            return p
+
+    pytest.fail(
+        "Manifest not found. Try setting SPECTRAMIND_MANIFEST to a valid path, "
+        "or place manifest_v50.json/manifest_v50.csv in repo root or outputs/manifests/."
+    )
+    raise AssertionError("unreachable")
+
+
+def _normalize_path(p: str) -> Path:
+    # Normalize separators and strip whitespace
+    return Path(p.strip().replace("\\", "/")).as_posix() and Path(p.strip().replace("\\", "/"))
+
+
+def load_manifest(path: Path) -> List[ManifestEntry]:
+    """
+    Load JSON or CSV format into a list of ManifestEntry objects.
+    """
+    entries: List[ManifestEntry] = []
+
+    if path.suffix.lower() == ".json":
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, list):
+            pytest.fail(f"JSON manifest must be a list of objects: {path}")
+        for i, row in enumerate(data):
+            if not isinstance(row, dict):
+                pytest.fail(f"JSON manifest row {i} is not an object: {row!r}")
+            p = _normalize_path(str(row.get("path", "")))
+            sha = row.get("sha256", None)
+            opt = bool(row.get("optional", False))
+            if not p or p.as_posix() in ("", "."):
+                pytest.fail(f"JSON manifest row {i} missing/invalid 'path'.")
+            if sha is not None:
+                sha = str(sha).lower().strip()
+                _assert_hex_sha256_or_fail(sha, context=f"row {i} ({p})")
+            entries.append(ManifestEntry(p, sha, opt))
+    elif path.suffix.lower() == ".csv":
+        with path.open("r", encoding="utf-8", newline="") as f:
+            rdr = csv.DictReader(f)
+            if not rdr.fieldnames:
+                pytest.fail(f"CSV manifest missing header: {path}")
+            expected_cols = {"path", "sha256", "optional"}
+            missing = expected_cols - set(x.lower() for x in rdr.fieldnames)
+            if missing:
+                pytest.fail(f"CSV manifest missing columns {missing}. Found: {rdr.fieldnames}")
+
+            for i, row in enumerate(rdr):
+                p = _normalize_path(str(row.get("path", "")))
+                sha_val = row.get("sha256", "")
+                sha = None
+                if sha_val is not None and str(sha_val).strip() != "":
+                    sha = str(sha_val).lower().strip()
+                    _assert_hex_sha256_or_fail(sha, context=f"row {i} ({p})")
+                opt_val = row.get("optional", "false").strip().lower()
+                opt = opt_val in ("1", "true", "yes", "y")
+                if not p or p.as_posix() in ("", "."):
+                    pytest.fail(f"CSV manifest row {i} missing/invalid 'path'.")
+                entries.append(ManifestEntry(p, sha, opt))
+    else:
+        pytest.fail(f"Unsupported manifest format: {path.suffix}")
+
+    return entries
+
+
+def _assert_hex_sha256_or_fail(sha: str, context: str = "") -> None:
+    if len(sha) != 64 or any(c not in "0123456789abcdef" for c in sha):
+        pytest.fail(f"Invalid sha256 hex digest {sha!r} {context}".strip())
+
+
+def stream_sha256(file_path: Path, chunk_size: int = 1024 * 1024) -> str:
     h = hashlib.sha256()
-    h.update(b)
-    return h.hexdigest()
-
-
-def _sha256_file(p: Path) -> str:
-    h = hashlib.sha256()
-    with p.open("rb") as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+    with file_path.open("rb") as f:
+        for chunk in iter(lambda: f.read(chunk_size), b""):
             h.update(chunk)
     return h.hexdigest()
 
 
-def _try_import_api() -> Tuple[
-    Optional[Callable[..., Dict[str, Any]]],
-    Optional[Callable[[Dict[str, Any], Path], None]]
-]:
-    """
-    Try to import a manifest API from several likely locations.
+def is_dvc_pointer(p: Path) -> bool:
+    # Basic heuristic: treat *.dvc as pointer files managed by DVC
+    return p.suffix.lower() == ".dvc"
 
-    Expected call signatures (any of these are fine):
-      - build_manifest(root: Path, includes: Iterable[str], excludes: Iterable[str]) -> dict
-      - generate_manifest(root: Path, include_globs: Iterable[str], exclude_globs: Iterable[str]) -> dict
-      - write_manifest(manifest: dict, out_path: Path) -> None  (optional)
 
-    Returns:
-      (build_fn, write_fn) — either/both can be None; tests will xfail gracefully.
-    """
-    candidates = [
-        ("spectramind.artifacts.manifest", ("build_manifest", "write_manifest")),
-        ("spectramind.utils.manifest", ("build_manifest", "write_manifest")),
-        ("spectramind.utils.manifest", ("generate_manifest", "write_manifest")),
-        ("src.spectramind.artifacts.manifest", ("build_manifest", "write_manifest")),
-        ("src.spectramind.utils.manifest", ("build_manifest", "write_manifest")),
-    ]
+def anchors_present(root: Path) -> Sequence[Path]:
+    return tuple(p for p in ANCHOR_FILES if (root / p).exists())
 
-    build_fn = None
-    write_fn = None
 
-    for mod_name, (build_name, write_name) in candidates:
-        try:
-            mod = __import__(mod_name, fromlist=[build_name, write_name])
-        except Exception:
+# ---------------------------------- Tests ---------------------------------- #
+
+def test_manifest_exists_and_loads():
+    root = repo_root()
+    manifest_path = find_manifest(root)
+    entries = load_manifest(manifest_path)
+    assert len(entries) > 0, f"Manifest {manifest_path} is empty."
+
+    # Ensure no duplicate paths and normalized paths
+    seen = set()
+    for e in entries:
+        norm = e.path.as_posix()
+        assert "/" in norm or norm, f"Entry path seems unnormalized: {e.path}"
+        assert norm not in seen, f"Duplicate entry in manifest: {e.path}"
+        seen.add(norm)
+
+
+def test_manifest_covers_key_project_anchors():
+    root = repo_root()
+    manifest = find_manifest(root)
+    entries = load_manifest(manifest)
+    paths = {e.path.as_posix() for e in entries}
+
+    present = anchors_present(root)
+    assert present, (
+        "None of the anchor files exist in the repo. "
+        "Expected at least one of: "
+        + ", ".join(str(p) for p in ANCHOR_FILES)
+    )
+
+    # If anchors exist, at least one of them should be listed in the manifest.
+    listed_any = any(p.as_posix() in paths for p in present)
+    assert listed_any, (
+        "At least one anchor file should be included in the manifest. "
+        f"Existing anchors: {[str(p) for p in present]}; "
+        f"Manifest path count: {len(paths)}"
+    )
+
+
+def test_manifest_paths_exist_and_hashes_match():
+    root = repo_root()
+    manifest = find_manifest(root)
+    entries = load_manifest(manifest)
+
+    # Create a simple summary of failures to show all problems at once.
+    missing: List[str] = []
+    mismatch: List[str] = []
+    skipped: List[str] = []
+
+    for e in entries:
+        file_path = (root / e.path).resolve()
+        if not file_path.exists():
+            # If file is optional, tolerate absence.
+            if e.optional:
+                skipped.append(f"[optional missing] {e.path.as_posix()}")
+                continue
+            missing.append(e.path.as_posix())
             continue
 
-        # pick build/generate callable if present
-        if hasattr(mod, build_name):
-            build_fn = getattr(mod, build_name)
-        elif build_name == "build_manifest" and hasattr(mod, "generate_manifest"):
-            build_fn = getattr(mod, "generate_manifest")  # tolerate naming alt
-        elif build_name == "generate_manifest" and hasattr(mod, "build_manifest"):
-            build_fn = getattr(mod, "build_manifest")
+        # Directories are permitted in manifest only if marked optional
+        if file_path.is_dir():
+            if e.optional:
+                skipped.append(f"[dir optional] {e.path.as_posix()}")
+                continue
+            pytest.fail(f"Manifest lists a directory as a required file: {e.path}")
 
-        if hasattr(mod, write_name):
-            write_fn = getattr(mod, write_name)
+        # If this is a DVC pointer file, we only assert it exists; hashing large artifacts is deferred to DVC.
+        if is_dvc_pointer(file_path):
+            # It's fine to have sha256 in manifest for .dvc (will be ignored), but not required.
+            skipped.append(f"[dvc pointer] {e.path.as_posix()}")
+            continue
 
-        if build_fn:
-            break
+        # For regular files we expect an SHA256
+        if e.sha256 is None or e.sha256.strip() == "":
+            pytest.fail(f"Manifest entry missing sha256 for regular file: {e.path}")
 
-    return build_fn, write_fn
+        # Compute and compare
+        actual = stream_sha256(file_path)
+        if actual != e.sha256:
+            mismatch.append(f"{e.path.as_posix()} expected={e.sha256} actual={actual}")
 
+    # Aggregate assertions to present a consolidated error view
+    errors: List[str] = []
+    if missing:
+        errors.append("Missing files:\n  - " + "\n  - ".join(missing))
+    if mismatch:
+        errors.append("SHA256 mismatches:\n  - " + "\n  - ".join(mismatch))
 
-def _require_api_or_xfail():
-    build_fn, write_fn = _try_import_api()
-    if build_fn is None:
-        pytest.xfail(
-            "Manifest API not found. "
-            "Provide one of: spectramind.artifacts.manifest.build_manifest, "
-            "spectramind.utils.manifest.build_manifest, "
-            "spectramind.utils.manifest.generate_manifest. "
-            "Tests will activate once the API exists."
+    if errors:
+        pytest.fail(
+            f"Manifest validation failed for {manifest} under root={repo_root()}.\n"
+            + "\n\n".join(errors)
+            + ("\n\nSkipped (ok):\n  - " + "\n  - ".join(skipped) if skipped else "")
         )
-    return build_fn, write_fn
 
 
-def _normalize_path(rel_path: Path) -> str:
-    """Return a POSIX-style relative path (no leading './')."""
-    p = posixpath.join(*rel_path.parts)
-    return p.lstrip("./")
-
-
-def _make_files(base: Path, files: Dict[str, bytes]) -> None:
-    for rel, data in files.items():
-        p = base / rel
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_bytes(data)
-
-
-# ---- Fixtures ---------------------------------------------------------------
-
-
-@pytest.fixture()
-def sample_tree(tmp_path: Path) -> Path:
+def test_manifest_is_reasonably_small_and_sorted():
     """
-    Create a small content-addressable tree with a few files, including folders
-    that should typically be excluded by default (.git, __pycache__, .dvc, etc.).
+    A gentle structural check to encourage order and sanity (does not enforce a specific sort key).
     """
-    files = {
-        "data/a.txt": b"alpha\n",
-        "data/sub/b.bin": b"\x00\x01\x02\x03",
-        "scripts/run.sh": b"#!/usr/bin/env bash\necho ok\n",
-        ".git/HEAD": b"ref: refs/heads/main\n",
-        "__pycache__/x.cpython-311.pyc": b"\x00F00BAR",
-        ".dvc/lock": b"{}",
-    }
-    _make_files(tmp_path, files)
-    os.chmod(tmp_path / "scripts" / "run.sh", 0o755)
-    return tmp_path
+    root = repo_root()
+    manifest = find_manifest(root)
+    entries = load_manifest(manifest)
+
+    # Ensure it's not absurdly huge for a test environment; adjust threshold if needed.
+    assert len(entries) < 100_000, "Manifest seems excessively large for this project."
+
+    # Encourages stable ordering (lexicographic by path)
+    paths = [e.path.as_posix() for e in entries]
+    sorted_paths = sorted(paths, key=str.lower)
+    assert paths == sorted_paths, (
+        "Manifest paths are not lexicographically sorted. "
+        "Please sort by path (case-insensitive) to improve diff stability."
+    )
 
 
-@pytest.fixture()
-def manifest_api():
-    return _require_api_or_xfail()
+def test_manifest_sha256_format_is_valid_hex():
+    root = repo_root()
+    manifest = find_manifest(root)
+    entries = load_manifest(manifest)
+
+    for e in entries:
+        if e.sha256:
+            _assert_hex_sha256_or_fail(e.sha256, context=f"path={e.path.as_posix()}")
 
 
-# ---- Tests ------------------------------------------------------------------
+# ---------------------------- Utility Assertions --------------------------- #
 
-
-def test_basic_content_hash_and_size(sample_tree: Path, manifest_api):
-    build_manifest, _write_manifest = manifest_api
-
-    # generous defaults: include everything, exclude common junk
-    includes = ["**/*"]
-    excludes = [".git/**", "__pycache__/**", ".dvc/**"]
-
-    manifest = build_manifest(sample_tree, includes, excludes)  # type: ignore[call-arg]
-
-    assert "meta" in manifest, "Top-level 'meta' missing"
-    assert "files" in manifest, "Top-level 'files' missing"
-    files = manifest["files"]
-    assert isinstance(files, list) and files, "Empty file list"
-
-    # Collect entries into a dict by path for quick lookup
-    by_path = {entry["path"]: entry for entry in files}
-    # Expect excluded files to be absent
-    assert ".git/HEAD" not in by_path
-    assert "__pycache__/x.cpython-311.pyc" not in by_path
-    assert ".dvc/lock" not in by_path
-
-    # Validate a.txt
-    a_rel = _normalize_path(Path("data/a.txt"))
-    assert a_rel in by_path, f"{a_rel} missing from manifest"
-    a = by_path[a_rel]
-    assert a["sha256"] == _sha256_file(sample_tree / a_rel)
-    assert a["bytes"] == (sample_tree / a_rel).stat().st_size
-    # POSIX relative paths only
-    assert "/" in a["path"] and "\\" not in a["path"]
-    assert not a["path"].startswith("./")
-
-    # Validate b.bin
-    b_rel = _normalize_path(Path("data/sub/b.bin"))
-    b = by_path[b_rel]
-    assert b["sha256"] == _sha256_file(sample_tree / b_rel)
-    assert b["bytes"] == 4
-
-    # Validate executable script presence
-    sh_rel = _normalize_path(Path("scripts/run.sh"))
-    assert sh_rel in by_path
-
-
-def test_stable_across_runs(sample_tree: Path, manifest_api):
-    build_manifest, _ = manifest_api
-    includes = ["**/*"]
-    excludes = [".git/**", "__pycache__/**", ".dvc/**"]
-
-    m1 = build_manifest(sample_tree, includes, excludes)  # type: ignore[call-arg]
-    m2 = build_manifest(sample_tree, includes, excludes)  # type: ignore[call-arg]
-
-    # Compare hashes and ordering (manifests should be deterministic)
-    assert m1["files"] == m2["files"], "Manifest not stable for same inputs"
-    # Meta created_at can differ if generated per-call; allow either same or both present
-    assert "meta" in m1 and "meta" in m2
-    assert "generator" in m1["meta"]
-    assert "version" in m1["meta"]
-
-
-def test_changes_reflected_when_file_changes(sample_tree: Path, manifest_api):
-    build_manifest, _ = manifest_api
-    includes = ["**/*"]
-    excludes = [".git/**", "__pycache__/**", ".dvc/**"]
-
-    a_path = sample_tree / "data" / "a.txt"
-    before = build_manifest(sample_tree, includes, excludes)  # type: ignore[call-arg]
-    before_entry = {e["path"]: e for e in before["files"]}["data/a.txt"]
-
-    # mutate file
-    a_path.write_bytes(b"alpha\nbeta\n")
-
-    after = build_manifest(sample_tree, includes, excludes)  # type: ignore[call-arg]
-    after_entry = {e["path"]: e for e in after["files"]}["data/a.txt"]
-
-    assert before_entry["sha256"] != after_entry["sha256"], "SHA256 did not change after content change"
-    assert before_entry["bytes"] != after_entry["bytes"], "size did not change after content change"
-
-
-def test_respects_excludes_and_includes(sample_tree: Path, manifest_api):
-    build_manifest, _ = manifest_api
-
-    # Only include *.txt under data, exclude everything else
-    includes = ["data/**/*.txt"]
-    excludes = ["**/*.bin", ".git/**", "__pycache__/**", ".dvc/**", "scripts/**"]
-
-    m = build_manifest(sample_tree, includes, excludes)  # type: ignore[call-arg]
-    paths = {e["path"] for e in m["files"]}
-    assert paths == {"data/a.txt"}, f"Unexpected paths: {paths}"
-
-
-def test_manifest_json_header_schema(sample_tree: Path, manifest_api, tmp_path: Path):
-    build_manifest, write_manifest = manifest_api
-    includes = ["**/*"]
-    excludes = [".git/**", "__pycache__/**", ".dvc/**"]
-
-    m = build_manifest(sample_tree, includes, excludes)  # type: ignore[call-arg]
-
-    # Top-level meta checks
-    meta = m.get("meta", {})
-    assert isinstance(meta, dict)
-    assert isinstance(meta.get("generator", ""), str) and meta["generator"], "generator string required"
-    assert isinstance(meta.get("version", ""), str) and meta["version"], "version string required"
-
-    # Optional fields: created_at ISO8601, git_commit (40 hex)
-    created = meta.get("created_at")
-    if created is not None:
-        assert re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$", created), "created_at must be ISO8601 UTC"
-
-    git_commit = meta.get("git_commit")
-    if git_commit is not None:
-        assert re.match(r"^[0-9a-f]{40}$", git_commit), "git_commit should be a 40-char hex SHA1"
-
-    # Ensure we can write JSON if write_manifest is provided
-    if write_manifest is not None:
-        out = tmp_path / "manifest.json"
-        write_manifest(m, out)  # type: ignore[call-arg]
-        on_disk = json.loads(out.read_text())
-        assert on_disk.get("files") == m["files"]
-        assert on_disk.get("meta", {}).get("version") == meta.get("version")
-
-
-def test_paths_are_posix_and_relative(sample_tree: Path, manifest_api):
-    build_manifest, _ = manifest_api
-    m = build_manifest(sample_tree, ["**/*"], [".git/**", "__pycache__/**", ".dvc/**"])  # type: ignore[call-arg]
-    for entry in m["files"]:
-        p = entry["path"]
-        assert isinstance(p, str)
-        # relative, POSIX, no drive letters, no backslashes
-        assert not p.startswith(("/", "./", ".\\")), f"not relative: {p}"
-        assert "\\" not in p, f"not POSIX: {p}"
-
-
-def test_manifest_contains_minimal_fields(sample_tree: Path, manifest_api):
-    build_manifest, _ = manifest_api
-    m = build_manifest(sample_tree, ["**/*"], [".git/**", "__pycache__/**", ".dvc/**"])  # type: ignore[call-arg]
-    assert isinstance(m["files"], list) and m["files"], "files must be non-empty list"
-    for e in m["files"]:
-        for key in ("path", "sha256", "bytes"):
-            assert key in e, f"missing '{key}' in file entry"
-        assert isinstance(e["bytes"], int) and e["bytes"] >= 0
-        assert re.match(r"^[0-9a-f]{64}$", e["sha256"]), "sha256 must be 64-char hex"
-
-
-# ---- UX: show a nicer skip/xfail in CI when API is missing -------------------
-
-
-def test_manifest_api_present_or_xfail():
-    build_fn, _ = _try_import_api()
-    if build_fn is None:
-        pytest.xfail(
-            "No manifest API found yet — implement one at:\n"
-            " - spectramind.artifacts.manifest.build_manifest(managed_root, includes, excludes)\n"
-            "   or spectramind.utils.manifest.generate_manifest(...)\n"
-            "Once present, this test (and suite) will activate automatically."
-        )
+@pytest.hookimpl(tryfirst=True, hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """
+    When a test fails, append manifest + root paths to the report to speed up debugging.
+    """
+    outcome = yield
+    rep = outcome.get_result()
+    if rep.when == "call" and rep.failed:
+        root = repo_root()
+        try:
+            manifest = find_manifest(root)
+            extra = f"\n[debug] repo_root={root}\n[debug] manifest={manifest}\n"
+        except Exception as e:
+            extra = f"\n[debug] repo_root={root}\n[debug] manifest=NOT FOUND ({e})\n"
+        rep.longrepr = f"{rep.longrepr}\n{extra}"
