@@ -55,7 +55,7 @@ repos:
 
   # ── Type checking (fast fail for obvious issues) ────────────────────────────
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.10.0
+    rev: v1.11.2
     hooks:
       - id: mypy
         args:
@@ -67,7 +67,7 @@ repos:
 
   # ── Notebooks (lint/format via nbQA + strip big outputs) ────────────────────
   - repo: https://github.com/nbQA-dev/nbQA
-    rev: 1.8.5
+    rev: 1.9.0
     hooks:
       - id: nbqa-ruff
         args: [--fix]
@@ -115,23 +115,20 @@ repos:
       - id: trailing-whitespace
         exclude: \.md$           # keep Markdown spacing when needed
 
-  # Spell-check identifiers & docs (keeps false positives low)
-  - repo: https://github.com/codespell-project/codespell
-    rev: v2.3.0
+  # ── Docs & config formatting ────────────────────────────────────────────────
+  - repo: https://github.com/executablebooks/mdformat
+    rev: 0.7.17
     hooks:
-      - id: codespell
-        args:
-          - --ignore-words-list=nd,teh,ot,fo
-          - --skip="*.lock,*.svg,*.ipynb,docs/_build/*,data/*,outputs/*"
-        exclude: ^(data/|outputs/|docs/assets/)
+      - id: mdformat
+        additional_dependencies:
+          - mdformat-gfm
+          - mdformat-frontmatter
+        files: "\\.(md|markdown|mdx)$"
 
-  # Shell lint/format for scripts
-  - repo: https://github.com/jumanjihouse/pre-commit-hooks
-    rev: 3.0.0
+  - repo: https://github.com/tox-dev/pyproject-fmt
+    rev: 1.7.0
     hooks:
-      - id: shellcheck
-      - id: shfmt
-        args: ["-i", "2", "-ci", "-bn"]  # 2-space indent, POSIX-friendly
+      - id: pyproject-fmt
 
   # YAML lint beyond well-formedness (style + rules)
   - repo: https://github.com/adrienverge/yamllint
@@ -140,12 +137,22 @@ repos:
       - id: yamllint
         args: ["-d", "{extends: default, rules: {line-length: {max: 120}, truthy: disable}}"]
 
+  # GitHub Actions / JSON / YAML schema validation (early CI failures locally)
+  - repo: https://github.com/python-jsonschema/check-jsonschema
+    rev: 0.28.5
+    hooks:
+      - id: check-github-workflows
+      - id: check-jsonschema
+        name: check-jsonschema (generic)
+        files: "\\.(json|ya?ml)$"
+        # You can add --schemafile for specific JSON schemas as needed
+
   # Format Markdown / JSON / YAML consistently (Prettier for docs/config)
   - repo: https://github.com/pre-commit/mirrors-prettier
-    rev: v3.2.5
+    rev: v3.3.3
     hooks:
       - id: prettier
-        additional_dependencies: ["prettier@3.2.5"]
+        additional_dependencies: ["prettier@3.3.3"]
         files: "\\.(md|markdown|mdx|json|ya?ml)$"
         exclude: ^(docs/_build/|data/|outputs/)
 
@@ -164,7 +171,7 @@ repos:
         args: ["-q", "-r", "src", "-x", "tests"]
 
   - repo: https://github.com/pypa/pip-audit
-    rev: v2.7.3
+    rev: v2.7.4
     hooks:
       - id: pip-audit
         args: ["--require-hashes=false", "--progress-spinner=off"]
@@ -177,7 +184,14 @@ repos:
       - id: python-no-log-warn
       - id: python-use-type-annotations
 
-  # ── Infrastructure linters (Dockerfiles & GitHub Actions) ───────────────────
+  # ── Shell / Docker / Actions ───────────────────────────────────────────────
+  - repo: https://github.com/jumanjihouse/pre-commit-hooks
+    rev: 3.0.0
+    hooks:
+      - id: shellcheck
+      - id: shfmt
+        args: ["-i", "2", "-ci", "-bn"]  # 2-space indent, POSIX-friendly
+
   - repo: https://github.com/hadolint/hadolint
     rev: v2.12.0
     hooks:
@@ -192,7 +206,7 @@ repos:
         name: actionlint (GitHub Actions linter)
         files: ^\.github/workflows/.*\.ya?ml$
 
-  # ── Local hooks (repo-managed) ──────────────────────────────────────────────
+  # ── Local hooks (repo-managed) ─────────────────────────────────────────────
   - repo: local
     hooks:
       - id: check-large-files-lfs

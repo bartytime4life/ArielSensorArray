@@ -1,0 +1,139 @@
+# ==============================================================================
+# Dockerfile.prod — SpectraMind V50 (NeurIPS 2025 Ariel Data Challenge)
+# Production-grade, CUDA-enabled, Poetry-managed image with Hydra/DVC/CLI
+# - Multi-stage build for smaller runtime images
+# - Non-root user, reproducible locks, deterministic locales
+# - Ready to run: `spectramind` CLI (train/predict/diagnose/submit)
+# ==============================================================================
+
+############################
+# Stage 0: base (CUDA + OS)
+############################
+# Choose a CUDA base that matches your PyTorch/CUDA toolchain.
+# For CPU-only builds, switch to python:3.11-slim and remove CUDA/NVIDIA bits.
+FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04 AS base
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    TZ=UTC \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8
+
+# Minimal OS deps + security updates
+RUN apt-get update -y && apt-get upgrade -y && apt-get install -y --no-install-recommends \
+    python3.11 python3.11-distutils python3-pip python3-venv \
+    git curl ca-certificates tzdata \
+    build-essential gcc g++ \
+    libglib2.0-0 libsm6 libxrender1 libxext6 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Make python -> python3.11
+RUN ln -sf /usr/bin/python3.11 /usr/bin/python && python -m pip install --no-cache-dir --upgrade pip
+
+# Create non-root user for safety
+ARG USERNAME=spectra
+ARG UID=1010
+ARG GID=1010
+RUN groupadd -g ${GID} ${USERNAME} && useradd -m -u ${UID} -g ${GID} -s /bin/bash ${USERNAME}
+WORKDIR /home/${USERNAME}
+
+############################
+# Stage 1: builder (Poetry)
+############################
+FROM base AS builder
+
+# Poetry installation (system-wide)
+ENV POETRY_VERSION=1.8.3 \
+    POETRY_HOME=/opt/poetry \
+    POETRY_NO_INTERACTION=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+RUN curl -sSL https://install.python-poetry.org | python - \
+    && ln -sf ${POETRY_HOME}/bin/poetry /usr/local/bin/poetry
+
+# Copy dependency manifests first for layer caching
+# Expect repo root includes: pyproject.toml, poetry.lock
+WORKDIR /opt/app
+COPY pyproject.toml poetry.lock ./
+
+# Optional: pre-create a virtualenv in /opt/venv for consistent path
+ENV VIRTUAL_ENV=/opt/venv
+RUN python -m venv ${VIRTUAL_ENV} && . ${VIRTUAL_ENV}/bin/activate \
+    && pip install --no-cache-dir -U pip setuptools wheel
+
+# Install deps (no dev) respecting locks
+# Use --no-root here; install project itself in runtime stage after copying code
+RUN . ${VIRTUAL_ENV}/bin/activate \
+    && poetry config virtualenvs.create false \
+    && poetry install --only main --no-interaction --no-ansi
+
+############################
+# Stage 2: runtime (slim)
+############################
+FROM base AS runtime
+
+# Copy venv from builder to keep only wheels we need
+ENV VIRTUAL_ENV=/opt/venv \
+    PATH=/opt/venv/bin:$PATH \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    HF_HOME=/home/spectra/.cache/huggingface \
+    TRANSFORMERS_OFFLINE=1 \
+    HF_HUB_DISABLE_TELEMETRY=1 \
+    MPLBACKEND=Agg
+
+# Copy the prebuilt environment
+COPY --from=builder ${VIRTUAL_ENV} ${VIRTUAL_ENV}
+RUN chown -R ${UID}:${GID} ${VIRTUAL_ENV}
+
+# Copy project code (respect .dockerignore to keep image lean)
+WORKDIR /opt/app
+COPY --chown=${UID}:${GID} . .
+
+# Install as an editable package (or standard) so CLI entrypoints are available
+# If using poetry-core, setup.cfg/pyproject entry_points will expose `spectramind`
+RUN . ${VIRTUAL_ENV}/bin/activate \
+    && pip install --no-cache-dir -e .
+
+# --------------------
+# Optional tools
+# --------------------
+# Data Version Control (DVC) — S3/GDrive extras only if you need them in-container.
+# Comment out what you don't need to keep image minimal.
+# RUN . ${VIRTUAL_ENV}/bin/activate && pip install --no-cache-dir \
+#     'dvc[s3]' 'dvc[gdrive]'
+
+# If you rely on specific CUDA PyTorch wheels, install them here:
+# RUN . ${VIRTUAL_ENV}/bin/activate && pip install --no-cache-dir \
+#     --index-url https://download.pytorch.org/whl/cu121 \
+#     torch torchvision torchaudio
+
+# --------------------
+# Runtime hygiene
+# --------------------
+# Precreate common writable dirs for logs and outputs (mounted in K8s/CI/Kaggle runner)
+RUN mkdir -p /opt/app/outputs /opt/app/logs /opt/app/data && \
+    chown -R ${UID}:${GID} /opt/app
+
+# Non-root runtime
+USER ${UID}:${GID}
+
+# Environment: stricter reproducibility flags
+ENV PYTHONHASHSEED=0 \
+    OMP_NUM_THREADS=1 \
+    MKL_NUM_THREADS=1
+
+# Healthcheck (basic Python sanity)
+HEALTHCHECK --interval=60s --timeout=5s --retries=5 \
+    CMD python -c "import sys; sys.exit(0)"
+
+# --------------------
+# Entrypoint options
+# --------------------
+# 1) Default to showing CLI help
+ENTRYPOINT ["spectramind"]
+CMD ["--help"]
+
+# Examples:
+# docker build -f Dockerfile.prod -t spectramind:v50 .
+# docker run --rm --gpus all -v $PWD:/opt/app spectramind:v50 train --config-dir config --config-name config_v50.yaml
+# docker run --rm --gpus all -v $PWD:/opt/app spectramind:v50 diagnose dashboard --html-out outputs/diagnostics/report.html

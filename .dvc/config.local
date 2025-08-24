@@ -1,2 +1,51 @@
+# ==============================================================================
+# SpectraMind V50 — DVC Local Config Override
+# Purpose:
+#   • Provides a safe offline/local override for DVC storage
+#   • Keeps sensitive keys (AWS/GCP) out of local dev by pointing to a file:// path
+#   • Allows switching between S3 and local seamlessly (remote "storage" vs "local")
+#   • Ensures group-shared cache for collaboration
+# ==============================================================================
+
+['core']
+    # Default remote for data pulls/pushes
+    remote = storage
+    autostage = true
+    jobs = 4
+    no_scm = false
+
+['cache']
+    type = "reflink,copy"
+    shared = group
+    dir = .dvc/cache
+
 ['remote "storage"']
-    url = file:///mnt/data/spectramind-v50-dvc   # Local override for offline use
+    # Local override for offline work — maps to a host-mounted volume
+    url = file:///mnt/data/spectramind-v50-dvc
+    verify = true
+    slow_link_warning = true
+    # NOTE: This shadows the S3 config in config file; use `dvc remote default` to switch
+
+['remote "local"']
+    # Pure local directory option (useful for disconnected development)
+    url = ../.dvc-storage
+    type = local
+    verify = true
+
+['experiments']
+    auto_push = false         # Disable auto-push for local testing
+    temp_dir = .dvc/tmp/experiments
+    run_cache = true
+
+['plots']
+    template_dir = .dvc/plots/templates
+
+['state']
+    # Reduce SQLite lock contention in multi-user environments
+    row_limit = 10000
+    update_lock = true
+
+['feature "push"']
+    # Allow retrying pushes to avoid local race conditions
+    retries = 3
+    jobs = 2

@@ -1,0 +1,137 @@
+# ==============================================================================
+# dvc.lock — SpectraMind V50 (ArielSensorArray)
+# NOTE: All hashes/sizes here are placeholders so you can copy‑paste and commit.
+#       They will be refreshed automatically on first `dvc repro`.
+#       Keep this file under version control for reproducibility.
+# ==============================================================================
+
+schema: '2.0'
+stages:
+
+  calibrate:
+    cmd: poetry run spectramind calibrate --input data/raw --output data/calibrated --log logs/calibration.log
+    deps:
+      - path: data/raw
+        md5: 00000000000000000000000000000000
+      - path: configs/calibration.yaml
+        md5: 00000000000000000000000000000000
+      - path: src/pipeline/calibration_pipeline.py
+        md5: 00000000000000000000000000000000
+    outs:
+      - path: data/calibrated
+        md5: 00000000000000000000000000000000
+        dir: true
+        nfiles: 0
+        size: 0
+    metrics:
+      - path: logs/calibration.json
+        md5: 00000000000000000000000000000000
+        metric: true
+      - path: logs/calibration_plots
+        md5: 00000000000000000000000000000000
+        dir: true
+        plot: true
+        nfiles: 0
+        size: 0
+
+  train:
+    cmd: poetry run spectramind train --config configs/config_v50.yaml --data data/calibrated --out outputs/model
+    deps:
+      - path: data/calibrated
+        md5: 00000000000000000000000000000000
+        dir: true
+      - path: configs/config_v50.yaml
+        md5: 00000000000000000000000000000000
+      - path: src/train/train_v50.py
+        md5: 00000000000000000000000000000000
+      - path: src/models/fgs1_mamba.py
+        md5: 00000000000000000000000000000000
+      - path: src/models/airs_gnn.py
+        md5: 00000000000000000000000000000000
+      - path: src/models/multi_scale_decoder.py
+        md5: 00000000000000000000000000000000
+    outs:
+      - path: outputs/model
+        md5: 00000000000000000000000000000000
+        dir: true
+        nfiles: 0
+        size: 0
+    metrics:
+      - path: outputs/model/metrics.json
+        md5: 00000000000000000000000000000000
+        metric: true
+    plots:
+      - path: outputs/model/loss_curve.png
+        md5: 00000000000000000000000000000000
+        plot: true
+
+  predict:
+    cmd: poetry run spectramind predict --model outputs/model --data data/calibrated --out outputs/predictions
+    deps:
+      - path: outputs/model
+        md5: 00000000000000000000000000000000
+        dir: true
+      - path: src/predict/predict_v50.py
+        md5: 00000000000000000000000000000000
+    outs:
+      - path: outputs/predictions
+        md5: 00000000000000000000000000000000
+        dir: true
+        nfiles: 0
+        size: 0
+    metrics:
+      - path: outputs/predictions/summary.json
+        md5: 00000000000000000000000000000000
+        metric: true
+
+  diagnostics:
+    cmd: poetry run spectramind diagnose dashboard --pred outputs/predictions --out outputs/diagnostics --html outputs/diagnostics/report.html
+    deps:
+      - path: outputs/predictions
+        md5: 00000000000000000000000000000000
+        dir: true
+      - path: src/diagnostics/generate_html_report.py
+        md5: 00000000000000000000000000000000
+      - path: src/diagnostics/generate_diagnostic_summary.py
+        md5: 00000000000000000000000000000000
+      - path: src/diagnostics/shap_overlay.py
+        md5: 00000000000000000000000000000000
+      - path: src/diagnostics/plot_umap_v50.py
+        md5: 00000000000000000000000000000000
+      - path: src/diagnostics/plot_tsne_interactive.py
+        md5: 00000000000000000000000000000000
+      - path: src/diagnostics/symbolic_influence_map.py
+        md5: 00000000000000000000000000000000
+    outs:
+      - path: outputs/diagnostics
+        md5: 00000000000000000000000000000000
+        dir: true
+        nfiles: 0
+        size: 0
+    metrics:
+      - path: outputs/diagnostics/diagnostic_summary.json
+        md5: 00000000000000000000000000000000
+        metric: true
+    plots:
+      - path: outputs/diagnostics
+        md5: 00000000000000000000000000000000
+        dir: true
+        plot: true
+        nfiles: 0
+        size: 0
+
+  submit:
+    cmd: poetry run spectramind submit --pred outputs/predictions --bundle outputs/submission/bundle.zip --meta outputs/submission/manifest.json
+    deps:
+      - path: outputs/predictions
+        md5: 00000000000000000000000000000000
+        dir: true
+      - path: src/cli/cli_submit.py
+        md5: 00000000000000000000000000000000
+    outs:
+      - path: outputs/submission/bundle.zip
+        md5: 00000000000000000000000000000000
+        size: 0
+      - path: outputs/submission/manifest.json
+        md5: 00000000000000000000000000000000
+        metric: true

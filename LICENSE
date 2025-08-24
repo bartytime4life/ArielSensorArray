@@ -1,21 +1,46 @@
-MIT License
+MIT License — Upgraded (SpectraMind V50)
 
-Copyright (c) 2025 SpectraMind Team
+Copyright (c) 2025 SpectraMind Team and Contributors
+https://github.com/bartytime4life/SpectraMindV50
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+of this software, associated documentation files, and research artifacts
+(the "Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Software, and to permit
+persons to whom the Software is furnished to do so, subject to the following
+conditions:
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+1. **Attribution & Citation**  
+   All copies or substantial portions of the Software must retain the above
+   copyright notice, this permission notice, and a citation reference to the
+   associated `CITATION.cff` file.  
+   In scientific publications, presentations, or derivative works that use
+   this Software, please cite:  
+   *SpectraMind V50: A Neuro-symbolic, Physics-informed Pipeline for the NeurIPS 2025 Ariel Data Challenge*  
+   (see `CITATION.cff` for full citation metadata).
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+2. **No Warranty**  
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+   EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+   OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, ACCURACY,
+   NON-INFRINGEMENT, OR FITNESS FOR SCIENTIFIC USE. IN NO EVENT SHALL
+   THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES,
+   OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR
+   OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE
+   OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+3. **Research & Competition Use**  
+   This Software is released for research, educational, and competition use
+   (e.g., NeurIPS Ariel Data Challenge 2025, Kaggle submissions).  
+   Users are responsible for ensuring compliance with any applicable data
+   licenses, challenge rules, or institutional policies.
+
+4. **Community Contributions**  
+   Contributions are welcomed under the terms of this license. Contributors
+   agree that submitted changes are provided under the MIT License unless
+   explicitly stated otherwise.
+
+---
+
+SPDX-License-Identifier: MIT

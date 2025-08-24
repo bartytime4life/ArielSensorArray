@@ -1,98 +1,195 @@
-Here are the upgraded dependency files, aligned with the V50 stack (Mamba SSM, GNNs, Hydra/Typer, DVC, SHAP/UMAP, calibration, and diagnostics). I’ve included pragmatic notes where installation depends on CUDA/torch wheels.
+
+````markdown
+# Contributing to SpectraMind V50 — ArielSensorArray
+
+Welcome! 🎉  
+Thank you for considering contributing to **SpectraMind V50**, our neuro-symbolic, physics-informed AI pipeline for the [NeurIPS 2025 Ariel Data Challenge](https://www.kaggle.com/competitions/ariel-data-challenge-2025).
+
+This document provides guidelines for contributors, covering setup, coding standards, commit practices, and competition-specific rules.
 
 ---
 
-### `requirements.txt`
+## 🚀 Getting Started
 
-```text
-# ===== Core numerical stack =====
-numpy>=1.26.0
-scipy>=1.11.0
-pandas>=2.2.0
-pyarrow>=15.0.0
+### Environment Setup
+We support **two parallel stacks**:
 
-# ===== Deep learning =====
-# Pin torch to your CUDA stack explicitly in production. Example:
-#   pip install --index-url https://download.pytorch.org/whl/cu121 torch torchvision torchaudio
-torch>=2.2.0
-torchvision>=0.17.0
-torchaudio>=2.2.0
+1. **Poetry (recommended for development)**  
+   ```bash
+   poetry install
+   poetry shell
+````
 
-# Graph / GNN utilities (NetworkX used even when TG is absent)
-networkx>=3.2.1
+2. **Conda/Mamba (for CI, Kaggle, HPC)**
 
-# Torch Geometric (install wheels matching your torch/CUDA version from https://pytorch-geometric.readthedocs.io/)
-# Keep the metapackage here for resolver visibility; a proper install often requires extra wheel URLs.
-torch-geometric>=2.5.0
+   ```bash
+   mamba env create -f CONDA_ENV.yml
+   conda activate spectramindv50
+   ```
 
-# ===== Sequence / SSM (FGS1 encoder) =====
-# Mamba SSM reference implementation. If your platform uses a different package, adjust accordingly.
-mamba-ssm>=1.2.0
+🔑 **Notes:**
 
-# ===== Config + CLI + logging =====
-hydra-core>=1.3.2
-omegaconf>=2.3.0
-typer>=0.12.4
-rich>=13.7.1
+* For **GPU installs**, pin PyTorch to your CUDA build:
 
-# ===== Uncertainty / calibration / stats =====
-statsmodels>=0.14.2
-scikit-learn>=1.4.0
-# Optional: conformal prediction helpers (generic libs)
-mapie==0.8.4
+  ```bash
+  pip install --index-url https://download.pytorch.org/whl/cu121 torch torchvision torchaudio
+  ```
+* For **CPU-only installs**, swap `pytorch-cuda` with `cpuonly` in `CONDA_ENV.yml`.
 
-# ===== Explainability & visualization =====
-shap>=0.44.0
-umap-learn>=0.5.5
-matplotlib>=3.8.0
-plotly>=5.20.0
+### Dependencies
 
-# ===== Experiment tracking (optional) =====
-mlflow>=2.12.1
+* Core stack: **NumPy, SciPy, Pandas, PyArrow**
+* DL stack: **PyTorch 2.2+, Torch Geometric (wheels), Mamba-SSM**
+* Config/CLI: **Hydra, Typer, Rich**
+* Diagnostics: **SHAP, UMAP, Plotly, Matplotlib**
+* Versioning: **DVC** (with S3/GDrive/GS backends)
+* Tracking: **MLflow, W\&B (optional)**
 
-# ===== Data & artifact versioning =====
-dvc>=3.50.0
-# Choose appropriate remote(s); comment out the ones you don’t need.
-dvc-s3>=3.0.1
-dvc-gs>=3.0.0
-dvc-gdrive>=3.0.0
+See [`requirements.txt`](./requirements.txt) and [`requirements-dev.txt`](./requirements-dev.txt) for details.
 
-# ===== Misc utilities =====
-tqdm>=4.66.2
-pyyaml>=6.0.1
+---
+
+## 📦 Project Layout
+
+```bash
+SpectraMindV50/
+├── spectramind/          # Core pipeline (FGS1 Mamba, AIRS GNN, decoders, calibration, diagnostics)
+├── configs/              # Hydra YAML configs
+├── scripts/              # CLI utilities, DVC hooks
+├── notebooks/            # Prototypes and experiments
+├── tests/                # pytest suite (unit, integration, symbolic checks)
+├── assets/               # Diagrams, dashboards, generated HTML reports
+├── .github/workflows/    # CI/CD pipelines
 ```
 
 ---
 
-### `requirements-dev.txt`
+## 🧪 Development Workflow
 
-```text
-# ===== Linters / formatters / typing =====
-ruff>=0.6.9
-black>=24.8.0
-isort>=5.13.2
-mypy>=1.11.0
-types-PyYAML>=6.0.12.20240808
+1. **Fork & Branch**
 
-# ===== Testing =====
-pytest>=8.1.0
-pytest-cov>=5.0.0
-hypothesis>=6.105.1
+   * Fork the repo, create feature branches from `main`:
 
-# ===== Pre-commit hooks =====
-pre-commit>=3.7.1
+     ```bash
+     git checkout -b feat/my-feature
+     ```
 
-# ===== Docs / notebooks (optional) =====
-mkdocs>=1.6.0
-mkdocs-material>=9.5.27
-jupyterlab>=4.2.4
-notebook>=7.2.2
+2. **Pre-commit Hooks**
+
+   * Install hooks:
+
+     ```bash
+     pre-commit install -t pre-commit -t pre-push
+     ```
+   * Hooks enforce: `ruff`, `black`, `isort`, `mypy`.
+
+3. **Testing**
+
+   * Run full test suite:
+
+     ```bash
+     pytest -q --cov=spectramind
+     ```
+
+4. **Documentation**
+
+   * MkDocs drives docs. To preview:
+
+     ```bash
+     mkdocs serve
+     ```
+
+5. **CLI Self-test**
+
+   * Before pushing:
+
+     ```bash
+     spectramind test --deep
+     ```
+
+---
+
+## 🎯 Contribution Guidelines
+
+* **Style:** Follow [PEP 8](https://peps.python.org/pep-0008/) with enforced linters.
+* **Commits:** Use [Conventional Commits](https://www.conventionalcommits.org/):
+
+  * `feat: add symbolic loss decomposition`
+  * `fix: correct calibration σ scaling`
+* **PRs:** One logical feature/fix per PR. Include:
+
+  * ✅ Tests
+  * 📖 Docs (if user-facing)
+  * 📝 Changelog entry
+
+---
+
+## 🧬 Kaggle Integration
+
+* **Competition Code:** Ensure Kaggle notebooks use `requirements.txt` or `CONDA_ENV.yml` to replicate the environment.
+* **Resource Limits:** Kaggle provides \~12h GPU runtime (Tesla P100, 16GB RAM). Optimize configs accordingly.
+* **Reproducibility:** Always pin `torch`/`torch-geometric` to compatible wheels to avoid runtime mismatch.
+* **Leaderboard Etiquette:** Respect the [Kaggle Code of Conduct](https://www.kaggle.com/code-of-conduct). Share public starter notebooks, but avoid leaking private test insights.
+
+---
+
+## 🔍 CI/CD
+
+Our GitHub Actions workflows check:
+
+* **Linting:** `lint.yml`
+* **Diagnostics:** `diagnostics.yml` (runs UMAP/t-SNE, SHAP, symbolic overlays)
+* **Docs:** `docs.yml`
+* **Benchmarking:** `benchmark.yml`
+
+CI **must pass** before merging into `main`.
+
+---
+
+## 🛠️ Advanced Tips
+
+* **Torch Geometric:** Install with CUDA-matched wheels:
+
+  ```bash
+  pip install torch-scatter -f https://data.pyg.org/whl/torch-2.4.0+cu121.html
+  ```
+* **Mamba-SSM:** If your environment uses a fork, adjust `requirements.txt`.
+* **DVC Remotes:** Configure only the remotes you use:
+
+  ```bash
+  dvc remote add -d s3remote s3://bucket/path
+  ```
+
+---
+
+## 🤝 Code of Conduct
+
+We follow the [Contributor Covenant](https://www.contributor-covenant.org/).
+Please treat all contributors and community members with respect.
+
+---
+
+## 📜 License
+
+SpectraMind V50 is released under the **Apache 2.0 License**.
+By contributing, you agree your code will be licensed under the same.
+
+---
+
+## 🙌 Acknowledgments
+
+* ESA Ariel Mission science team
+* NeurIPS 2025 Ariel Challenge organizers
+* Open-source contributors in PyTorch, Hydra, DVC, SHAP, UMAP, and beyond
+* Kaggle community notebooks & discussions
+
+---
+
+## 🔗 References
+
+* [NeurIPS 2025 Ariel Data Challenge](https://www.kaggle.com/competitions/ariel-data-challenge-2025)
+* [Torch Geometric Documentation](https://pytorch-geometric.readthedocs.io/)
+* [Hydra Documentation](https://hydra.cc/)
+* [DVC Documentation](https://dvc.org/)
+
 ```
-
-**Notes & tips**
-
-* **PyTorch + CUDA:** For reproducible installs, always pin the torch build to your CUDA version (e.g., `cu121`) using the official index URL. The plain `pip torch` above will default to CPU or whatever wheel PyPI offers.
-* **torch-geometric:** Install wheels that match your exact PyTorch & CUDA versions (their docs provide one-liners). Keeping the requirement here helps resolvers, but your CI should install via the TG wheel URL for consistency.
-* **mamba-ssm:** If your environment uses a different SSM package name or a compiled fork, adjust accordingly. The requirement above follows commonly used naming.
-* **DVC remotes:** Keep only the remote backends you actually use (e.g., remove `dvc-gs` if you don’t use Google Cloud Storage).
-* **Docs/notebooks:** The dev file includes MkDocs + Material and Jupyter; drop these if you want a slimmer dev image.
