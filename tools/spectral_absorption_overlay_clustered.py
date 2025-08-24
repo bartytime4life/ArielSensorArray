@@ -3,939 +3,938 @@
 """
 tools/spectral_absorption_overlay_clustered.py
 
-SpectraMind V50 — Clustered Spectral Absorption Overlay
+SpectraMind V50 — Spectral Absorption Overlay (Clustered) • Ultimate, Challenge‑Grade
 
 Purpose
 -------
-Compute absorption features from predicted μ spectra, cluster the samples using band-depth
-features (plus optional FFT/entropy descriptors), and render clustered overlays:
-
-  • Per‑cluster mean/median spectrum with shaded IQR and band overlays
-  • Heatmaps of spectra sorted by cluster and by band-depth score
-  • Interactive Plotly figures (per‑cluster overlays, UMAP if available)
-  • CSV tables: cluster assignments, band depths, cluster stats
-  • Optional HTML report linking plots/tables for diagnostics dashboard inclusion
-
-This tool is designed to integrate with the V50 diagnostics stack and the unified HTML
-report (`generate_html_report.py`). All file outputs are safe to link/iframe.
+Cluster spectral bins by their cross‑planet absorption behavior and render an
+overlayed visualization that fuses:
+  • Mean/median μ(λ) curve(s)
+  • Clustered bin regions (color‑coded, contiguous spans)
+  • Molecular band overlays (H2O, CO2, CH4, CO, NH3, etc.; configurable)
+  • Optional symbolic overlays (per‑bin or per‑planet; flexible schema)
+  • Exported cluster tables, band overlaps, HTML dashboard, and PNG figures
 
 Inputs
 ------
---mu            N×B .npy of predicted μ (required)
---wavelengths   B .npy of λ values (optional; if absent, bin indices are used)
---bands         YAML/JSON file specifying named bands (μm or indices) (optional)
---meta          CSV with N rows for hover/labels (optional)
---symbolic      JSON with per-sample symbolic violation summaries (optional)
---shap-bins     Optional N×B .npy of per-bin SHAP magnitudes for overlay scoring (optional)
+  --mu                : N×B array (n_planets × n_bins) for μ (transmission) OR flux
+  --wavelengths       : length‑B array of wavelengths (e.g., microns). If absent, fall back to bin indices.
+  --bands-json        : (optional) JSON with molecular band definitions; see format below.
+  --symbolic-bins     : (optional) per‑bin JSON/CSV with row per bin (violation, weight, flag). Flexible schema.
+  --symbolic-planets  : (optional) per‑planet JSON/CSV (not required; used for cluster stats).
+  --units             : "micron" (default) or "index" — used in labels when wavelengths missing.
+  --mu-mode           : "transmission" (μ already absorption‑like) or "flux" (convert to absorption as 1‑norm_flux)
+  --norm              : "zscore" | "minmax" | "none"  (bin‑wise normalization across planets before clustering)
+  --feature           : "raw" | "std" | "entropy" | "fft" | "pca"
+  --k                 : number of clusters (k‑means)
+  --cluster           : "kmeans" | "agglo"
+  --seed              : RNG seed
+  --outdir            : output directory
+  --html-name         : dashboard HTML filename (default: spectral_absorption_overlay_clustered.html)
+  --open-browser      : open dashboard after run (if environment allows)
 
-Feature Engineering (defaults)
-------------------------------
-• Band depths per named band: mean(cont) - mean(band)
-  - A "continuum" band can also be provided; else an automatic continuum is estimated
-    via a robust rolling median or a low-order poly fit.
-• Global descriptors (optional toggles):
-  - Entropy of μ
-  - FFT high-frequency energy ratio
-  - Mean SHAP magnitude (if provided)
-  - Symbolic violation count/score (if provided)
+Molecular bands JSON format (example)
+------------------------------------
+{
+  "units": "micron",
+  "bands": {
+    "H2O":  [[1.3,1.5], [1.8,2.0]],
+    "CO2":  [[2.0,2.1], [4.2,4.4]],
+    "CH4":  [[3.2,3.4]],
+    "CO":   [[4.5,4.8]],
+    "NH3":  [[2.2,2.35]]
+  }
+}
 
-Clustering
-----------
-• Methods: KMeans (default), MiniBatchKMeans, DBSCAN, Agglomerative
-• Features: concatenation of band-depth vector + optional globals (scaled)
-• UMAP/TSNE embedding for visualization (optional and graceful if packages missing)
+If omitted, a default pragmatic set of bands is used for Ariel‑like ranges.
 
-Outputs (in --outdir)
----------------------
-tables/
-  band_depths.csv
-  cluster_assignments.csv
-  cluster_stats.csv
-plots/
-  clusters_overlay_*.png / .html
-  spectra_heatmap_by_cluster_*.png
-  umap_clusters.html / tsne_clusters.html (if enabled)
-report_spectral_absorption_overlay.html (if --html)
+Outputs
+-------
+outdir/
+  cluster_assignments.csv                 # bin → cluster_id (+ wavelength, flags, band overlaps)
+  cluster_stats.csv                       # size, λ stats, mean μ, band coverage
+  band_overlap_matrix.csv                 # clusters × molecules (% of cluster in band)
+  mean_mu.png                             # mean μ(λ) with cluster spans + band overlays
+  cluster_heatmap.png/.html               # bins × features heatmap (optional Plotly)
+  bands_overlay_only.png                  # molecular bands overlay for quick review
+  symbolic_bin_overlay.png                # if symbolic-bins provided (importance bar)
+  spectral_absorption_overlay_manifest.json
+  run_hash_summary_v50.json               # append‑only reproducibility trail
+  dashboard.html                          # self-contained quick links + preview table
 
-CLI Examples
-------------
-# Minimal:
-python -m tools.spectral_absorption_overlay_clustered \
-  --mu outputs/predictions/mu.npy \
-  --outdir outputs/absorption_clusters
-
-# With wavelengths, bands, and HTML report:
-python -m tools.spectral_absorption_overlay_clustered \
-  --mu outputs/predictions/mu.npy \
-  --wavelengths data/wavelengths.npy \
-  --bands configs/bands.yaml \
-  --outdir outputs/absorption_clusters --html
-
-# Include symbolic and SHAP overlays, use 6 clusters, add UMAP:
-python -m tools.spectral_absorption_overlay_clustered \
-  --mu mu.npy --wavelengths lam.npy --bands bands.yaml \
-  --symbolic outputs/diagnostics/symbolic_results.json \
-  --shap-bins outputs/diagnostics/shap_bins.npy \
-  --n-clusters 6 --umap --html --save-png
+Design & Integration Notes
+--------------------------
+• Deterministic seeding, append‑only logs to logs/v50_debug_log.md and logs/v50_runs.jsonl
+• No external network calls; optional Plotly/Matplotlib degrade gracefully to CSV
+• Molecular overlays align to wavelength vector if present, else bin index domain
+• Cluster features are derived from across‑planet statistics per bin (robust & fast)
+• Clusters are colored consistently across plots; legend is exported
+• Works standalone but designed to mesh with SpectraMind V50 diagnostics dashboard
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import math
 import os
 import sys
-import time
-import warnings
-from dataclasses import dataclass, field
+import textwrap
+import hashlib
+import datetime as _dt
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
-import pandas as pd
-import typer
-from rich.console import Console
-from rich.panel import Panel
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
-from rich.theme import Theme
 
-# Plotting (PNG, static)
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-
-# Plotly (HTML, interactive)
-import plotly.express as px
-import plotly.graph_objects as go
-import plotly.io as pio
-
-# Clustering & projection
-from sklearn.preprocessing import StandardScaler
-from sklearn.decomposition import PCA
-from sklearn.cluster import KMeans, MiniBatchKMeans, DBSCAN, AgglomerativeClustering
-from sklearn.manifold import TSNE
-
-# Optional deps: umap-learn, pyyaml
+# Required for tables/IO
 try:
-    import umap  # type: ignore
-    _HAS_UMAP = True
+    import pandas as pd
+except Exception as e:
+    raise RuntimeError("pandas is required. Please `pip install pandas`.") from e
+
+# Optional viz (graceful fallbacks)
+try:
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    _MPL_OK = True
 except Exception:
-    _HAS_UMAP = False
+    _MPL_OK = False
 
 try:
-    import yaml
-    _HAS_YAML = True
+    import plotly.graph_objects as go
+    import plotly.io as pio
+    _PLOTLY_OK = True
 except Exception:
-    _HAS_YAML = False
+    _PLOTLY_OK = False
 
-# Typer CLI
-app = typer.Typer(add_completion=False, help="SpectraMind V50 — Clustered Spectral Absorption Overlay")
-console = Console(theme=Theme({"info": "cyan", "warn": "yellow", "err": "bold red"}))
-
-
-# ============================================================
-# Utility
-# ============================================================
-
-def ensure_dir(path: Path) -> None:
-    path.mkdir(parents=True, exist_ok=True)
+# Optional ML utilities
+try:
+    from sklearn.cluster import KMeans, AgglomerativeClustering
+    from sklearn.decomposition import PCA
+except Exception:
+    # We only strictly need KMeans/Agglo/PCA for certain options.
+    KMeans = None
+    AgglomerativeClustering = None
+    PCA = None
 
 
-def load_npy(path: Optional[str]) -> Optional[np.ndarray]:
-    if not path:
-        return None
-    arr = np.load(path)
-    if not isinstance(arr, np.ndarray):
-        raise ValueError(f"{path} did not contain an ndarray")
-    return arr
+# ==============================================================================
+# Logging & reproducibility utilities
+# ==============================================================================
+
+def _now_iso() -> str:
+    return _dt.datetime.now().astimezone().isoformat(timespec="seconds")
 
 
-def append_audit_log(msg: str) -> None:
-    try:
-        logdir = Path("logs")
-        logdir.mkdir(parents=True, exist_ok=True)
-        with open(logdir / "v50_debug_log.md", "a", encoding="utf-8") as f:
-            f.write(msg.rstrip() + "\n")
-    except Exception:
-        pass
-
-
-def set_global_seed(seed: int) -> None:
-    try:
-        import random
-        random.seed(seed)
-    except Exception:
-        pass
-    try:
-        np.random.seed(seed)
-    except Exception:
-        pass
-
-
-def now_str() -> str:
-    import datetime as dt
-    return dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-
-# ============================================================
-# Bands config
-# ============================================================
-
-@dataclass
-class BandsConfig:
-    """
-    Holds named bands and an optional 'continuum' name.
-    Bands can be specified in μm (with wavelengths provided) or in indices.
-    """
-    bands: Dict[str, Tuple[float, float]] = field(default_factory=dict)
-    continuum: Optional[Tuple[float, float]] = None  # optional explicit continuum window
-    unit: str = "auto"  # "auto", "um", or "index"
-
-    @staticmethod
-    def from_file(path: Optional[str]) -> "BandsConfig":
-        if path is None:
-            return BandsConfig()
-        p = Path(path)
-        if p.suffix.lower() in (".yaml", ".yml"):
-            if not _HAS_YAML:
-                raise RuntimeError("PyYAML not installed; cannot parse YAML bands file.")
-            data = yaml.safe_load(p.read_text())
-        elif p.suffix.lower() == ".json":
-            data = json.loads(p.read_text())
-        else:
-            raise ValueError(f"Unsupported band file type: {p.suffix}")
-        bc = BandsConfig()
-        bc.bands = {str(k): (float(v[0]), float(v[1])) for k, v in data.get("bands", {}).items()}
-        cont = data.get("continuum", None)
-        if cont is not None:
-            bc.continuum = (float(cont[0]), float(cont[1]))
-        bc.unit = str(data.get("unit", "auto"))
-        return bc
-
-
-def band_mask_from_bounds(
-    B: int,
-    bounds: Tuple[float, float],
-    wavelengths: Optional[np.ndarray],
-    unit: str = "auto",
-) -> np.ndarray:
-    """
-    Return a binary mask for a band defined by (lo, hi), either in μm or indices.
-    If unit="auto": use wavelengths if provided; else treat as indices.
-    """
-    lo, hi = bounds
-    mask = np.zeros(B, dtype=np.float32)
-    if (unit == "um") or (unit == "auto" and wavelengths is not None):
-        lam = wavelengths if wavelengths is not None else np.arange(B)
-        mask = ((lam >= lo) & (lam <= hi)).astype(np.float32)
-    else:
-        ia = max(0, min(B - 1, int(round(lo))))
-        ib = max(0, min(B - 1, int(round(hi))))
-        if ib < ia:
-            ia, ib = ib, ia
-        mask[ia:ib + 1] = 1.0
-    return mask
-
-
-# ============================================================
-# Feature engineering
-# ============================================================
-
-def rolling_median(x: np.ndarray, win: int = 21) -> np.ndarray:
-    """Simple rolling median with reflect pad; odd window size recommended."""
-    w = max(3, win | 1)
-    pad = w // 2
-    xr = np.pad(x, (pad, pad), mode="reflect")
-    out = np.empty_like(x, dtype=float)
-    for i in range(len(x)):
-        out[i] = np.median(xr[i:i + w])
-    return out
-
-
-def polyfit_baseline(x: np.ndarray, y: np.ndarray, deg: int = 3) -> np.ndarray:
-    """Low-order polynomial baseline fit."""
-    try:
-        c = np.polyfit(x, y, deg=deg)
-        p = np.poly1d(c)
-        return p(x)
-    except Exception:
-        # fallback to rolling median
-        return rolling_median(y, win=min(51, max(7, len(y)//12*2+1)))
-
-
-def estimate_continuum(mu_row: np.ndarray, wavelengths: Optional[np.ndarray]) -> np.ndarray:
-    """
-    Estimate a smooth baseline ("continuum") for a single μ spectrum.
-    If wavelengths provided, polyfit over λ; else polyfit over bin index.
-    """
-    B = mu_row.shape[0]
-    x = wavelengths if wavelengths is not None else np.arange(B)
-    base = polyfit_baseline(x.astype(float), mu_row.astype(float), deg=3)
-    # safety: ensure no zeros/negatives (not strictly required for "depth")
-    return base
-
-
-def band_mean(mu_row: np.ndarray, mask01: np.ndarray) -> float:
-    w = mask01.astype(float)
-    if w.sum() <= 0:
-        return float("nan")
-    return float(np.sum(mu_row * w) / np.sum(w))
-
-
-def entropy_row(mu_row: np.ndarray, eps: float = 1e-12) -> float:
-    v = mu_row.astype(float)
-    v = v - np.min(v)
-    v = v + eps
-    p = v / np.sum(v)
-    return float(-np.sum(p * np.log(p + eps)))
-
-
-def fft_highfreq_ratio(mu_row: np.ndarray, keep: int = 32) -> float:
-    fx = np.fft.rfft(mu_row)
-    mag2 = (fx.real ** 2 + fx.imag ** 2)
-    low = mag2[:max(1, keep)].sum()
-    high = mag2[max(1, keep):].sum()
-    denom = (low + high) if (low + high) > 0 else 1.0
-    return float(high / denom)
+def _ensure_dir(p: Path) -> None:
+    p.mkdir(parents=True, exist_ok=True)
 
 
 @dataclass
-class FeatureConfig:
-    use_entropy: bool = True
-    use_fft_ratio: bool = True
-    use_shap_mean: bool = True
-    use_symbolic_score: bool = True
-    fft_keep: int = 32
+class AuditLogger:
+    md_path: Path
+    jsonl_path: Path
+
+    def log(self, event: Dict[str, Any]) -> None:
+        _ensure_dir(self.md_path.parent); _ensure_dir(self.jsonl_path.parent)
+        row = dict(event); row.setdefault("timestamp", _now_iso())
+        # JSONL
+        with open(self.jsonl_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        # Markdown
+        md = textwrap.dedent(f"""
+        ---
+        time: {row["timestamp"]}
+        tool: spectral_absorption_overlay_clustered
+        action: {row.get("action","run")}
+        status: {row.get("status","ok")}
+        mu: {row.get("mu","")}
+        wavelengths: {row.get("wavelengths","")}
+        bands_json: {row.get("bands_json","")}
+        symbolic_bins: {row.get("symbolic_bins","")}
+        outdir: {row.get("outdir","")}
+        k: {row.get("k","")}
+        feature: {row.get("feature","raw")}
+        cluster: {row.get("cluster","kmeans")}
+        message: {row.get("message","")}
+        """).strip() + "\n"
+        with open(self.md_path, "a", encoding="utf-8") as f:
+            f.write(md)
 
 
-def compute_band_depth_features(
-    mu: np.ndarray,
-    bands_cfg: BandsConfig,
-    wavelengths: Optional[np.ndarray],
-    shap_bins: Optional[np.ndarray],
-    symbolic_json: Optional[Dict[str, Any]],
-    feat_cfg: FeatureConfig,
-) -> Tuple[pd.DataFrame, Dict[str, np.ndarray]]:
-    """
-    Compute band-depth features for all samples. If a 'continuum' band is provided in bands_cfg,
-    depth = mean(cont) - mean(band). Else estimate a per-sample continuum curve and define
-    band mean relative to baseline: depth ~ mean(baseline) - mean(band region).
+def _hash_jsonable(obj: Any) -> str:
+    b = json.dumps(obj, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(b).hexdigest()
 
-    Returns:
-      features_df (N × (num_bands + extras))
-      masks_by_name: dict name -> mask01 (B,)
-    """
-    N, B = mu.shape
-    masks_by_name: Dict[str, np.ndarray] = {}
-    # Build masks
-    for name, bounds in bands_cfg.bands.items():
-        masks_by_name[name] = band_mask_from_bounds(B, bounds, wavelengths, unit=bands_cfg.unit)
-    cont_mask = None
-    if bands_cfg.continuum is not None:
-        cont_mask = band_mask_from_bounds(B, bands_cfg.continuum, wavelengths, unit=bands_cfg.unit)
 
-    # Compute features
-    cols = []
-    data = []
-
-    for name in bands_cfg.bands.keys():
-        cols.append(f"depth::{name}")
-
-    if feat_cfg.use_entropy:
-        cols.append("entropy")
-    if feat_cfg.use_fft_ratio:
-        cols.append("fft_highfreq_ratio")
-    if feat_cfg.use_shap_mean and shap_bins is not None:
-        cols.append("shap_mean")
-    if feat_cfg.use_symbolic_score and symbolic_json is not None:
-        cols.append("symbolic_score")
-
-    # Precompute per-sample extras
-    # Parse symbolic score vector best-effort: allow list[dict] or dict[str]->dict
-    sym_vec = None
-    if symbolic_json is not None:
+def _update_run_hash_summary(outdir: Path, manifest: Dict[str, Any]) -> None:
+    path = outdir / "run_hash_summary_v50.json"
+    payload = {"runs": []}
+    if path.exists():
         try:
-            if isinstance(symbolic_json, list) and len(symbolic_json) == N:
-                sym_vec = np.array([float(d.get("violations_total", 0.0)) for d in symbolic_json], dtype=float)
-            elif isinstance(symbolic_json, dict) and all(k.isdigit() for k in symbolic_json.keys()):
-                sym_vec = np.array([float(symbolic_json.get(str(i), {}).get("violations_total", 0.0)) for i in range(N)])
+            with open(path, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+            if not isinstance(payload, dict) or "runs" not in payload:
+                payload = {"runs": []}
         except Exception:
-            sym_vec = None
+            payload = {"runs": []}
+    payload["runs"].append({"hash": _hash_jsonable(manifest), "timestamp": _now_iso(), "manifest": manifest})
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
 
-    for i in range(N):
-        row = []
-        mu_i = mu[i, :]
 
-        if cont_mask is not None:
-            cont_mean = band_mean(mu_i, cont_mask)
-            for name, mask in masks_by_name.items():
-                row.append(cont_mean - band_mean(mu_i, mask))
+# ==============================================================================
+# Loading helpers
+# ==============================================================================
+
+def _load_array_any(path: Path) -> np.ndarray:
+    s = path.suffix.lower()
+    if s == ".npy":
+        return np.asarray(np.load(path, allow_pickle=False))
+    if s == ".npz":
+        z = np.load(path, allow_pickle=False)
+        # pick first
+        for k in z.files:
+            return np.asarray(z[k])
+        raise ValueError(f"No arrays found in {path}")
+    if s in {".csv", ".tsv"}:
+        df = pd.read_csv(path) if s == ".csv" else pd.read_csv(path, sep="\t")
+        return df.to_numpy()
+    if s == ".parquet":
+        return pd.read_parquet(path).to_numpy()
+    if s == ".feather":
+        return pd.read_feather(path).to_numpy()
+    raise ValueError(f"Unsupported array format: {path}")
+
+
+def _load_wavelengths(path: Optional[Path], B_hint: int) -> Optional[np.ndarray]:
+    if path is None:
+        return None
+    arr = _load_array_any(path)
+    if arr.ndim == 2:
+        vec = np.asarray(arr[:, 0]).reshape(-1)
+    else:
+        vec = np.asarray(arr).reshape(-1)
+    vec = vec.astype(float)
+    # align length
+    if vec.shape[0] != B_hint:
+        out = np.zeros(B_hint, dtype=float)
+        copy = min(B_hint, vec.shape[0])
+        out[:copy] = vec[:copy]
+        return out
+    return vec
+
+
+def _load_bands_json(path: Optional[Path]) -> Dict[str, List[Tuple[float, float]]]:
+    """
+    Return {"molecule": [(start,end), ...], ...} in wavelength units (e.g., microns).
+    If path is None, return a default set of pragmatic bands.
+    """
+    if path is None:
+        # Default Ariel‑like coverage (rough, adjustable)
+        return {
+            "H2O": [(1.30, 1.55), (1.75, 2.05)],
+            "CO2": [(1.95, 2.10), (4.20, 4.45)],
+            "CH4": [(3.20, 3.45)],
+            "CO":  [(4.50, 4.85)],
+            "NH3": [(2.20, 2.38)],
+        }
+    with open(path, "r", encoding="utf-8") as f:
+        obj = json.load(f)
+    bands = obj.get("bands", obj)
+    result: Dict[str, List[Tuple[float, float]]] = {}
+    for mol, spans in bands.items():
+        spans_norm = []
+        for pair in spans:
+            if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+                continue
+            a, b = float(pair[0]), float(pair[1])
+            if b < a:
+                a, b = b, a
+            spans_norm.append((a, b))
+        if spans_norm:
+            result[str(mol)] = spans_norm
+    return result
+
+
+def _load_symbolic_bins(path: Optional[Path], B: int) -> Optional[pd.DataFrame]:
+    """
+    Load optional per‑bin symbolic overlay, flexible schema.
+    Returns DataFrame with columns: 'bin', and optionally 'score' (float), 'flag' (str/int)
+    """
+    if path is None:
+        return None
+    s = path.suffix.lower()
+    if s in {".csv", ".tsv"}:
+        df = pd.read_csv(path) if s == ".csv" else pd.read_csv(path, sep="\t")
+    elif s == ".json":
+        with open(path, "r", encoding="utf-8") as f:
+            obj = json.load(f)
+        if isinstance(obj, dict) and "rows" in obj and isinstance(obj["rows"], list):
+            df = pd.DataFrame(obj["rows"])
         else:
-            # Estimate continuum curve; compute baseline mean in each band region
-            baseline = estimate_continuum(mu_i, wavelengths)
-            for name, mask in masks_by_name.items():
-                bmean = band_mean(mu_i, mask)
-                cmean = band_mean(baseline, mask)
-                row.append(cmean - bmean)
-
-        if feat_cfg.use_entropy:
-            row.append(entropy_row(mu_i))
-        if feat_cfg.use_fft_ratio:
-            row.append(fft_highfreq_ratio(mu_i, keep=feat_cfg.fft_keep))
-        if feat_cfg.use_shap_mean and shap_bins is not None:
-            row.append(float(np.nanmean(np.abs(shap_bins[i, :]))))
-        if feat_cfg.use_symbolic_score and sym_vec is not None:
-            row.append(float(sym_vec[i]))
-
-        data.append(row)
-
-    features_df = pd.DataFrame(data, columns=cols)
-    return features_df, masks_by_name
-
-
-# ============================================================
-# Clustering & projections
-# ============================================================
-
-def cluster_features(
-    X: np.ndarray,
-    method: str = "kmeans",
-    n_clusters: int = 5,
-    seed: int = 42,
-    dbscan_eps: float = 0.5,
-    dbscan_min_samples: int = 10,
-    agglom_linkage: str = "ward",
-) -> np.ndarray:
-    method = method.lower()
-    if method == "kmeans":
-        model = KMeans(n_clusters=n_clusters, random_state=seed, n_init="auto")
-        labels = model.fit_predict(X)
-    elif method == "minibatchkmeans":
-        model = MiniBatchKMeans(n_clusters=n_clusters, random_state=seed, batch_size=256)
-        labels = model.fit_predict(X)
-    elif method == "dbscan":
-        model = DBSCAN(eps=dbscan_eps, min_samples=dbscan_min_samples)
-        labels = model.fit_predict(X)
-    elif method == "agglomerative":
-        model = AgglomerativeClustering(n_clusters=n_clusters, linkage=agglom_linkage)
-        labels = model.fit_predict(X)
+            df = pd.DataFrame(obj)
     else:
-        raise ValueError(f"Unknown clustering method: {method}")
-    return labels
+        # try generic table
+        arr = _load_array_any(path)
+        if arr.ndim == 2 and arr.shape[1] >= 1:
+            df = pd.DataFrame(arr, columns=[f"c{i}" for i in range(arr.shape[1])])
+            df["bin"] = np.arange(len(df))
+        else:
+            return None
+    # normalize
+    if "bin" not in df.columns:
+        df = df.reset_index().rename(columns={"index": "bin"})
+    df["bin"] = pd.to_numeric(df["bin"], errors="coerce").fillna(-1).astype(int)
+    df = df[(df["bin"] >= 0) & (df["bin"] < B)].copy()
+    # best‑effort 'score'
+    if "score" not in df.columns:
+        num = df.select_dtypes(include=[np.number]).copy()
+        if "bin" in num.columns:
+            num = num.drop(columns=["bin"])
+        df["score"] = num.sum(axis=1) if not num.empty else 0.0
+    return df[["bin", "score"] + [c for c in df.columns if c not in {"bin", "score"}]].drop_duplicates(subset=["bin"])
 
 
-def compute_projections(
-    X: np.ndarray,
-    do_umap: bool,
-    do_tsne: bool,
-    seed: int,
-) -> Dict[str, np.ndarray]:
-    out: Dict[str, np.ndarray] = {}
-    pca = PCA(n_components=2, random_state=seed)
-    out["pca2"] = pca.fit_transform(X)
-    if do_umap and _HAS_UMAP:
-        reducer = umap.UMAP(n_components=2, n_neighbors=15, min_dist=0.1, random_state=seed)
-        out["umap2"] = reducer.fit_transform(X)
-    if do_tsne:
-        tsne = TSNE(n_components=2, random_state=seed, init="random", learning_rate="auto", perplexity=30)
-        out["tsne2"] = tsne.fit_transform(X)
-    return out
+# ==============================================================================
+# Feature engineering for clustering
+# ==============================================================================
 
-
-# ============================================================
-# Visualization
-# ============================================================
-
-def plot_cluster_overlays_png(
-    mu: np.ndarray,
-    labels: np.ndarray,
-    wavelengths: Optional[np.ndarray],
-    masks_by_name: Dict[str, np.ndarray],
-    outdir: Path,
-) -> List[str]:
+def _normalize_binwise(mu: np.ndarray, mode: str) -> np.ndarray:
     """
-    Static PNG: per-cluster mean with shaded IQR; band regions overlaid.
+    Normalize each bin's across‑planet vector per chosen mode.
+    mu: N×B
+    Returns N×B
     """
-    B = mu.shape[1]
-    x = wavelengths if wavelengths is not None else np.arange(B)
-    uniq = np.unique(labels)
-    outfiles: List[str] = []
-
-    # Precompute band polygons
-    band_regions = []
-    for name, m in masks_by_name.items():
-        idx = np.where(m > 0.5)[0]
-        if idx.size == 0:
-            continue
-        lo, hi = idx.min(), idx.max()
-        xl = x[lo]
-        xh = x[hi]
-        band_regions.append((name, xl, xh))
-
-    for c in uniq:
-        sel = (labels == c)
-        if sel.sum() == 0:  # safety
-            continue
-        block = mu[sel, :]
-        mean = np.nanmean(block, axis=0)
-        q25 = np.nanpercentile(block, 25, axis=0)
-        q75 = np.nanpercentile(block, 75, axis=0)
-
-        plt.figure(figsize=(10, 4), dpi=120)
-        # shade bands
-        for (name, xl, xh) in band_regions:
-            plt.axvspan(xl, xh, color="#dbeafe", alpha=0.35, lw=0, label=None)
-        # IQR shaded
-        plt.fill_between(x, q25, q75, alpha=0.25, color="#9ca3af", label="IQR")
-        # Mean line
-        plt.plot(x, mean, lw=2.2, color="#0b5fff", label=f"Cluster {int(c)} mean")
-        plt.title(f"Cluster {int(c)} — mean ± IQR (N={int(sel.sum())})")
-        plt.xlabel("Wavelength" if wavelengths is not None else "Bin")
-        plt.ylabel("μ")
-        plt.grid(alpha=0.25)
-        plt.legend(loc="best", fontsize=9)
-        plt.tight_layout()
-        fn = outdir / f"clusters_overlay_c{int(c)}.png"
-        plt.savefig(fn)
-        plt.close()
-        outfiles.append(fn.name)
-
-    return outfiles
+    if mode == "none":
+        return mu
+    if mode == "zscore":
+        m = mu.mean(axis=0, keepdims=True)
+        s = mu.std(axis=0, keepdims=True) + 1e-12
+        return (mu - m) / s
+    if mode == "minmax":
+        lo = mu.min(axis=0, keepdims=True)
+        hi = mu.max(axis=0, keepdims=True)
+        return (mu - lo) / (hi - lo + 1e-12)
+    raise ValueError(f"Unknown norm mode: {mode}")
 
 
-def plot_cluster_overlays_html(
-    mu: np.ndarray,
-    labels: np.ndarray,
-    wavelengths: Optional[np.ndarray],
-    masks_by_name: Dict[str, np.ndarray],
-    outdir: Path,
-) -> List[str]:
+def _feature_per_bin(muN: np.ndarray, feature: str) -> np.ndarray:
     """
-    Interactive Plotly lines: per-cluster mean ± shaded band regions via shapes.
+    Build a per‑bin feature vector from the across‑planet values μ[:, b].
+    Return array of shape (B, D_features).
     """
-    B = mu.shape[1]
-    x = wavelengths if wavelengths is not None else np.arange(B)
-    uniq = np.unique(labels)
-    outfiles: List[str] = []
+    N, B = muN.shape
+    X = np.zeros((B, 1), dtype=float)
 
-    # Band shapes (rectangles)
-    shapes = []
-    for name, m in masks_by_name.items():
-        idx = np.where(m > 0.5)[0]
-        if idx.size == 0:
-            continue
-        lo, hi = idx.min(), idx.max()
-        xl = x[lo]
-        xh = x[hi]
-        shapes.append(dict(
-            type="rect",
-            xref="x",
-            yref="paper",
-            x0=float(xl),
-            x1=float(xh),
-            y0=0,
-            y1=1,
-            fillcolor="rgba(13,110,253,0.10)",
-            line=dict(width=0),
-            layer="below"
-        ))
+    if feature == "raw":
+        # mean across planets per bin
+        X = muN.mean(axis=0, keepdims=False).reshape(B, 1)
+        return X
 
-    for c in uniq:
-        sel = (labels == c)
-        if sel.sum() == 0:
-            continue
-        block = mu[sel, :]
-        mean = np.nanmean(block, axis=0)
-        q25 = np.nanpercentile(block, 25, axis=0)
-        q75 = np.nanpercentile(block, 75, axis=0)
+    if feature == "std":
+        X = muN.std(axis=0, keepdims=False).reshape(B, 1)
+        return X
 
-        fig = go.Figure()
-        # IQR band
-        fig.add_traces([
-            go.Scatter(x=x, y=q75, mode="lines", line=dict(width=0), showlegend=False),
-            go.Scatter(x=x, y=q25, mode="lines",
-                       fill="tonexty", fillcolor="rgba(156,163,175,0.35)",
-                       line=dict(width=0), showlegend=True, name="IQR"),
-        ])
-        # Mean
-        fig.add_trace(go.Scatter(x=x, y=mean, mode="lines", name=f"Cluster {int(c)} mean"))
+    if feature == "entropy":
+        # treat normalized μ as probabilities after softmax along planets
+        m = muN - muN.max(axis=0, keepdims=True)
+        p = np.exp(m)
+        p /= p.sum(axis=0, keepdims=True) + 1e-12
+        ent = -(p * np.log(p + 1e-12)).sum(axis=0)  # length B
+        return ent.reshape(B, 1)
 
-        fig.update_layout(
-            title=f"Cluster {int(c)} — mean ± IQR (N={int(sel.sum())})",
-            xaxis_title="Wavelength" if wavelengths is not None else "Bin",
-            yaxis_title="μ",
-            template="plotly_white",
-            height=420,
-            shapes=shapes,
-        )
-        fn = outdir / f"clusters_overlay_c{int(c)}.html"
-        pio.write_html(fig, file=str(fn), include_plotlyjs="cdn", full_html=True)
-        outfiles.append(fn.name)
+    if feature == "fft":
+        # magnitude of first K low‑frequency FFT coeffs of μ[:, b]; N timeseries length across planets
+        # choose K adaptively (min(8, N//2))
+        K = max(4, min(16, N // 2))
+        X = np.zeros((B, K), dtype=float)
+        for b in range(B):
+            v = muN[:, b]
+            f = np.fft.rfft(v)
+            mag = np.abs(f)[1:K+1]  # skip DC
+            if len(mag) < K:
+                pad = np.zeros(K, dtype=float)
+                pad[:len(mag)] = mag
+                mag = pad
+            X[b] = mag
+        # log‑scale
+        X = np.log1p(X)
+        return X
 
-    return outfiles
+    if feature == "pca":
+        # Use principal components across planets per bin.
+        # Build (B × N) matrix then project to few dims with PCA.
+        if PCA is None:
+            raise RuntimeError("scikit‑learn PCA not available. Install scikit‑learn or choose another feature.")
+        Z = muN.T  # B×N
+        pca = PCA(n_components=min(5, Z.shape[1]))
+        X = pca.fit_transform(Z)  # B×d
+        return X
+
+    raise ValueError(f"Unknown feature mode: {feature}")
 
 
-def plot_heatmap_sorted_png(
-    mu: np.ndarray,
-    labels: np.ndarray,
-    wavelengths: Optional[np.ndarray],
-    outdir: Path,
-    by: str = "cluster",
-) -> str:
+def _cluster_bins(X: np.ndarray, k: int, algo: str, seed: int) -> np.ndarray:
     """
-    Static heatmap of μ sorted by cluster or by mean band-depth.
+    Cluster rows of X (B×D) into k clusters.
+    Returns cluster labels length B in [0..k-1].
     """
-    N, B = mu.shape
-    if by == "cluster":
-        order = np.argsort(labels)
-        title = "Spectra heatmap (sorted by cluster)"
-        fname = "spectra_heatmap_by_cluster.png"
-    else:
-        # fallback: sort by row mean
-        order = np.argsort(mu.mean(axis=1))
-        title = "Spectra heatmap (sorted by μ mean)"
-        fname = "spectra_heatmap_by_mean.png"
-
-    mu_sorted = mu[order, :]
-    plt.figure(figsize=(10, 6), dpi=120)
-    plt.imshow(mu_sorted, aspect="auto", cmap="viridis", interpolation="nearest")
-    plt.colorbar(label="μ")
-    plt.title(title)
-    plt.xlabel("Wavelength" if wavelengths is not None else "Bin")
-    plt.ylabel("Samples (sorted)")
-    plt.tight_layout()
-    fn = outdir / fname
-    plt.savefig(fn)
-    plt.close()
-    return fn.name
+    B = X.shape[0]
+    if k <= 1:
+        return np.zeros(B, dtype=int)
+    if algo == "kmeans":
+        if KMeans is None:
+            raise RuntimeError("scikit‑learn KMeans not available. Install scikit‑learn or choose agglo.")
+        km = KMeans(n_clusters=k, random_state=seed, n_init=10, max_iter=300)
+        lab = km.fit_predict(X)
+        return lab.astype(int)
+    if algo == "agglo":
+        if AgglomerativeClustering is None:
+            raise RuntimeError("scikit‑learn AgglomerativeClustering not available.")
+        ac = AgglomerativeClustering(n_clusters=k, linkage="ward")
+        lab = ac.fit_predict(X)
+        return lab.astype(int)
+    raise ValueError(f"Unknown cluster algo: {algo}")
 
 
-def plot_embedding_html(
-    emb: np.ndarray,
-    labels: np.ndarray,
-    hover: Optional[pd.DataFrame],
-    title: str,
-    out_html: Path,
+# ==============================================================================
+# Visualization helpers
+# ==============================================================================
+
+def _pick_cluster_colors(k: int) -> List[str]:
+    """
+    Return at most k color hex strings. If Plotly available, use a qualitative palette,
+    else generate simple HSL‑like hexes.
+    """
+    if k <= 1:
+        return ["#4f46e5"]
+    if _PLOTLY_OK:
+        # plotly qualitative palette fallback
+        base = ["#636EFA","#EF553B","#00CC96","#AB63FA","#FFA15A","#19D3F3","#FF6692","#B6E880",
+                "#FF97FF","#FECB52","#1F77B4","#FF7F0E","#2CA02C","#D62728","#9467BD","#8C564B"]
+        if k <= len(base):
+            return base[:k]
+        # extend by cycling + darkening
+        out = []
+        for i in range(k):
+            out.append(base[i % len(base)])
+        return out
+    # generate HSL hex
+    cols = []
+    for i in range(k):
+        h = (i / k) % 1.0
+        s = 0.65
+        l = 0.50
+        # convert to RGB
+        import colorsys
+        r,g,b = colorsys.hls_to_rgb(h, l, s)
+        cols.append("#%02x%02x%02x" % (int(255*r), int(255*g), int(255*b)))
+    return cols
+
+
+def _plot_mean_mu_with_overlays(
+    wl: np.ndarray,
+    mean_mu: np.ndarray,
+    clusters: np.ndarray,
+    colors: List[str],
+    bands: Dict[str, List[Tuple[float,float]]],
+    units_label: str,
+    out_png: Path
 ) -> None:
-    df = pd.DataFrame({"x": emb[:, 0], "y": emb[:, 1], "cluster": labels})
-    if hover is not None:
-        for c in hover.columns:
-            df[c] = hover[c]
-    fig = px.scatter(
-        df, x="x", y="y", color="cluster",
-        hover_data=hover.columns.tolist() if hover is not None else None,
-        title=title, template="plotly_white"
-    )
-    fig.update_traces(marker=dict(opacity=0.9))
-    pio.write_html(fig, file=str(out_html), include_plotlyjs="cdn", full_html=True)
-
-
-# ============================================================
-# HTML report
-# ============================================================
-
-def build_html_report(
-    outdir: Path,
-    summary: Dict[str, Any],
-    tables: Dict[str, str],
-    pngs: List[str],
-    htmls: List[str],
-) -> str:
-    report = outdir / "report_spectral_absorption_overlay.html"
-    css = """
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Arial, sans-serif; margin: 16px; color: #0e1116; }
-    h1 { font-size: 20px; margin: 8px 0 12px; }
-    h2 { font-size: 16px; margin: 16px 0 8px; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 12px; }
-    .card { border: 1px solid #e5e7eb; border-radius: 12px; padding: 12px; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,0.04); }
-    a { color: #0b5fff; text-decoration: none; }
-    a:hover { text-decoration: underline; }
-    code { background: #f3f4f6; padding: 2px 4px; border-radius: 6px; }
     """
-    imgs = "".join([f'<div class="card"><img src="plots/{fn}" style="width:100%;height:auto" alt="{fn}"/></div>' for fn in pngs])
-    links = "".join([f'<div class="card"><a href="plots/{fn}">{fn}</a></div>' for fn in htmls])
-    tbls = "".join([f'<div class="card"><a href="tables/{v}">{k}: {v}</a></div>' for k, v in tables.items()])
+    Line plot of mean μ(λ) with translucent cluster spans and band overlays.
+    Fallback to CSV if MPL unavailable.
+    """
+    if not _MPL_OK:
+        # CSV fallback
+        pd.DataFrame({"wavelength": wl, "mean_mu": mean_mu, "cluster": clusters}).to_csv(out_png.with_suffix(".csv"), index=False)
+        return
+
+    _ensure_dir(out_png.parent)
+    plt.figure(figsize=(14, 6))
+
+    # Draw cluster spans (contiguous regions by cluster id)
+    B = len(wl)
+    for c in np.unique(clusters):
+        mask = (clusters == c)
+        # find segments
+        idx = np.where(mask)[0]
+        if idx.size == 0:
+            continue
+        s = idx[0]; prev = idx[0]
+        for i in idx[1:]:
+            if i != prev + 1:
+                # segment [s, prev]
+                a = wl[s]; b = wl[prev]
+                if b < a: a, b = b, a
+                plt.axvspan(a, b, color=colors[int(c)], alpha=0.12, lw=0)
+                s = i; prev = i; continue
+            prev = i
+        # last segment
+        a = wl[s]; b = wl[prev]
+        if b < a: a, b = b, a
+        plt.axvspan(a, b, color=colors[int(c)], alpha=0.12, lw=0)
+
+    # Plot mean μ(λ)
+    plt.plot(wl, mean_mu, lw=2.0, color="#111827")
+
+    # Band overlays (draw as thicker translucent spans on top)
+    for mol, spans in bands.items():
+        for (a, b) in spans:
+            plt.axvspan(a, b, color="#0b5fff", alpha=0.08, lw=0)
+
+    plt.title("Mean μ with Clustered Absorption Overlays + Molecular Bands")
+    plt.xlabel(f"Wavelength ({units_label})")
+    plt.ylabel("μ (mean across planets)")
+    # Make a legend proxy for clusters
+    from matplotlib.patches import Patch
+    handles = [Patch(facecolor=colors[i], edgecolor='none', alpha=0.25, label=f"Cluster {i}") for i in np.unique(clusters)]
+    handles.append(Patch(facecolor="#0b5fff", edgecolor='none', alpha=0.10, label="Molecular bands"))
+    plt.legend(handles=handles, loc="best", fontsize=9, ncol=2)
+    plt.tight_layout()
+    plt.savefig(out_png, dpi=160)
+    plt.close()
+
+
+def _plot_bands_only(wl: np.ndarray, bands: Dict[str,List[Tuple[float,float]]], units_label: str, out_png: Path) -> None:
+    if not _MPL_OK:
+        # write simple CSV of bands
+        rows=[]
+        for mol, spans in bands.items():
+            for (a,b) in spans:
+                rows.append({"molecule":mol,"start":a,"end":b})
+        pd.DataFrame(rows).to_csv(out_png.with_suffix(".csv"), index=False)
+        return
+    _ensure_dir(out_png.parent)
+    plt.figure(figsize=(14, 2.5))
+    ymin, ymax = 0, 1
+    for mol, spans in bands.items():
+        for (a, b) in spans:
+            plt.axvspan(a, b, alpha=0.20, label=mol)
+    # build unique legend
+    handles = []
+    labels_seen = set()
+    for mol in bands.keys():
+        if mol not in labels_seen:
+            labels_seen.add(mol)
+            handles.append(plt.Rectangle((0,0),1,1,alpha=0.20,label=mol))
+    plt.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5,1.4), ncol=min(6, len(handles)))
+    plt.xlim(wl.min(), wl.max())
+    plt.yticks([])
+    plt.xlabel(f"Wavelength ({units_label})")
+    plt.title("Molecular Bands Overlay (reference)")
+    plt.tight_layout()
+    plt.savefig(out_png, dpi=160)
+    plt.close()
+
+
+def _plot_symbolic_bin_overlay(wl: np.ndarray, sym_bin_df: pd.DataFrame, units_label: str, out_png: Path) -> None:
+    if not _MPL_OK:
+        sym_bin_df.to_csv(out_png.with_suffix(".csv"), index=False)
+        return
+    _ensure_dir(out_png.parent)
+    plt.figure(figsize=(14, 3.5))
+    plt.bar(wl, sym_bin_df["score"].to_numpy(), width=(wl.max()-wl.min())/len(wl)*0.9 if len(wl) > 1 else 0.9)
+    plt.xlabel(f"Wavelength ({units_label})")
+    plt.ylabel("Symbolic Bin Score")
+    plt.title("Symbolic Per‑Bin Overlay")
+    plt.tight_layout()
+    plt.savefig(out_png, dpi=160)
+    plt.close()
+
+
+def _plot_cluster_heatmap(X: np.ndarray, clusters: np.ndarray, out_png: Path, out_html: Path) -> None:
+    """
+    Simple bins × features heatmap sorted by cluster id.
+    """
+    order = np.argsort(clusters)
+    Xs = X[order]
+    if _PLOTLY_OK:
+        _ensure_dir(out_html.parent)
+        fig = go.Figure(data=go.Heatmap(z=Xs, colorscale="Viridis", showscale=True))
+        fig.update_layout(title="Cluster Feature Heatmap (bins sorted by cluster)", xaxis_title="feature", yaxis_title="bin (sorted)")
+        pio.write_html(fig, file=str(out_html), auto_open=False, include_plotlyjs="cdn")
+    if _MPL_OK:
+        _ensure_dir(out_png.parent)
+        import matplotlib.pyplot as plt
+        plt.figure(figsize=(12, 6))
+        vmax = np.percentile(Xs, 99) if np.any(np.isfinite(Xs)) else 1.0
+        plt.imshow(Xs, aspect="auto", interpolation="nearest", cmap="viridis", vmin=np.nanmin(Xs), vmax=vmax)
+        plt.colorbar(label="feature value")
+        plt.xlabel("feature")
+        plt.ylabel("bin (sorted by cluster)")
+        plt.tight_layout()
+        plt.savefig(out_png, dpi=160)
+        plt.close()
+    if not _PLOTLY_OK and not _MPL_OK:
+        # CSV fallback
+        pd.DataFrame(Xs).to_csv(out_png.with_suffix(".csv"), index=False)
+
+
+# ==============================================================================
+# Core pipeline
+# ==============================================================================
+
+@dataclass
+class Config:
+    mu_path: Path
+    wavelengths_path: Optional[Path]
+    bands_json_path: Optional[Path]
+    symbolic_bins_path: Optional[Path]
+    units: str
+    mu_mode: str
+    norm: str
+    feature: str
+    k: int
+    cluster_algo: str
+    seed: int
+    outdir: Path
+    html_name: str
+    open_browser: bool
+
+
+def run(cfg: Config, audit: AuditLogger) -> int:
+    _ensure_dir(cfg.outdir)
+
+    # Load μ (N×B)
+    mu = _load_array_any(cfg.mu_path)
+    if mu.ndim == 1:
+        mu = mu.reshape(1, -1)
+    if mu.ndim != 2:
+        raise ValueError(f"--mu must be 2D (N×B). Got {mu.shape}")
+
+    N, B = mu.shape
+
+    # Wavelengths (optional)
+    wl = _load_wavelengths(cfg.wavelengths_path, B)
+    if wl is None:
+        wl = np.arange(B, dtype=float)
+        units_label = "bin"
+    else:
+        units_label = "μm" if cfg.units.lower().startswith("micr") else cfg.units
+
+    # Convert μ to absorption if needed
+    mu_work = mu.copy()
+    if cfg.mu_mode == "flux":
+        # Normalize each planet to [0,1] then absorption = 1 - norm_flux
+        lo = mu_work.min(axis=1, keepdims=True)
+        hi = mu_work.max(axis=1, keepdims=True)
+        norm_flux = (mu_work - lo) / (hi - lo + 1e-12)
+        mu_work = 1.0 - norm_flux
+    elif cfg.mu_mode == "transmission":
+        # μ already "absorption‑like"
+        pass
+    else:
+        raise ValueError("--mu-mode must be 'transmission' or 'flux'")
+
+    # Normalize across planets per bin (optional)
+    muN = _normalize_binwise(mu_work, cfg.norm)  # N×B
+
+    # Features per bin
+    X = _feature_per_bin(muN, cfg.feature)  # B×D
+
+    # Cluster bins
+    clusters = _cluster_bins(X, cfg.k, cfg.cluster_algo, cfg.seed)  # length B
+    k_eff = int(np.max(clusters) + 1) if clusters.size else 1
+    colors = _pick_cluster_colors(max(k_eff, cfg.k))
+
+    # Stats per cluster
+    mean_mu = mu_work.mean(axis=0)          # length B
+    median_mu = np.median(mu_work, axis=0)  # optional, not currently plotted
+    assignments = pd.DataFrame({
+        "bin": np.arange(B, dtype=int),
+        "wavelength": wl,
+        "cluster": clusters.astype(int),
+        "mean_mu": mean_mu
+    })
+
+    # Bands
+    bands = _load_bands_json(cfg.bands_json_path)
+
+    # Overlap fractions: for each cluster, % of its bins inside each molecule band
+    def _in_any_band(lam: float, spans: List[Tuple[float,float]]) -> bool:
+        for (a,b) in spans:
+            if a <= lam <= b:
+                return True
+        return False
+
+    # band flags per bin
+    band_cols = {}
+    for mol, spans in bands.items():
+        band_cols[f"in_{mol}"] = np.array([1 if _in_any_band(wl[i], spans) else 0 for i in range(B)], dtype=int)
+    for name, col in band_cols.items():
+        assignments[name] = col
+
+    # cluster stats
+    rows=[]
+    for c in range(k_eff):
+        sub = assignments[assignments["cluster"] == c]
+        if sub.empty:
+            rows.append({"cluster": c, "size": 0})
+            continue
+        row = {
+            "cluster": c,
+            "size": int(len(sub)),
+            "wavelength_min": float(sub["wavelength"].min()),
+            "wavelength_max": float(sub["wavelength"].max()),
+            "mean_mu_mean": float(sub["mean_mu"].mean()),
+            "mean_mu_std": float(sub["mean_mu"].std()),
+        }
+        for mol in bands.keys():
+            row[f"{mol}_frac"] = float(sub[f"in_{mol}"].mean())
+        rows.append(row)
+    cluster_stats = pd.DataFrame(rows)
+
+    # cluster × molecule overlap matrix
+    mol_names = list(bands.keys())
+    overlap_mat = np.zeros((k_eff, len(mol_names)), dtype=float)
+    for ci in range(k_eff):
+        sub = assignments[assignments["cluster"] == ci]
+        if len(sub) == 0:
+            continue
+        for j, mol in enumerate(mol_names):
+            overlap_mat[ci, j] = float(sub[f"in_{mol}"].mean())
+    overlap_df = pd.DataFrame(overlap_mat, index=[f"cluster_{i}" for i in range(k_eff)], columns=mol_names)
+
+    # Optional symbolic per‑bin overlay
+    sym_bin_df = _load_symbolic_bins(cfg.symbolic_bins_path, B)
+    if sym_bin_df is not None and not sym_bin_df.empty:
+        assignments = assignments.merge(sym_bin_df, on="bin", how="left")
+        assignments["score"] = assignments["score"].fillna(0.0)
+
+    # Write tables
+    out_assign = cfg.outdir / "cluster_assignments.csv"
+    out_stats = cfg.outdir / "cluster_stats.csv"
+    out_overlap = cfg.outdir / "band_overlap_matrix.csv"
+    assignments.to_csv(out_assign, index=False)
+    cluster_stats.to_csv(out_stats, index=False)
+    overlap_df.to_csv(out_overlap)
+
+    # Figures
+    mean_mu_png = cfg.outdir / "mean_mu.png"
+    _plot_mean_mu_with_overlays(wl, mean_mu, clusters, colors, bands, units_label, mean_mu_png)
+
+    bands_png = cfg.outdir / "bands_overlay_only.png"
+    _plot_bands_only(wl, bands, units_label, bands_png)
+
+    if sym_bin_df is not None and not sym_bin_df.empty:
+        # align symbolic scores to wavelength bins (fill missing as 0)
+        sb = pd.DataFrame({"bin": np.arange(B), "score": 0.0})
+        sb.loc[sym_bin_df["bin"].values, "score"] = sym_bin_df["score"].values
+        sym_overlay_png = cfg.outdir / "symbolic_bin_overlay.png"
+        _plot_symbolic_bin_overlay(wl, sb, units_label, sym_overlay_png)
+
+    heatmap_png = cfg.outdir / "cluster_heatmap.png"
+    heatmap_html = cfg.outdir / "cluster_heatmap.html"
+    _plot_cluster_heatmap(X, clusters, heatmap_png, heatmap_html)
+
+    # Dashboard HTML
+    dashboard_html = cfg.outdir / (cfg.html_name if cfg.html_name.endswith(".html") else "spectral_absorption_overlay_clustered.html")
+    preview = assignments.head(40).to_html(index=False)
+    quick_links = textwrap.dedent(f"""
+    <ul>
+      <li><a href="{out_assign.name}" target="_blank" rel="noopener">{out_assign.name}</a></li>
+      <li><a href="{out_stats.name}" target="_blank" rel="noopener">{out_stats.name}</a></li>
+      <li><a href="{out_overlap.name}" target="_blank" rel="noopener">{out_overlap.name}</a></li>
+      <li><a href="mean_mu.png" target="_blank" rel="noopener">mean_mu.png</a></li>
+      <li><a href="bands_overlay_only.png" target="_blank" rel="noopener">bands_overlay_only.png</a></li>
+      <li><a href="{heatmap_html.name if _PLOTLY_OK else heatmap_png.name}" target="_blank" rel="noopener">{heatmap_html.name if _PLOTLY_OK else heatmap_png.name}</a></li>
+    </ul>
+    """).strip()
 
     html = f"""<!doctype html>
-<html>
+<html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>SpectraMind V50 — Clustered Spectral Absorption Overlay</title>
+<title>SpectraMind V50 — Spectral Absorption Overlay (Clustered)</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<style>{css}</style>
+<meta name="color-scheme" content="light dark" />
+<style>
+  :root {{ --bg:#0b0e14; --fg:#e6edf3; --muted:#9aa4b2; --card:#111827; --border:#2b3240; --brand:#0b5fff; }}
+  body {{ background:var(--bg); color:var(--fg); font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; margin:2rem; line-height:1.5; }}
+  .card {{ background:var(--card); border:1px solid var(--border); border-radius:14px; padding:1rem 1.25rem; margin-bottom:1rem; }}
+  a {{ color:var(--brand); text-decoration:none; }} a:hover {{ text-decoration:underline; }}
+  table {{ border-collapse: collapse; width: 100%; font-size: .95rem; }}
+  th, td {{ border:1px solid var(--border); padding:.4rem .5rem; }} th {{ background:#0f172a; }}
+  .pill {{ display:inline-block; padding:.15rem .6rem; border-radius:999px; background:#0f172a; border:1px solid var(--border); }}
+</style>
 </head>
 <body>
-  <h1>SpectraMind V50 — Clustered Spectral Absorption Overlay</h1>
-  <div class="card"><pre>{json.dumps(summary, indent=2)}</pre></div>
+  <header class="card">
+    <h1>Spectral Absorption Overlay — Clustered</h1>
+    <div>Generated: <span class="pill">{_now_iso()}</span> • k={k_eff} • feature={cfg.feature} • cluster={cfg.cluster_algo}</div>
+  </header>
 
-  <h2>Static Plots</h2>
-  <div class="grid">{imgs}</div>
+  <section class="card">
+    <h2>Quick Links</h2>
+    {quick_links}
+  </section>
 
-  <h2>Interactive Plots</h2>
-  <div class="grid">{links}</div>
+  <section class="card">
+    <h2>Preview — First 40 Bins</h2>
+    {preview}
+  </section>
 
-  <h2>Tables</h2>
-  <div class="grid">{tbls}</div>
+  <footer class="card">
+    <small>© SpectraMind V50 • Deterministic seed: {cfg.seed} • norm={cfg.norm} • μ‑mode={cfg.mu_mode}</small>
+  </footer>
 </body>
 </html>
 """
-    report.write_text(html, encoding="utf-8")
-    return str(report.name)
+    dashboard_html.write_text(html, encoding="utf-8")
 
-
-# ============================================================
-# Orchestration
-# ============================================================
-
-def run_pipeline(
-    mu_path: str,
-    outdir: str,
-    wavelengths_path: Optional[str] = None,
-    bands_path: Optional[str] = None,
-    meta_csv: Optional[str] = None,
-    symbolic_path: Optional[str] = None,
-    shap_bins_path: Optional[str] = None,
-    n_clusters: int = 5,
-    clustering: str = "kmeans",
-    seed: int = 42,
-    scale_features: bool = True,
-    use_entropy: bool = True,
-    use_fft_ratio: bool = True,
-    fft_keep: int = 32,
-    use_shap_mean: bool = True,
-    use_symbolic_score: bool = True,
-    umap_flag: bool = False,
-    tsne_flag: bool = False,
-    save_png: bool = False,
-    html_report: bool = False,
-) -> None:
-    t0 = time.time()
-    set_global_seed(seed)
-    out = Path(outdir)
-    plots = out / "plots"
-    tables = out / "tables"
-    ensure_dir(out)
-    ensure_dir(plots)
-    ensure_dir(tables)
-
-    console.rule("[info]SpectraMind V50 — Clustered Spectral Absorption Overlay")
-    console.print(f"[info]μ: {mu_path}")
-    if wavelengths_path: console.print(f"[info]λ: {wavelengths_path}")
-    if bands_path: console.print(f"[info]bands: {bands_path}")
-    if meta_csv: console.print(f"[info]meta: {meta_csv}")
-    if symbolic_path: console.print(f"[info]symbolic: {symbolic_path}")
-    if shap_bins_path: console.print(f"[info]shap-bins: {shap_bins_path}")
-
-    with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), BarColumn(), TimeElapsedColumn(), transient=True) as progress:
-        t_load = progress.add_task("Loading data", total=None)
-        mu = load_npy(mu_path)
-        if mu is None:
-            raise FileNotFoundError("--mu is required")
-        wavelengths = load_npy(wavelengths_path) if wavelengths_path else None
-        shap_bins = load_npy(shap_bins_path) if shap_bins_path else None
-        bands_cfg = BandsConfig.from_file(bands_path)
-        meta_df = pd.read_csv(meta_csv) if meta_csv else None
-        symbolic_json = None
-        if symbolic_path and Path(symbolic_path).exists():
-            symbolic_json = json.loads(Path(symbolic_path).read_text())
-        progress.update(t_load, advance=1, visible=False)
-
-    N, B = mu.shape
-    console.print(f"[info]Loaded μ shape: {N}×{B}")
-
-    # Compute features
-    feat_cfg = FeatureConfig(
-        use_entropy=use_entropy,
-        use_fft_ratio=use_fft_ratio,
-        use_shap_mean=(use_shap_mean and shap_bins is not None),
-        use_symbolic_score=(use_symbolic_score and symbolic_json is not None),
-        fft_keep=fft_keep,
-    )
-    features_df, masks_by_name = compute_band_depth_features(
-        mu=mu,
-        bands_cfg=bands_cfg,
-        wavelengths=wavelengths,
-        shap_bins=shap_bins,
-        symbolic_json=symbolic_json,
-        feat_cfg=feat_cfg,
-    )
-
-    # Save band depths/features table
-    band_depths_csv = tables / "band_depths.csv"
-    features_df.to_csv(band_depths_csv, index=False)
-
-    # Prepare feature matrix
-    X = features_df.values.astype(float)
-    if scale_features:
-        X = StandardScaler().fit_transform(X)
-
-    # Cluster
-    labels = cluster_features(
-        X, method=clustering, n_clusters=n_clusters, seed=seed,
-    )
-    # Fix DBSCAN noise label (-1) by shifting to a separate cluster index at end
-    if labels.min() < 0:
-        labels = labels.copy()
-        labels[labels < 0] = labels.max() + 1
-
-    # Save assignments
-    assign_df = pd.DataFrame({"sample": np.arange(N), "cluster": labels})
-    if meta_df is not None:
-        assign_df = pd.concat([assign_df, meta_df.reset_index(drop=True)], axis=1)
-    cluster_assign_csv = tables / "cluster_assignments.csv"
-    assign_df.to_csv(cluster_assign_csv, index=False)
-
-    # Cluster stats
-    rows = []
-    uniq = np.unique(labels)
-    for c in uniq:
-        sel = (labels == c)
-        rows.append({"cluster": int(c), "count": int(sel.sum()), "fraction": float(sel.mean())})
-    cluster_stats_df = pd.DataFrame(rows).sort_values("cluster").reset_index(drop=True)
-    cluster_stats_csv = tables / "cluster_stats.csv"
-    cluster_stats_df.to_csv(cluster_stats_csv, index=False)
-
-    # Plots — overlays per cluster
-    pngs_overlays = plot_cluster_overlays_png(
-        mu=mu, labels=labels, wavelengths=wavelengths, masks_by_name=masks_by_name, outdir=plots
-    ) if save_png else []
-
-    html_overlays = plot_cluster_overlays_html(
-        mu=mu, labels=labels, wavelengths=wavelengths, masks_by_name=masks_by_name, outdir=plots
-    )
-
-    # Heatmap sorted by cluster
-    heatmap_by_cluster = plot_heatmap_sorted_png(mu=mu, labels=labels, wavelengths=wavelengths, outdir=plots, by="cluster")
-    if not save_png:
-        # Ensure at least one static plot exists for HTML report preview
-        pngs_overlays = [heatmap_by_cluster]
-    else:
-        pngs_overlays.append(heatmap_by_cluster)
-
-    # Projections (optional)
-    proj = compute_projections(X, do_umap=umap_flag, do_tsne=tsne_flag, seed=seed)
-    if "pca2" in proj:
-        plot_embedding_html(proj["pca2"], labels, meta_df, "PCA — clusters", plots / "pca_clusters.html")
-        html_overlays.append("pca_clusters.html")
-    if "umap2" in proj:
-        plot_embedding_html(proj["umap2"], labels, meta_df, "UMAP — clusters", plots / "umap_clusters.html")
-        html_overlays.append("umap_clusters.html")
-    if "tsne2" in proj:
-        plot_embedding_html(proj["tsne2"], labels, meta_df, "t-SNE — clusters", plots / "tsne_clusters.html")
-        html_overlays.append("tsne_clusters.html")
-
-    # Summary JSON
-    summary = {
-        "timestamp": now_str(),
-        "mu_path": mu_path,
-        "wavelengths_path": wavelengths_path,
-        "bands_path": bands_path,
-        "meta_csv": meta_csv,
-        "symbolic_path": symbolic_path,
-        "shap_bins_path": shap_bins_path,
-        "N": int(N),
-        "B": int(B),
-        "n_clusters": int(n_clusters),
-        "clustering": clustering,
-        "features_cols": features_df.columns.tolist(),
-        "tables": {
-            "band_depths.csv": band_depths_csv.name,
-            "cluster_assignments.csv": cluster_assign_csv.name,
-            "cluster_stats.csv": cluster_stats_csv.name,
+    # Manifest
+    manifest = {
+        "tool": "spectral_absorption_overlay_clustered",
+        "timestamp": _now_iso(),
+        "inputs": {
+            "mu": str(cfg.mu_path),
+            "wavelengths": str(cfg.wavelengths_path) if cfg.wavelengths_path else None,
+            "bands_json": str(cfg.bands_json_path) if cfg.bands_json_path else None,
+            "symbolic_bins": str(cfg.symbolic_bins_path) if cfg.symbolic_bins_path else None,
         },
-        "plots": {
-            "png": pngs_overlays,
-            "html": html_overlays,
+        "params": {
+            "units": cfg.units,
+            "mu_mode": cfg.mu_mode,
+            "norm": cfg.norm,
+            "feature": cfg.feature,
+            "k": cfg.k,
+            "cluster_algo": cfg.cluster_algo,
+            "seed": cfg.seed,
         },
-        "timing_sec": round(time.time() - t0, 3),
+        "shapes": {"N": int(N), "B": int(B), "features": int(X.shape[1])},
+        "outputs": {
+            "cluster_assignments_csv": str(out_assign),
+            "cluster_stats_csv": str(out_stats),
+            "band_overlap_matrix_csv": str(out_overlap),
+            "mean_mu_png": str(mean_mu_png if mean_mu_png.exists() else mean_mu_png.with_suffix(".csv")),
+            "bands_overlay_only_png": str(bands_png if bands_png.exists() else bands_png.with_suffix(".csv")),
+            "heatmap_png": str(heatmap_png if heatmap_png.exists() else heatmap_png.with_suffix(".csv")),
+            "heatmap_html": str(heatmap_html) if _PLOTLY_OK else None,
+            "dashboard_html": str(dashboard_html),
+        }
     }
-    with open(out / "summary.json", "w", encoding="utf-8") as f:
-        json.dump(summary, f, indent=2)
+    with open(cfg.outdir / "spectral_absorption_overlay_manifest.json", "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2)
+    _update_run_hash_summary(cfg.outdir, manifest)
 
-    # HTML report
-    if html_report:
-        report_name = build_html_report(
-            outdir=out,
-            summary=summary,
-            tables={
-                "band_depths": band_depths_csv.name,
-                "cluster_assignments": cluster_assign_csv.name,
-                "cluster_stats": cluster_stats_csv.name,
-            },
-            pngs=pngs_overlays,
-            htmls=html_overlays,
-        )
-        console.print(f"[info]Wrote HTML report → {out / report_name}")
+    # Audit success
+    audit.log({
+        "action": "run",
+        "status": "ok",
+        "mu": str(cfg.mu_path),
+        "wavelengths": str(cfg.wavelengths_path) if cfg.wavelengths_path else "",
+        "bands_json": str(cfg.bands_json_path) if cfg.bands_json_path else "",
+        "symbolic_bins": str(cfg.symbolic_bins_path) if cfg.symbolic_bins_path else "",
+        "outdir": str(cfg.outdir),
+        "k": cfg.k,
+        "feature": cfg.feature,
+        "cluster": cfg.cluster_algo,
+        "message": f"Clustered B={B} bins into k={k_eff} clusters; dashboard={dashboard_html.name}",
+    })
 
-    # Audit log (best-effort)
-    append_audit_log(f"- {now_str()} | spectral_absorption_overlay_clustered | mu={mu_path} out={outdir} bands={bands_path or 'none'} clusters={n_clusters} method={clustering} N={N} B={B}")
+    # Optionally open dashboard
+    if cfg.open_browser:
+        try:
+            import webbrowser
+            webbrowser.open_new_tab(dashboard_html.as_uri())
+        except Exception:
+            pass
 
-    console.rule("[info]Done")
-    console.print(f"[info]Elapsed: {round(time.time() - t0, 2)} s")
-    console.print(f"[info]Artifacts in: {outdir}")
+    return 0
 
 
-# ============================================================
-# Typer CLI
-# ============================================================
+# ==============================================================================
+# CLI
+# ==============================================================================
 
-@app.command("run")
-def cli_run(
-    mu: str = typer.Option(..., help="Path to μ.npy (N×B)"),
-    outdir: str = typer.Option(..., help="Output directory for artifacts"),
-    wavelengths: Optional[str] = typer.Option(None, help="Path to wavelengths.npy (B,)"),
-    bands: Optional[str] = typer.Option(None, help="Bands YAML/JSON: {unit:'um'|'index'|'auto', bands:{name:[lo,hi]}, continuum:[lo,hi]?}"),
-    meta: Optional[str] = typer.Option(None, help="Metadata CSV (N rows) for hover/labels (optional)"),
-    symbolic: Optional[str] = typer.Option(None, help="Symbolic overlay JSON (optional)"),
-    shap_bins: Optional[str] = typer.Option(None, help="Per-bin SHAP N×B .npy (optional)"),
-    n_clusters: int = typer.Option(5, min=1, help="Number of clusters (ignored for DBSCAN unless noise-only)"),
-    clustering: str = typer.Option("kmeans", help="kmeans|minibatchkmeans|dbscan|agglomerative"),
-    seed: int = typer.Option(42, help="Random seed"),
-    scale_features: bool = typer.Option(True, help="Standardize features before clustering"),
-    use_entropy: bool = typer.Option(True, help="Include entropy feature"),
-    use_fft_ratio: bool = typer.Option(True, help="Include FFT high-frequency ratio feature"),
-    fft_keep: int = typer.Option(32, help="Number of low freqs to 'keep' when computing high-frequency ratio"),
-    use_shap_mean: bool = typer.Option(True, help="Include mean(|SHAP|) if --shap-bins provided"),
-    use_symbolic_score: bool = typer.Option(True, help="Include symbolic violation score if --symbolic provided"),
-    umap_flag: bool = typer.Option(False, "--umap/--no-umap", help="Compute UMAP projection if available"),
-    tsne_flag: bool = typer.Option(False, "--tsne/--no-tsne", help="Compute t-SNE projection"),
-    save_png: bool = typer.Option(False, help="Save static PNG overlays/heatmaps"),
-    html: bool = typer.Option(False, help="Emit compact HTML report"),
-):
-    """
-    Cluster spectra using band-depth features and render per-cluster overlays + tables.
-    """
+def build_argparser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="spectral_absorption_overlay_clustered",
+        description="Cluster spectral bins by absorption behavior and overlay with molecular bands."
+    )
+    p.add_argument("--mu", type=Path, required=True, help="N×B array (n_planets × n_bins) for μ (transmission) or flux.")
+    p.add_argument("--wavelengths", type=Path, default=None, help="Optional wavelengths vector (length B).")
+    p.add_argument("--bands-json", type=Path, default=None, help="Optional molecular bands JSON (see tool docs).")
+    p.add_argument("--symbolic-bins", type=Path, default=None, help="Optional per‑bin symbolic overlay (JSON/CSV; flexible schema).")
+    p.add_argument("--units", type=str, default="micron", choices=["micron","index","nm","um","μm"], help="Display units for wavelength axis.")
+    p.add_argument("--mu-mode", type=str, default="transmission", choices=["transmission","flux"], help="Convert μ if given as flux.")
+    p.add_argument("--norm", type=str, default="zscore", choices=["zscore","minmax","none"], help="Across‑planet normalization per bin.")
+    p.add_argument("--feature", type=str, default="fft", choices=["raw","std","entropy","fft","pca"], help="Per‑bin features for clustering.")
+    p.add_argument("--k", type=int, default=8, help="Number of clusters.")
+    p.add_argument("--cluster", type=str, default="kmeans", choices=["kmeans","agglo"], help="Clustering algorithm.")
+    p.add_argument("--seed", type=int, default=7, help="RNG seed.")
+    p.add_argument("--outdir", type=Path, required=True, help="Output directory.")
+    p.add_argument("--html-name", type=str, default="spectral_absorption_overlay_clustered.html", help="Dashboard HTML filename.")
+    p.add_argument("--open-browser", action="store_true", help="Open dashboard in default browser.")
+    return p
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    args = build_argparser().parse_args(argv)
+
+    cfg = Config(
+        mu_path=args.mu.resolve(),
+        wavelengths_path=args.wavelengths.resolve() if args.wavelengths else None,
+        bands_json_path=args.bands_json.resolve() if args.bands_json else None,
+        symbolic_bins_path=args.symbolic_bins.resolve() if args.symbolic_bins else None,
+        units=str(args.units),
+        mu_mode=str(args.mu_mode),
+        norm=str(args.norm),
+        feature=str(args.feature),
+        k=int(args.k),
+        cluster_algo=str(args.cluster),
+        seed=int(args.seed),
+        outdir=args.outdir.resolve(),
+        html_name=str(args.html_name),
+        open_browser=bool(args.open_browser),
+    )
+
+    # Audit logger
+    audit = AuditLogger(
+        md_path=Path("logs") / "v50_debug_log.md",
+        jsonl_path=Path("logs") / "v50_runs.jsonl",
+    )
+    audit.log({
+        "action": "start",
+        "status": "running",
+        "mu": str(cfg.mu_path),
+        "wavelengths": str(cfg.wavelengths_path) if cfg.wavelengths_path else "",
+        "bands_json": str(cfg.bands_json_path) if cfg.bands_json_path else "",
+        "symbolic_bins": str(cfg.symbolic_bins_path) if cfg.symbolic_bins_path else "",
+        "outdir": str(cfg.outdir),
+        "k": cfg.k,
+        "feature": cfg.feature,
+        "cluster": cfg.cluster_algo,
+        "message": "Starting spectral_absorption_overlay_clustered",
+    })
+
     try:
-        run_pipeline(
-            mu_path=mu,
-            outdir=outdir,
-            wavelengths_path=wavelengths,
-            bands_path=bands,
-            meta_csv=meta,
-            symbolic_path=symbolic,
-            shap_bins_path=shap_bins,
-            n_clusters=n_clusters,
-            clustering=clustering,
-            seed=seed,
-            scale_features=scale_features,
-            use_entropy=use_entropy,
-            use_fft_ratio=use_fft_ratio,
-            fft_keep=fft_keep,
-            use_shap_mean=use_shap_mean,
-            use_symbolic_score=use_symbolic_score,
-            umap_flag=umap_flag,
-            tsne_flag=tsne_flag,
-            save_png=save_png,
-            html_report=html,
-        )
+        rc = run(cfg, audit)
+        return rc
     except Exception as e:
-        console.print(Panel.fit(str(e), title="Error", style="err"))
-        raise typer.Exit(code=1)
-
-
-def main():
-    app()
+        # Log error + traceback to stderr for CI visibility
+        import traceback
+        traceback.print_exc()
+        audit.log({
+            "action": "run",
+            "status": "error",
+            "mu": str(cfg.mu_path),
+            "wavelengths": str(cfg.wavelengths_path) if cfg.wavelengths_path else "",
+            "bands_json": str(cfg.bands_json_path) if cfg.bands_json_path else "",
+            "symbolic_bins": str(cfg.symbolic_bins_path) if cfg.symbolic_bins_path else "",
+            "outdir": str(cfg.outdir),
+            "k": cfg.k,
+            "feature": cfg.feature,
+            "cluster": cfg.cluster_algo,
+            "message": f"{type(e).__name__}: {e}",
+        })
+        return 2
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
