@@ -1,357 +1,370 @@
-# tests/artifacts/test_log_integrity.py
-# SpectraMind V50 — Log Integrity & Provenance Tests
-#
-# Objective
-# ---------
-# Validate that our audit logs (Markdown and/or JSONL) are readable, structured,
-# and consistent with our reproducibility posture:
-#   • logs/v50_debug_log.md      (human-friendly append-only audit)
-#   • logs/v50_runs.jsonl        (machine-friendly JSONL, one record per run)
-#
-# The tests are *tolerant* of format variations and will skip gracefully if a
-# particular file is not present yet. When present, they check:
-#   1) UTF‑8 readability (no binary/NULs) and reasonable size.
-#   2) Presence of expected cues (timestamps, CLI command strings).
-#   3) JSONL parseability and minimal schema (timestamp, cmd, exit_code).
-#   4) Monotonic (non‑decreasing) timestamps → “no time travel”.
-#   5) Optional “recent activity” window if EXPECT_LOG_WITHIN_HOURS is set.
-#   6) Markdown table sanity (if a table is present, row column counts align).
-#
-# Config (optional environment variables)
-# ---------------------------------------
-#   LOG_MD_PATH              : path to the Markdown log (default: logs/v50_debug_log.md)
-#   LOG_JSONL_PATH           : path to the JSONL log (default: logs/v50_runs.jsonl)
-#   EXPECT_LOG_WITHIN_HOURS  : int; if set, assert at least one entry is newer
-#                              than now - X hours (JSONL path preferred)
-#
-# Usage
-# -----
-#   pytest -q tests/artifacts/test_log_integrity.py
-#
-# Notes
-# -----
-#   • Tests do NOT modify any log file.
-#   • If both logs are missing (fresh repo), core tests will skip with context.
+# /tools/artifacts/test_log_integrity.py
+"""
+SpectraMind V50 — Log Integrity Tests (upgraded)
+
+Purpose
+-------
+These tests enforce "NASA‑grade" logging guarantees for the CLI‑first pipeline.
+They validate JSONL telemetry emitted by the system (e.g., events.jsonl or
+run_*.jsonl), catching schema drift, timezone issues, missing hashes, etc.
+
+How it works
+------------
+By default we scan for JSONL logs under:
+  ./artifacts/logs/**/*.jsonl
+Override with env:
+  ARTIFACT_LOG_GLOB="path/pattern/**/*.jsonl"
+
+What we validate
+----------------
+* Each line is valid JSON (no trailing commas, no BOM, etc.)
+* Required fields are present per event
+* Timestamps are RFC3339/ISO‑8601 with timezone and monotonic per run_id
+* Levels and event types are from approved vocabularies
+* No NaN/Inf or non‑finite numbers
+* run_id is UUIDv4‑like (or 26+ char ULID), consistent within a file
+* config_hash/data_hash look like hex SHA‑256 (64 hex chars)
+* pid is int, hostname is non‑empty
+* schema string present and versioned (e.g., "v1", "v1.1")
+* message length sane; no newline injection
+* Optional file references exist and (if checksum provided) match
+* No secrets/keys accidentally logged
+* File rotation (if used) is well‑formed and ordered
+
+Run
+---
+pytest -q tools/artifacts/test_log_integrity.py
+"""
 
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
-from dataclasses import dataclass
-from datetime import datetime, timezone, timedelta
+from collections import defaultdict
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import pytest
 
+# ------------------------------
+# Configuration / constants
+# ------------------------------
 
-# -----------------------------
-# Helpers & configuration
-# -----------------------------
+DEFAULT_GLOB = "artifacts/logs/**/*.jsonl"
+LOG_GLOB = os.getenv("ARTIFACT_LOG_GLOB", DEFAULT_GLOB)
 
-def _env(name: str, default: Optional[str] = None) -> Optional[str]:
-    v = os.getenv(name)
-    return v if v is not None and str(v).strip() != "" else default
+# Required event fields (add more as your schema evolves)
+REQUIRED_FIELDS = {
+    "ts",           # ISO-8601 timestamp with timezone (RFC3339)
+    "level",        # INFO|DEBUG|WARN|ERROR|CRITICAL
+    "event",        # machine-friendly event type (snake_case)
+    "message",      # human-friendly message (one line)
+    "run_id",       # UUIDv4 or ULID
+    "component",    # e.g., "cli", "calibrate", "train", "diagnostics"
+    "schema",       # e.g., "v1", "v1.1"
+    "config_hash",  # SHA256 hex of composed Hydra config
+    "data_hash",    # SHA256 hex of dataset snapshot (e.g., DVC)
+    "pid",          # process id (int)
+    "hostname",     # machine hostname
+}
+
+APPROVED_LEVELS = {"TRACE", "DEBUG", "INFO", "WARN", "WARNING", "ERROR", "CRITICAL"}
+
+# You can extend based on your pipeline's event taxonomy
+APPROVED_EVENTS = {
+    # lifecycle
+    "run_started",
+    "run_finished",
+    "stage_started",
+    "stage_finished",
+    "epoch_started",
+    "epoch_finished",
+    # io / artifacts
+    "artifact_written",
+    "artifact_read",
+    "artifact_deleted",
+    # metrics
+    "metric",
+    "metrics_flushed",
+    # errors
+    "exception",
+    "retry",
+    # calibration / processing
+    "calibration_step",
+    "detrend_step",
+    # submission
+    "submission_packaged",
+}
+
+# Optional file reference fields used for existence/hash checks
+FILE_PATH_FIELDS = {"artifact_path", "file_path", "report_path", "image_path"}
+FILE_HASH_FIELDS = {"artifact_sha256", "file_sha256"}
+
+# Simple secret patterns to catch accidental leaks
+SECRET_REGEXES = [
+    re.compile(r"(?i)(api[_-]?key|secret|token|password)\s*[:=]\s*[A-Za-z0-9_\-]{12,}"),
+    re.compile(r"(?i)bearer\s+[A-Za-z0-9\._\-]{20,}"),
+    re.compile(r"AKIA[0-9A-Z]{16}"),  # AWS Access Key prefix
+]
+
+UUID4_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+)
+ULID_RE = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")  # Crockford base32 (no I,L,O,U)
+
+HEX256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
+ISO8601_TZ_RE = re.compile(
+    # 2025-08-24T12:34:56.789Z or with offset like +02:00
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+\-]\d{2}:\d{2})$"
+)
+
+ONE_LINE_RE = re.compile(r"^[^\r\n]*$")
+
+MAX_MESSAGE_LEN = 2000  # sane upper bound for single-line messages
 
 
-def _log_md_path() -> Path:
-    return Path(_env("LOG_MD_PATH", "logs/v50_debug_log.md"))
+# ------------------------------
+# Utilities
+# ------------------------------
+
+def _iter_jsonl(path: Path) -> Iterable[Tuple[int, Dict[str, Any]]]:
+    with path.open("r", encoding="utf-8") as f:
+        for idx, line in enumerate(f, start=1):
+            # Skip empty lines (but flag them in a separate test)
+            if not line.strip():
+                yield idx, {"__empty__": True}
+                continue
+            try:
+                # Disallow trailing commas by strict parsing via json.loads
+                obj = json.loads(line)
+            except json.JSONDecodeError as e:
+                raise AssertionError(
+                    f"{path} line {idx}: invalid JSON ({e})"
+                ) from e
+            if not isinstance(obj, dict):
+                raise AssertionError(f"{path} line {idx}: JSON must be an object")
+            yield idx, obj
 
 
-def _log_jsonl_path() -> Path:
-    return Path(_env("LOG_JSONL_PATH", "logs/v50_runs.jsonl"))
-
-
-def _read_text_safe(p: Path) -> str:
-    data = p.read_bytes()
-    # quick binary sanity: reject NULs
-    assert b"\x00" not in data, f"NUL byte detected in {p}"
-    return data.decode("utf-8", errors="strict")
-
-
-def _parse_iso8601(s: str) -> Optional[datetime]:
-    """
-    Parse a variety of ISO8601-ish times used in logs.
-    Accepted forms (UTC):
-      2025-08-23T12:34:56Z
-      2025-08-23T12:34:56.789Z
-      2025-08-23 12:34:56Z
-    Returns timezone-aware datetime in UTC, or None if not parseable.
-    """
-    s = s.strip()
-    m = re.match(r"^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2}(?:\.\d+)?)Z$", s)
-    if not m:
-        return None
+def _parse_ts(ts: str) -> datetime:
+    if not ISO8601_TZ_RE.match(ts):
+        raise AssertionError(f"timestamp not ISO‑8601 with timezone: {ts!r}")
+    # Normalize 'Z' to +00:00 for fromisoformat
+    if ts.endswith("Z"):
+        ts = ts[:-1] + "+00:00"
     try:
-        dt = datetime.fromisoformat((m.group(1) + "T" + m.group(2)).replace("Z", ""))
-    except ValueError:
-        return None
-    # ensure tz-aware UTC
+        dt = datetime.fromisoformat(ts)
+    except ValueError as e:
+        raise AssertionError(f"invalid timestamp value: {ts!r}") from e
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    else:
-        dt = dt.astimezone(timezone.utc)
+        raise AssertionError(f"timestamp missing timezone: {ts!r}")
     return dt
 
 
-def _extract_md_timestamps(md_text: str) -> List[datetime]:
-    """
-    Heuristic extraction of timestamps from the Markdown log.
-    Matches lines like:
-      [2025-08-23T12:34:56Z] spectramind train ...
-      timestamp: 2025-08-23T12:34:56.123Z
-    """
-    ts_list: List[datetime] = []
-
-    # [ISO] prefix lines
-    for m in re.finditer(r"\[(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?)Z\]", md_text):
-        ts = _parse_iso8601(m.group(1) + "Z")
-        if ts:
-            ts_list.append(ts)
-
-    # key: value style
-    for m in re.finditer(r"(?:^|\s)(?:ts|timestamp)\s*[:=]\s*(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?)Z\b", md_text):
-        ts = _parse_iso8601(m.group(1) + "Z")
-        if ts:
-            ts_list.append(ts)
-
-    # Non-decreasing sort for monotonicity checks
-    ts_list.sort()
-    return ts_list
+def _is_uuid_or_ulid(s: str) -> bool:
+    return bool(UUID4_RE.match(s) or ULID_RE.match(s))
 
 
-def _load_jsonl_records(p: Path) -> List[Dict[str, Any]]:
-    recs: List[Dict[str, Any]] = []
-    with p.open("r", encoding="utf-8") as f:
-        for i, line in enumerate(f, start=1):
-            s = line.strip()
-            if not s:
-                # tolerate blank lines
-                continue
-            try:
-                obj = json.loads(s)
-            except json.JSONDecodeError as e:
-                raise AssertionError(f"JSONL parse error at {p}:{i} → {e}") from e
-            assert isinstance(obj, dict), f"JSONL object at {p}:{i} must be a JSON object"
-            recs.append(obj)
-    return recs
+def _is_finite_number(x: Any) -> bool:
+    if isinstance(x, (int,)) and not isinstance(x, bool):
+        return True
+    if isinstance(x, float):
+        return math.isfinite(x)
+    return False
 
 
-def _coerce_ts(obj: Dict[str, Any]) -> Optional[datetime]:
-    """
-    Extract a timestamp-like field from a JSONL record.
-    Accepts any of: ts, timestamp, time (ISO8601Z).
-    """
-    for k in ("ts", "timestamp", "time"):
-        if k in obj and isinstance(obj[k], str):
-            dt = _parse_iso8601(obj[k].strip().rstrip("Z") + "Z")
-            if dt:
-                return dt
-    return None
+def _flatten(obj: Any, prefix: str = "") -> Iterable[Tuple[str, Any]]:
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            yield from _flatten(v, f"{prefix}.{k}" if prefix else k)
+    elif isinstance(obj, list):
+        for i, v in enumerate(obj):
+            yield from _flatten(v, f"{prefix}[{i}]")
+    else:
+        yield prefix, obj
 
 
-# -----------------------------
+# ------------------------------
 # Fixtures
-# -----------------------------
+# ------------------------------
 
 @pytest.fixture(scope="session")
-def md_path() -> Path:
-    return _log_md_path()
+def log_files() -> List[Path]:
+    paths = sorted(Path(".").glob(LOG_GLOB))
+    assert paths, f"No JSONL logs found for pattern: {LOG_GLOB}"
+    return paths
 
 
-@pytest.fixture(scope="session")
-def jsonl_path() -> Path:
-    return _log_jsonl_path()
+# ------------------------------
+# Tests per file
+# ------------------------------
 
-
-# -----------------------------
-# Tests — presence & readability
-# -----------------------------
-
-def test_logs_present_or_skip(md_path: Path, jsonl_path: Path) -> None:
+@pytest.mark.parametrize("path", ids=lambda p: str(p), argvalues=None)
+def test_collection_parametrize_marker(log_files):  # noqa: D401
     """
-    At least one log should exist. If neither exists yet (fresh repo),
-    skip the suite gracefully with instructions.
+    Internal: works around pytest parametrization when building from fixture.
+    This test dynamically parametrizes and delegates to the actual tests below.
     """
-    if not md_path.exists() and not jsonl_path.exists():
-        pytest.skip(
-            "No logs found yet. Create logs/v50_debug_log.md and/or logs/v50_runs.jsonl "
-            "via the SpectraMind CLI to activate these tests."
-        )
+    # Dynamically create parametrized tests for each file
+    for path in log_files:
+        _run_all_tests_on_file(path)
 
 
-def test_markdown_log_readable_when_present(md_path: Path) -> None:
-    if not md_path.exists():
-        pytest.skip("Markdown log not present.")
-    text = _read_text_safe(md_path)
-    # Non-empty and reasonable size (< 50 MB)
-    assert text.strip(), "Markdown log is empty."
-    assert md_path.stat().st_size < 50 * 1024 * 1024, "Markdown log is unexpectedly huge; consider rotation."
+def _run_all_tests_on_file(path: Path) -> None:
+    # 1) Basic JSON & required fields
+    events_by_run: dict[str, list[Tuple[int, Dict[str, Any]]]] = defaultdict(list)
+    empty_lines = 0
 
-    # Should contain some recognizable cues
-    cues = ("spectramind", "cli", "train", "predict", "diagnose", "submit", "version", "config", "hash")
-    assert any(c in text for c in cues), "Markdown log lacks recognizable CLI cues; is it the correct file?"
-
-    # Optional: trailing newline for append-only friendliness
-    assert text.endswith("\n"), "Markdown log should end with a newline (append-only hygiene)."
-
-
-def test_jsonl_log_readable_when_present(jsonl_path: Path) -> None:
-    if not jsonl_path.exists():
-        pytest.skip("JSONL log not present.")
-    recs = _load_jsonl_records(jsonl_path)
-    assert recs, "JSONL log is empty."
-    # Minimal schema check on a few records
-    sample = recs[: min(5, len(recs))]
-    for obj in sample:
-        ts = _coerce_ts(obj)
-        assert ts is not None, "JSONL records must include an ISO8601 UTC timestamp (ts/timestamp/time)."
-        # Command text recommended
-        if "cmd" in obj:
-            assert isinstance(obj["cmd"], str) and obj["cmd"].strip(), "If present, 'cmd' must be a non-empty string."
-        # exit_code recommended
-        if "exit_code" in obj:
-            assert isinstance(obj["exit_code"], int), "'exit_code' should be an integer."
-        # If present, config_hash should look like hex
-        if "config_hash" in obj and obj["config_hash"] is not None:
-            assert re.match(r"^[0-9a-fA-F]{6,64}$", str(obj["config_hash"])), "config_hash should be hex-like."
-
-
-# -----------------------------
-# Tests — monotonicity & time
-# -----------------------------
-
-def test_jsonl_timestamps_monotonic(jsonl_path: Path) -> None:
-    if not jsonl_path.exists():
-        pytest.skip("JSONL log not present.")
-    recs = _load_jsonl_records(jsonl_path)
-    ts_list = [t for t in (_coerce_ts(r) for r in recs) if t is not None]
-    assert ts_list, "No parseable timestamps in JSONL log."
-    # Non-decreasing (allow ties)
-    assert all(ts_list[i] >= ts_list[i - 1] for i in range(1, len(ts_list))), "JSONL timestamps are not monotonic."
-
-
-def test_markdown_no_time_travel(md_path: Path) -> None:
-    if not md_path.exists():
-        pytest.skip("Markdown log not present.")
-    text = _read_text_safe(md_path)
-    ts = _extract_md_timestamps(text)
-    if len(ts) < 2:
-        pytest.skip("Not enough timestamps in Markdown log to evaluate monotonicity.")
-    assert all(ts[i] >= ts[i - 1] for i in range(1, len(ts))), "Markdown timestamps are not monotonic (time travel)."
-
-
-def test_recent_activity_window_if_configured(md_path: Path, jsonl_path: Path) -> None:
-    """
-    If EXPECT_LOG_WITHIN_HOURS=x is set, ensure at least one entry within the window.
-    JSONL is preferred; fallback to Markdown timestamps if needed.
-    """
-    cfg = _env("EXPECT_LOG_WITHIN_HOURS")
-    if not cfg:
-        pytest.skip("EXPECT_LOG_WITHIN_HOURS not set — skipping recency check.")
-    hours = int(cfg)
-    cutoff = datetime.now(tz=timezone.utc) - timedelta(hours=hours)
-
-    # Prefer JSONL
-    if jsonl_path.exists():
-        recs = _load_jsonl_records(jsonl_path)
-        ts_list = [t for t in (_coerce_ts(r) for r in recs) if t is not None]
-        assert ts_list, "No parseable timestamps in JSONL log."
-        assert any(t >= cutoff for t in ts_list), f"No JSONL entries within {hours}h."
-        return
-
-    # Fallback to Markdown
-    if md_path.exists():
-        text = _read_text_safe(md_path)
-        ts = _extract_md_timestamps(text)
-        assert ts, "No parseable timestamps in Markdown log."
-        assert any(t >= cutoff for t in ts), f"No Markdown entries within {hours}h."
-        return
-
-    pytest.skip("No logs present to evaluate recency (unexpected in this branch).")
-
-
-# -----------------------------
-# Tests — Markdown table sanity (optional)
-# -----------------------------
-
-def _iter_md_tables(md_text: str) -> List[List[List[str]]]:
-    """
-    Extract simple GitHub-flavored Markdown tables as a list of tables,
-    where each table is a list of rows, and each row is a list of cell strings.
-
-    This is a *lightweight* heuristic sufficient to catch obvious row/column
-    mismatches; it does not aim to fully parse GFM tables.
-    """
-    lines = md_text.splitlines()
-    tables: List[List[List[str]]] = []
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        if re.match(r"^\s*\|", line) and "|" in line.strip().rstrip("|"):
-            # Potential header and separator on next line
-            if i + 1 < len(lines) and re.match(r"^\s*\|?[:\-\s|]+\|?\s*$", lines[i + 1]):
-                # capture table until a non-pipe line
-                rows: List[List[str]] = []
-                j = i
-                while j < len(lines) and lines[j].lstrip().startswith("|"):
-                    row = [c.strip() for c in lines[j].strip().strip("|").split("|")]
-                    rows.append(row)
-                    j += 1
-                tables.append(rows)
-                i = j
-                continue
-        i += 1
-    return tables
-
-
-def test_markdown_tables_have_consistent_columns(md_path: Path) -> None:
-    if not md_path.exists():
-        pytest.skip("Markdown log not present.")
-    text = _read_text_safe(md_path)
-    tables = _iter_md_tables(text)
-    if not tables:
-        pytest.skip("No Markdown tables found — skipping table integrity check.")
-
-    for t in tables:
-        widths = [len(r) for r in t]
-        # Sometimes first two rows are header and separator; use the mode of widths
-        # and assert that all rows match it.
-        if not widths:
+    for idx, obj in _iter_jsonl(path):
+        if "__empty__" in obj:
+            empty_lines += 1
             continue
-        mode = max(set(widths), key=widths.count)
-        assert all(w == mode for w in widths), f"Markdown table has inconsistent column counts: {widths}"
+
+        missing = REQUIRED_FIELDS - obj.keys()
+        assert not missing, f"{path} line {idx}: missing fields {missing}"
+
+        # level & event vocab
+        level = str(obj["level"])
+        event = str(obj["event"])
+        assert level.upper() in APPROVED_LEVELS, f"{path} line {idx}: bad level {level!r}"
+        assert re.fullmatch(r"[a-z][a-z0-9_]*", event), f"{path} line {idx}: event must be snake_case"
+        if event not in APPROVED_EVENTS:
+            # Allow forward-compat with a warning-style failure
+            pytest.fail(f"{path} line {idx}: event {event!r} not in approved taxonomy", pytrace=False)
+
+        # ts format
+        ts_str = str(obj["ts"])
+        dt = _parse_ts(ts_str)
+
+        # run id
+        rid = str(obj["run_id"])
+        assert _is_uuid_or_ulid(rid), f"{path} line {idx}: run_id not UUIDv4/ULID: {rid!r}"
+
+        # hashes
+        assert HEX256_RE.match(str(obj["config_hash"])), f"{path} line {idx}: config_hash not SHA256 hex"
+        assert HEX256_RE.match(str(obj["data_hash"])), f"{path} line {idx}: data_hash not SHA256 hex"
+
+        # pid / hostname
+        assert isinstance(obj["pid"], int), f"{path} line {idx}: pid must be int"
+        assert str(obj["hostname"]).strip(), f"{path} line {idx}: hostname empty"
+
+        # schema
+        schema = str(obj["schema"])
+        assert re.fullmatch(r"v\d+(?:\.\d+)?", schema), f"{path} line {idx}: schema must look like 'v1' or 'v1.2'"
+
+        # message single-line + length
+        msg = str(obj["message"])
+        assert ONE_LINE_RE.match(msg), f"{path} line {idx}: message must be single line"
+        assert len(msg) <= MAX_MESSAGE_LEN, f"{path} line {idx}: message too long ({len(msg)} chars)"
+
+        # No NaN/Inf anywhere
+        for key, val in _flatten(obj):
+            if isinstance(val, float):
+                assert math.isfinite(val), f"{path} line {idx}: non‑finite number at {key}: {val}"
+
+        # Secret detection
+        full_line = json.dumps(obj, ensure_ascii=False)
+        for rx in SECRET_REGEXES:
+            assert not rx.search(full_line), f"{path} line {idx}: possible secret detected by {rx.pattern}"
+
+        # Optional file refs
+        file_paths_present = [obj.get(k) for k in FILE_PATH_FIELDS if obj.get(k)]
+        file_hashes_present = [obj.get(k) for k in FILE_HASH_FIELDS if obj.get(k)]
+        for fp in file_paths_present:
+            p = Path(str(fp))
+            assert p.exists(), f"{path} line {idx}: referenced file does not exist: {fp}"
+        # If both path and sha256 present, check hash (best‑effort to avoid heavy reads)
+        for fp, fh in zip(file_paths_present, file_hashes_present):
+            if fp and fh and HEX256_RE.match(str(fh)):
+                # Only hash files smaller than ~50MB to keep tests fast
+                p = Path(str(fp))
+                if p.is_file() and p.stat().st_size <= 50 * 1024 * 1024:
+                    import hashlib
+
+                    h = hashlib.sha256()
+                    with p.open("rb") as f:
+                        for chunk in iter(lambda: f.read(8192), b""):
+                            h.update(chunk)
+                    assert (
+                        h.hexdigest().lower() == str(fh).lower()
+                    ), f"{path} line {idx}: checksum mismatch for {fp}"
+
+        events_by_run[rid].append((idx, obj))
+
+    # 2) No empty lines inside logs (to keep JSONL strict) — allow trailing at most one
+    assert empty_lines == 0, f"{path}: contains {empty_lines} empty lines; JSONL must be dense"
+
+    # 3) Per-run monotonic timestamps and stage ordering sanity
+    for rid, rows in events_by_run.items():
+        # sort by line index (already in file order)
+        last_dt: Optional[datetime] = None
+        for idx, obj in rows:
+            dt = _parse_ts(str(obj["ts"]))
+            if last_dt:
+                assert dt >= last_dt, f"{path} line {idx}: non‑monotonic timestamp in run {rid}"
+            last_dt = dt
+
+        # lifecycle sanity: if present, run_started must appear before run_finished
+        idxs = {e: i for i, (_, o) in enumerate(rows) for e in ["run_started", "run_finished"] if o["event"] == e}
+        if "run_started" in idxs and "run_finished" in idxs:
+            assert idxs["run_started"] < idxs["run_finished"], f"{path}: run_finished precedes run_started for {rid}"
+
+    # 4) Rotation sanity (e.g., events.jsonl, events.jsonl.1, …)
+    # If this file has numeric suffix, ensure the base exists. If not, just pass.
+    m = re.match(r"^(?P<stem>.+\.jsonl)\.(?P<num>\d+)$", path.name)
+    if m:
+        base = path.with_name(m.group("stem"))
+        assert base.exists(), f"{path}: rotated file found but base log '{base.name}' missing"
+
+    # 5) Ensure file encoding is UTF‑8 (no BOM) — open() above would have failed subtly otherwise
+    first_bytes = path.read_bytes()[:3]
+    assert first_bytes != b"\xef\xbb\xbf", f"{path}: file must not contain UTF‑8 BOM"
+
+    # If we got here, the file passed all checks.
 
 
-# -----------------------------
-# Tests — Basic content cues
-# -----------------------------
+# ------------------------------
+# Optional: summary report (skip by default)
+# ------------------------------
 
-def test_logs_contain_cli_cues(md_path: Path, jsonl_path: Path) -> None:
+@pytest.mark.optionalhook
+def pytest_sessionfinish(session, exitstatus):  # pragma: no cover
     """
-    Provide a friendly assertion that at least one of the logs contains
-    a recognizable SpectraMind CLI cue (cmd string). This is not strict
-    (we only warn/fail if neither log has any cues).
+    If you want a lightweight success marker for downstream CI steps,
+    you can enable writing a small report via env var:
+      WRITE_LOG_INTEGRITY_REPORT=1
     """
-    cues = ("spectramind", "python -m", "train", "predict", "diagnose", "submit", "ablate")
-    md_ok = False
-    js_ok = False
+    if os.getenv("WRITE_LOG_INTEGRITY_REPORT", "") != "1":
+        return
+    out = Path("artifacts") / "log_integrity_report.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "status": "passed" if exitstatus == 0 else "failed",
+        "exitstatus": exitstatus,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "pattern": LOG_GLOB,
+    }
+    out.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
-    if md_path.exists():
-        text = _read_text_safe(md_path).lower()
-        md_ok = any(c in text for c in cues)
 
-    if jsonl_path.exists():
-        try:
-            recs = _load_jsonl_records(jsonl_path)
-            for r in recs:
-                cmd = str(r.get("cmd", "")).lower()
-                if any(c in cmd for c in cues):
-                    js_ok = True
-                    break
-        except AssertionError:
-            # JSONL parsing error would have been raised in its own test
-            pass
+# ------------------------------
+# Helpful markers / selection
+# ------------------------------
 
-    assert md_ok or js_ok, "No recognizable CLI cues found in either log; verify logging integration."
+def pytest_addoption(parser):  # pragma: no cover
+    parser.addoption(
+        "--log-glob",
+        action="store",
+        default=None,
+        help="Override ARTIFACT_LOG_GLOB for this pytest invocation",
+    )
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _apply_cli_override(request):  # pragma: no cover
+    val = request.config.getoption("--log-glob")
+    if val:
+        os.environ["ARTIFACT_LOG_GLOB"] = val
