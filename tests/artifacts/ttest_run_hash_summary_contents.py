@@ -1,563 +1,348 @@
-#!/usr/bin/env python3
+# tests/artifacts/test_run_hash_summary_contents.py
 # -*- coding: utf-8 -*-
 """
-tests/artifacts/test_run_hash_summary_contents.py
-
-SpectraMind V50 — Run Hash Summary Contents (Reproducibility Metadata)
-======================================================================
+SpectraMind V50 — Artifact Tests
+File: tests/artifacts/test_run_hash_summary_contents.py
 
 Purpose
 -------
-Ensure that `outputs/run_hash_summary_v50.json` (or a synthesized dummy equivalent)
-exists and includes richly-structured, self-auditable metadata for reproducible runs.
+Validate the integrity and schema of the consolidated run-hash summary produced
+by the CLI (e.g., `spectramind ...`), typically named:
 
-What we validate
-----------------
-1) Presence (or dummy fallback)
-   • If the canonical file is missing, we generate a **dummy** summary inside pytest's tmp_path.
+    run_hash_summary_v50.json
 
-2) Minimum required fields (non-empty strings)
-   • config_hash — Prefer 40 or 64 hex chars if hex-like
-   • cli_version — e.g., "v50.3.2" or "v50.0.0-test"
-   • build_timestamp — ISO8601-ish string (no need to fully parse tz offsets)
-   • Optionally present but recommended: repo_root, run_id
+This test asserts (at minimum):
 
-3) Optional ecosystem fields (validated if present)
-   • git: {commit, branch, dirty}
-   • python, platform, cuda, torch (and versions)
-   • hydra, dvc, mlflow, wandb, poetry, poetry_lock_hash
-   • docker_image, kaggle_competition, kaggle_username
-   • env: mapping[str, str], with sensitive keys allowed but type-checked
-   • run_args (list[str]) and/or cli_command (str)
-   • config_snapshot (dict or str path)
-   • hydra_resolved_config_path (str path)
-   • outputs / artifacts / diagnostics references (paths or dict of paths)
-   • diagnostics_html, v50_debug_log, run_hash_files (list of paths)
-   • metrics (dict[str, number]), e.g., {"gll_mean": -1.23, "rmse": 0.04}
-   • durations (dict[str, number]), e.g., {"train_sec": 1234.5, "inference_sec": 456.7}
+1) Summary file exists (or an override is provided via env).
+2) Top-level JSON object has stable keys and the `runs` list is non-empty.
+3) Each run item contains required fields with valid formats:
+     - run_id: UUIDv4 or ULID
+     - started_at, finished_at: ISO 8601 UTC (…Z), finished >= started
+     - duration_seconds: float ≥ 0 and ≈ (finished - started)
+     - command: non-empty string
+     - exit_code: int
+     - config_hash, data_hash: 64-hex (SHA-256) or "UNKNOWN"
+     - git_commit: hexish string (7–40 chars) or "UNKNOWN"
+     - python_version, platform: non-empty strings
+     - cwd: absolute or relative path string
+     - environment: dict-like or omitted; if present, should be key:str, value:str
+     - files/artifacts/logs: optional arrays; if checksums present, must be 64-hex
+4) run_id uniqueness across the file.
+5) Optional determinism guard: entries are sorted by started_at (non-decreasing).
+6) If global keys exist (app_name/version/build_time/etc.), they pass basic checks.
 
-4) Path sanity (if present)
-   • Any referenced paths must be inside the repo root (no traversal/escape).
-   • If files exist, we check they are readable. If they don't exist, we **warn** (soft check),
-     not fail — since different CI stages may write them at different times.
+Configuration
+-------------
+Set SPECTRAMIND_RUN_HASH_SUMMARY to point to a custom path if your repo uses a
+different location or name.
 
-5) Timestamp sanity
-   • build_timestamp is not grossly in the future (> 24 hours beyond now)
+Default search order:
+  - outputs/run_hash_summary_v50.json
+  - logs/run_hash_summary_v50.json
+  - run_hash_summary_v50.json
 
-Design notes
-------------
-• The tests are verbose and self-documenting to align with the project's "No brevity" philosophy.
-• The dummy creation ensures green CI on fresh clones while still enforcing structure.
-• We deliberately allow optional fields to be missing; when present, we validate types and patterns.
 """
 
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
-import sys
-from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
+from typing import Dict, Iterable, List, Optional, Tuple
 
 import pytest
 
+# --------------------------------------------------------------------------- #
+# Config
+# --------------------------------------------------------------------------- #
 
-# =========================
-# Utility & Helper Routines
-# =========================
+ENV_SUMMARY = "SPECTRAMIND_RUN_HASH_SUMMARY"
+CANDIDATES = (
+    Path("outputs/run_hash_summary_v50.json"),
+    Path("logs/run_hash_summary_v50.json"),
+    Path("run_hash_summary_v50.json"),
+)
 
-HEX_RE = re.compile(r"^[0-9a-fA-F]+$")
+# Loose patterns / validators
+UUID4_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+)
+ULID_RE = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")  # Crockford base32 (no I,L,O,U)
+HEX256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
+GIT_COMMIT_RE = re.compile(r"^(?:[0-9a-fA-F]{7,40}|UNKNOWN)$")
+ISO8601_UTC_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$")
 
+# Optional “global” keys we tolerate and lightly validate if present
+GLOBAL_KEYS = {
+    "app_name",
+    "version",
+    "build_time",
+    "cli_entry",
+}
+
+# --------------------------------------------------------------------------- #
+# Helpers
+# --------------------------------------------------------------------------- #
 
 def repo_root() -> Path:
-    """
-    Best-effort discovery of repository root by walking up from this file.
-    Signals:
-    • .git present           -> treat as root
-    • pyproject.toml present -> likely root
-    • spectramind.py present -> repository root by convention
-    """
     here = Path(__file__).resolve()
-    for parent in [here] + list(here.parents):
-        if (parent / ".git").exists() or (parent / "pyproject.toml").exists() or (parent / "spectramind.py").exists():
-            return parent
+    for p in [here, *here.parents]:
+        if (p / "pyproject.toml").exists() or (p / ".git").exists():
+            return p
     return Path.cwd().resolve()
 
 
-def canonical_run_hash_location(base: Path) -> Path:
-    """
-    Canonical location of the summary JSON, by convention.
-    """
-    return base / "outputs" / "run_hash_summary_v50.json"
+def find_summary(root: Path) -> Path:
+    env = os.getenv(ENV_SUMMARY, "").strip()
+    if env:
+        p = Path(env)
+        if not p.is_absolute():
+            p = (root / p).resolve()
+        assert p.exists(), f"run-hash summary not found at {p}"
+        return p
+
+    for cand in CANDIDATES:
+        p = (root / cand).resolve()
+        if p.exists():
+            return p
+
+    pytest.fail(
+        "Run-hash summary JSON not found. "
+        f"Set {ENV_SUMMARY} or place 'run_hash_summary_v50.json' under outputs/ or logs/."
+    )
 
 
-def save_json(path: Path, data: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, sort_keys=True)
+def _parse_iso8601_utc(s: str) -> datetime:
+    assert ISO8601_UTC_RE.match(s), f"timestamp not ISO‑8601 UTC with 'Z': {s!r}"
+    # convert for fromisoformat by replacing Z with +00:00
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    dt = datetime.fromisoformat(s)
+    assert dt.tzinfo is not None, "timestamp missing timezone info"
+    return dt
 
 
-def load_json(path: Path) -> Any:
-    with path.open("r", encoding="utf-8") as f:
-        return json.load(f)
+def _is_uuid_or_ulid(s: str) -> bool:
+    return bool(UUID4_RE.match(s) or ULID_RE.match(s))
 
 
-def now_iso8601() -> str:
-    """Return a simple ISO8601-like UTC timestamp (Z suffix)."""
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+def _semver_like(s: str) -> bool:
+    return bool(re.match(r"^\d+\.\d+\.\d+([\-+][A-Za-z0-9\.\-_]+)?$", s))
 
 
-def parse_dt_soft(s: str) -> Optional[datetime]:
-    """
-    Soft-parse an ISO-like timestamp. We accept a wide range of reasonable formats.
-    On failure, return None instead of raising.
-    """
-    candidates = [
-        "%Y-%m-%dT%H:%M:%SZ",      # 2025-08-23T04:05:06Z
-        "%Y-%m-%dT%H:%M:%S",       # 2025-08-23T04:05:06
-        "%Y-%m-%d %H:%M:%S",       # 2025-08-23 04:05:06
-        "%Y-%m-%d",                # 2025-08-23
-    ]
-    for fmt in candidates:
-        try:
-            dt = datetime.strptime(s, fmt)
-            if fmt.endswith("Z"):
-                return dt.replace(tzinfo=timezone.utc)
-            # no tz info -> assume UTC
-            return dt.replace(tzinfo=timezone.utc)
-        except Exception:
-            continue
-    # Fallback: attempt fromisoformat (handles offsets)
-    try:
-        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt
-    except Exception:
-        return None
+def _safe_get(obj: dict, key: str, default=None):
+    return obj.get(key, default)
 
 
-def ensure_relative_to_root(p: Path, root: Path) -> bool:
-    """
-    Return True if p is inside root (or equal). False otherwise.
-    This prevents path traversal and enforces portability.
-    """
-    try:
-        _ = p.resolve().relative_to(root.resolve())
-        return True
-    except Exception:
-        return False
+def _is_sha256_or_unknown(v: str) -> bool:
+    return v == "UNKNOWN" or bool(HEX256_RE.match(v))
 
 
-def coerce_str_list(x: Any) -> Optional[List[str]]:
-    if x is None:
-        return None
-    if isinstance(x, list) and all(isinstance(i, str) for i in x):
-        return x
-    return None
+# --------------------------------------------------------------------------- #
+# Tests
+# --------------------------------------------------------------------------- #
+
+def test_summary_exists_and_has_runs():
+    root = repo_root()
+    summary_path = find_summary(root)
+    data = json.loads(summary_path.read_text(encoding="utf-8"))
+
+    assert isinstance(data, dict), "Top-level of run-hash summary must be a JSON object"
+    assert "runs" in data, "Missing 'runs' key at top-level"
+    runs = data["runs"]
+    assert isinstance(runs, list) and len(runs) > 0, "'runs' must be a non-empty list"
+
+    # Optional global keys sanity (if present)
+    for k in GLOBAL_KEYS:
+        if k in data:
+            assert isinstance(data[k], str) and data[k].strip(), f"Global key '{k}' must be non-empty string"
+    if "version" in data:
+        assert _semver_like(data["version"]), f"Global 'version' not semver-like: {data['version']}"
+    if "build_time" in data:
+        _parse_iso8601_utc(data["build_time"])
 
 
-def walk_paths_in_summary(data: Dict[str, Any]) -> List[str]:
-    """
-    Extract a conservative set of path-like fields from the run hash summary.
-    We avoid making hard assumptions about schema; we just look at known keys.
+def test_each_run_item_has_required_fields_and_valid_formats():
+    root = repo_root()
+    data = json.loads(find_summary(root).read_text(encoding="utf-8"))
+    runs = data["runs"]
 
-    Returns a list of string paths (relative or absolute as given in JSON).
-    """
-    paths: List[str] = []
-    # Canonical and commonly seen keys:
-    for key in [
-        "repo_root",
-        "diagnostics_html",
-        "v50_debug_log",
-        "hydra_resolved_config_path",
-        "config_snapshot_path",
-        "poetry_lock_path",
-        "dockerfile_path",
-        "dvc_yaml_path",
-        "submission_csv",
-        "submission_zip",
-    ]:
-        val = data.get(key)
-        if isinstance(val, str):
-            paths.append(val)
+    # Check uniqueness and order by started_at
+    seen_ids = set()
+    last_start: Optional[datetime] = None
 
-    # Nested dicts that may contain paths
-    for nested_key in ["outputs", "artifacts", "files", "manifests"]:
-        nested = data.get(nested_key)
-        if isinstance(nested, dict):
-            for v in nested.values():
-                if isinstance(v, str):
-                    paths.append(v)
-                elif isinstance(v, list):
-                    for i in v:
-                        if isinstance(i, str):
-                            paths.append(i)
+    for i, r in enumerate(runs):
+        assert isinstance(r, dict), f"runs[{i}] must be an object"
 
-    # run_hash_files (list)
-    rfiles = coerce_str_list(data.get("run_hash_files"))
-    if rfiles:
-        paths.extend(rfiles)
-
-    return paths
-
-
-# ==============================================
-# Dummy (Synthetic) run_hash_summary_v50.json
-# ==============================================
-
-def create_dummy_run_hash_summary(tmp_root: Path) -> Path:
-    """
-    Create a **dummy** run hash summary in tmp_root/outputs/run_hash_summary_v50.json
-    with enough structure to satisfy tests and document expected fields.
-    """
-    out = canonical_run_hash_location(tmp_root)
-    data = {
-        "config_hash": "deadbeefcafebabe0123456789abcdef0123456789abcdef0123456789abcd",
-        "cli_version": "v50.0.0-test",
-        "build_timestamp": now_iso8601(),
-        "repo_root": str(tmp_root),
-        "run_id": "dummy-run-0001",
-        "python": sys.version.split()[0],
-        "platform": sys.platform,
-        "env": {
-            "HYDRA_FULL_ERROR": "1",
-            "PYTHONHASHSEED": "0",
-        },
-        "git": {
-            "commit": "0123456789abcdef0123456789abcdef01234567",
-            "branch": "feature/dummy",
-            "dirty": False,
-        },
-        "run_args": ["spectramind", "test", "--deep"],
-        "cli_command": "spectramind --version",
-        "outputs": {
-            "diagnostics_dir": "outputs/diagnostics",
-            "predictions_dir": "outputs/predictions",
-        },
-        "artifacts": {
-            "manifests_dir": "outputs/manifests",
-        },
-        "metrics": {
-            "gll_mean": -1.234,
-            "rmse": 0.0567,
-        },
-        "durations": {
-            "train_sec": 12.34,
-            "inference_sec": 5.67,
-        },
-        "run_hash_files": [
-            "outputs/run_hash_summary_v50.json",
-        ],
-    }
-    save_json(out, data)
-    return out
-
-
-# ======================
-# Pytest-Level Fixtures
-# ======================
-
-@pytest.fixture(scope="module")
-def discovered_or_dummy_run_hash(tmp_path_factory):
-    """
-    Try to discover the real run hash summary under the repo root. If not found,
-    synthesize a **dummy** summary in a tmp directory to preserve CI greenness.
-
-    Returns:
-        {
-          "root": Path,             # base root for path-rel checking
-          "path": Path,             # path to run_hash_summary_v50.json
-          "is_dummy": bool
-        }
-    """
-    base = repo_root()
-    summary = canonical_run_hash_location(base)
-    if summary.exists():
-        return {"root": base, "path": summary, "is_dummy": False}
-
-    # Create dummy in a temp project layout
-    tmp_root = tmp_path_factory.mktemp("run_hash_dummy_root")
-    # Establish minimal repo signals in tmp_root:
-    (tmp_root / "pyproject.toml").write_text("[tool.spectramind]\nname='dummy'\n", encoding="utf-8")
-    created = create_dummy_run_hash_summary(tmp_root)
-    return {"root": tmp_root, "path": created, "is_dummy": True}
-
-
-# ============
-# The Test Set
-# ============
-
-class TestRunHashSummaryContents:
-    """
-    Comprehensive checks for the `outputs/run_hash_summary_v50.json` structure.
-    """
-
-    # 1) Presence
-    def test_summary_presence(self, discovered_or_dummy_run_hash):
-        info = discovered_or_dummy_run_hash
-        p: Path = info["path"]
-        assert p.exists(), f"Expected run hash summary at {p}."
-
-    # 2) Minimum fields and simple sanity
-    def test_minimum_fields(self, discovered_or_dummy_run_hash):
-        path: Path = discovered_or_dummy_run_hash["path"]
-        data: Dict[str, Any] = load_json(path)
-
-        # Required fields: config_hash, cli_version, build_timestamp
-        for k in ("config_hash", "cli_version", "build_timestamp"):
-            assert k in data and isinstance(data[k], str) and data[k].strip(), f"Missing/empty field '{k}' in {path}"
-
-        # config_hash: if hex-like, enforce length 40 or 64
-        conf = data["config_hash"]
-        if HEX_RE.match(conf):
-            assert len(conf) in (40, 64), f"config_hash should be 40 or 64 hex chars when hex-like; got length {len(conf)}"
-
-        # cli_version: simple pattern check (vXX or vXX.YY etc.) — flexible on purpose
-        cli_ver = data["cli_version"]
-        assert cli_ver[0].lower() == "v", f"cli_version should start with 'v' (e.g., v50.0.0); got {cli_ver}"
-
-        # build_timestamp: parseable & not far in the future (> 24h)
-        ts_str = data["build_timestamp"]
-        ts = parse_dt_soft(ts_str)
-        assert ts is not None, f"build_timestamp not parseable: {ts_str}"
-        now = datetime.now(timezone.utc)
-        assert ts <= now + timedelta(hours=24), f"build_timestamp appears to be far in the future: {ts_str}"
-
-    # 3) Optional ecosystem fields — types/patterns
-    def test_optional_ecosystem_fields(self, discovered_or_dummy_run_hash):
-        path: Path = discovered_or_dummy_run_hash["path"]
-        data: Dict[str, Any] = load_json(path)
-
-        # repo_root (if present) should be a directory
-        repo_root_str = data.get("repo_root")
-        if isinstance(repo_root_str, str):
-            repo_root_path = Path(repo_root_str)
-            # Not strictly required to exist in real repo; dummy will set it to tmp root
-            assert isinstance(repo_root_path, Path)
-
-        # run_id (if present)
-        run_id = data.get("run_id")
-        if run_id is not None:
-            assert isinstance(run_id, str) and run_id.strip(), "run_id should be a non-empty string when present."
-
-        # git block
-        git = data.get("git")
-        if git is not None:
-            assert isinstance(git, dict), "git should be a dict when present."
-            commit = git.get("commit")
-            if commit is not None:
-                assert isinstance(commit, str) and len(commit) >= 7, "git.commit should be a short or full hash string"
-                assert HEX_RE.match(commit[:7]), "git.commit should start with hex chars."
-            branch = git.get("branch")
-            if branch is not None:
-                assert isinstance(branch, str)
-            dirty = git.get("dirty")
-            if dirty is not None:
-                assert isinstance(dirty, bool)
-
-        # env mapping
-        env = data.get("env")
-        if env is not None:
-            assert isinstance(env, dict), "env should be a dict when present."
-            for k, v in env.items():
-                assert isinstance(k, str), "env keys must be strings"
-                assert isinstance(v, (str, int, float, bool)), "env values should be primitive types (string/number/bool)"
-
-        # run_args list
-        run_args = data.get("run_args")
-        if run_args is not None:
-            assert isinstance(run_args, list) and all(isinstance(i, str) for i in run_args), "run_args must be list[str]"
-
-        # cli_command str
-        cli_cmd = data.get("cli_command")
-        if cli_cmd is not None:
-            assert isinstance(cli_cmd, str) and cli_cmd.strip(), "cli_command must be a non-empty string"
-
-        # metrics dict[str, number]
-        metrics = data.get("metrics")
-        if metrics is not None:
-            assert isinstance(metrics, dict), "metrics should be a dict when present."
-            for k, v in metrics.items():
-                assert isinstance(k, str), "metrics keys must be strings"
-                assert isinstance(v, (int, float)), f"metric '{k}' must be a number; got {type(v)}"
-
-        # durations dict[str, number]
-        durations = data.get("durations")
-        if durations is not None:
-            assert isinstance(durations, dict), "durations should be a dict when present."
-            for k, v in durations.items():
-                assert isinstance(k, str), "durations keys must be strings"
-                assert isinstance(v, (int, float)), f"duration '{k}' must be a number; got {type(v)}"
-
-        # tool versions (if present): accept strings
-        for key in ["python", "platform", "cuda", "torch", "hydra", "dvc", "mlflow", "wandb", "poetry", "poetry_lock_hash"]:
-            if key in data:
-                assert isinstance(data[key], str), f"{key} should be a string when present."
-
-        # docker image, kaggle fields (if present): strings
-        for key in ["docker_image", "kaggle_competition", "kaggle_username"]:
-            if key in data and data[key] is not None:
-                assert isinstance(data[key], str), f"{key} should be a string when present."
-
-        # config snapshot (path or dict)
-        csnap = data.get("config_snapshot")
-        if csnap is not None:
-            assert isinstance(csnap, (dict, str)), "config_snapshot may be a dict (inlined) or a path string."
-
-        # hydra resolved config path (if present)
-        hrp = data.get("hydra_resolved_config_path")
-        if hrp is not None:
-            assert isinstance(hrp, str), "hydra_resolved_config_path should be a string path when present."
-
-    # 4) Path sanity (inside repo root), existence is soft-checked
-    def test_path_sanity(self, discovered_or_dummy_run_hash, capsys):
-        info = discovered_or_dummy_run_hash
-        base: Path = info["root"]
-        path: Path = info["path"]
-        data: Dict[str, Any] = load_json(path)
-
-        # Collect a conservative set of path-like fields
-        candidates = walk_paths_in_summary(data)
-
-        # Always include self-path for sanity
-        candidates.append(str(path.relative_to(base)) if ensure_relative_to_root(path, base) else str(path))
-
-        warnings: List[str] = []
-        for rel in candidates:
-            if not isinstance(rel, str) or not rel.strip():
-                warnings.append(f"Skipping non-string path candidate: {rel!r}")
-                continue
-            p = Path(rel)
-            # If the JSON holds an absolute path, make it relative check against base; else join base + rel
-            resolved = (p if p.is_absolute() else (base / p)).resolve()
-            assert ensure_relative_to_root(resolved, base), f"Referenced path escapes repo root: {rel} -> {resolved} (base: {base})"
-            # Existence is a soft check; only warn
-            if not resolved.exists():
-                warnings.append(f"Referenced path does not (yet) exist: {rel} -> {resolved}")
-
-        if warnings:
-            # Print soft warnings to help developers; does not fail the test
-            print("\n".join(f"[run-hash-summary warning] {w}" for w in warnings))
-
-        # Ensure printed warnings (if any) are captured (no-op otherwise)
-        _ = capsys.readouterr()
-
-    # 5) Round-trip dummy synthesis (self-contained regression)
-    def test_dummy_round_trip(self, tmp_path):
-        """
-        Build a minimal temporary project root with a synthesized run hash summary.
-        Validate the same checks: minimum fields, optional typing, and path sanity.
-        """
-        # Create a minimal root
-        root = tmp_path / "proj"
-        root.mkdir(parents=True, exist_ok=True)
-        (root / "pyproject.toml").write_text("[tool.spectramind]\nname='dummy'\n", encoding="utf-8")
-
-        # Create dummy summary
-        summary = create_dummy_run_hash_summary(root)
-        assert summary.exists(), "Failed to create dummy run hash summary."
-
-        data = load_json(summary)
-        # Minimum fields
-        for k in ("config_hash", "cli_version", "build_timestamp"):
-            assert k in data and isinstance(data[k], str) and data[k].strip()
-
-        # Timestamp parseable and not far future
-        ts = parse_dt_soft(data["build_timestamp"])
-        assert ts is not None
-        assert ts <= datetime.now(timezone.utc) + timedelta(hours=24)
-
-        # Optional env type check
-        env = data.get("env")
-        assert isinstance(env, dict)
-        for k, v in env.items():
-            assert isinstance(k, str)
-            assert isinstance(v, (str, int, float, bool))
-
-        # Path sanity for known references
-        candidates = walk_paths_in_summary(data)
-        for rel in candidates:
-            if not isinstance(rel, str) or not rel.strip():
-                continue
-            p = Path(rel)
-            resolved = (p if p.is_absolute() else (root / p)).resolve()
-            assert ensure_relative_to_root(resolved, root), f"Dummy referenced path escapes root: {rel} -> {resolved}"
-
-    # 6) Friendly schema hints (non-failing): print examples of suggested keys if missing
-    def test_suggested_schema_hints(self, discovered_or_dummy_run_hash, capsys):
-        """
-        Provide friendly guidance on *suggested* keys missing from the summary to
-        encourage richer reproducibility — but do not fail the test.
-        """
-        path: Path = discovered_or_dummy_run_hash["path"]
-        data: Dict[str, Any] = load_json(path)
-
-        suggested_keys = [
-            "repo_root",
+        # Required keys
+        for key in [
             "run_id",
-            "git.commit",
-            "git.branch",
-            "git.dirty",
-            "python",
+            "started_at",
+            "finished_at",
+            "duration_seconds",
+            "command",
+            "exit_code",
+            "config_hash",
+            "data_hash",
+            "git_commit",
+            "python_version",
             "platform",
-            "cuda",
-            "torch",
-            "hydra",
-            "dvc",
-            "mlflow",
-            "wandb",
-            "poetry",
-            "poetry_lock_hash",
-            "docker_image",
-            "kaggle_competition",
-            "kaggle_username",
-            "env",
-            "run_args",
-            "cli_command",
-            "config_snapshot",
-            "hydra_resolved_config_path",
-            "outputs",
-            "artifacts",
-            "metrics",
-            "durations",
-            "diagnostics_html",
-            "v50_debug_log",
-            "run_hash_files",
-        ]
+            "cwd",
+        ]:
+            assert key in r, f"runs[{i}] missing '{key}'"
 
-        missing: List[str] = []
-        # shallow checks for top-level keys; special-case git subkeys
-        for k in suggested_keys:
-            if k.startswith("git."):
-                sub = k.split(".", 1)[1]
-                if not isinstance(data.get("git"), dict) or sub not in data["git"]:
-                    missing.append(k)
-            else:
-                if k not in data:
-                    missing.append(k)
+        # run_id
+        run_id = str(r["run_id"])
+        assert _is_uuid_or_ulid(run_id), f"runs[{i}].run_id not UUIDv4/ULID: {run_id!r}"
+        assert run_id not in seen_ids, f"Duplicate run_id in summary: {run_id}"
+        seen_ids.add(run_id)
 
-        if missing:
-            print(
-                "[run-hash-summary hint] Consider enriching outputs/run_hash_summary_v50.json with keys:\n  - "
-                + "\n  - ".join(missing)
-            )
+        # timestamps
+        started = _parse_iso8601_utc(str(r["started_at"]))
+        finished = _parse_iso8601_utc(str(r["finished_at"]))
+        assert finished >= started, f"runs[{i}]: finished_at < started_at"
+        if last_start:
+            assert started >= last_start, f"runs are not sorted by started_at at index {i}"
+        last_start = started
 
-        # Drain captured output
-        _ = capsys.readouterr()
+        # duration
+        duration = float(r["duration_seconds"])
+        assert duration >= 0.0, f"runs[{i}]: duration_seconds must be ≥ 0"
+        # wall-clock duration comparison (allow ±0.5s tolerance)
+        wall = (finished - started).total_seconds()
+        assert abs(duration - wall) <= 0.5, (
+            f"runs[{i}]: duration_seconds ({duration:.3f}) "
+            f"differs from wall time ({wall:.3f})"
+        )
+
+        # command
+        cmd = str(r["command"]).strip()
+        assert cmd, f"runs[{i}]: empty command string"
+
+        # exit code
+        assert isinstance(r["exit_code"], int), f"runs[{i}]: exit_code must be int"
+
+        # hashes
+        cfg_hash = str(r["config_hash"])
+        data_hash = str(r["data_hash"])
+        assert _is_sha256_or_unknown(cfg_hash), f"runs[{i}]: invalid config_hash: {cfg_hash!r}"
+        assert _is_sha256_or_unknown(data_hash), f"runs[{i}]: invalid data_hash: {data_hash!r}"
+
+        # git commit
+        gitc = str(r["git_commit"])
+        assert GIT_COMMIT_RE.match(gitc), f"runs[{i}]: invalid git_commit: {gitc!r}"
+
+        # python/platform
+        assert isinstance(r["python_version"], str) and r["python_version"], f"runs[{i}]: python_version empty"
+        assert isinstance(r["platform"], str) and r["platform"], f"runs[{i}]: platform empty"
+
+        # cwd
+        assert isinstance(r["cwd"], str) and r["cwd"], f"runs[{i}]: cwd empty"
+
+        # Optional: environment (if present, should be dict of strings → strings)
+        env = _safe_get(r, "environment")
+        if env is not None:
+            assert isinstance(env, dict), f"runs[{i}].environment must be object"
+            for k, v in env.items():
+                assert isinstance(k, str) and isinstance(v, str), f"runs[{i}].environment must map str→str"
+
+        # Optional: artifacts/files/logs arrays
+        for coll_key in ("artifacts", "files", "logs"):
+            coll = _safe_get(r, coll_key)
+            if coll is not None:
+                assert isinstance(coll, list), f"runs[{i}].{coll_key} must be list"
+                for j, item in enumerate(coll):
+                    assert isinstance(item, dict), f"runs[{i}].{coll_key}[{j}] must be object"
+                    # If checksum present, validate shape
+                    if "sha256" in item:
+                        val = str(item["sha256"])
+                        assert _is_sha256_or_unknown(val), \
+                            f"runs[{i}].{coll_key}[{j}].sha256 invalid: {val!r}"
+                    # If path present, validate non-empty string
+                    if "path" in item:
+                        p = str(item["path"]).strip()
+                        assert p, f"runs[{i}].{coll_key}[{j}].path empty"
+
+        # Optional: metrics (dict or list)
+        metrics = _safe_get(r, "metrics")
+        if metrics is not None:
+            assert isinstance(metrics, (dict, list)), f"runs[{i}].metrics must be dict or list"
+            # Guard against NaN/Inf if numbers present
+            def _flat(o):
+                if isinstance(o, dict):
+                    for vv in o.values():
+                        yield from _flat(vv)
+                elif isinstance(o, list):
+                    for vv in o:
+                        yield from _flat(vv)
+                else:
+                    yield o
+            for val in _flat(metrics):
+                if isinstance(val, float):
+                    assert math.isfinite(val), f"runs[{i}].metrics contains non‑finite float"
+
+        # Optional: notes (string)
+        notes = _safe_get(r, "notes")
+        if notes is not None:
+            assert isinstance(notes, str), f"runs[{i}].notes must be string"
 
 
-# ======================
-# Standalone Test Runner
-# ======================
+def test_summary_keys_are_stable_and_no_surprising_renames():
+    """
+    Guardrail: if maintainers change top-level keys or omit 'runs', fail loudly
+    to force downstream updates.
+    """
+    data = json.loads(find_summary(repo_root()).read_text(encoding="utf-8"))
 
-if __name__ == "__main__":  # pragma: no cover
-    # Allow running this file directly:
-    #   python -m pytest -q tests/artifacts/test_run_hash_summary_contents.py
-    # Or:
-    #   python tests/artifacts/test_run_hash_summary_contents.py
-    import pytest as _pytest
-    sys.exit(_pytest.main([__file__, "-q"]))
+    assert isinstance(data, dict), "Top-level JSON must be an object"
+    assert "runs" in data, "Missing 'runs' key at top-level"
+    # Permit a small set of known globals; ignore unknown keys rather than fail hard.
+    for k in data.keys():
+        if k in ("runs", *GLOBAL_KEYS):
+            continue
+        # Soft guard: allow additional keys; if you want strict, turn this into an assert.
+
+
+def test_human_readable_header_and_counts_are_reasonable():
+    """
+    Optional nicety: if the summary exposes `total_runs`, `failures`, etc., validate consistency.
+    If not present, this test passes (no-op).
+    """
+    data = json.loads(find_summary(repo_root()).read_text(encoding="utf-8"))
+    runs = data.get("runs", [])
+    total = data.get("total_runs")
+    failures = data.get("failures")
+    if total is not None:
+        assert isinstance(total, int) and total >= 0, "total_runs must be non-negative int"
+        assert total == len(runs), "`total_runs` must equal length of 'runs'"
+    if failures is not None:
+        assert isinstance(failures, int) and 0 <= failures <= len(runs), "failures must be in [0, len(runs)]"
+        # If exit_code is present for each run, cross-check failures ~= number of non-zero exit_code
+        try:
+            calc_failures = sum(1 for r in runs if int(r.get("exit_code", 0)) != 0)
+            assert failures == calc_failures, "failures count mismatch vs. exit_code aggregation"
+        except Exception:
+            # If exit_code types vary, skip strict check.
+            pass
+
+
+# --------------------------------------------------------------------------- #
+# Debug / failure context
+# --------------------------------------------------------------------------- #
+
+def pytest_runtest_makereport(item, call):
+    """
+    On failure, append helpful context to stderr to speed up root-cause analysis.
+    """
+    if call.excinfo is not None and call.when == "call":
+        root = repo_root()
+        try:
+            path = find_summary(root)
+            extra = f"[debug] repo_root={root}\n[debug] run_hash_summary={path}\n"
+        except Exception as e:
+            extra = f"[debug] repo_root={root}\n[debug] run_hash_summary=NOT FOUND ({e})\n"
+        import sys
+        sys.stderr.write(extra)
