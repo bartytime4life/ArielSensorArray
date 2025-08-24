@@ -1,608 +1,906 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
-shap_symbolic_overlay.py
+tools/shap_symbolic_overlay.py
 
-Neuro‑symbolic SHAP overlay for SpectraMind V50:
-- computes feature attributions (SHAP) for the spectrum head of a trained model,
-- computes per‑wavelength symbolic rule pressures (constraint-violation magnitudes),
-- produces aligned heatmaps and a fused overlay to diagnose why the model predicts what it does
-  and whether it does so in a physically consistent way.
+SpectraMind V50 — SHAP × Symbolic Overlay (Ultimate, Challenge‑Grade)
 
-Design notes (refs):
-- CLI‑first Typer + Hydra config workflow; structured logs/artifacts for reproducibility. :contentReference[oaicite:0]{index=0} 
-- “UI‑light” rich console and saved plots/HTML, no heavy GUI. :contentReference[oaicite:1]{index=1} 
-- Neuro‑symbolic loss with physics rules (non‑negativity, bounded flux, correlated features). :contentReference[oaicite:2]{index=2} 
-- GNN spectral priors and molecular-band coherence → we re-use band groupings for a “coherence” rule. :contentReference[oaicite:3]{index=3} 
-- FFT/UMAP/diagnostics are part of the toolbox; this module focuses on SHAP + symbolic overlays. :contentReference[oaicite:4]{index=4}
+Purpose
+-------
+Fuse per‑bin SHAP attributions with physics‑informed symbolic rule masks to:
+  • quantify per‑planet × per‑rule importance (rule‑weighted |SHAP|, fractions),
+  • rank rules per planet and compare against symbolic violation scores (if available),
+  • render planet×rule heatmaps and per‑planet μ(λ) overlays shaded by top rules,
+  • export authoritative CSV/JSON tables + a compact HTML diagnostics dashboard,
+  • maintain append‑only, reproducible run manifests and logs.
 
+Inputs (flexible)
+-----------------
+• --shap
+    |SHAP| per bin with robust shapes:
+      - (P, B)       per‑planet per‑bin absolute SHAP  (recommended)
+      - (P, I, B)    per‑planet per‑input per‑bin → reduces via sum(|.|, axis=1) → (P,B)
+      - (B,)         global per‑bin |SHAP| → broadcast to P planets
+
+• --rules
+    JSON with "rule_masks" mapping names → bin selections or weights (length B):
+      {
+        "rule_masks": {
+          "H2O_band_1": [idx, idx, ...] | [0/1/weight, ... len B] | {"bin": weight, ...},
+          "CO2_4.3um" : ...
+        },
+        "rule_groups": { "water": ["H2O_band_1", "H2O_band_2"], ... }   # optional
+      }
+
+• --symbolic (optional)
+    JSON of symbolic diagnostics; if per‑rule or per‑planet violation scores exist,
+    they will be attached for correlation and ranking. Flexible schema supported.
+
+• --mu (optional)
+    Predicted μ spectra, shape (P, B) — used for line overlays under shaded rule spans.
+
+• --wavelengths (optional)
+    Length‑B wavelength vector (μm/nm/index). Defaults to 0..B‑1.
+
+• --metadata (optional)
+    CSV/JSON with 'planet_id'. Synthesized if missing.
+
+Key Outputs
+-----------
+outdir/
+  rule_importance_per_planet.csv          # P×R matrix (long table, with fractions and optional violations)
+  rule_leaderboard.csv                    # total rule importance across planets (sum, mean, fraction)
+  topk_rules_per_planet.csv               # top‑K rules per planet (with spans & fractions)
+  planet_rule_heatmap.png/.html           # heatmap (P×R) of rule importance
+  overlay_planet_<id>.png                 # μ(λ) with shaded spans of top rules (first N planets)
+  rule_table.json                         # normalized rule stats (coverage, segments, weights)
+  shap_symbolic_overlay_manifest.json     # manifest
+  run_hash_summary_v50.json               # reproducibility trail (append‑only)
+  dashboard.html                          # quick links + preview
+
+Design & Integration
+--------------------
+• Deterministic (no RNG). No network calls. Plotly/Matplotlib degrade to CSV if unavailable.
+• Rules loader is identical in spirit to `symbolic_rule_table.py` for consistency.
+• All paths/arrays are validated and padded/truncated safely.
+• Append‑only audit logging to logs/v50_debug_log.md and logs/v50_runs.jsonl.
 """
 
 from __future__ import annotations
 
+import argparse
+import datetime as _dt
+import hashlib
 import json
-import math
-import os
 import sys
-import time
+import textwrap
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
-import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
-import shap
-import torch
-import typer
-import yaml
-from rich.console import Console
-from rich.progress import Progress, TextColumn, BarColumn, TimeElapsedColumn
-from rich.table import Table
 
-app = typer.Typer(add_completion=False)
-console = Console()
+# Tabular
+try:
+    import pandas as pd
+except Exception as e:
+    raise RuntimeError("pandas is required. Please `pip install pandas`.") from e
+
+# Visualization (optional)
+try:
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    _MPL_OK = True
+except Exception:
+    _MPL_OK = False
+
+try:
+    import plotly.graph_objects as go
+    import plotly.io as pio
+    _PLOTLY_OK = True
+except Exception:
+    _PLOTLY_OK = False
 
 
-# -----------------------------
-# Utility / Config structures
-# -----------------------------
+# ==============================================================================
+# Utilities — time, dirs, hashing, logging
+# ==============================================================================
+
+def _now_iso() -> str:
+    return _dt.datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def _ensure_dir(p: Path) -> None:
+    p.mkdir(parents=True, exist_ok=True)
+
+
+def _hash_jsonable(obj: Any) -> str:
+    b = json.dumps(obj, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(b).hexdigest()
+
 
 @dataclass
-class OverlayConfig:
-    # Paths
-    model_path: str
-    data_path: str
-    output_dir: str = "outputs/diagnostics/shap_symbolic"
-    # Selection
-    n_samples: int = 64
-    seed: int = 42
-    # Spectrum specifics
-    n_wavelengths: int = 283
-    wl_start: float = 0.5  # microns (example)
-    wl_end: float = 7.8    # microns (example)
-    # Rules
-    max_flux: float = 1.0          # upper bound (relative to stellar continuum)
-    smooth_lambda: float = 1.0      # weight for smoothness rule
-    nonneg_lambda: float = 1.0      # weight for non-negativity rule
-    bound_lambda: float = 1.0       # weight for upper bound rule
-    bandcoh_lambda: float = 1.0     # weight for molecular band coherence rule
-    # Coherence bands: list of (name, [index ranges])
-    bands: Dict[str, List[Tuple[int, int]]] = None
-    # SHAP
-    shap_background: int = 64
-    shap_max_evals: int = 1024
-    shap_method: str = "auto"  # "deep", "kernel", "auto"
-    device: str = "auto"       # "auto","cpu","cuda"
+class AuditLogger:
+    md_path: Path
+    jsonl_path: Path
+
+    def log(self, event: Dict[str, Any]) -> None:
+        _ensure_dir(self.md_path.parent)
+        _ensure_dir(self.jsonl_path.parent)
+        row = dict(event)
+        row.setdefault("timestamp", _now_iso())
+        # JSONL
+        with open(self.jsonl_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        # Markdown block
+        md = textwrap.dedent(f"""
+        ---
+        time: {row["timestamp"]}
+        tool: shap_symbolic_overlay
+        action: {row.get("action","run")}
+        status: {row.get("status","ok")}
+        shap: {row.get("shap","")}
+        rules: {row.get("rules","")}
+        mu: {row.get("mu","")}
+        wavelengths: {row.get("wavelengths","")}
+        metadata: {row.get("metadata","")}
+        topk: {row.get("topk","")}
+        first_n: {row.get("first_n","")}
+        outdir: {row.get("outdir","")}
+        message: {row.get("message","")}
+        """).strip() + "\n"
+        with open(self.md_path, "a", encoding="utf-8") as f:
+            f.write(md)
 
 
-def load_yaml(path: str) -> dict:
-    with open(path, "r") as f:
-        return yaml.safe_load(f)
+def _update_run_hash_summary(outdir: Path, manifest: Dict[str, Any]) -> None:
+    path = outdir / "run_hash_summary_v50.json"
+    payload = {"runs": []}
+    if path.exists():
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+            if not isinstance(payload, dict) or "runs" not in payload:
+                payload = {"runs": []}
+        except Exception:
+            payload = {"runs": []}
+    payload["runs"].append({"hash": _hash_jsonable(manifest), "timestamp": _now_iso(), "manifest": manifest})
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
 
 
-def save_yaml(obj: dict, path: str) -> None:
-    with open(path, "w") as f:
-        yaml.safe_dump(obj, f)
+# ==============================================================================
+# Generic loaders
+# ==============================================================================
+
+def _load_array_any(path: Path) -> np.ndarray:
+    s = path.suffix.lower()
+    if s == ".npy":
+        return np.asarray(np.load(path, allow_pickle=False))
+    if s == ".npz":
+        z = np.load(path, allow_pickle=False)
+        for k in z.files:
+            return np.asarray(z[k])
+        raise ValueError(f"No arrays found in {path}")
+    if s in {".csv", ".tsv"}:
+        df = pd.read_csv(path) if s == ".csv" else pd.read_csv(path, sep="\t")
+        return df.to_numpy()
+    if s == ".parquet":
+        return pd.read_parquet(path).to_numpy()
+    if s == ".feather":
+        return pd.read_feather(path).to_numpy()
+    raise ValueError(f"Unsupported array format: {path}")
 
 
-def set_seed(seed: int):
-    import random
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
+def _load_metadata_any(path: Optional[Path], n_planets: int) -> pd.DataFrame:
+    if path is None:
+        return pd.DataFrame({"planet_id": [f"planet_{i:04d}" for i in range(n_planets)]})
+    s = path.suffix.lower()
+    if s in {".csv", ".tsv"}:
+        df = pd.read_csv(path) if s == ".csv" else pd.read_csv(path, sep="\t")
+    elif s == ".json":
+        df = pd.read_json(path)
+    elif s == ".parquet":
+        df = pd.read_parquet(path)
+    elif s == ".feather":
+        df = pd.read_feather(path)
+    else:
+        raise ValueError(f"Unsupported metadata format: {path}")
+    if "planet_id" not in df.columns:
+        df = df.copy()
+        df["planet_id"] = [f"planet_{i:04d}" for i in range(len(df))]
+    return df.iloc[:n_planets].copy()
 
 
-def pick_device(pref: str) -> torch.device:
-    if pref == "cpu":
-        return torch.device("cpu")
-    if pref == "cuda":
-        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    # auto
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-# -----------------------------
-# Data / Model loading
-# -----------------------------
-
-def load_model(model_path: str, device: torch.device) -> torch.nn.Module:
+def _load_symbolic_any(path: Optional[Path]) -> Dict[str, Any]:
     """
-    Expects a torch scripted or state-dict saved model that outputs
-    either:
-      - spectrum (B, 283)
-      - or (mu, log_sigma) pair as a dict with keys ['mu','log_sigma']
+    Load optional symbolic results JSON. Flexible schema; return raw dict or {}.
     """
-    ckpt = torch.load(model_path, map_location=device)
-    if isinstance(ckpt, torch.nn.Module):
-        model = ckpt
-        model.to(device).eval()
-        return model
-
-    # Fallback: state dict under 'state_dict' or top-level
-    # A minimal generic MLP head definition for restoration if class is not present
-    class SimpleHead(torch.nn.Module):
-        def __init__(self, n_in: int, n_out: int):
-            super().__init__()
-            self.net = torch.nn.Sequential(
-                torch.nn.Linear(n_in, 512),
-                torch.nn.ReLU(),
-                torch.nn.Linear(512, 512),
-                torch.nn.ReLU(),
-                torch.nn.Linear(512, n_out),
-            )
-
-        def forward(self, x):
-            return self.net(x)
-
-    state_dict = ckpt.get("state_dict", ckpt)
-    # Infer shapes crudely
-    # NOTE: users should prefer saving scripted models; this is a convenience.
-    example_in = state_dict.get("net.0.weight", None)
-    if example_in is None:
-        raise RuntimeError("Cannot infer model architecture; provide a scripted model or known class.")
-    n_in = example_in.shape[1]
-    # Try detecting mu/log_sigma twin heads
-    has_mu = any(k.startswith("mu_head") for k in state_dict.keys())
-    has_logsig = any(k.startswith("logsig_head") for k in state_dict.keys())
-
-    if has_mu and has_logsig:
-        class TwinHead(torch.nn.Module):
-            def __init__(self, n_in: int, n_out: int):
-                super().__init__()
-                self.backbone = torch.nn.Sequential(
-                    torch.nn.Linear(n_in, 512),
-                    torch.nn.ReLU(),
-                    torch.nn.Linear(512, 512),
-                    torch.nn.ReLU(),
-                )
-                self.mu_head = torch.nn.Linear(512, n_out)
-                self.logsig_head = torch.nn.Linear(512, n_out)
-
-            def forward(self, x):
-                h = self.backbone(x)
-                return {"mu": self.mu_head(h), "log_sigma": self.logsig_head(h)}
-
-        model = TwinHead(n_in, 283)
-        model.load_state_dict(state_dict, strict=False)
-        model.to(device).eval()
-        return model
-
-    model = SimpleHead(n_in, 283)
-    model.load_state_dict(state_dict, strict=False)
-    model.to(device).eval()
-    return model
+    if path is None:
+        return {}
+    with open(path, "r", encoding="utf-8") as f:
+        try:
+            return json.load(f)
+        except Exception:
+            return {}
 
 
-def load_dataset_npz(data_path: str, n_samples: int, n_wavelengths: int) -> Tuple[np.ndarray, np.ndarray]:
+# ==============================================================================
+# Rules loader & helpers (aligned with symbolic_rule_table.py)
+# ==============================================================================
+
+@dataclass
+class RuleSet:
+    rule_names: List[str]          # length R
+    rule_masks: np.ndarray         # R×B (float >=0)
+    groups: Dict[str, List[str]]   # optional group name -> list of rules
+
+
+def _as_mask_vector(spec: Any, B: int) -> np.ndarray:
     """
-    Loads an .npz with keys:
-      X : features for the spectrum head (B, F)   (e.g., engineered features or latent repr)
-      Y : target spectrum (B, n_wavelengths)      (optional; used only for overlay CSV)
+    Convert a rule mask specification to a length‑B float vector.
+      • list of bin indices -> 1.0 at those indices
+      • list of 0/1/weight (len B) -> float array
+      • dict {bin_idx: weight} -> weight at indices
     """
-    with np.load(data_path) as d:
-        X = d["X"]
-        Y = d.get("Y", None)
-    if n_samples > 0 and X.shape[0] > n_samples:
-        idx = np.random.choice(X.shape[0], n_samples, replace=False)
-        X = X[idx]
-        if Y is not None:
-            Y = Y[idx]
-    if Y is None:
-        Y = np.zeros((X.shape[0], n_wavelengths), dtype=np.float32)
-    return X, Y
-
-
-# -----------------------------
-# Symbolic rules
-# -----------------------------
-
-def rule_nonneg(spectrum: np.ndarray) -> np.ndarray:
-    """Penalty for negative values; zero if >= 0, else magnitude below zero."""
-    return np.maximum(0.0, -spectrum)
-
-
-def rule_upper_bound(spectrum: np.ndarray, max_flux: float) -> np.ndarray:
-    """Penalty for exceeding an upper physical bound (e.g., stellar continuum)."""
-    return np.maximum(0.0, spectrum - max_flux)
-
-
-def rule_smoothness(spectrum: np.ndarray) -> np.ndarray:
-    """
-    Smoothness pressure ~ |second derivative|.
-    Returns per-wavelength penalties, centered (pad edges with zeros).
-    """
-    pen = np.zeros_like(spectrum)
-    # finite differences
-    # d2[i] = s[i+1] - 2 s[i] + s[i-1]
-    d2 = np.zeros_like(spectrum)
-    d2[1:-1] = spectrum[2:] - 2.0 * spectrum[1:-1] + spectrum[:-2]
-    pen = np.abs(d2)
-    return pen
-
-
-def rule_band_coherence(spectrum: np.ndarray, bands: Dict[str, List[Tuple[int, int]]]) -> np.ndarray:
-    """
-    Within each molecular band region, penalize inconsistency from the band's median response:
-      penalty[i] = |s[i] - median_band|
-    Accumulate across bands (sum if overlapping).
-    """
-    pen = np.zeros_like(spectrum)
-    for _, ranges in (bands or {}).items():
-        for (a, b) in ranges:
-            a = max(0, int(a))
-            b = min(len(spectrum), int(b))
-            if b <= a: 
+    mask = np.zeros(B, dtype=float)
+    if isinstance(spec, list):
+        if len(spec) == B and all(isinstance(x, (int, float, bool, np.floating, np.integer)) for x in spec):
+            arr = np.array(spec, dtype=float)
+            mask = np.maximum(np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0), 0.0)
+        else:
+            for x in spec:
+                if isinstance(x, (int, np.integer)) and 0 <= int(x) < B:
+                    mask[int(x)] = 1.0
+    elif isinstance(spec, dict):
+        for k, v in spec.items():
+            try:
+                idx = int(k)
+                if 0 <= idx < B:
+                    mask[idx] = max(float(v), 0.0)
+            except Exception:
                 continue
-            seg = spectrum[a:b]
-            med = np.median(seg)
-            pen[a:b] += np.abs(seg - med)
-    return pen
+    else:
+        raise ValueError("Unsupported rule mask spec; must be list or dict.")
+    return mask
 
 
-def compute_symbolic_pressures(
-    spectra: np.ndarray,
-    cfg: OverlayConfig
-) -> Dict[str, np.ndarray]:
+def _load_rules_json(path: Path, B: int) -> RuleSet:
+    with open(path, "r", encoding="utf-8") as f:
+        obj = json.load(f)
+    if "rule_masks" not in obj or not isinstance(obj["rule_masks"], dict):
+        raise ValueError("Rules JSON must contain a 'rule_masks' object mapping name→mask")
+    names: List[str] = []
+    mats: List[np.ndarray] = []
+    for name, spec in obj["rule_masks"].items():
+        names.append(str(name))
+        mats.append(_as_mask_vector(spec, B))
+    rule_masks = np.vstack(mats) if mats else np.zeros((0, B), dtype=float)
+    groups: Dict[str, List[str]] = {}
+    if "rule_groups" in obj and isinstance(obj["rule_groups"], dict):
+        for gname, lst in obj["rule_groups"].items():
+            groups[str(gname)] = [str(x) for x in lst if str(x) in names]
+    return RuleSet(rule_names=names, rule_masks=rule_masks, groups=groups)
+
+
+def _segments(mask: np.ndarray) -> List[Tuple[int, int]]:
     """
-    Returns dict of per-sample per-wavelength pressures.
-      keys: 'nonneg','upper','smooth','bandcoh','total'
-      shapes: (B, n_wavelengths)
+    Return [start,end] (inclusive) segments for contiguous mask>0.
     """
-    B, W = spectra.shape
-    out = {
-        "nonneg": np.zeros_like(spectra),
-        "upper": np.zeros_like(spectra),
-        "smooth": np.zeros_like(spectra),
-        "bandcoh": np.zeros_like(spectra),
-    }
-    for i in range(B):
-        s = spectra[i]
-        out["nonneg"][i] = rule_nonneg(s)
-        out["upper"][i] = rule_upper_bound(s, cfg.max_flux)
-        out["smooth"][i] = rule_smoothness(s)
-        out["bandcoh"][i] = rule_band_coherence(s, cfg.bands or {})
-    total = (
-        cfg.nonneg_lambda * out["nonneg"]
-        + cfg.bound_lambda * out["upper"]
-        + cfg.smooth_lambda * out["smooth"]
-        + cfg.bandcoh_lambda * out["bandcoh"]
-    )
-    out["total"] = total
+    idx = np.where(mask > 0.0)[0]
+    if idx.size == 0:
+        return []
+    segs: List[Tuple[int, int]] = []
+    s = idx[0]
+    prev = idx[0]
+    for i in idx[1:]:
+        if i == prev + 1:
+            prev = i
+            continue
+        segs.append((s, prev))
+        s, prev = i, i
+    segs.append((s, prev))
+    return segs
+
+
+# ==============================================================================
+# SHAP alignment & entropy
+# ==============================================================================
+
+def _align_bins(arr: np.ndarray, B: int) -> np.ndarray:
+    if arr.shape[-1] == B:
+        return arr
+    out = np.zeros(arr.shape[:-1] + (B,), dtype=float)
+    copy = min(B, arr.shape[-1])
+    out[..., :copy] = arr[..., :copy]
     return out
 
 
-# -----------------------------
-# SHAP computation
-# -----------------------------
-
-def predict_spectrum_head(model: torch.nn.Module, x: torch.Tensor) -> torch.Tensor:
+def _prepare_shap(shap: np.ndarray, P: int, B: int) -> np.ndarray:
     """
-    Normalize model outputs to shape (B, W) always.
-    Accepts dict {'mu','log_sigma'} or plain tensor. Uses 'mu' if present.
+    Normalize to absolute SHAP (P×B):
+      - (P,B)    → abs
+      - (P,I,B)  → sum(abs, axis=1)
+      - (B,)     → broadcast to P
     """
-    with torch.no_grad():
-        y = model(x)
-        if isinstance(y, dict):
-            y = y.get("mu", next(iter(y.values())))
-        return y
+    a = np.asarray(shap, dtype=float)
+    if a.ndim == 1:
+        a = np.repeat(a[None, :], P, axis=0)
+    elif a.ndim == 2:
+        if a.shape[0] != P and a.shape[1] == P:
+            a = a.T
+        if a.shape[0] != P:
+            if a.shape[0] == 1:
+                a = np.repeat(a, P, axis=0)
+            else:
+                raise ValueError(f"SHAP planets mismatch; got {a.shape}, expected P={P}")
+    elif a.ndim == 3:
+        if a.shape[0] != P:
+            raise ValueError(f"SHAP leading dim != P; got {a.shape}, P={P}")
+        a = np.sum(np.abs(a), axis=1)
+    else:
+        raise ValueError(f"Unsupported SHAP shape: {a.shape}")
+    a = _align_bins(a, B)
+    a = np.abs(a)
+    return np.nan_to_num(a, nan=0.0, posinf=0.0, neginf=0.0)
 
 
-def shap_explainer_for_model(model: torch.nn.Module, Xb: np.ndarray, device: torch.device, method: str, max_evals: int):
+def shap_entropy_per_planet(shap_abs: np.ndarray, eps: float = 1e-12) -> np.ndarray:
     """
-    Build a SHAP explainer; prefer DeepExplainer if model is PyTorch native and supports gradient,
-    else fall back to KernelExplainer (model-agnostic).
+    Shannon entropy of normalized |SHAP| over bins, per planet.
     """
-    model.eval()
-
-    def f_predict(inp: np.ndarray) -> np.ndarray:
-        t = torch.from_numpy(inp).float().to(device)
-        out = predict_spectrum_head(model, t).detach().cpu().numpy()
-        return out
-
-    # Try deep explainer if possible (single-output per call requirement is avoided by looping)
-    if method in ("deep", "auto"):
-        try:
-            # Create a wrapper that returns a single dimension at a time so DeepExplainer can handle
-            # multi-output by looping outside. We'll still return the explainer factory.
-            return ("deep", f_predict)
-        except Exception:
-            pass
-
-    # Fallback: kernel
-    return ("kernel", f_predict)
+    P, B = shap_abs.shape
+    p = shap_abs / (shap_abs.sum(axis=1, keepdims=True) + eps)
+    return -np.sum(p * (np.log(p + eps)), axis=1)
 
 
-def compute_shap_values(
-    model: torch.nn.Module,
-    X: np.ndarray,
-    X_bg: np.ndarray,
-    device: torch.device,
-    method: str,
-    max_evals: int,
-) -> np.ndarray:
+# ==============================================================================
+# Visualization helpers
+# ==============================================================================
+
+def _cluster_colors(k: int) -> List[str]:
+    if k <= 1:
+        return ["#636EFA"]
+    if _PLOTLY_OK:
+        base = ["#636EFA","#EF553B","#00CC96","#AB63FA","#FFA15A","#19D3F3",
+                "#FF6692","#B6E880","#FF97FF","#FECB52","#1F77B4","#FF7F0E",
+                "#2CA02C","#D62728","#9467BD","#8C564B"]
+        if k <= len(base):
+            return base[:k]
+        return [base[i % len(base)] for i in range(k)]
+    # simple HSL fallback
+    cols = []
+    for i in range(k):
+        import colorsys
+        h = (i / k) % 1.0
+        r,g,b = colorsys.hls_to_rgb(h, 0.5, 0.6)
+        cols.append("#%02x%02x%02x" % (int(255*r), int(255*g), int(255*b)))
+    return cols
+
+
+def _save_heatmap(Z: np.ndarray, xnames: List[str], ynames: List[str], title: str, out_png: Path, out_html: Path) -> None:
+    _ensure_dir(out_png.parent)
+    if _PLOTLY_OK:
+        fig = go.Figure(data=go.Heatmap(z=Z, x=xnames, y=ynames, colorscale="Viridis",
+                                        colorbar=dict(title="importance")))
+        fig.update_layout(title=title, template="plotly_white",
+                          width=max(900, min(1800, 120 + 24*len(xnames))),
+                          height=max(600, min(1800, 120 + 18*len(ynames))))
+        pio.write_html(fig, file=str(out_html), auto_open=False, include_plotlyjs="cdn")
+    if _MPL_OK:
+        plt.figure(figsize=(max(10, 0.25*len(xnames)), max(6, 0.25*len(ynames))))
+        vmax = np.percentile(Z, 99.0) if np.any(np.isfinite(Z)) else 1.0
+        plt.imshow(Z, aspect="auto", interpolation="nearest", cmap="viridis", vmin=0.0, vmax=max(vmax, 1e-12))
+        plt.colorbar(label="importance")
+        plt.xticks(np.arange(len(xnames)), xnames, rotation=75, ha="right", fontsize=8)
+        plt.yticks(np.arange(len(ynames)), ynames, fontsize=8)
+        plt.title(title)
+        plt.tight_layout()
+        plt.savefig(out_png, dpi=160)
+        plt.close()
+    if not _PLOTLY_OK and not _MPL_OK:
+        pd.DataFrame(Z, index=ynames, columns=xnames).to_csv(out_png.with_suffix(".csv"))
+
+
+def _save_overlay_mu_rules(
+    wl: np.ndarray,
+    mu_row: Optional[np.ndarray],
+    rule_names: List[str],
+    rule_masks: np.ndarray,          # R×B
+    rule_order: List[int],           # indices of rules to draw, ordered (top→bottom)
+    colors: List[str],
+    planet_label: str,
+    out_png: Path
+) -> None:
     """
-    Returns SHAP values with shape (B, F, W_out).
-    Strategy:
-      - For DeepExplainer: loop over each output wavelength; compute shap for that scalar output.
-      - For KernelExplainer: same loop (expensive but general).
+    Per‑planet μ(λ) line plot with shaded spans for top rules (using mask segments).
+    Fallback to CSV if Matplotlib unavailable or μ missing.
     """
-    B, F = X.shape
-    # Probe output width
-    with torch.no_grad():
-        out = predict_spectrum_head(model, torch.from_numpy(X[:1]).float().to(device)).cpu().numpy()
-    W_out = out.shape[1]
+    _ensure_dir(out_png.parent)
+    if not _MPL_OK or mu_row is None:
+        # Save which spans would be drawn
+        rows=[]
+        for rank, r in enumerate(rule_order, 1):
+            mask = rule_masks[r] > 0.0
+            idx = np.where(mask)[0]
+            if idx.size == 0:
+                continue
+            # segments
+            s = idx[0]; prev = idx[0]
+            for i in idx[1:]:
+                if i != prev+1:
+                    rows.append({"rank":rank,"rule":rule_names[r],"start_bin":int(s),"end_bin":int(prev)})
+                    s=i; prev=i; continue
+                prev=i
+            rows.append({"rank":rank,"rule":rule_names[r],"start_bin":int(s),"end_bin":int(prev)})
+        pd.DataFrame(rows).to_csv(out_png.with_suffix(".csv"), index=False)
+        return
 
-    expl_kind, f_predict = shap_explainer_for_model(model, X_bg, device, method, max_evals)
-    console.log(f"[cyan]SHAP backend[/cyan]: {expl_kind} | W_out={W_out}")
+    plt.figure(figsize=(12, 5))
+    plt.plot(wl, mu_row, lw=2.0, color="#0b5fff", label="μ(λ)")
 
-    shap_values = np.zeros((B, F, W_out), dtype=np.float32)
+    # Draw shaded spans for each rule in order
+    for rank, r in enumerate(rule_order, 1):
+        mask = rule_masks[r] > 0.0
+        idx = np.where(mask)[0]
+        if idx.size == 0:
+            continue
+        s = idx[0]; prev = idx[0]
+        for i in idx[1:]:
+            if i != prev + 1:
+                a, b = wl[s], wl[prev]
+                if b < a: a, b = b, a
+                plt.axvspan(a, b, color=colors[rank-1], alpha=0.16, lw=0,
+                            label=f"{rule_names[r]}" if rank == 1 else None)
+                s, prev = i, i
+                continue
+            prev = i
+        a, b = wl[s], wl[prev]
+        if b < a: a, b = b, a
+        plt.axvspan(a, b, color=colors[rank-1], alpha=0.16, lw=0)
 
-    with Progress(
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TimeElapsedColumn(),
-        console=console,
-    ) as progress:
-        task = progress.add_task("Computing SHAP per wavelength", total=W_out)
-
-        if expl_kind == "deep":
-            # DeepExplainer expects a torch model; we use grad-based shap by building per-dim heads
-            # We implement gradient × input as a fast proxy (when DeepExplainer is not instantiated).
-            # For robustness across arbitrary models, fallback to gradient×input here.
-            X_t = torch.from_numpy(X).float().to(device).requires_grad_(True)
-            model.eval()
-            for j in range(W_out):
-                model.zero_grad(set_to_none=True)
-                y = predict_spectrum_head(model, X_t)[:, j]  # (B,)
-                # gradient × input attribution
-                y.sum().backward(retain_graph=True)
-                grad = X_t.grad.detach().cpu().numpy()  # (B,F)
-                shap_values[:, :, j] = grad * X  # simple proxy
-                X_t.grad.zero_()
-                progress.advance(task)
-        else:
-            # KernelExplainer (model-agnostic)
-            # Use small background sample
-            bg = shap.kmeans(X_bg, min(len(X_bg), 32))
-            for j in range(W_out):
-                # scalar-output function for dimension j
-                f_j = lambda inp: f_predict(inp)[:, j]
-                expl = shap.KernelExplainer(f_j, bg)
-                vals = expl.shap_values(
-                    X,
-                    nsamples=max_evals,
-                    l1_reg="aic",
-                )  # returns (B,F)
-                shap_values[:, :, j] = np.asarray(vals, dtype=np.float32)
-                progress.advance(task)
-
-    return shap_values  # (B,F,W)
-
-
-# -----------------------------
-# Visualization / Saving
-# -----------------------------
-
-def wavelength_axis(cfg: OverlayConfig) -> np.ndarray:
-    return np.linspace(cfg.wl_start, cfg.wl_end, cfg.n_wavelengths)
-
-
-def plot_heatmap(
-    M: np.ndarray,
-    x_axis: np.ndarray,
-    title: str,
-    outpath: Path,
-    cmap: str = "RdBu_r",
-    center_zero: bool = True,
-):
-    plt.figure(figsize=(12, 4))
-    vmin, vmax = (None, None)
-    if center_zero:
-        vmax = np.nanpercentile(np.abs(M), 99.0)
-        vmin = -vmax
-    plt.imshow(M, aspect="auto", cmap=cmap, vmin=vmin, vmax=vmax,
-               extent=[x_axis[0], x_axis[-1], 0, M.shape[0]])
-    plt.colorbar(label="magnitude")
-    plt.xlabel("Wavelength (μm)")
-    plt.ylabel("Sample")
-    plt.title(title)
+    plt.title(f"μ(λ) with Top Rule Spans — {planet_label}")
+    plt.xlabel("wavelength (index or μm)")
+    plt.ylabel("μ (relative)")
+    plt.legend(loc="best", fontsize=9, ncol=2)
+    plt.grid(alpha=0.25)
     plt.tight_layout()
-    plt.savefig(outpath, dpi=200)
+    plt.savefig(out_png, dpi=160)
     plt.close()
 
 
-def save_overlay_csv(
-    spectra: np.ndarray,
-    shap_vals: np.ndarray,
-    sym: Dict[str, np.ndarray],
-    wl: np.ndarray,
-    out_csv: Path,
-):
-    """
-    Save per-sample summaries: mean |SHAP| per wavelength, mean rule pressures, and spectrum.
-    """
-    B, W = spectra.shape
-    F = shap_vals.shape[1]
-    # Aggregate |SHAP| over features dimension
-    mean_abs_shap = np.mean(np.abs(shap_vals), axis=1)  # (B,W)
+# ==============================================================================
+# Overlay core
+# ==============================================================================
 
-    records = []
-    for i in range(B):
-        rec = {
-            "sample": int(i),
-            **{f"spectrum_{k}": float(v) for k, v in zip(wl, spectra[i])},
-            **{f"shap_{k}": float(v) for k, v in zip(wl, mean_abs_shap[i])},
-            **{f"nonneg_{k}": float(v) for k, v in zip(wl, sym["nonneg"][i])},
-            **{f"upper_{k}": float(v) for k, v in zip(wl, sym["upper"][i])},
-            **{f"smooth_{k}": float(v) for k, v in zip(wl, sym["smooth"][i])},
-            **{f"bandcoh_{k}": float(v) for k, v in zip(wl, sym["bandcoh"][i])},
-            **{f"total_{k}": float(v) for k, v in zip(wl, sym["total"][i])},
+def _rule_importance_from_shap(shap_abs: np.ndarray, rule_masks: np.ndarray, power: float = 1.0, eps: float = 1e-12) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Compute per‑planet × per‑rule importance by integrating |SHAP| over rule masks.
+
+    Returns:
+      imp:  (P×R) absolute importance = sum_b shap[p,b] * (mask[r,b]^power)
+      frac: (P×R) fraction of planet's total |SHAP| mass that lies within rule r
+    """
+    P, B = shap_abs.shape
+    R, B2 = rule_masks.shape
+    assert B == B2
+    W = np.power(np.maximum(rule_masks, 0.0), power)  # R×B
+    # imp[p,r] = sum_b shap[p,b] * W[r,b]
+    imp = shap_abs @ W.T  # (P×B) @ (B×R) = P×R
+    total = shap_abs.sum(axis=1, keepdims=True) + eps
+    frac = imp / total
+    imp = np.nan_to_num(imp, nan=0.0, posinf=0.0, neginf=0.0)
+    frac = np.nan_to_num(frac, nan=0.0, posinf=0.0, neginf=0.0)
+    return imp, frac
+
+
+def _extract_rule_scores_from_symbolic(symbolic_obj: Dict[str, Any]) -> Optional[pd.DataFrame]:
+    """
+    Try to extract per‑rule scores from a flexible symbolic JSON.
+    Accepts patterns:
+      • {"rule_scores": {"RuleA":score,...}}
+      • {"rows":[{"rule":"RuleA","score":...}, ...]}
+    Returns DataFrame with columns ['rule','score'] or None.
+    """
+    if not symbolic_obj:
+        return None
+    if isinstance(symbolic_obj, dict):
+        if "rule_scores" in symbolic_obj and isinstance(symbolic_obj["rule_scores"], dict):
+            rows = [{"rule": k, "score": float(v)} for k,v in symbolic_obj["rule_scores"].items()
+                    if isinstance(v, (int,float))]
+            return pd.DataFrame(rows)
+        if "rows" in symbolic_obj and isinstance(symbolic_obj["rows"], list):
+            rows=[]
+            for r in symbolic_obj["rows"]:
+                if isinstance(r, dict) and "rule" in r:
+                    val = r.get("score", r.get("value", r.get("violation", 0.0)))
+                    try:
+                        rows.append({"rule": str(r["rule"]), "score": float(val)})
+                    except Exception:
+                        pass
+            return pd.DataFrame(rows) if rows else None
+    return None
+
+
+# ==============================================================================
+# Orchestration
+# ==============================================================================
+
+@dataclass
+class Config:
+    shap_path: Path
+    rules_path: Path
+    symbolic_path: Optional[Path]
+    mu_path: Optional[Path]
+    wavelengths_path: Optional[Path]
+    metadata_path: Optional[Path]
+    outdir: Path
+    topk: int
+    first_n: int
+    mask_power: float
+    html_name: str
+    open_browser: bool
+
+
+def run(cfg: Config, audit: AuditLogger) -> int:
+    _ensure_dir(cfg.outdir)
+
+    # Load SHAP (robust shapes) and infer P,B
+    shap_raw = _load_array_any(cfg.shap_path)
+    P, B = None, None
+    if shap_raw.ndim == 1:
+        B = shap_raw.shape[0]
+        P = P or 1  # will broadcast later after metadata
+    elif shap_raw.ndim == 2:
+        P, B = shap_raw.shape
+    elif shap_raw.ndim == 3:
+        P, _, B = shap_raw.shape
+    else:
+        raise ValueError(f"Unsupported SHAP shape: {shap_raw.shape}")
+
+    # μ optional
+    mu = None
+    if cfg.mu_path:
+        mu = _load_array_any(cfg.mu_path)
+        if mu.ndim == 1:
+            mu = mu[None, :]
+        if P is None and mu is not None:
+            P = mu.shape[0]
+        if B is None and mu is not None:
+            B = mu.shape[1]
+
+    if P is None or B is None:
+        raise ValueError("Could not infer (P,B). Provide SHAP and/or μ with clear shape.")
+
+    # Wavelengths
+    wl = None
+    if cfg.wavelengths_path:
+        arr = _load_array_any(cfg.wavelengths_path)
+        wl = arr.reshape(-1).astype(float)
+        if wl.shape[0] != B:
+            tmp = np.zeros(B, dtype=float)
+            tmp[:min(B, wl.shape[0])] = wl[:min(B, wl.shape[0])]
+            wl = tmp
+    if wl is None:
+        wl = np.arange(B, dtype=float)
+
+    # Metadata & planet IDs
+    meta_df = _load_metadata_any(cfg.metadata_path, n_planets=P)
+    planet_ids = meta_df["planet_id"].astype(str).tolist()
+
+    # Finalize SHAP matrix
+    shap_abs = _prepare_shap(shap_raw, len(planet_ids), B)  # P×B
+
+    # Rules
+    rules = _load_rules_json(cfg.rules_path, B)
+    rule_names = rules.rule_names
+    rule_masks = rules.rule_masks  # R×B
+    R = len(rule_names)
+
+    # Compute rule importance from SHAP
+    imp, frac = _rule_importance_from_shap(shap_abs, rule_masks, power=float(cfg.mask_power))  # P×R
+    # Summaries
+    ent = shap_entropy_per_planet(shap_abs)  # P
+
+    # Long table export
+    rows=[]
+    for p in range(len(planet_ids)):
+        for r in range(R):
+            rows.append({
+                "planet_id": planet_ids[p],
+                "rule": rule_names[r],
+                "importance": float(imp[p, r]),
+                "fraction": float(frac[p, r]),
+                "entropy_shap": float(ent[p]),
+            })
+    long_df = pd.DataFrame(rows)
+
+    # Optional symbolic per‑rule scores (attach for correlation)
+    symbolic_obj = _load_symbolic_any(cfg.symbolic_path)
+    rule_score_df = _extract_rule_scores_from_symbolic(symbolic_obj)
+    if rule_score_df is not None and not rule_score_df.empty:
+        # merge on rule (broadcast to all planets)
+        long_df = long_df.merge(rule_score_df, on="rule", how="left")
+        long_df["score"] = long_df["score"].fillna(0.0)
+
+    long_csv = cfg.outdir / "rule_importance_per_planet.csv"
+    long_df.to_csv(long_csv, index=False)
+
+    # Rule leaderboard (total across planets)
+    leaderboard = long_df.groupby("rule", as_index=False).agg(
+        total_importance=("importance","sum"),
+        mean_importance=("importance","mean"),
+        mean_fraction=("fraction","mean")
+    ).sort_values("total_importance", ascending=False)
+    leaderboard_csv = cfg.outdir / "rule_leaderboard.csv"
+    leaderboard.to_csv(leaderboard_csv, index=False)
+
+    # Top‑K rules per planet (by importance)
+    topk_rows=[]
+    K = max(1, int(cfg.topk))
+    name_to_idx = {n:i for i,n in enumerate(rule_names)}
+    for p, pid in enumerate(planet_ids):
+        vals = imp[p]  # length R
+        idx = np.argpartition(-vals, kth=min(K-1, R-1))[:K]
+        idx = idx[np.argsort(-vals[idx])]
+        for rank, r in enumerate(idx, 1):
+            # build span string (bin segments)
+            segs = _segments(rule_masks[r])
+            spans = ";".join([f"{a}-{b}" for a,b in segs]) if segs else ""
+            topk_rows.append({
+                "planet_id": pid,
+                "rank": rank,
+                "rule": rule_names[r],
+                "importance": float(vals[r]),
+                "fraction": float(frac[p, r]),
+                "segments_bins": spans
+            })
+    topk_df = pd.DataFrame(topk_rows)
+    topk_csv = cfg.outdir / "topk_rules_per_planet.csv"
+    topk_df.to_csv(topk_csv, index=False)
+
+    # Heatmap (P×R)
+    heat = imp  # numeric matrix
+    heat_png = cfg.outdir / "planet_rule_heatmap.png"
+    heat_html = cfg.outdir / "planet_rule_heatmap.html"
+    _save_heatmap(heat, xnames=rule_names, ynames=planet_ids, title="Rule Importance (sum of |SHAP| within rule mask)",
+                  out_png=heat_png, out_html=heat_html)
+
+    # Per‑planet overlays (first N planets)
+    Nshow = max(0, int(cfg.first_n))
+    colors = _cluster_colors(max(1, min(K, 12)))
+    for p in range(min(len(planet_ids), Nshow)):
+        pid = planet_ids[p]
+        mu_row = mu[p] if (mu is not None and mu.shape == (len(planet_ids), B)) else None
+        # choose top rules by importance
+        vals = imp[p]
+        idx = np.argsort(-vals)[:min(K, R)]
+        _save_overlay_mu_rules(
+            wl=wl,
+            mu_row=mu_row,
+            rule_names=rule_names,
+            rule_masks=rule_masks,
+            rule_order=list(idx),
+            colors=colors,
+            planet_label=pid,
+            out_png=cfg.outdir / f"overlay_planet_{p:04d}.png"
+        )
+
+    # Rule table JSON (coverage, segments, weight stats)
+    rule_rows=[]
+    for r, name in enumerate(rule_names):
+        m = np.maximum(rule_masks[r], 0.0)
+        nz = m[m>0.0]
+        segs = _segments(m)
+        rule_rows.append({
+            "rule": name,
+            "coverage_count": int((m>0.0).sum()),
+            "coverage_fraction": float((m>0.0).mean()),
+            "weight_sum": float(m.sum()),
+            "weight_min": float(nz.min()) if nz.size else 0.0,
+            "weight_mean": float(nz.mean()) if nz.size else 0.0,
+            "weight_max": float(nz.max()) if nz.size else 0.0,
+            "n_segments": len(segs),
+            "segments_bins": ";".join([f"{a}-{b}" for a,b in segs]) if segs else "",
+        })
+    rule_table_json = cfg.outdir / "rule_table.json"
+    with open(rule_table_json, "w", encoding="utf-8") as f:
+        json.dump({"rows": rule_rows}, f, indent=2)
+
+    # Dashboard
+    dashboard_html = cfg.outdir / (cfg.html_name if cfg.html_name.endswith(".html") else "shap_symbolic_overlay.html")
+    preview = topk_df.head(40).to_html(index=False)
+    quick_links = textwrap.dedent(f"""
+    <ul>
+      <li><a href="{long_csv.name}" target="_blank" rel="noopener">{long_csv.name}</a></li>
+      <li><a href="{leaderboard_csv.name}" target="_blank" rel="noopener">{leaderboard_csv.name}</a></li>
+      <li><a href="{topk_csv.name}" target="_blank" rel="noopener">{topk_csv.name}</a></li>
+      <li><a href="planet_rule_heatmap.html" target="_blank" rel="noopener">planet_rule_heatmap.html</a> / <a href="planet_rule_heatmap.png" target="_blank" rel="noopener">PNG</a></li>
+      <li><a href="{rule_table_json.name}" target="_blank" rel="noopener">{rule_table_json.name}</a></li>
+    </ul>
+    """).strip()
+
+    html = f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>SpectraMind V50 — SHAP × Symbolic Overlay</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="light dark" />
+<style>
+  :root {{ --bg:#0b0e14; --fg:#e6edf3; --muted:#9aa4b2; --card:#111827; --border:#2b3240; --brand:#0b5fff; }}
+  body {{ background:var(--bg); color:var(--fg); font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; margin:2rem; line-height:1.5; }}
+  .card {{ background:var(--card); border:1px solid var(--border); border-radius:14px; padding:1rem 1.25rem; margin-bottom:1rem; }}
+  a {{ color:var(--brand); text-decoration:none; }} a:hover {{ text-decoration:underline; }}
+  table {{ border-collapse: collapse; width: 100%; font-size: .95rem; }}
+  th, td {{ border:1px solid var(--border); padding:.4rem .5rem; }} th {{ background:#0f172a; }}
+  .pill {{ display:inline-block; padding:.15rem .6rem; border-radius:999px; background:#0f172a; border:1px solid var(--border); }}
+</style>
+</head>
+<body>
+  <header class="card">
+    <h1>SHAP × Symbolic Overlay — SpectraMind V50</h1>
+    <div>Generated: <span class="pill">{_now_iso()}</span> • Rules: {R} • Planets: {len(planet_ids)} • Bins: {B}</div>
+  </header>
+
+  <section class="card">
+    <h2>Quick Links</h2>
+    {quick_links}
+  </section>
+
+  <section class="card">
+    <h2>Preview — Top‑K Rules per Planet</h2>
+    {preview}
+  </section>
+
+  <footer class="card">
+    <small>© SpectraMind V50 • mask_power={cfg.mask_power} • topk={cfg.topk} • first_n={cfg.first_n}</small>
+  </footer>
+</body>
+</html>
+"""
+    dashboard_html.write_text(html, encoding="utf-8")
+
+    # Manifest
+    manifest = {
+        "tool": "shap_symbolic_overlay",
+        "timestamp": _now_iso(),
+        "inputs": {
+            "shap": str(cfg.shap_path),
+            "rules": str(cfg.rules_path),
+            "symbolic": str(cfg.symbolic_path) if cfg.symbolic_path else None,
+            "mu": str(cfg.mu_path) if cfg.mu_path else None,
+            "wavelengths": str(cfg.wavelengths_path) if cfg.wavelengths_path else None,
+            "metadata": str(cfg.metadata_path) if cfg.metadata_path else None,
+        },
+        "params": {
+            "topk": cfg.topk,
+            "first_n": cfg.first_n,
+            "mask_power": cfg.mask_power,
+        },
+        "shapes": {
+            "P": int(len(planet_ids)),
+            "B": int(B),
+            "R": int(R),
+        },
+        "outputs": {
+            "long_csv": str(long_csv),
+            "leaderboard_csv": str(leaderboard_csv),
+            "topk_csv": str(topk_csv),
+            "heatmap_png": str(heat_png),
+            "heatmap_html": str(heat_html),
+            "rule_table_json": str(rule_table_json),
+            "dashboard_html": str(dashboard_html),
         }
-        records.append(rec)
-    df = pd.DataFrame.from_records(records)
-    df.to_csv(out_csv, index=False)
-
-
-def fuse_overlay(mean_abs_shap: np.ndarray, sym_total: np.ndarray, alpha: float = 0.5) -> np.ndarray:
-    """
-    Simple fusion: normalize each map to [0,1] per-sample then weighted sum.
-    """
-    B, W = mean_abs_shap.shape
-    s1 = mean_abs_shap - mean_abs_shap.min(axis=1, keepdims=True)
-    s1 = s1 / (s1.max(axis=1, keepdims=True) + 1e-9)
-    s2 = sym_total - sym_total.min(axis=1, keepdims=True)
-    s2 = s2 / (s2.max(axis=1, keepdims=True) + 1e-9)
-    return (1 - alpha) * s1 + alpha * s2
-
-
-# -----------------------------
-# Main CLI
-# -----------------------------
-
-@app.command()
-def run(
-    cfg_path: str = typer.Option(..., help="YAML config for overlay (paths, rules, SHAP params)"),
-):
-    """
-    Example config YAML:
-
-    model_path: "artifacts/model.pt"
-    data_path: "data/npz/val_latents.npz"
-    output_dir: "outputs/diagnostics/shap_symbolic"
-    n_samples: 64
-    seed: 42
-    n_wavelengths: 283
-    wl_start: 0.5
-    wl_end: 7.8
-    max_flux: 1.0
-    smooth_lambda: 1.0
-    nonneg_lambda: 1.0
-    bound_lambda: 1.0
-    bandcoh_lambda: 1.0
-    bands:
-      H2O:
-        - [30, 60]
-        - [140, 165]
-      CO2:
-        - [200, 230]
-    shap_background: 64
-    shap_max_evals: 1024
-    shap_method: "auto"
-    device: "auto"
-    """
-    cfgd = load_yaml(cfg_path)
-    cfg = OverlayConfig(**cfgd)
-    set_seed(cfg.seed)
-    device = pick_device(cfg.device)
-
-    out_dir = Path(cfg.output_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    save_yaml(cfgd, out_dir / "overlay_config.yaml")
-
-    # Load
-    console.rule("[bold]Loading model & data")
-    model = load_model(cfg.model_path, device)
-    X, Y = load_dataset_npz(cfg.data_path, cfg.n_samples, cfg.n_wavelengths)
-
-    console.print(f"[green]Model[/green]: {type(model).__name__} on {device}")
-    console.print(f"[green]Data[/green]: X={X.shape}, Y={Y.shape}")
-
-    # Probe predictions (spectra)
-    with torch.no_grad():
-        spectra = predict_spectrum_head(
-            model, torch.from_numpy(X).float().to(device)
-        ).cpu().numpy()  # (B,W)
-
-    # Compute symbolic pressures
-    console.rule("[bold]Computing symbolic rule pressures")
-    sym = compute_symbolic_pressures(spectra, cfg)
-
-    # SHAP values
-    console.rule("[bold]Computing SHAP values")
-    # Background for kernel/approx: sample from X
-    bg_n = min(cfg.shap_background, X.shape[0])
-    X_bg = X[np.random.choice(X.shape[0], bg_n, replace=False)]
-
-    shap_vals = compute_shap_values(
-        model=model,
-        X=X,
-        X_bg=X_bg,
-        device=device,
-        method=cfg.shap_method,
-        max_evals=cfg.shap_max_evals,
-    )  # (B,F,W)
-
-    # Aggregate |SHAP| over features to compare with per-wavelength symbolic pressures
-    mean_abs_shap = np.mean(np.abs(shap_vals), axis=1)  # (B,W)
-
-    # Save artifacts
-    wl = wavelength_axis(cfg)
-    console.rule("[bold]Saving artifacts")
-    # Heatmaps
-    plot_heatmap(
-        mean_abs_shap,
-        wl,
-        "Mean |SHAP| per wavelength (samples x wavelengths)",
-        out_dir / "heatmap_mean_abs_shap.png",
-    )
-    plot_heatmap(
-        sym["total"],
-        wl,
-        "Total symbolic pressure per wavelength",
-        out_dir / "heatmap_symbolic_total.png",
-        cmap="magma",
-        center_zero=False,
-    )
-    fused = fuse_overlay(mean_abs_shap, sym["total"], alpha=0.5)
-    plot_heatmap(
-        fused,
-        wl,
-        "Fused overlay (normalized SHAP ⊕ symbolic pressure)",
-        out_dir / "heatmap_fused_overlay.png",
-        cmap="viridis",
-        center_zero=False,
-    )
-
-    # Per-sample CSV
-    save_overlay_csv(
-        spectra=spectra,
-        shap_vals=shap_vals,
-        sym=sym,
-        wl=wl,
-        out_csv=out_dir / "overlay_per_sample.csv",
-    )
-
-    # JSON summary (global)
-    summary = {
-        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "model_path": cfg.model_path,
-        "data_path": cfg.data_path,
-        "n_samples": int(cfg.n_samples),
-        "seed": int(cfg.seed),
-        "device": str(device),
-        "shap_backend": cfg.shap_method,
-        "mean_symbolic_total": float(np.mean(sym["total"])),
-        "mean_abs_shap": float(np.mean(mean_abs_shap)),
     }
-    with open(out_dir / "overlay_summary.json", "w") as f:
-        json.dump(summary, f, indent=2)
+    with open(cfg.outdir / "shap_symbolic_overlay_manifest.json", "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2)
+    _update_run_hash_summary(cfg.outdir, manifest)
 
-    # Console table
-    tbl = Table(title="Overlay Summary")
-    tbl.add_column("Metric")
-    tbl.add_column("Value")
-    for k, v in summary.items():
-        tbl.add_row(k, str(v))
-    console.print(tbl)
+    # Audit success
+    audit.log({
+        "action": "run",
+        "status": "ok",
+        "shap": str(cfg.shap_path),
+        "rules": str(cfg.rules_path),
+        "mu": str(cfg.mu_path) if cfg.mu_path else "",
+        "wavelengths": str(cfg.wavelengths_path) if cfg.wavelengths_path else "",
+        "metadata": str(cfg.metadata_path) if cfg.metadata_path else "",
+        "topk": cfg.topk,
+        "first_n": cfg.first_n,
+        "outdir": str(cfg.outdir),
+        "message": f"Computed rule importance (P={len(planet_ids)}, R={R}, B={B}); dashboard={dashboard_html.name}",
+    })
 
-    console.print(f"[bold green]Saved overlays to:[/bold green] {out_dir.resolve()}")
-    console.rule("[bold]Done")
+    # Optionally open dashboard
+    if cfg.open_browser and dashboard_html.exists():
+        try:
+            import webbrowser
+            webbrowser.open_new_tab(dashboard_html.as_uri())
+        except Exception:
+            pass
+
+    return 0
+
+
+# ==============================================================================
+# CLI
+# ==============================================================================
+
+def build_argparser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="shap_symbolic_overlay",
+        description="Fuse |SHAP| with symbolic rule masks; export per‑planet × per‑rule importance and overlays."
+    )
+    p.add_argument("--shap", type=Path, required=True, help="SHAP array: (P,B) or (P,I,B) or (B,).")
+    p.add_argument("--rules", type=Path, required=True, help="Rules JSON with 'rule_masks' and optional 'rule_groups'.")
+    p.add_argument("--symbolic", type=Path, default=None, help="Optional symbolic JSON (per‑rule/planet scores).")
+    p.add_argument("--mu", type=Path, default=None, help="Optional μ array (P,B) for line overlays.")
+    p.add_argument("--wavelengths", type=Path, default=None, help="Optional wavelength vector (B,).")
+    p.add_argument("--metadata", type=Path, default=None, help="Optional metadata with 'planet_id' (CSV/JSON/Parquet).")
+    p.add_argument("--outdir", type=Path, required=True, help="Output directory for artifacts.")
+
+    p.add_argument("--topk", type=int, default=8, help="Top‑K rules per planet for ranking/overlays.")
+    p.add_argument("--first-n", type=int, default=24, help="Render μ overlays for first N planets (0=disable).")
+    p.add_argument("--mask-power", type=float, default=1.0, help="Exponent applied to rule mask weights when integrating |SHAP|.")
+    p.add_argument("--html-name", type=str, default="shap_symbolic_overlay.html", help="Dashboard HTML filename.")
+    p.add_argument("--open-browser", action="store_true", help="Open dashboard in default browser.")
+    return p
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    args = build_argparser().parse_args(argv)
+
+    cfg = Config(
+        shap_path=args.shap.resolve(),
+        rules_path=args.rules.resolve(),
+        symbolic_path=args.symbolic.resolve() if args.symbolic else None,
+        mu_path=args.mu.resolve() if args.mu else None,
+        wavelengths_path=args.wavelengths.resolve() if args.wavelengths else None,
+        metadata_path=args.metadata.resolve() if args.metadata else None,
+        outdir=args.outdir.resolve(),
+        topk=int(args.topk),
+        first_n=int(args.first_n),
+        mask_power=float(args.mask_power),
+        html_name=str(args.html_name),
+        open_browser=bool(args.open_browser),
+    )
+
+    audit = AuditLogger(
+        md_path=Path("logs") / "v50_debug_log.md",
+        jsonl_path=Path("logs") / "v50_runs.jsonl",
+    )
+    audit.log({
+        "action": "start",
+        "status": "running",
+        "shap": str(cfg.shap_path),
+        "rules": str(cfg.rules_path),
+        "mu": str(cfg.mu_path) if cfg.mu_path else "",
+        "wavelengths": str(cfg.wavelengths_path) if cfg.wavelengths_path else "",
+        "metadata": str(cfg.metadata_path) if cfg.metadata_path else "",
+        "topk": cfg.topk,
+        "first_n": cfg.first_n,
+        "outdir": str(cfg.outdir),
+        "message": "Starting shap_symbolic_overlay",
+    })
+
+    try:
+        rc = run(cfg, audit)
+        return rc
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        audit.log({
+            "action": "run",
+            "status": "error",
+            "shap": str(cfg.shap_path),
+            "rules": str(cfg.rules_path),
+            "outdir": str(cfg.outdir),
+            "message": f"{type(e).__name__}: {e}",
+        })
+        return 2
 
 
 if __name__ == "__main__":
-    try:
-        app()
-    except KeyboardInterrupt:
-        console.print("\n[red]Interrupted[/red]")
-        sys.exit(130)
+    sys.exit(main())
