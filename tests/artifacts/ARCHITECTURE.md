@@ -1,112 +1,157 @@
-# 🏗️ Tests — Diagnostics Architecture
+# 🏗️ Tests / Artifacts — Architecture
 
-**SpectraMind V50** · *Neuro-symbolic, physics-informed AI pipeline for the NeurIPS 2025 Ariel Data Challenge*:contentReference[oaicite:0]{index=0}
+**SpectraMind V50** · *Neuro‑symbolic, physics‑informed AI pipeline for the NeurIPS 2025 Ariel Data Challenge*
 
-The `/tests/diagnostics` directory enforces **scientific correctness and consistency** for all  
-diagnostic modules. Unlike `/tests/artifacts` (which protects reproducibility), these tests ensure  
-that the **diagnostic engines themselves** (FFT, SHAP, symbolic overlays, calibration checks)  
-produce **accurate, interpretable, and stable results**.
+This document explains how the **artifact‑integrity test suite** is wired into the SpectraMind V50 pipeline, how data flows through manifests and logs, and how CI blocks merges when artifact guarantees are not met.
 
 ---
 
-## 📂 Components
+## 🎯 What this suite guarantees
 
-| Test Script                              | Diagnostic Under Test                     | Purpose / Guarantee                                                    |
-| ---------------------------------------- | ------------------------------------------ | ---------------------------------------------------------------------- |
-| `test_generate_diagnostic_summary.py`    | `generate_diagnostic_summary.py`           | Verifies full pipeline metrics: GLL, RMSE, entropy, symbolic overlays. |
-| `test_generate_html_report.py`           | `generate_html_report.py`                  | Confirms HTML dashboard renders plots/iframes without missing artifacts. |
-| `test_plot_umap_v50.py`                  | `plot_umap_v50.py`                         | Ensures UMAP projections generate interactive + static plots correctly. |
-| `test_plot_tsne_interactive.py`          | `plot_tsne_interactive.py`                 | Validates t-SNE projections + interactive HTML export.                 |
-| `test_fft_power_compare.py`              | `fft_power_compare.py`                     | Checks FFT cluster comparisons + symbolic overlays.                    |
-| `test_analyze_fft_autocorr_mu.py`        | `analyze_fft_autocorr_mu.py`               | Validates FFT + autocorrelation analysis for μ spectra.                |
-| `test_spectral_smoothness_map.py`        | `spectral_smoothness_map.py`               | Confirms smoothness metric maps produce consistent results.            |
-| `test_spectral_shap_gradient.py`         | `spectral_shap_gradient.py`                | Validates ∂μ/∂input + SHAP × gradient overlay diagnostics.             |
-| `test_symbolic_violation_overlay.py`     | `symbolic_violation_overlay.py`             | Ensures symbolic rule violation overlays match symbolic engine outputs. |
-| `test_symbolic_influence_map.py`         | `symbolic_influence_map.py`                | Confirms per-rule ∂L/∂μ influence maps align with symbolic loss.       |
-| `test_neural_logic_graph.py`             | `neural_logic_graph.py`                    | Validates symbolic logic graph rendering + dashboard embedding.        |
-| `test_shap_overlay.py`                   | `shap_overlay.py`                          | Ensures SHAP × μ spectrum overlays render + export metadata.           |
-| `test_shap_attention_overlay.py`         | `shap_attention_overlay.py`                | Confirms SHAP × attention fusion visualizations.                       |
-| `test_shap_symbolic_overlay.py`          | `shap_symbolic_overlay.py`                 | Verifies SHAP × symbolic overlays produce consistent diagnostic JSON.  |
-| `test_simulate_lightcurve_from_mu.py`    | `simulate_lightcurve_from_mu.py`           | Ensures synthetic lightcurves match μ spectra & metadata.              |
+- **Reproducibility** — Artifacts are regenerable from code+config; digests match.
+- **Auditability** — Logs and manifests form an append‑only, cross‑checked trail.
+- **Submission safety** — Bundles pass validator checks before leaderboard upload.
 
 ---
 
-## 🔄 Data Flow
+## 📦 Components
+
+| Component / File                          | Role in the system                                                                                 |
+|------------------------------------------|------------------------------------------------------------------------------------------------------|
+| `spectramind` CLI                         | Single entrypoint that builds all artifacts (submissions, reports, manifests, logs).                |
+| `manifest_v50.(json|csv)`                 | Canon of artifacts (path, size, SHA256, created_at, run_id, config_hash).                          |
+| `run_hash_summary_v50.json`               | Run metadata (git commit, env snapshot, config hash, timestamps).                                   |
+| `logs/v50_debug_log.md` + `*.jsonl`       | Append‑only audit trail (invocation, merged config, result pointers, errors).                        |
+| `/tests/artifacts/*`                      | Verification layer (see test matrix below).                                                         |
+| CI workflow (`.github/workflows/*.yml`)   | Enforces gating: generate → verify → publish (fail fast on any artifact mismatch).                  |
+
+---
+
+## 🧪 Test matrix (what each spec asserts)
+
+| Test file                                | Primary assertions                                                                                                  |
+|------------------------------------------|----------------------------------------------------------------------------------------------------------------------|
+| `test_submission_validator.py`           | Submission shape/headers/NaN policy; optional size limits; row–ID coverage.                                          |
+| `test_manifest_hashes.py`                | Every manifest entry exists; recomputed SHA256 matches; orphan/missing file detection.                               |
+| `test_log_integrity.py`                  | `v50_debug_log.md` is append‑only; timestamps monotonic; no duplicate run IDs; CLI line parses.                      |
+| `test_dummy_data_generator.py`           | Determinism under fixed seed; schema (dims/metadata) correct; basic numeric sanity (ranges, sparsity).               |
+| `test_cli_version_stamp.py`              | CLI `--version`/config hash recorded; matches `run_hash_summary_v50.json`; echoed into debug log.                    |
+| `test_report_manifest_integrity.py`      | Report bundles (HTML/PNG/JSON) are manifest‑tracked; no dangling file refs; intra‑report links resolvable.           |
+| `test_run_hash_summary_contents.py`      | Git commit present; toolchain/env fingerprint present; config digest equals pipeline merged config digest.            |
+
+---
+
+## 🔄 Data & control flow
 
 ```mermaid
 flowchart TD
-    subgraph Predictions[Model Outputs]
-        MU[μ Spectra]
-        SIG[σ (Uncertainty)]
+    subgraph CLI["spectramind (Typer)"]
+      A1[calibrate] -->|artifacts| AO[outputs/…]
+      A2[train] --> AO
+      A3[diagnose] --> AO
+      A4[submit] --> AO
+      A1 --> L[logs/v50_debug_log.md]
+      A2 --> L
+      A3 --> L
+      A4 --> L
+      A5[any] --> H[run_hash_summary_v50.json]
+      A5 --> M[manifest_v50.json/csv]
     end
 
-    subgraph Diagnostics[Diagnostics Tools]
-        SUMM[Diagnostic Summary]
-        DASH[HTML Dashboard]
-        UMAP[UMAP Projection]
-        TSNE[t-SNE Projection]
-        FFT[FFT/Autocorr]
-        SHAP[SHAP Overlays]
-        SYMB[Symbolic Overlays]
-        SMOOTH[Smoothness Map]
-        INFL[Symbolic Influence Map]
-        NLG[Neural Logic Graph]
+    subgraph Tests["/tests/artifacts"]
+      T1[test_submission_validator]
+      T2[test_manifest_hashes]
+      T3[test_log_integrity]
+      T4[test_dummy_data_generator]
+      T5[test_cli_version_stamp]
+      T6[test_report_manifest_integrity]
+      T7[test_run_hash_summary_contents]
     end
 
-    subgraph Tests[/tests/diagnostics]
-        T1[test_generate_diagnostic_summary]
-        T2[test_generate_html_report]
-        T3[test_plot_umap_v50]
-        T4[test_plot_tsne_interactive]
-        T5[test_fft_power_compare]
-        T6[test_analyze_fft_autocorr_mu]
-        T7[test_spectral_smoothness_map]
-        T8[test_spectral_shap_gradient]
-        T9[test_symbolic_violation_overlay]
-        T10[test_symbolic_influence_map]
-        T11[test_neural_logic_graph]
-        T12[test_shap_overlay]
-        T13[test_shap_attention_overlay]
-        T14[test_shap_symbolic_overlay]
-        T15[test_simulate_lightcurve_from_mu]
+    AO --> T1 & T2 & T6
+    L  --> T3 & T5
+    H  --> T5 & T7
+    M  --> T2 & T6
+
+    subgraph CI["GitHub Actions"]
+      C1[setup env]
+      C2[run spectramind (sample)]
+      C3[pytest tests/artifacts -v]
+      C4[gated publish]
     end
 
-    MU --> Diagnostics
-    SIG --> Diagnostics
-
-    Diagnostics --> Tests
-    Tests --> CI[GitHub Actions CI]:::ci
-
-    classDef ci fill=#0f62fe,stroke=#fff,color=#fff
+    CLI -->|invoked by| C2
+    Tests -->|executed by| C3
+    C3 -->|all pass| C4
+    C3 -->|fail any| X([❌ block merge])
 ````
 
----
+**Reading the graph**
 
-## 🧪 Test Philosophy
-
-* **Scientific Rigor** — FFT, SHAP, symbolic overlays, and diagnostics must be mathematically correct.
-* **Interpretability First** — Every diagnostic visualization must export human-readable + machine-parseable outputs.
-* **Integration-Ready** — Each diagnostic test validates compatibility with the HTML dashboard.
-* **Fail-Fast** — If a diagnostic plot or metric diverges, the CI pipeline halts to prevent publishing misleading science.
+1. The CLI creates **artifacts**, **manifest**, **run summary**, and **logs**.
+2. The **tests** recompute and cross‑check those views of truth.
+3. **CI** runs a small, deterministic pipeline then executes the artifact suite; failures block merge.
 
 ---
 
-## 🚀 Why It Matters
+## 🧰 CI hooks (reference sequence)
 
-Diagnostics are the **eyes of the pipeline**.
-They reveal *why* a model works, where it fails, and how symbolic rules constrain predictions.
-
-The `/tests/diagnostics` suite ensures that SpectraMind V50’s diagnostics are:
-
-* Accurate (FFT/spectral math validated)
-* Explainable (SHAP + symbolic overlays reproducible)
-* Integrated (plots and JSON embed into the dashboard without breakage)
-* CI-Enforced (no unverified diagnostics reach the main branch)
-
-In short: these tests guarantee the **scientific trustworthiness** of every insight SpectraMind publishes.
+1. **Build**: create Python env (Poetry/UV/pip), cache deps, pin versions.
+2. **Sample run**: `spectramind calibrate/train/diagnose --fast-dev-run --seed 1337`
+3. **Tests**: `pytest tests/artifacts -v --maxfail=1`
+4. **Gate**: on success, proceed (optionally upload artifacts as CI evidence); on failure, **stop**.
 
 ---
 
+## 🚨 Failure modes this suite catches
+
+* **Hash drift**: file changed without manifest update (or vice‑versa).
+* **Audit holes**: missing CLI call; duplicate run IDs; non‑monotonic timestamps.
+* **Submission regressions**: wrong shapes, NaNs, unexpected headers or ID gaps.
+* **Report rot**: HTML/PNG/JSON files not in manifest, broken intra‑bundle links.
+* **Provenance gaps**: missing git commit or mismatched config digest.
+* **Nondeterministic stubs**: dummy‑data not reproducible under fixed seed.
+
+---
+
+## ➕ Extending the suite
+
+* **New artifact type?**
+
+  1. Add it to `manifest_v50.*` with SHA256 + metadata.
+  2. Create `tests/artifacts/test_<new>.py` to recompute and assert digests + schema.
+  3. Wire generation into a CI sample run so the test has real inputs.
+
+* **Custom checks** (examples):
+
+  * Enforce max bundle size before upload (safety against infra limits).
+  * Enforce required tags/metadata in manifest entries (e.g., instrument, profile).
+  * Validate cross‑run invariants (e.g., static assets identical across builds).
+
+---
+
+## 🏁 Quick commands
+
+```bash
+# run only artifact tests
+pytest tests/artifacts -v
+
+# regenerate sample artifacts locally (deterministic)
+spectramind diagnose dashboard --fast-dev-run --seed 1337
+
+# sanity: show current CLI stamp used by the tests
+spectramind --version
 ```
 
 ---
+
+## 📌 Design principles distilled
+
+* **One source of truth per view**: manifest (files), run summary (provenance), logs (human audit).
+* **Cross‑validation, not trust**: every view is recomputed and checked against the others.
+* **Gate early**: tiny sample runs + fast tests catch issues before costly training/inference.
+
+> *Artifacts are the DNA of experiments; this suite performs the genome integrity check.*
+
+```
+```
