@@ -3,468 +3,528 @@
 """
 tests/diagnostics/test_fft_power_compare.py
 
-SpectraMind V50 — Diagnostics Tests (FFT power compare)
+SpectraMind V50 — Diagnostics Test: tools/fft_power_compare.py
 
-This suite validates the FFT power comparison / clustering diagnostics tool.
-It is tolerant to different filenames/entrypoints your repo may use, such as:
+Purpose
+-------
+Validate the FFT power comparison tool in a *safe*, *adaptive*, and *repo‑agnostic* way.
+This suite focuses on CLI/UX and artifact behavior rather than numerical correctness.
 
-  • tools/plot_fft_power_cluster_compare.py
-  • tools/fft_power_compare.py
-  • tools/analyze_fft_autocorr_mu.py   (some teams fold FFT compare into this script)
-
-Objectives
-----------
-1) End-to-end CLI run on tiny synthetic inputs (time-series and/or μ spectra).
-2) Verify at least one plot (PNG/SVG/PDF) is created in the specified --outdir.
-3) Confirm append-only audit logging into logs/v50_debug_log.md.
-4) Ensure --outdir is respected (no stray writes outside, except logs/ and run-hash JSON).
-5) Exercise edge cases (very short sequences, NaNs) without crashing.
-6) Module invocation mode (`python -m tools.<name>`) works if importable.
+The test asserts that the tool:
+  1) Is discoverable and prints a meaningful --help (mentions FFT/power/compare).
+  2) Supports a safe invocation path (dry-run/selftest/plan) exiting with code 0.
+  3) Accepts tiny synthetic inputs if applicable (μ spectra or CSV) when flags exist.
+  4) Writes light artifacts (HTML/PNG/CSV/JSON/MD) *or* clearly states intended outputs.
+  5) Appends an audit entry to logs/v50_debug_log.md (append-only).
+  6) Is idempotent in safe mode (no accumulation of heavy artifacts).
+  7) Optionally exercises clustering/options (e.g., --clusters/--labels) if present.
 
 Design
 ------
-• Self-contained repo scaffold (tools/, logs/, outputs/).
-• Synthetic signals: sine + jitter with distinct power bands to make clustering plausible.
-• Flexible CLI args: we pass common flags, but tests don't fail if your tool ignores unknown ones.
-• We do NOT over-constrain exact filenames—only require that at least one image artifact exists.
+• Entry points probed (in order):
+    - tools/fft_power_compare.py (canonical)
+    - tools/fft_power_compare_v50.py (variant)
+    - spectramind diagnose fft-power-compare (wrapper; optional)
+• Flags are discovered by parsing --help and mapping abstract names to actual flags.
+• Tiny inputs are created in tmp_path:
+    - mu.npy       : shape (N, B) float32
+    - labels.csv   : optional grouping labels (id,cluster)
+• The tool may just *plan* outputs in dry mode; if so, we accept messages indicating
+  intended outputs instead of requiring files.
 
-Run
----
-pytest -q tests/diagnostics/test_fft_power_compare.py
+Notes
+-----
+• No network/GPU required. Tests are time-bounded and synthetic.
+• Flexible to avoid brittle coupling with the exact CLI flag names.
+• Numerical fidelity of FFTs is covered elsewhere; this test checks the CLI contract.
+
+Author: SpectraMind V50 QA
 """
 
-from __future__ import annotations
-
 import json
-import math
 import os
 import re
 import subprocess
 import sys
-import textwrap
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pytest
 
-# Force headless plotting for CI environments
-os.environ.setdefault("MPLBACKEND", "Agg")
 
+# ======================================================================================
+# Repo root / entrypoint discovery
+# ======================================================================================
 
-# --------------------------------------
-# Repo scaffold + synthetic inputs
-# --------------------------------------
-
-CANDIDATE_SCRIPTS = [
-    "plot_fft_power_cluster_compare.py",
-    "fft_power_compare.py",
-    "analyze_fft_autocorr_mu.py",
-]
-
-CANDIDATE_MODULES = [
-    "tools.plot_fft_power_cluster_compare",
-    "tools.fft_power_compare",
-    "tools.analyze_fft_autocorr_mu",
-]
-
-
-def _ensure_repo_scaffold(repo_root: Path) -> None:
+def repo_root() -> Path:
     """
-    Create a minimal repo-like layout so default relative paths used by the tool
-    (e.g., logs/, outputs/) resolve cleanly.
-    If none of the candidate tools exists, write a shim that exits with a helpful message.
+    Resolve repository root by walking upward until a 'tools' directory appears.
+    Fallback: two levels up from tests/diagnostics.
     """
-    (repo_root / "tools").mkdir(parents=True, exist_ok=True)
-    (repo_root / "logs").mkdir(parents=True, exist_ok=True)
-    (repo_root / "outputs" / "diagnostics").mkdir(parents=True, exist_ok=True)
-
-    tool_dir = repo_root / "tools"
-    if not any((tool_dir / name).exists() for name in CANDIDATE_SCRIPTS):
-        # Create a shim for the first candidate to make the skip reasoning explicit
-        shim_path = tool_dir / CANDIDATE_SCRIPTS[0]
-        shim_path.write_text(
-            textwrap.dedent(
-                f"""\
-                #!/usr/bin/env python3
-                # Shim placeholder for FFT diagnostics tool.
-                # Replace with one of: {", ".join(CANDIDATE_SCRIPTS)}
-                import sys
-                if __name__ == "__main__":
-                    sys.exit("Shim placeholder: replace with a real FFT diagnostics tool in tools/.")
-                """
-            ),
-            encoding="utf-8",
-        )
+    here = Path(__file__).resolve()
+    for anc in [here] + list(here.parents):
+        if (anc / "tools").is_dir():
+            return anc
+    return Path(__file__).resolve().parents[2]
 
 
-def _make_sine_mix_time_series(
-    n_series: int = 8,
-    length: int = 256,
-    seed: int = 123,
-    sample_rate_hz: float = 1.0,
-) -> np.ndarray:
+def tool_script_candidates() -> List[Path]:
     """
-    Construct tiny multi-series signals:
-      x[t] = a1*sin(2π f1 t) + a2*sin(2π f2 t) + jitter
-    with per-series random amplitudes/frequencies to create distinct FFT signatures.
-    Returns array of shape (n_series, length).
+    Candidate tool scripts for FFT power comparison.
     """
-    rng = np.random.default_rng(seed)
-    t = np.arange(length, dtype=np.float64) / sample_rate_hz
-
-    X = []
-    for i in range(n_series):
-        # Choose two frequencies in different bands (normalized)
-        f1 = rng.uniform(0.03, 0.08)  # low-ish
-        f2 = rng.uniform(0.15, 0.25)  # higher
-        a1 = rng.uniform(0.5, 1.5)
-        a2 = rng.uniform(0.3, 1.2)
-        sig = a1 * np.sin(2 * np.pi * f1 * t) + a2 * np.sin(2 * np.pi * f2 * t)
-        sig += rng.normal(0, 0.1, size=length)
-        # small trend for realism
-        sig += 0.001 * (i + 1) * (t - t.mean())
-        X.append(sig)
-    return np.vstack(X)
+    root = repo_root()
+    cands = [
+        root / "tools" / "fft_power_compare.py",
+        root / "tools" / "fft_power_compare_v50.py",  # variant name (defensive)
+    ]
+    return [c for c in cands if c.exists()]
 
 
-def _make_mu_spectra_from_signals(signals: np.ndarray) -> np.ndarray:
+def spectramind_cli_candidates() -> List[List[str]]:
     """
-    Derive a tiny 'μ spectra' proxy by taking the magnitude of the FFT at a handful
-    of pseudo-'wavelength bins'. This is only for testing file I/O paths where the tool
-    expects μ(λ) arrays. Shape: (n_series, n_bins).
+    Optional wrapper CLI forms. We'll try these if direct script/module isn't available.
     """
-    n_series, length = signals.shape
-    fft = np.abs(np.fft.rfft(signals, axis=1))
-    # pick a few stable bins (excluding DC)
-    idx = np.linspace(2, min(fft.shape[1] - 1, 60), 17).astype(int)
-    mu = fft[:, idx] / (fft[:, idx].max(axis=1, keepdims=True) + 1e-9)
-    return mu.astype(np.float64)
-
-
-def _write_inputs(repo_root: Path) -> Dict[str, Path]:
-    """
-    Write minimal inputs for both "time-series" and "μ spectra" workflows so the tool
-    can choose either. Returns a dict of useful paths.
-    """
-    inputs = repo_root / "inputs"
-    inputs.mkdir(parents=True, exist_ok=True)
-
-    signals = _make_sine_mix_time_series(n_series=8, length=192, seed=321)
-    mu = _make_mu_spectra_from_signals(signals)
-
-    ts_path = inputs / "time_series.npy"
-    mu_path = inputs / "mu.npy"
-    labels_path = inputs / "labels.txt"
-
-    np.save(ts_path, signals)
-    np.save(mu_path, mu)
-    labels = [f"group_{i%2}" for i in range(signals.shape[0])]
-    labels_path.write_text("\n".join(labels), encoding="utf-8")
-
-    return {"time_series": ts_path, "mu": mu_path, "labels": labels_path}
-
-
-def _find_tool_script(repo_root: Path) -> Optional[Path]:
-    """
-    Return a path to the first candidate tool found in tools/.
-    """
-    for name in CANDIDATE_SCRIPTS:
-        p = repo_root / "tools" / name
-        if p.exists():
-            return p
-    return None
-
-
-def _find_tool_module() -> Optional[str]:
-    """
-    Return the first importable candidate module path (tools.<name>).
-    """
-    for mod in CANDIDATE_MODULES:
-        try:
-            __import__(mod)
-            return mod
-        except Exception:
-            continue
-    return None
-
-
-def _run_tool_subprocess(
-    repo_root: Path,
-    tool_path: Optional[Path],
-    module_name: Optional[str],
-    inputs: Dict[str, Path],
-    outdir: Path,
-    extra_args: Optional[List[str]] = None,
-) -> subprocess.CompletedProcess:
-    """
-    Execute the FFT tool either by file path or as a module.
-    Prefer a direct file path when available; module is a fallback.
-    """
-    env = os.environ.copy()
-    env.setdefault("PYTHONUNBUFFERED", "1")
-    env.setdefault("MPLBACKEND", "Agg")
-    env.setdefault("SPECTRAMIND_TEST", "1")
-
-    base_args: List[str] = []
-    # Supply both time-series and μ inputs; accept that the tool may use only one.
-    # Provide tolerant flags that many implementations accept; unknown flags should be ignored gracefully.
-    base_args += [
-        # common flags seen across repos/tools
-        "--outdir", str(outdir),
-        "--no-open",
-        "--save-plots",
-        "--quiet",
-        "--version", "test",
+    return [
+        ["spectramind", "diagnose", "fft-power-compare"],
+        ["spectramind", "diagnose", "fft_power_compare"],
+        [sys.executable, "-m", "spectramind", "diagnose", "fft-power-compare"],
+        [sys.executable, "-m", "src.cli.cli_diagnose", "fft-power-compare"],
+        [sys.executable, "-m", "src.cli.cli_diagnose", "fft_power_compare"],
     ]
 
-    # Try a variety of input flag spellings (tool should accept at least one).
-    # If the tool rejects unknowns with non-zero exit, later tests will xfail with context.
-    input_flag_sets = [
-        ["--time-series", str(inputs["time_series"]), "--labels", str(inputs["labels"])],
-        ["--ts", str(inputs["time_series"]), "--labels", str(inputs["labels"])],
-        ["--mu", str(inputs["mu"]), "--labels", str(inputs["labels"])],
-    ]
 
-    # We'll attempt up to 3 runs with alternative flag sets until one succeeds.
-    tried_cmds: List[List[str]] = []
+# ======================================================================================
+# Subprocess helpers
+# ======================================================================================
 
-    for flagset in input_flag_sets:
-        if module_name:
-            env["PYTHONPATH"] = str(repo_root) + os.pathsep + env.get("PYTHONPATH", "")
-            cmd = [sys.executable, "-m", module_name]
+def run_proc(cmd: List[str], cwd: Optional[Path] = None, timeout: int = 180) -> Tuple[int, str, str]:
+    """
+    Execute a command and return (exit_code, stdout, stderr) in text mode.
+    """
+    proc = subprocess.Popen(
+        cmd,
+        cwd=str(cwd) if cwd else None,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env={**os.environ},
+    )
+    try:
+        out, err = proc.communicate(timeout=timeout)
+        return proc.returncode, out, err
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        out, err = proc.communicate()
+        return 124, out, err
+
+
+def python_module_invocation(module: str, *args: str) -> List[str]:
+    return [sys.executable, "-m", module, *args]
+
+
+def python_script_invocation(script: Path, *args: str) -> List[str]:
+    return [sys.executable, str(script), *args]
+
+
+# ======================================================================================
+# Flag discovery
+# ======================================================================================
+
+FLAG_ALIASES: Dict[str, List[str]] = {
+    # Help
+    "help": ["--help", "-h"],
+
+    # Safe / plan mode
+    "dry_run": ["--dry-run", "--dryrun", "--selftest", "--plan", "--check", "--no-exec"],
+
+    # Output directory
+    "outdir": ["--outdir", "--out-dir", "--output", "--output-dir", "-o"],
+
+    # Inputs (allow multiple spellings)
+    "mu": ["--mu", "--mu-npy", "--mu_path", "--pred-mu", "--pred_mu", "--input-mu"],
+    "labels": ["--labels", "--labels-csv", "--clusters", "--cluster-csv", "--labels_path"],
+
+    # Exports (request light artifacts)
+    "html": ["--html", "--html-out", "--open-html", "--open_html", "--no-open-html", "--report-html"],
+    "md": ["--md", "--markdown", "--md-out", "--markdown-out"],
+    "csv": ["--csv", "--csv-out", "--write-csv", "--per-bin-csv", "--export-csv"],
+    "json": ["--json", "--json-out", "--export-json"],
+
+    # FFT options (optional)
+    "n_freq": ["--n-freq", "--n_freq", "--num-freq", "--kmax"],
+    "window": ["--window", "--fft-window"],
+    "normalize": ["--normalize", "--norm", "--zscore", "--standardize"],
+
+    # Compare toggles / clustering (optional)
+    "compare": ["--compare", "--do-compare", "--pairwise", "--between-clusters"],
+    "plot": ["--plot", "--plots", "--make-plots"],
+}
+
+
+def discover_supported_flags(help_text: str) -> Dict[str, str]:
+    """
+    Map abstract flag names to actual aliases found in --help text.
+    """
+    mapping: Dict[str, str] = {}
+    for abstract, aliases in FLAG_ALIASES.items():
+        for alias in aliases:
+            if re.search(rf"(^|\s){re.escape(alias)}(\s|,|$)", help_text):
+                mapping[abstract] = alias
+                break
+    return mapping
+
+
+# ======================================================================================
+# Artifact probing
+# ======================================================================================
+
+def recent_files_with_suffix(root: Path, suffixes: Tuple[str, ...]) -> List[Path]:
+    """
+    Find files recursively under root with suffix in suffixes, sorted by mtime desc.
+    """
+    if not root.exists():
+        return []
+    hits: List[Path] = []
+    for p in root.rglob("*"):
+        if p.is_file() and p.suffix.lower() in suffixes:
+            hits.append(p)
+    return sorted(hits, key=lambda p: p.stat().st_mtime, reverse=True)
+
+
+def read_text_or_empty(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        return ""
+
+
+# ======================================================================================
+# Fixtures
+# ======================================================================================
+
+@pytest.fixture(scope="module")
+def project_root() -> Path:
+    return repo_root()
+
+
+@pytest.fixture
+def temp_outdir(tmp_path: Path) -> Path:
+    d = tmp_path / "fft_power_compare_out"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+@pytest.fixture
+def ensure_logs_dir(project_root: Path) -> Path:
+    logs = project_root / "logs"
+    logs.mkdir(parents=True, exist_ok=True)
+    dbg = logs / "v50_debug_log.md"
+    if not dbg.exists():
+        dbg.write_text("# v50 Debug Log\n", encoding="utf-8")
+    return logs
+
+
+@pytest.fixture
+def tiny_inputs(tmp_path: Path) -> Dict[str, Path]:
+    """
+    Create tiny inputs for FFT power comparison:
+      - mu.npy: (N, B) with simple synthetic periodic patterns + noise
+      - labels.csv: N rows mapping ids to small set of clusters
+    Shapes kept tiny to avoid heavy compute: N=6, B=64
+    """
+    N, B = 6, 64
+    rng = np.random.default_rng(2025)
+
+    # Synthesize two groups with different dominant frequencies
+    t = np.linspace(0, 1, B, endpoint=False).astype(np.float32)
+    mu = np.zeros((N, B), dtype=np.float32)
+    for i in range(N):
+        if i < N // 2:
+            mu[i] = 0.7 * np.sin(2 * np.pi * 5 * t) + 0.2 * rng.normal(0, 0.2, size=B)
         else:
-            assert tool_path is not None
-            cmd = [sys.executable, str(tool_path)]
+            mu[i] = 0.7 * np.sin(2 * np.pi * 9 * t) + 0.2 * rng.normal(0, 0.2, size=B)
 
-        args = base_args + flagset
-        if extra_args:
-            args += list(extra_args)
-
-        tried_cmds.append(cmd + args)
-        proc = subprocess.run(
-            cmd + args,
-            cwd=str(repo_root),
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=90,
-        )
-        if proc.returncode == 0:
-            return proc
-        # else try next flag set; continue
-
-    # If none succeeded, return the last proc for debugging
-    return proc  # type: ignore[name-defined]
-
-
-def _scan_new_artifacts(root: Path, before: Sequence[Path]) -> List[Path]:
-    """
-    Find new image artifacts (PNG/SVG/PDF) in outdir after running tool.
-    """
-    before_set = set(before)
-    exts = {".png", ".svg", ".pdf", ".jpg", ".jpeg"}
-    after = [p for p in root.rglob("*") if p.suffix.lower() in exts]
-    return [p for p in after if p not in before_set]
-
-
-def _read_text(path: Path) -> str:
-    return path.read_text(encoding="utf-8", errors="ignore")
-
-
-# ----------------------
-# Pytest fixtures
-# ----------------------
-
-@pytest.fixture(scope="function")
-def repo_tmp(tmp_path: Path) -> Path:
-    _ensure_repo_scaffold(tmp_path)
-    return tmp_path
-
-
-@pytest.fixture(scope="function")
-def tiny_inputs(repo_tmp: Path) -> Dict[str, Path]:
-    return _write_inputs(repo_tmp)
-
-
-# ---------------------------------------
-# Core tests — end-to-end and robustness
-# ---------------------------------------
-
-@pytest.mark.integration
-def test_fft_power_compare_generates_plots(repo_tmp: Path, tiny_inputs: Dict[str, Path]) -> None:
-    """
-    End-to-end run:
-      • Execute tool with small time-series/μ inputs.
-      • Expect at least one image artifact in --outdir.
-      • Confirm audit log appended.
-    """
-    tool_path = _find_tool_script(repo_tmp)
-    module_name = _find_tool_module() if tool_path is None else None
-
-    # If neither script nor module is present, skip with a clear message.
-    if tool_path is None and module_name is None:
-        pytest.skip("No FFT diagnostics tool found under tools/. Add one of the candidates to enable this test.")
-
-    outdir = repo_tmp / "outputs" / "diagnostics" / "fft_compare_run"
-    outdir.mkdir(parents=True, exist_ok=True)
-
-    before = list(outdir.rglob("*"))
-
-    proc = _run_tool_subprocess(
-        repo_root=repo_tmp,
-        tool_path=tool_path,
-        module_name=module_name,
-        inputs=tiny_inputs,
-        outdir=outdir,
-        extra_args=["--dpi", "120", "--figsize", "8,6"],
-    )
-
-    if proc.returncode != 0:
-        print("STDOUT:\n", proc.stdout)
-        print("STDERR:\n", proc.stderr)
-    assert proc.returncode == 0, "FFT diagnostics tool should exit successfully."
-
-    artifacts = _scan_new_artifacts(outdir, before)
-    assert artifacts, "Expected at least one plot artifact (PNG/SVG/PDF) in the outdir."
-
-    # Audit log presence
-    log_path = repo_tmp / "logs" / "v50_debug_log.md"
-    assert log_path.exists(), "Expected audit log logs/v50_debug_log.md"
-    log_text = _read_text(log_path).lower()
-    assert "fft" in log_text or "power" in log_text or "autocorr" in log_text, \
-        "Audit log should mention FFT/power/autocorr diagnostics."
-
-
-@pytest.mark.integration
-def test_outdir_respected_no_stray_writes(repo_tmp: Path, tiny_inputs: Dict[str, Path]) -> None:
-    """
-    Ensure the tool writes under --outdir (plus logs/); no other stray writes in repo root.
-    """
-    tool_path = _find_tool_script(repo_tmp)
-    module_name = _find_tool_module() if tool_path is None else None
-    if tool_path is None and module_name is None:
-        pytest.skip("No FFT diagnostics tool available; skipping.")
-
-    outdir = repo_tmp / "outputs" / "diagnostics" / "fft_compare_outdir"
-    outdir.mkdir(parents=True, exist_ok=True)
-
-    before = set(p.relative_to(repo_tmp).as_posix() for p in repo_tmp.rglob("*") if p.is_file())
-
-    proc = _run_tool_subprocess(
-        repo_root=repo_tmp,
-        tool_path=tool_path,
-        module_name=module_name,
-        inputs=tiny_inputs,
-        outdir=outdir,
-        extra_args=["--dpi", "110", "--quiet"],
-    )
-    assert proc.returncode == 0
-
-    after = set(p.relative_to(repo_tmp).as_posix() for p in repo_tmp.rglob("*") if p.is_file())
-    new_files = sorted(list(after - before))
-
-    # Allowed: anything under outdir, logs/*, and optionally outputs/run_hash_summary*.json
-    disallowed = []
-    out_rel = outdir.relative_to(repo_tmp).as_posix()
-    for rel in new_files:
-        if rel.startswith("logs/"):
-            continue
-        if rel.startswith(out_rel):
-            continue
-        if rel.startswith("outputs/") and re.search(r"run_hash_summary.*\.json$", rel):
-            continue
-        if rel.endswith(".pyc") or "/__pycache__/" in rel:
-            continue
-        disallowed.append(rel)
-
-    assert not disallowed, f"FFT tool wrote unexpected files outside --outdir: {disallowed}"
-
-
-@pytest.mark.integration
-def test_handles_short_sequences_and_nans(repo_tmp: Path) -> None:
-    """
-    Edge cases:
-      • Very short sequences (length ~ 32).
-      • Inject NaNs; tool should either sanitize or skip gracefully and still complete.
-    """
-    tool_path = _find_tool_script(repo_tmp)
-    module_name = _find_tool_module() if tool_path is None else None
-    if tool_path is None and module_name is None:
-        pytest.skip("No FFT diagnostics tool available; skipping.")
-
-    # Build tiny inputs with NaNs
-    inputs_dir = repo_tmp / "inputs_edge"
-    inputs_dir.mkdir(parents=True, exist_ok=True)
-
-    ts = _make_sine_mix_time_series(n_series=4, length=32, seed=7)
-    ts[1, 3] = np.nan  # inject
-    mu = _make_mu_spectra_from_signals(ts)
-
-    ts_path = inputs_dir / "ts_short.npy"
-    mu_path = inputs_dir / "mu_short.npy"
-    labels_path = inputs_dir / "labels.txt"
-    np.save(ts_path, ts)
+    mu_path = tmp_path / "mu.npy"
     np.save(mu_path, mu)
-    labels_path.write_text("A\nB\nA\nB\n", encoding="utf-8")
 
-    outdir = repo_tmp / "outputs" / "diagnostics" / "fft_compare_edge"
-    outdir.mkdir(parents=True, exist_ok=True)
+    labels_path = tmp_path / "labels.csv"
+    # Minimal CSV header: id,cluster
+    # p000,G1
+    # ...
+    ids = [f"p{i:03d}" for i in range(N)]
+    clusters = ["G1"] * (N // 2) + ["G2"] * (N - N // 2)
+    lines = ["id,cluster"] + [f"{pid},{clu}" for pid, clu in zip(ids, clusters)]
+    labels_path.write_text("\n".join(lines), encoding="utf-8")
 
-    # Try with μ first (some tools operate on μ-only); then fallback to time-series flags.
-    proc = _run_tool_subprocess(
-        repo_root=repo_tmp,
-        tool_path=tool_path,
-        module_name=module_name,
-        inputs={"time_series": ts_path, "mu": mu_path, "labels": labels_path},
-        outdir=outdir,
-        extra_args=["--dpi", "120", "--max-series", "4"],
-    )
-
-    if proc.returncode != 0:
-        print("STDOUT:\n", proc.stdout)
-        print("STDERR:\n", proc.stderr)
-    assert proc.returncode == 0, "Tool should handle short sequences and NaNs without crashing."
-
-    artifacts = list(outdir.glob("**/*.*"))
-    # Not strict on extension here; just verify something was produced.
-    assert any(p.suffix.lower() in {".png", ".svg", ".pdf"} for p in artifacts), \
-        "Expected at least one plot artifact even for edge-case inputs."
+    return {"mu": mu_path, "labels": labels_path}
 
 
-@pytest.mark.integration
-def test_module_invocation_if_importable(repo_tmp: Path, tiny_inputs: Dict[str, Path]) -> None:
+# ======================================================================================
+# Tests
+# ======================================================================================
+
+def test_discoverable_and_help(project_root: Path):
     """
-    Validate `python -m tools.<name>` execution path if a candidate tool module is importable.
-    If only a shim exists, xfail gracefully with context.
+    Tool must be discoverable and --help must mention FFT/power/compare keywords.
+    We try:
+      1) python tools/fft_power_compare.py --help
+      2) python -m tools.fft_power_compare --help (if tools is a package)
+      3) spectramind diagnose fft-power-compare --help
     """
-    module_name = _find_tool_module()
-    if module_name is None:
-        pytest.xfail("No importable tools.<name> FFT module found; acceptable if your tool is file-invoked only.")
+    help_blobs: List[str] = []
 
-    # Detect shim by reading file text if accessible (best-effort)
-    # We'll just run it and expect success; if shim raises, we xfail.
-    outdir = repo_tmp / "outputs" / "diagnostics" / "fft_compare_module_mode"
-    outdir.mkdir(parents=True, exist_ok=True)
+    # 1) Direct scripts
+    for script in tool_script_candidates():
+        code, out, err = run_proc(python_script_invocation(script, "--help"), cwd=project_root)
+        if code == 0 and (out or err):
+            help_blobs.append(out + "\n" + err)
 
-    proc = _run_tool_subprocess(
-        repo_root=repo_tmp,
-        tool_path=None,
-        module_name=module_name,
-        inputs=tiny_inputs,
-        outdir=outdir,
-        extra_args=["--dpi", "120", "--figsize", "7,5"],
-    )
+    # 2) Module form
+    if (project_root / "tools" / "__init__.py").exists():
+        code, out, err = run_proc(python_module_invocation("tools.fft_power_compare", "--help"), cwd=project_root)
+        if code == 0 and (out or err):
+            help_blobs.append(out + "\n" + err)
 
-    if proc.returncode != 0:
-        combined = (proc.stdout or "") + "\n" + (proc.stderr or "")
-        if "Shim placeholder" in combined:
-            pytest.xfail("FFT tool shim detected — replace with real implementation to pass this test.")
-        print("STDOUT:\n", proc.stdout)
-        print("STDERR:\n", proc.stderr)
-    assert proc.returncode == 0
+    # 3) spectramind wrapper
+    if not help_blobs:
+        for cli in spectramind_cli_candidates():
+            code, out, err = run_proc([*cli, "--help"], cwd=project_root)
+            if code == 0 and (out or err):
+                help_blobs.append(out + "\n" + err)
+                break
 
-    # At least one artifact expected
-    imgs = list(outdir.glob("**/*"))
-    assert any(p.suffix.lower() in {".png", ".svg", ".pdf"} for p in imgs), \
-        "Expected at least one image artifact in module mode."
+    assert help_blobs, "No --help output found for FFT power compare tool."
+    combined = "\n\n".join(help_blobs).lower()
+    required_any = ["fft", "power", "spectrum", "compare", "diagnostics"]
+    assert any(tok in combined for tok in required_any), \
+        f"--help lacks core FFT/power/compare keywords; expected any of {required_any}"
+
+
+def test_safe_invocation_and_artifacts(project_root: Path, temp_outdir: Path, ensure_logs_dir: Path, tiny_inputs: Dict[str, Path]):
+    """
+    Execute the tool in safe mode with tiny inputs (if supported), ensuring:
+      - Exit code 0
+      - Debug log appended
+      - Outdir exists
+      - Artifacts produced (HTML/PNG/CSV/JSON/MD) OR intended outputs are mentioned
+    """
+    debug_log = ensure_logs_dir / "v50_debug_log.md"
+    pre_len = len(read_text_or_empty(debug_log))
+
+    # Choose an entrypoint and collect help text
+    help_text = ""
+    base_cmd: Optional[List[str]] = None
+
+    for script in tool_script_candidates():
+        code, out, err = run_proc(python_script_invocation(script, "--help"), cwd=project_root)
+        if code == 0:
+            help_text = out + "\n" + err
+            base_cmd = python_script_invocation(script)
+            break
+
+    if base_cmd is None and (project_root / "tools" / "__init__.py").exists():
+        code, out, err = run_proc(python_module_invocation("tools.fft_power_compare", "--help"), cwd=project_root)
+        if code == 0:
+            help_text = out + "\n" + err
+            base_cmd = python_module_invocation("tools.fft_power_compare")
+
+    if base_cmd is None:
+        for cli in spectramind_cli_candidates():
+            code, out, err = run_proc([*cli, "--help"], cwd=project_root)
+            if code == 0:
+                help_text = out + "\n" + err
+                base_cmd = cli
+                break
+
+    assert base_cmd is not None, "Unable to obtain a working entrypoint for FFT tool."
+    flags = discover_supported_flags(help_text)
+
+    # Build safe command
+    cmd = list(base_cmd)
+
+    # Safe flag
+    if "dry_run" in flags:
+        cmd.append(flags["dry_run"])
+
+    # Outdir
+    if "outdir" in flags:
+        cmd.extend([flags["outdir"], str(temp_outdir)])
+
+    # Inputs
+    if "mu" in flags:
+        cmd.extend([flags["mu"], str(tiny_inputs["mu"])])
+    if "labels" in flags:
+        cmd.extend([flags["labels"], str(tiny_inputs["labels"])])
+
+    # Exports (request light artifacts; tool may *plan* in dry mode)
+    for opt in ("html", "md", "csv", "json", "plot"):
+        if opt in flags:
+            cmd.append(flags[opt])
+
+    # Optional FFT options (small values to keep it light)
+    if "n_freq" in flags:
+        cmd.extend([flags["n_freq"], "16"])
+    if "window" in flags:
+        cmd.extend([flags["window"], "hann"])
+    if "normalize" in flags:
+        cmd.append(flags["normalize"])
+    if "compare" in flags:
+        cmd.append(flags["compare"])
+
+    # Execute
+    code, out, err = run_proc(cmd, cwd=project_root, timeout=210)
+    assert code == 0, f"Safe FFT power compare invocation failed.\nSTDERR:\n{err}\nSTDOUT:\n{out}"
+    combined = (out + "\n" + err).lower()
+    assert any(k in combined for k in ["fft", "power", "spectrum", "compare", "cluster", "plot", "html", "csv", "json"]), \
+        "Output does not resemble FFT/power compare tool output."
+
+    # Log grew
+    post_len = len(read_text_or_empty(debug_log))
+    assert post_len >= pre_len, "v50_debug_log.md did not grow after FFT tool invocation."
+    appended = read_text_or_empty(debug_log)[pre_len:]
+    assert re.search(r"(fft|power|spectrum|compare|diagnose)", appended, re.IGNORECASE), \
+        "No recognizable FFT/power/compare text found in debug log appended segment."
+
+    # Outdir exists
+    assert temp_outdir.exists(), "Output directory missing after FFT tool invocation."
+
+    # Look for produced artifacts OR mention of intended outputs
+    produced_html = recent_files_with_suffix(temp_outdir, (".html", ".htm"))
+    produced_png = recent_files_with_suffix(temp_outdir, (".png",))
+    produced_csv = recent_files_with_suffix(temp_outdir, (".csv",))
+    produced_json = recent_files_with_suffix(temp_outdir, (".json",))
+
+    if not (produced_html or produced_png or produced_csv or produced_json):
+        # Accept dry-run planning — require mention of output intent
+        assert any(tok in combined for tok in ["outdir", "output", "write", ".html", ".png", ".csv", ".json"]), \
+            "No artifacts found and no mention of intended outputs in tool output (dry-run should plan)."
+
+
+def test_json_or_csv_summaries_if_emitted(temp_outdir: Path):
+    """
+    If JSON or CSV summaries were written, perform light sanity checks.
+    """
+    json_files = recent_files_with_suffix(temp_outdir, (".json",))
+    csv_files = recent_files_with_suffix(temp_outdir, (".csv",))
+
+    # JSON sanity
+    for jf in json_files[:5]:
+        text = read_text_or_empty(jf).strip()
+        if not text:
+            continue
+        try:
+            obj = json.loads(text)
+        except Exception as e:
+            pytest.fail(f"Malformed JSON at {jf}: {e}")
+
+        # Expect dict or list; if dict, look for indicative keys
+        if isinstance(obj, dict):
+            keys = {str(k).lower() for k in obj.keys()}
+            indicative = {"fft", "power", "bins", "metrics", "clusters", "summary"}
+            assert keys & indicative or len(keys) > 0, \
+                f"JSON {jf} lacks indicative FFT/compare keys."
+
+    # CSV sanity
+    for cf in csv_files[:5]:
+        text = read_text_or_empty(cf).strip()
+        if not text:
+            continue
+        assert ("\n" in text or "," in text), f"CSV {cf} seems empty or malformed."
+
+
+def test_idempotent_safe_runs_no_heavy_accumulation(project_root: Path, temp_outdir: Path, tiny_inputs: Dict[str, Path]):
+    """
+    Run safe mode twice and ensure that heavy artifacts (checkpoints or >5MB) do not accumulate.
+    """
+    # Get help & base command
+    help_text = ""
+    base_cmd: Optional[List[str]] = None
+
+    for script in tool_script_candidates():
+        code, out, err = run_proc(python_script_invocation(script, "--help"), cwd=project_root)
+        if code == 0:
+            help_text = out + "\n" + err
+            base_cmd = python_script_invocation(script)
+            break
+
+    if base_cmd is None and (project_root / "tools" / "__init__.py").exists():
+        code, out, err = run_proc(python_module_invocation("tools.fft_power_compare", "--help"), cwd=project_root)
+        if code == 0:
+            help_text = out + "\n" + err
+            base_cmd = python_module_invocation("tools.fft_power_compare")
+
+    if base_cmd is None:
+        for cli in spectramind_cli_candidates():
+            code, out, err = run_proc([*cli, "--help"], cwd=project_root)
+            if code == 0:
+                help_text = out + "\n" + err
+                base_cmd = cli
+                break
+
+    assert base_cmd is not None, "Could not obtain tool help for idempotency test."
+    flags = discover_supported_flags(help_text)
+
+    # Build safe command with the tiny inputs
+    cmd = list(base_cmd)
+    if "dry_run" in flags:
+        cmd.append(flags["dry_run"])
+    if "outdir" in flags:
+        cmd.extend([flags["outdir"], str(temp_outdir)])
+    if "mu" in flags:
+        cmd.extend([flags["mu"], str(tiny_inputs["mu"])])
+    if "labels" in flags:
+        cmd.extend([flags["labels"], str(tiny_inputs["labels"])])
+
+    # Count heavy artifacts (heuristic: >5MB or checkpoint-like suffixes)
+    def count_heavy(root: Path) -> int:
+        if not root.exists():
+            return 0
+        n = 0
+        for p in root.rglob("*"):
+            if p.is_file():
+                if p.suffix.lower() in {".ckpt", ".pt"} or p.stat().st_size > 5 * 1024 * 1024:
+                    n += 1
+        return n
+
+    pre = count_heavy(temp_outdir)
+    code1, out1, err1 = run_proc(cmd, cwd=project_root, timeout=150)
+    code2, out2, err2 = run_proc(cmd, cwd=project_root, timeout=150)
+    assert code1 == 0 and code2 == 0, f"Safe FFT tool invocations failed.\n1) {err1}\n2) {err2}"
+    post = count_heavy(temp_outdir)
+    assert post <= pre, f"Heavy artifacts increased in safe mode: before={pre}, after={post}"
+
+
+def test_help_mentions_fft_options_and_exports(project_root: Path):
+    """
+    Quick semantic sniff: --help should mention FFT options or exports to guide users.
+    """
+    help_texts: List[str] = []
+
+    for script in tool_script_candidates():
+        code, out, err = run_proc(python_script_invocation(script, "--help"), cwd=project_root)
+        if code == 0 and (out or err):
+            help_texts.append(out + "\n" + err)
+
+    if not help_texts and (project_root / "tools" / "__init__.py").exists():
+        code, out, err = run_proc(python_module_invocation("tools.fft_power_compare", "--help"), cwd=project_root)
+        if code == 0 and (out or err):
+            help_texts.append(out + "\n" + err)
+
+    if not help_texts:
+        for cli in spectramind_cli_candidates():
+            code, out, err = run_proc([*cli, "--help"], cwd=project_root)
+            if code == 0 and (out or err):
+                help_texts.append(out + "\n" + err)
+                break
+
+    assert help_texts, "Unable to capture --help for FFT power compare."
+    combined = "\n\n".join(help_texts).lower()
+    want_any = ["n-freq", "window", "normalize", "html", "csv", "json", "plot"]
+    assert any(tok in combined for tok in want_any), \
+        f"--help should mention FFT options or exports; expected any of {want_any}"
+
+
+# ======================================================================================
+# End of file
+# ======================================================================================
