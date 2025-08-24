@@ -3,752 +3,599 @@
 """
 tools/fft_power_compare.py
 
-SpectraMind V50 — FFT Power Compare (FGS1 & AIRS, pre/post calibration)
+SpectraMind V50 — FFT Power Compare (Ultimate, Challenge‑Grade)
 
 Purpose
 -------
-Compute and compare frequency-domain power (FFT/Welch) of:
-  • FGS1 time-series (photometry) and
-  • AIRS time-series per wavelength (or aggregated),
-before and after calibration/detrending. Export rich diagnostics:
-  • Matplotlib PNG plots (log–log power vs frequency)
-  • Optional Plotly HTML with hover
-  • CSV/JSON summaries (peak bands, band power, ratios)
-  • Markdown mini-report (optional)
-  • Append audit entry to logs/v50_debug_log.md
+Compute and compare FFT power spectra between two conditions (e.g., pre‑ vs post‑calibration;
+method A vs B) across Ariel‑like data. Works on either:
 
-Design
-------
-• CLI-first (Typer) with robust flags & friendly output (Rich).
-• Safe readers: .npy, .csv, .txt, and optional HDF5 (h5py if available).
-• AIRS: support (T, W) arrays or (P, T, W); reduce via mean/median across W or per-band.
-• FGS1: support (T,) or (P, T).
-• Welch PSD (scipy.signal.welch) with tunable nperseg/overlap/window.
-• Physics-aware helpers: mark low-f jitter, remove DC, show slope fits.
+  • Time-domain cubes (FGS1/AIRS‑style):      X.shape ∈ {(T,W), (P,T,W)}
+      -> FFT along time axis (T) for each [planet, wavelength] channel
+  • Spectral-domain matrices (μ spectra):     μ.shape ∈ {(B,), (P,B)}
+      -> FFT along wavelength/bins axis (B) per planet
 
-References (project context, CLI strategy, challenge & instruments)
-------------------------------------------------------------------
-• SpectraMind V50 CLI-first, Typer, Rich console dashboards, artifact logging
-   
-• Reproducibility & logging (config-as-code; append-to-log practice)
-   
-• CLI UX best practices (help, progress, human-friendly errors)
-   
-• Ariel mission instruments (FGS / AIRS) and noisy low-frequency systematics
-  
-• Kaggle pipelines & runtime context (notebooks/datasets/limits)
-  
+It produces:
+  • Aggregated power spectra for condition A and B (mean/median over selected channels)
+  • Power ratio (B / A) diagnostics
+  • CSV exports for reproducibility
+  • PNG static plots + optional Plotly HTML
+  • Self-contained dashboard and manifest + run-hash log
+  • Append-only audit logs (logs/v50_debug_log.md / logs/v50_runs.jsonl)
 
-Usage
------
-  # Minimal: FGS1 pre/post (1D .npy) and AIRS pre/post (2D .npy: T×W)
-  python tools/fft_power_compare.py \
-      --fgs1-pre  data/fgs1_pre.npy  --fgs1-post  data/fgs1_post.npy \
-      --airs-pre  data/airs_pre.npy  --airs-post  data/airs_post.npy \
-      --rate 0.5  --outdir outputs/fft_compare
+Examples
+--------
+# 1) Time-domain comparison (pre vs post calibration), averaging over all wavelengths
+python tools/fft_power_compare.py \
+  --a outputs/calibration/pre_cube.npy \
+  --b outputs/calibration/post_cube.npy \
+  --mode time --aggregate mean --nfft 4096 --freq-max 0.5 \
+  --outdir outputs/fft_compare_pre_post --open-browser
 
-  # HDF5 (auto-discovery) with Welch tuning and HTML:
-  python tools/fft_power_compare.py \
-      --h5 cal/LightCurves.h5 \
-      --fgs1-key /FGS1/cal --airs-key /AIRS/cal \
-      --compare-raw True \
-      --welch-nperseg 8192 --welch-overlap 0.5 --welch-window hann \
-      --html True --open-html False
+# 2) Spectral-domain comparison for μ spectra (bins axis FFT)
+python tools/fft_power_compare.py \
+  --a outputs/predictions/mu_a.npy \
+  --b outputs/predictions/mu_b.npy \
+  --mode spectrum --aggregate median \
+  --outdir outputs/fft_compare_mu --open-browser
 
-Notes
------
-• Sample rate (--rate) = samples per second (Hz). For the challenge’s simulated cadence,
-  pass the correct sampling rate for FGS1/AIRS time axis to get physical Hz.
-• If unknown, you can set --rate 1.0 (dimensionless frequency).
-• HDF5 auto-discovery expects groups like /FGS1/{time,raw,cal} and /AIRS/{time,raw,cal}.
+Input Notes
+-----------
+• Arrays are loaded via NPY/NPZ/CSV/TSV/Parquet/Feather.
+• Time-domain expects shape (T,W) or (P,T,W). If (T,W), planets=1. If (P,T,W), FFT runs along axis=1.
+• Spectral-domain expects shape (B,) or (P,B). FFT runs along last axis.
+• Optional wavelength/time axes can be supplied to label plots; otherwise normalized axes are used.
 
 Outputs
 -------
 outdir/
-  ├── fft_compare_fgs1.png
-  ├── fft_compare_airs.png
-  ├── fft_compare_airs_heatmap.png (optional, if --airs-heatmap)
-  ├── fft_compare_plotly.html (if --html)
-  ├── fft_summary.json
-  ├── fft_summary.csv
-  └── fft_report.md (optional)
+  power_a.csv, power_b.csv, power_ratio.csv    # frequency vs power (aggregated)
+  power_a.png/.html, power_b.png/.html         # spectra
+  power_ratio.png/.html                        # ratio B/A
+  fft_power_compare_manifest.json
+  run_hash_summary_v50.json
+  dashboard.html
+
+Design
+------
+• Deterministic computations (no RNG). No external web calls.
+• Graceful fallbacks if Plotly/Matplotlib missing (CSV always written).
+• Robust input normalization & channel selection (wavelength masks / planet filters).
 
 """
 
 from __future__ import annotations
 
+import argparse
+import datetime as _dt
+import hashlib
 import json
 import math
 import os
 import sys
-import csv
-import time
-import pathlib
+import textwrap
 from dataclasses import dataclass
-from typing import Optional, Tuple, Dict, Any, List
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
-import typer
-from rich.console import Console
-from rich.table import Table
-from rich.panel import Panel
-from rich.progress import track
-from rich import box
 
-# Optional imports guarded
+# Tabular I/O
 try:
-    import h5py  # type: ignore
-    HAS_H5PY = True
-except Exception:
-    HAS_H5PY = False
+    import pandas as pd
+except Exception as e:
+    raise RuntimeError("pandas is required. Please `pip install pandas`.") from e
 
-try:
-    from scipy.signal import welch, get_window  # type: ignore
-    HAS_SCIPY = True
-except Exception:
-    HAS_SCIPY = False
-
+# Optional viz libs
 try:
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    HAS_MPL = True
+    _MPL_OK = True
 except Exception:
-    HAS_MPL = False
+    _MPL_OK = False
 
 try:
-    import plotly.graph_objs as go  # type: ignore
-    from plotly.subplots import make_subplots  # type: ignore
-    HAS_PLOTLY = True
+    import plotly.graph_objects as go
+    import plotly.io as pio
+    _PLOTLY_OK = True
 except Exception:
-    HAS_PLOTLY = False
+    _PLOTLY_OK = False
 
 
-app = typer.Typer(help="SpectraMind V50 — FFT Power Compare (FGS1/AIRS, pre/post)",
-                  add_completion=False)
-console = Console()
+# ==============================================================================
+# Utilities — time, dirs, hashing, audit logging
+# ==============================================================================
+
+def _now_iso() -> str:
+    return _dt.datetime.now().astimezone().isoformat(timespec="seconds")
 
 
-# ----------------------------- Helpers & I/O --------------------------------- #
-
-def _ensure_dir(path: str | os.PathLike) -> str:
-    p = pathlib.Path(path)
+def _ensure_dir(p: Path) -> None:
     p.mkdir(parents=True, exist_ok=True)
-    return str(p)
 
 
-def _load_simple(path: str) -> np.ndarray:
-    """
-    Load .npy / .npz (arr) / .csv / .txt. Returns float64 array.
-    Shapes commonly:
-      FGS1: (T,) or (P,T)
-      AIRS: (T,W) or (P,T,W)
-    """
-    suffix = pathlib.Path(path).suffix.lower()
-    if suffix in [".npy"]:
-        arr = np.load(path)
-    elif suffix in [".npz"]:
-        with np.load(path) as npz:
-            # Heuristic: pick first array
-            key = list(npz.keys())[0]
-            arr = npz[key]
-    elif suffix in [".csv", ".txt"]:
-        arr = np.loadtxt(path, delimiter="," if suffix == ".csv" else None)
-    else:
-        raise ValueError(f"Unsupported format: {path}")
-    return np.asarray(arr, dtype=np.float64)
-
-
-def _h5_read(h5_path: str,
-             fgs1_key: Optional[str],
-             airs_key: Optional[str],
-             fgs1_raw_key: Optional[str],
-             airs_raw_key: Optional[str]) -> Tuple[Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray]]:
-    """
-    Open HDF5 and read datasets. Returns:
-       (fgs1_cal, fgs1_raw, airs_cal, airs_raw)
-    Keys:
-       fgs1_key like '/FGS1/cal' or '/FGS1/flux_cal'
-       airs_key like '/AIRS/cal'  or '/AIRS/flux_cal'
-       fgs1_raw_key '/FGS1/raw' (optional)
-       airs_raw_key '/AIRS/raw'  (optional)
-    """
-    if not HAS_H5PY:
-        raise RuntimeError("h5py not installed. Install it or pass array files instead.")
-
-    fgs1_cal = fgs1_raw = airs_cal = airs_raw = None
-
-    with h5py.File(h5_path, "r") as h5:
-        def get_or_none(k: Optional[str]):
-            if not k:
-                return None
-            if k in h5:
-                return np.asarray(h5[k], dtype=np.float64)
-            # try flexible lookup
-            try:
-                return np.asarray(h5[k], dtype=np.float64)
-            except Exception:
-                return None
-
-        fgs1_cal = get_or_none(fgs1_key)
-        airs_cal = get_or_none(airs_key)
-        fgs1_raw = get_or_none(fgs1_raw_key)
-        airs_raw = get_or_none(airs_raw_key)
-
-        # Lightweight auto-discovery if not provided
-        if fgs1_cal is None:
-            for cand in ["/FGS1/cal", "/FGS1/flux_cal", "/FGS1/flux"]:
-                if cand in h5:
-                    fgs1_cal = np.asarray(h5[cand], dtype=np.float64)
-                    break
-        if airs_cal is None:
-            for cand in ["/AIRS/cal", "/AIRS/flux_cal", "/AIRS/flux"]:
-                if cand in h5:
-                    airs_cal = np.asarray(h5[cand], dtype=np.float64)
-                    break
-        if fgs1_raw is None:
-            for cand in ["/FGS1/raw", "/FGS1/flux_raw"]:
-                if cand in h5:
-                    fgs1_raw = np.asarray(h5[cand], dtype=np.float64)
-                    break
-        if airs_raw is None:
-            for cand in ["/AIRS/raw", "/AIRS/flux_raw"]:
-                if cand in h5:
-                    airs_raw = np.asarray(h5[cand], dtype=np.float64)
-                    break
-
-    return fgs1_cal, fgs1_raw, airs_cal, airs_raw
-
-
-def _to_2d(arr: np.ndarray) -> np.ndarray:
-    """
-    Ensure array is 2D for Welch handling:
-      • (T,) -> (1,T)
-      • (P,T) -> (P,T)
-      • (T,W) -> treat as (T,W) will be reduced by aggregate path
-      • (P,T,W) -> (P,T,W) handled in higher-level
-    """
-    if arr.ndim == 1:
-        return arr[None, :]
-    if arr.ndim == 2:
-        return arr
-    return arr  # leave higher dims to caller
+def _hash_jsonable(obj: Any) -> str:
+    b = json.dumps(obj, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(b).hexdigest()
 
 
 @dataclass
-class WelchConfig:
-    nperseg: int = 4096
-    overlap: float = 0.5
-    window: str = "hann"
-    detrend: str = "constant"
-    scaling: str = "density"
-    average: str = "mean"
+class AuditLogger:
+    md_path: Path
+    jsonl_path: Path
 
-    def window_array(self) -> Optional[np.ndarray]:
-        if not HAS_SCIPY:
-            return None
+    def log(self, event: Dict[str, Any]) -> None:
+        _ensure_dir(self.md_path.parent)
+        _ensure_dir(self.jsonl_path.parent)
+        row = dict(event)
+        row.setdefault("timestamp", _now_iso())
+        with open(self.jsonl_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        md = textwrap.dedent(f"""
+        ---
+        time: {row["timestamp"]}
+        tool: fft_power_compare
+        action: {row.get("action","run")}
+        status: {row.get("status","ok")}
+        a: {row.get("a","")}
+        b: {row.get("b","")}
+        mode: {row.get("mode","time")}
+        aggregate: {row.get("aggregate","mean")}
+        nfft: {row.get("nfft","")}
+        freq_max: {row.get("freq_max","")}
+        outdir: {row.get("outdir","")}
+        message: {row.get("message","")}
+        """).strip() + "\n"
+        with open(self.md_path, "a", encoding="utf-8") as f:
+            f.write(md)
+
+
+def _update_run_hash_summary(outdir: Path, manifest: Dict[str, Any]) -> None:
+    p = outdir / "run_hash_summary_v50.json"
+    payload = {"runs": []}
+    if p.exists():
         try:
-            return get_window(self.window, self.nperseg, fftbins=True)  # type: ignore
+            with open(p, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+            if not isinstance(payload, dict) or "runs" not in payload:
+                payload = {"runs": []}
         except Exception:
-            return None
+            payload = {"runs": []}
+    payload["runs"].append({"hash": _hash_jsonable(manifest), "timestamp": _now_iso(), "manifest": manifest})
+    with open(p, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
 
 
-def _welch_psd(x: np.ndarray, fs: float, cfg: WelchConfig) -> Tuple[np.ndarray, np.ndarray]:
+# ==============================================================================
+# Robust loaders
+# ==============================================================================
+
+def _load_array_any(path: Path) -> np.ndarray:
+    s = path.suffix.lower()
+    if s == ".npy":
+        return np.asarray(np.load(path, allow_pickle=False))
+    if s == ".npz":
+        z = np.load(path, allow_pickle=False)
+        for k in z.files:
+            return np.asarray(z[k])
+        raise ValueError(f"No arrays found in {path}")
+    if s in {".csv", ".tsv"}:
+        df = pd.read_csv(path) if s == ".csv" else pd.read_csv(path, sep="\t")
+        return df.to_numpy()
+    if s == ".parquet":
+        return pd.read_parquet(path).to_numpy()
+    if s == ".feather":
+        return pd.read_feather(path).to_numpy()
+    raise ValueError(f"Unsupported array format: {path}")
+
+
+def _normalize_time_input(X: np.ndarray) -> Tuple[np.ndarray, int, int, int]:
     """
-    Vectorized Welch per row of x (shape: N_series × T).
-    Returns (freqs, mean_psd) averaged across series.
+    Normalize time-domain input to (P,T,W). Accepts (T,W) or (P,T,W).
     """
-    if not HAS_SCIPY:
-        raise RuntimeError("scipy is required for Welch PSD (install scipy).")
-    if x.ndim != 2:
-        raise ValueError("Welch expects 2D array (N_series × T)")
-
-    nperseg = min(cfg.nperseg, x.shape[-1])
-    noverlap = int(cfg.overlap * nperseg)
-
-    psds = []
-    freqs = None
-    window = cfg.window_array()
-
-    for row in x:
-        # Remove NaNs quietly
-        row = np.asarray(row, dtype=np.float64)
-        if np.any(np.isnan(row)):
-            row = np.nan_to_num(row, nan=np.nanmedian(row))
-        f, Pxx = welch(row, fs=fs, window=window if window is not None else cfg.window,
-                       nperseg=nperseg, noverlap=noverlap, detrend=cfg.detrend,
-                       scaling=cfg.scaling, average=cfg.average)  # type: ignore
-        psds.append(Pxx)
-        if freqs is None:
-            freqs = f
-    psds = np.asarray(psds)
-    mean_psd = np.nanmean(psds, axis=0)
-    return freqs, mean_psd
+    if X.ndim == 2:
+        T, W = X.shape
+        return X[None, :, :], 1, T, W
+    if X.ndim == 3:
+        P, T, W = X.shape
+        return X, P, T, W
+    raise ValueError(f"Time-domain input must be (T,W) or (P,T,W); got {X.shape}")
 
 
-def _reduce_airs(airs: np.ndarray, method: str = "mean") -> np.ndarray:
+def _normalize_spectrum_input(mu: np.ndarray) -> Tuple[np.ndarray, int, int]:
     """
-    Reduce AIRS cube to 2D series for PSD:
-      • (T,W) -> reduce across W   => (1,T) or multiple if method='none'
-      • (P,T,W) -> reduce across W => (P,T)
-    method: 'mean' | 'median' | 'p50' | 'none' (no reduction; handled separately)
+    Normalize spectral-domain input to (P,B). Accepts (B,) or (P,B).
     """
-    if airs.ndim == 2:
-        T, W = airs.shape
-        if method == "none":
-            # return (W,T) for per-wavelength PSD then aggregate outside
-            return airs.T  # (W,T)
-        if method in ("median", "p50"):
-            return np.median(airs, axis=1, keepdims=True).T  # (1,T)
-        return np.mean(airs, axis=1, keepdims=True).T  # (1,T)
-    if airs.ndim == 3:
-        P, T, W = airs.shape
-        if method == "none":
-            # Return (P*W, T)
-            return airs.reshape(P * T, W).T  # (W, P*T) → nope; keep consistent
-        if method in ("median", "p50"):
-            return np.median(airs, axis=2)  # (P,T)
-        return np.mean(airs, axis=2)  # (P,T)
-    raise ValueError("AIRS array must be (T,W) or (P,T,W)")
+    if mu.ndim == 1:
+        B = mu.shape[0]
+        return mu[None, :], 1, B
+    if mu.ndim == 2:
+        P, B = mu.shape
+        return mu, P, B
+    raise ValueError(f"Spectrum input must be (B,) or (P,B); got {mu.shape}")
 
 
-def _band_power(freqs: np.ndarray, psd: np.ndarray, band: Tuple[float, float]) -> float:
-    """Integrate PSD over a frequency band using trapezoidal rule."""
-    fmin, fmax = band
-    mask = (freqs >= fmin) & (freqs <= fmax)
-    if not np.any(mask):
-        return 0.0
-    return float(np.trapz(psd[mask], freqs[mask]))
+# ==============================================================================
+# FFT helpers
+# ==============================================================================
+
+def _fft_power_time(X: np.ndarray, nfft: int, detrend: bool, window: str) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Compute FFT power along time axis for X ∈ R^{P×T×W}.
+    Returns (freqs, power) with power shape P×F×W, F = nfft//2+1 (rfft).
+    Detrending: subtract mean per [p,w] channel if requested.
+    Window: 'hann' or 'none' (applied along time).
+    """
+    P, T, W = X.shape
+    F = nfft // 2 + 1
+    Xw = X.copy()
+    if detrend:
+        Xw = Xw - Xw.mean(axis=1, keepdims=True)
+    if window == "hann":
+        win = np.hanning(T).astype(Xw.dtype)
+        norm = np.sqrt((win**2).sum())
+        Xw = Xw * win[None, :, None] / (norm + 1e-12)
+    freqs = np.fft.rfftfreq(nfft, d=1.0)  # normalized freq (cycles/sample)
+    # rfft along axis=1 (time). If nfft>T, zero-pad; if smaller, truncate via rfft arg.
+    power = np.empty((P, F, W), dtype=np.float64)
+    for p in range(P):
+        # rfft over time for each wavelength
+        Y = np.fft.rfft(Xw[p], n=nfft, axis=0)  # shape F×W
+        power[p] = (Y.real**2 + Y.imag**2)
+    return freqs, power
 
 
-# ----------------------------- Plotting -------------------------------------- #
+def _fft_power_bins(mu: np.ndarray, nfft: int, detrend: bool, window: str) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Compute FFT power along spectral bins for μ ∈ R^{P×B}.
+    Returns (k, power) with power shape P×K, K = nfft//2+1.
+    """
+    P, B = mu.shape
+    K = nfft // 2 + 1
+    Z = mu.copy()
+    if detrend:
+        Z = Z - Z.mean(axis=1, keepdims=True)
+    if window == "hann":
+        win = np.hanning(B).astype(Z.dtype)
+        norm = np.sqrt((win**2).sum())
+        Z = Z * win[None, :] / (norm + 1e-12)
+    k = np.fft.rfftfreq(nfft, d=1.0)
+    Y = np.fft.rfft(Z, n=nfft, axis=1)  # P×K
+    power = (Y.real**2 + Y.imag**2)
+    return k, power
 
-def _plot_loglog(freqs, pre_psd, post_psd, out_png, title, bands=None, annotate_slope=True):
-    if not HAS_MPL:
-        return
-    plt.figure(figsize=(9.5, 6.5), dpi=130)
-    plt.loglog(freqs, pre_psd + 1e-30, label="Pre", alpha=0.85)
-    plt.loglog(freqs, post_psd + 1e-30, label="Post", alpha=0.85)
-    plt.xlabel("Frequency [Hz]")
-    plt.ylabel("Power Spectral Density")
-    plt.title(title)
-    plt.grid(True, which='both', ls='--', alpha=0.3)
-    plt.legend()
 
-    if bands:
-        ymin, ymax = np.min([pre_psd, post_psd]), np.max([pre_psd, post_psd])
-        for (bmin, bmax, name, color) in bands:
-            plt.fill_betweenx([ymin, ymax], bmin, bmax, color=color, alpha=0.08, label=name)
-    if annotate_slope:
-        # crude slope annotation over a mid band (between 2nd and 3rd decade if possible)
+def _aggregate_power(PW: np.ndarray, aggregate: str, axis: Optional[Tuple[int, ...]]) -> np.ndarray:
+    """
+    Aggregate power array over given axes using 'mean' or 'median'.
+    """
+    if axis is None:
+        return PW
+    if aggregate == "mean":
+        return PW.mean(axis=axis)
+    if aggregate == "median":
+        return np.median(PW, axis=axis)
+    raise ValueError(f"Unknown aggregate: {aggregate}")
+
+
+# ==============================================================================
+# Plotting
+# ==============================================================================
+
+def _plot_lines(x: np.ndarray, y: Dict[str, np.ndarray], title: str, xlabel: str, ylabel: str,
+                out_png: Path, out_html: Path) -> None:
+    _ensure_dir(out_png.parent)
+    if _MPL_OK:
+        plt.figure(figsize=(11, 5))
+        for name, vec in y.items():
+            plt.plot(x, vec, label=name, lw=2.0)
+        plt.xlabel(xlabel)
+        plt.ylabel(ylabel)
+        plt.title(title)
+        plt.grid(alpha=0.25)
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(out_png, dpi=170)
+        plt.close()
+    if _PLOTLY_OK:
+        fig = go.Figure()
+        for name, vec in y.items():
+            fig.add_trace(go.Scatter(x=x, y=vec, mode="lines", name=name))
+        fig.update_layout(title=title, xaxis_title=xlabel, yaxis_title=ylabel, template="plotly_white")
+        pio.write_html(fig, file=str(out_html), auto_open=False, include_plotlyjs="cdn")
+
+
+# ==============================================================================
+# Orchestration
+# ==============================================================================
+
+@dataclass
+class Config:
+    a_path: Path
+    b_path: Path
+    mode: str                 # 'time' or 'spectrum'
+    nfft: int
+    detrend: bool
+    window: str
+    aggregate: str
+    freq_max: Optional[float]
+    select_planet: Optional[int]
+    select_wl_from: Optional[int]
+    select_wl_to: Optional[int]
+    outdir: Path
+    html_name: str
+    open_browser: bool
+
+
+def run(cfg: Config, audit: AuditLogger) -> int:
+    _ensure_dir(cfg.outdir)
+
+    # Load inputs
+    A = _load_array_any(cfg.a_path)
+    B = _load_array_any(cfg.b_path)
+
+    manifest_inputs = {"a": str(cfg.a_path), "b": str(cfg.b_path), "mode": cfg.mode}
+
+    if cfg.mode == "time":
+        A3, PA, TA, WA = _normalize_time_input(A)
+        B3, PB, TB, WB = _normalize_time_input(B)
+        if (TA != TB) or (WA != WB):
+            # pad/truncate smaller to match larger along T,W
+            T = min(TA, TB); W = min(WA, WB)
+            A3 = A3[:, :T, :W]
+            B3 = B3[:, :T, :W]
+        else:
+            T, W = TA, WA
+
+        # Optional channel subset (wavelength slice)
+        wl_lo = 0 if cfg.select_wl_from is None else max(0, int(cfg.select_wl_from))
+        wl_hi = W if cfg.select_wl_to is None else min(W, int(cfg.select_wl_to))
+        wl_slice = slice(wl_lo, wl_hi)
+        A3 = A3[:, :, wl_slice]
+        B3 = B3[:, :, wl_slice]
+        P = max(PA, PB)
+
+        # If both have planet dim >1 and select_planet specified: take that planet
+        if cfg.select_planet is not None:
+            p = int(cfg.select_planet)
+            p = max(0, min(p, A3.shape[0]-1, B3.shape[0]-1))
+            A3 = A3[p:p+1]
+            B3 = B3[p:p+1]
+
+        # Compute FFT power (average over wavelength and planets per aggregate)
+        freqs, PwA = _fft_power_time(A3, cfg.nfft, cfg.detrend, cfg.window)  # P×F×W
+        _,     PwB = _fft_power_time(B3, cfg.nfft, cfg.detrend, cfg.window)
+
+        # Aggregate over (P,W) to get per-frequency curves
+        pA = _aggregate_power(PwA, cfg.aggregate, axis=(0, 2))
+        pB = _aggregate_power(PwB, cfg.aggregate, axis=(0, 2))
+
+        # Truncate frequency max
+        if cfg.freq_max is not None:
+            mask = freqs <= float(cfg.freq_max)
+            freqs, pA, pB = freqs[mask], pA[mask], pB[mask]
+
+        # Ratio (avoid div-by-zero)
+        ratio = pB / np.maximum(pA, 1e-18)
+
+        # Save CSVs
+        dfA = pd.DataFrame({"freq": freqs, "power_a": pA})
+        dfB = pd.DataFrame({"freq": freqs, "power_b": pB})
+        dfR = pd.DataFrame({"freq": freqs, "power_ratio_B_over_A": ratio})
+        dfA.to_csv(cfg.outdir / "power_a.csv", index=False)
+        dfB.to_csv(cfg.outdir / "power_b.csv", index=False)
+        dfR.to_csv(cfg.outdir / "power_ratio.csv", index=False)
+
+        # Plots
+        _plot_lines(freqs, {"A": pA, "B": pB}, "FFT Power (Time Domain)", "Frequency (cycles/sample)", "Power",
+                    cfg.outdir / "power_time.png", cfg.outdir / "power_time.html")
+        _plot_lines(freqs, {"B/A": ratio}, "FFT Power Ratio (Time Domain)", "Frequency (cycles/sample)", "Ratio (B/A)",
+                    cfg.outdir / "power_ratio_time.png", cfg.outdir / "power_ratio_time.html")
+
+    elif cfg.mode == "spectrum":
+        A2, PA, BA = _normalize_spectrum_input(A)
+        B2, PB, BB = _normalize_spectrum_input(B)
+        if BA != BB:
+            K = min(BA, BB)
+            A2 = A2[:, :K]
+            B2 = B2[:, :K]
+        else:
+            K = BA
+
+        # Select planet if provided and both have P>1
+        if cfg.select_planet is not None:
+            p = int(cfg.select_planet)
+            p = max(0, min(p, A2.shape[0]-1, B2.shape[0]-1))
+            A2 = A2[p:p+1]
+            B2 = B2[p:p+1]
+
+        k, pA2 = _fft_power_bins(A2, cfg.nfft, cfg.detrend, cfg.window)  # P×Kf
+        _, pB2 = _fft_power_bins(B2, cfg.nfft, cfg.detrend, cfg.window)
+
+        pA = _aggregate_power(pA2, cfg.aggregate, axis=(0,))  # Kf
+        pB = _aggregate_power(pB2, cfg.aggregate, axis=(0,))  # Kf
+
+        if cfg.freq_max is not None:
+            mask = k <= float(cfg.freq_max)
+            k, pA, pB = k[mask], pA[mask], pB[mask]
+
+        ratio = pB / np.maximum(pA, 1e-18)
+
+        dfA = pd.DataFrame({"k": k, "power_a": pA})
+        dfB = pd.DataFrame({"k": k, "power_b": pB})
+        dfR = pd.DataFrame({"k": k, "power_ratio_B_over_A": ratio})
+        dfA.to_csv(cfg.outdir / "power_a.csv", index=False)
+        dfB.to_csv(cfg.outdir / "power_b.csv", index=False)
+        dfR.to_csv(cfg.outdir / "power_ratio.csv", index=False)
+
+        _plot_lines(k, {"A": pA, "B": pB}, "FFT Power (Spectral)", "Spatial Frequency (1/bin)", "Power",
+                    cfg.outdir / "power_spectrum.png", cfg.outdir / "power_spectrum.html")
+        _plot_lines(k, {"B/A": ratio}, "FFT Power Ratio (Spectral)", "Spatial Frequency (1/bin)", "Ratio (B/A)",
+                    cfg.outdir / "power_ratio_spectrum.png", cfg.outdir / "power_ratio_spectrum.html")
+    else:
+        raise ValueError("mode must be 'time' or 'spectrum'.")
+
+    # Dashboard
+    html_name = cfg.html_name if cfg.html_name.endswith(".html") else "fft_power_compare.html"
+    dash = cfg.outdir / html_name
+    links = []
+    # collect existing files
+    for name in ["power_a.csv", "power_b.csv", "power_ratio.csv",
+                 "power_time.png", "power_time.html", "power_ratio_time.png", "power_ratio_time.html",
+                 "power_spectrum.png", "power_spectrum.html", "power_ratio_spectrum.png", "power_ratio_spectrum.html"]:
+        p = cfg.outdir / name
+        if p.exists():
+            links.append(f'<li><a href="{p.name}" target="_blank" rel="noopener">{p.name}</a></li>')
+    dash.write_text(f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>SpectraMind V50 — FFT Power Compare</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="light dark" />
+<style>
+  :root {{ --bg:#0b0e14; --fg:#e6edf3; --muted:#9aa4b2; --card:#111827; --border:#2b3240; --brand:#0b5fff; }}
+  body {{ background:var(--bg); color:var(--fg); font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; margin:2rem; line-height:1.5; }}
+  .card {{ background:var(--card); border:1px solid var(--border); border-radius:14px; padding:1rem 1.25rem; margin-bottom:1rem; }}
+  a {{ color:var(--brand); text-decoration:none; }} a:hover {{ text-decoration:underline; }}
+</style>
+</head>
+<body>
+  <header class="card">
+    <h1>FFT Power Compare — SpectraMind V50</h1>
+    <div>Generated: {_now_iso()} • mode: {cfg.mode} • aggregate: {cfg.aggregate} • nfft: {cfg.nfft}</div>
+  </header>
+  <section class="card">
+    <h2>Artifacts</h2>
+    <ul>
+      {''.join(links)}
+    </ul>
+  </section>
+  <footer class="card">
+    <small>© SpectraMind V50 • fft_power_compare</small>
+  </footer>
+</body>
+</html>
+""", encoding="utf-8")
+
+    # Manifest
+    manifest = {
+        "tool": "fft_power_compare",
+        "timestamp": _now_iso(),
+        "inputs": manifest_inputs,
+        "params": {
+            "nfft": cfg.nfft,
+            "detrend": cfg.detrend,
+            "window": cfg.window,
+            "aggregate": cfg.aggregate,
+            "freq_max": cfg.freq_max,
+            "select_planet": cfg.select_planet,
+            "select_wl_from": cfg.select_wl_from,
+            "select_wl_to": cfg.select_wl_to,
+        },
+        "outputs": {
+            "dashboard_html": str(dash),
+            "csv_a": str(cfg.outdir / "power_a.csv"),
+            "csv_b": str(cfg.outdir / "power_b.csv"),
+            "csv_ratio": str(cfg.outdir / "power_ratio.csv"),
+        }
+    }
+    with open(cfg.outdir / "fft_power_compare_manifest.json", "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2)
+    _update_run_hash_summary(cfg.outdir, manifest)
+
+    audit.log({
+        "action": "run", "status": "ok",
+        "a": str(cfg.a_path), "b": str(cfg.b_path),
+        "mode": cfg.mode, "aggregate": cfg.aggregate, "nfft": cfg.nfft, "freq_max": cfg.freq_max,
+        "outdir": str(cfg.outdir),
+        "message": f"FFT compare complete; dashboard={dash.name}"
+    })
+
+    if cfg.open_browser and dash.exists():
         try:
-            idx = (freqs > np.percentile(freqs, 30)) & (freqs < np.percentile(freqs, 70))
-            lf = np.log10(freqs[idx] + 1e-30)
-            lp = np.log10(post_psd[idx] + 1e-30)
-            # linear fit in log-log
-            a = np.polyfit(lf, lp, 1)
-            slope = a[0]
-            x0 = 10 ** np.mean(lf)
-            y0 = 10 ** np.polyval(a, np.mean(lf))
-            x_line = np.logspace(np.min(lf), np.max(lf), 50)
-            y_line = 10 ** np.polyval(a, np.log10(x_line))
-            plt.loglog(x_line, y_line, 'k--', alpha=0.4, label=f"slope≈{slope:.2f}")
-            plt.legend()
+            import webbrowser
+            webbrowser.open_new_tab(dash.as_uri())
         except Exception:
             pass
 
-    plt.tight_layout()
-    plt.savefig(out_png)
-    plt.close()
+    return 0
 
 
-def _plot_airs_heatmap(freqs, psd_matrix, out_png, title):
-    """
-    Heatmap of per-wavelength PSD:
-      psd_matrix: shape (W, F) or (N_series, F) after reduction 'none'
-    """
-    if not HAS_MPL:
-        return
-    plt.figure(figsize=(10.5, 6.0), dpi=130)
-    # Log10 for visibility
-    im = plt.imshow(np.log10(psd_matrix + 1e-30), aspect='auto',
-                    origin='lower', extent=[freqs[0], freqs[-1], 0, psd_matrix.shape[0]])
-    plt.xscale("log")
-    plt.xlabel("Frequency [Hz] (log)")
-    plt.ylabel("Wavelength index (or series idx)")
-    plt.title(title)
-    plt.colorbar(im, label="log10(PSD)")
-    plt.tight_layout()
-    plt.savefig(out_png)
-    plt.close()
+# ==============================================================================
+# CLI
+# ==============================================================================
+
+def build_argparser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="fft_power_compare",
+        description="Compare FFT power between two arrays (pre/post; A/B) in time or spectrum modes."
+    )
+    p.add_argument("--a", type=Path, required=True, help="Condition A filepath (NPY/NPZ/CSV/TSV/Parquet/Feather).")
+    p.add_argument("--b", type=Path, required=True, help="Condition B filepath.")
+    p.add_argument("--mode", type=str, default="time", choices=["time", "spectrum"],
+                   help="'time' for time-domain cubes (T×W or P×T×W); 'spectrum' for μ spectra (B or P×B).")
+    p.add_argument("--nfft", type=int, default=4096, help="FFT size (rfft).")
+    p.add_argument("--detrend", action="store_true", help="Subtract per-channel mean before FFT.")
+    p.add_argument("--window", type=str, default="hann", choices=["hann", "none"], help="Window along FFT axis.")
+    p.add_argument("--aggregate", type=str, default="mean", choices=["mean", "median"],
+                   help="Aggregate power across channels/planets.")
+    p.add_argument("--freq-max", type=float, default=None, help="Max frequency to display (normalized).")
+    p.add_argument("--select-planet", type=int, default=None, help="If provided, compare only this planet index.")
+    p.add_argument("--select-wl-from", type=int, default=None, help="For time mode: inclusive start wavelength index.")
+    p.add_argument("--select-wl-to", type=int, default=None, help="For time mode: exclusive end wavelength index.")
+    p.add_argument("--outdir", type=Path, required=True, help="Output directory.")
+    p.add_argument("--html-name", type=str, default="fft_power_compare.html", help="Dashboard HTML name.")
+    p.add_argument("--open-browser", action="store_true", help="Open dashboard in browser.")
+    return p
 
 
-def _plotly_dual(freqs, pre_psd, post_psd, title) -> go.Figure:
-    fig = make_subplots(rows=1, cols=1)
-    fig.add_trace(go.Scatter(x=freqs, y=pre_psd, mode='lines', name='Pre', line=dict(width=2)))
-    fig.add_trace(go.Scatter(x=freqs, y=post_psd, mode='lines', name='Post', line=dict(width=2)))
-    fig.update_layout(title=title, xaxis_type="log", yaxis_type="log",
-                      xaxis_title="Frequency [Hz]", yaxis_title="Power Spectral Density",
-                      template="plotly_white", legend=dict(x=0.02, y=0.98))
-    return fig
+def main(argv: Optional[List[str]] = None) -> int:
+    args = build_argparser().parse_args(argv)
 
-
-# ----------------------------- Core Routine ---------------------------------- #
-
-def _compute_compare(
-    pre_arr: Optional[np.ndarray],
-    post_arr: Optional[np.ndarray],
-    fs: float,
-    welch_cfg: WelchConfig,
-    label: str,
-    outdir: str,
-    bands_for_summary: List[Tuple[float, float, str]],
-    is_airs: bool = False,
-    airs_reduce: str = "mean",
-    airs_heatmap: bool = False,
-    html: bool = False,
-    html_name: str = "fft_compare_plotly.html",
-    html_open: bool = False,
-) -> Dict[str, Any]:
-    """
-    Compute Welch PSD for pre/post, export plots & summary.
-    For AIRS if reduce='none', produce heatmap as well.
-    """
-    result: Dict[str, Any] = {"label": label, "bands": {}, "figures": []}
-
-    if pre_arr is None and post_arr is None:
-        console.print(f"[yellow]Skipping {label}: no arrays provided[/yellow]")
-        return result
-
-    if pre_arr is None:
-        pre_arr = post_arr
-    if post_arr is None:
-        post_arr = pre_arr
-
-    # Reduce shapes
-    if is_airs:
-        if pre_arr is not None:
-            if airs_reduce == "none":
-                # (T,W) -> (W,T)
-                if pre_arr.ndim == 2:
-                    pre_series = pre_arr.T
-                elif pre_arr.ndim == 3:
-                    # (P,T,W) flatten by median across P then transpose to (W,T)
-                    pre_series = np.median(pre_arr, axis=0).T
-                else:
-                    raise ValueError("AIRS array expected (T,W) or (P,T,W)")
-            else:
-                pre_series = _to_2d(_reduce_airs(pre_arr, method=airs_reduce))
-        else:
-            pre_series = None
-
-        if post_arr is not None:
-            if airs_reduce == "none":
-                if post_arr.ndim == 2:
-                    post_series = post_arr.T
-                elif post_arr.ndim == 3:
-                    post_series = np.median(post_arr, axis=0).T
-                else:
-                    raise ValueError("AIRS array expected (T,W) or (P,T,W)")
-            else:
-                post_series = _to_2d(_reduce_airs(post_arr, method=airs_reduce))
-        else:
-            post_series = None
-    else:
-        pre_series = _to_2d(pre_arr)
-        post_series = _to_2d(post_arr)
-
-    # Welch
-    freqs_pre, psd_pre = _welch_psd(pre_series, fs, welch_cfg)
-    freqs_post, psd_post = _welch_psd(post_series, fs, welch_cfg)
-
-    # Plot PNG
-    png = os.path.join(outdir, f"fft_compare_{label.lower()}.png")
-    bands_vis = [(bmin, bmax, name, "#ff7f0e") for (bmin, bmax, name) in [(b[0], b[1], b[2]) for b in bands_for_summary]]
-    _plot_loglog(freqs_post, psd_pre, psd_post, png, f"{label}: FFT Power (Welch)", bands=bands_vis)
-    result["figures"].append(os.path.basename(png))
-
-    # Optional heatmap for AIRS when reduce='none'
-    if is_airs and airs_reduce == "none" and airs_heatmap:
-        # Build per-wavelength PSD matrices (pre/post), store combined heatmap for 'post/pre ratio'
-        def per_series_psd(series_2d):
-            F = None
-            PSDs = []
-            for row in series_2d:
-                f, pxx = _welch_psd(row[None, :], fs, welch_cfg)
-                PSDs.append(pxx)
-                if F is None:
-                    F = f
-            return F, np.asarray(PSDs)
-
-        f_pre, m_pre = per_series_psd(pre_series)
-        f_post, m_post = per_series_psd(post_series)
-        # Align just in case
-        assert np.allclose(f_pre, f_post)
-        ratio = (m_post + 1e-30) / (m_pre + 1e-30)
-        png_hm = os.path.join(outdir, f"fft_compare_{label.lower()}_heatmap.png")
-        _plot_airs_heatmap(f_post, ratio, png_hm, f"{label}: per-wavelength POST/PRE PSD ratio (log10)")
-        result["figures"].append(os.path.basename(png_hm))
-
-    # Optional HTML
-    if html and HAS_PLOTLY:
-        fig = _plotly_dual(freqs_post, psd_pre, psd_post, f"{label}: Welch PSD (log–log)")
-        html_path = os.path.join(outdir, html_name)
-        if os.path.exists(html_path):
-            # append as a new figure using a simple wrapper page
-            with open(html_path, "a", encoding="utf-8") as f:
-                f.write(fig.to_html(full_html=False, include_plotlyjs=False))
-        else:
-            fig.write_html(html_path, include_plotlyjs="cdn", full_html=True)
-        result["figures"].append(os.path.basename(html_path))
-        if html_open:
-            try:
-                import webbrowser  # stdlib
-                webbrowser.open(f"file://{os.path.abspath(html_path)}", new=2)
-            except Exception:
-                pass
-
-    # Band power summary
-    for (bmin, bmax, name) in bands_for_summary:
-        bp_pre = _band_power(freqs_post, psd_pre, (bmin, bmax))
-        bp_post = _band_power(freqs_post, psd_post, (bmin, bmax))
-        ratio = bp_post / (bp_pre + 1e-30)
-        result["bands"][name] = {
-            "band": [bmin, bmax],
-            "pre": bp_pre,
-            "post": bp_post,
-            "ratio": ratio
-        }
-
-    # Peak frequency (argmax) summary
-    k_pre = int(np.argmax(psd_pre))
-    k_post = int(np.argmax(psd_post))
-    result["peak"] = {
-        "pre": {"f": float(freqs_post[k_pre]), "psd": float(psd_pre[k_pre])},
-        "post": {"f": float(freqs_post[k_post]), "psd": float(psd_post[k_post])}
-    }
-
-    return result
-
-
-# ----------------------------- CLI ------------------------------------------- #
-
-@app.command("run")
-def run(
-    # Inputs (either pass arrays directly OR one HDF5)
-    fgs1_pre: Optional[str] = typer.Option(None, help="FGS1 pre-cal (npy/npz/csv/txt)"),
-    fgs1_post: Optional[str] = typer.Option(None, help="FGS1 post-cal (npy/npz/csv/txt)"),
-    airs_pre: Optional[str] = typer.Option(None, help="AIRS pre-cal (T×W npy/...)"),
-    airs_post: Optional[str] = typer.Option(None, help="AIRS post-cal (T×W npy/...)"),
-    h5: Optional[str] = typer.Option(None, help="HDF5 file for auto-discovery"),
-    fgs1_key: Optional[str] = typer.Option(None, help="H5 dataset key for FGS1 cal (e.g. /FGS1/cal)"),
-    fgs1_raw_key: Optional[str] = typer.Option(None, help="H5 dataset key for FGS1 raw (e.g. /FGS1/raw)"),
-    airs_key: Optional[str] = typer.Option(None, help="H5 dataset key for AIRS cal (e.g. /AIRS/cal)"),
-    airs_raw_key: Optional[str] = typer.Option(None, help="H5 dataset key for AIRS raw (e.g. /AIRS/raw)"),
-
-    # Sampling & Welch
-    rate: float = typer.Option(1.0, help="Sampling rate [Hz]"),
-    welch_nperseg: int = typer.Option(4096, help="Welch nperseg"),
-    welch_overlap: float = typer.Option(0.5, help="Welch overlap fraction [0..1)"),
-    welch_window: str = typer.Option("hann", help="Welch window (scipy name)"),
-    welch_detrend: str = typer.Option("constant", help="Welch detrend (constant/linear/None)"),
-    welch_scaling: str = typer.Option("density", help="Welch scaling (density/spectrum)"),
-
-    # AIRS aggregation
-    airs_reduce: str = typer.Option("mean", help="AIRS per-wavelength reduction: mean|median|none"),
-    airs_heatmap: bool = typer.Option(False, help="If reduce=none, export PSD ratio heatmap"),
-
-    # Bands of interest
-    low_band: str = typer.Option("1e-5,5e-4", help="Low-f band (e.g. spacecraft jitter) as 'fmin,fmax'"),
-    mid_band: str = typer.Option("5e-4,5e-3", help="Mid band 'fmin,fmax'"),
-    high_band: str = typer.Option("5e-3,5e-2", help="High band 'fmin,fmax'"),
-
-    # Outputs
-    outdir: str = typer.Option("outputs/fft_compare", help="Output directory"),
-    html: bool = typer.Option(False, help="Write plotly HTML"),
-    open_html: bool = typer.Option(False, help="Open HTML in browser"),
-    report_md: bool = typer.Option(False, help="Write markdown mini-report"),
-    log_append: bool = typer.Option(True, help="Append audit line to logs/v50_debug_log.md"),
-    pretty: bool = typer.Option(True, help="Pretty-print summary table")
-):
-    """
-    Run FFT/Welch power comparison on FGS1 and AIRS pre/post calibration streams.
-    """
-    t0 = time.time()
-    console.rule("[bold cyan]SpectraMind V50 — FFT Power Compare")
-    outdir = _ensure_dir(outdir)
-
-    # Prepare Welch config
-    welch_cfg = WelchConfig(
-        nperseg=welch_nperseg,
-        overlap=welch_overlap,
-        window=welch_window,
-        detrend=welch_detrend,
-        scaling=welch_scaling,
-        average="mean",
+    cfg = Config(
+        a_path=args.a.resolve(),
+        b_path=args.b.resolve(),
+        mode=str(args.mode),
+        nfft=int(args.nfft),
+        detrend=bool(args.detrend),
+        window=str(args.window),
+        aggregate=str(args.aggregate),
+        freq_max=float(args.freq_max) if args.freq_max is not None else None,
+        select_planet=int(args.select_planet) if args.select_planet is not None else None,
+        select_wl_from=int(args.select_wl_from) if args.select_wl_from is not None else None,
+        select_wl_to=int(args.select_wl_to) if args.select_wl_to is not None else None,
+        outdir=args.outdir.resolve(),
+        html_name=str(args.html_name),
+        open_browser=bool(args.open_browser),
     )
 
-    # Parse bands
-    def parse_band(s: str, name: str) -> Tuple[float, float, str]:
-        parts = [p.strip() for p in s.split(",")]
-        if len(parts) != 2:
-            raise typer.BadParameter(f"Invalid {name} band: {s}")
-        return (float(parts[0]), float(parts[1]), name)
+    audit = AuditLogger(
+        md_path=Path("logs") / "v50_debug_log.md",
+        jsonl_path=Path("logs") / "v50_runs.jsonl",
+    )
+    audit.log({
+        "action": "start", "status": "running",
+        "a": str(cfg.a_path), "b": str(cfg.b_path),
+        "mode": cfg.mode, "aggregate": cfg.aggregate, "nfft": cfg.nfft, "freq_max": cfg.freq_max,
+        "outdir": str(cfg.outdir), "message": "Starting fft_power_compare"
+    })
 
-    bands_for_summary = [
-        parse_band(low_band, "low"),
-        parse_band(mid_band, "mid"),
-        parse_band(high_band, "high"),
-    ]
+    try:
+        rc = run(cfg, audit)
+        return rc
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        audit.log({
+            "action": "run", "status": "error",
+            "a": str(cfg.a_path), "b": str(cfg.b_path),
+            "mode": cfg.mode, "aggregate": cfg.aggregate,
+            "outdir": str(cfg.outdir), "message": f"{type(e).__name__}: {e}"
+        })
+        return 2
 
-    # Load inputs
-    fgs1_pre_arr = fgs1_post_arr = airs_pre_arr = airs_post_arr = None
-
-    if h5:
-        console.print(f"[green]Loading HDF5:[/green] {h5}")
-        if not HAS_H5PY:
-            console.print("[red]h5py not installed; cannot read HDF5[/red]")
-            raise typer.Exit(1)
-        fgs1_cal, fgs1_raw, airs_cal, airs_raw = _h5_read(h5, fgs1_key, airs_key, fgs1_raw_key, airs_raw_key)
-        # Use *cal as 'post'; optionally compare raw vs cal if present
-        if fgs1_raw is not None:
-            fgs1_pre_arr = fgs1_raw
-        if fgs1_cal is not None:
-            fgs1_post_arr = fgs1_cal
-        if airs_raw is not None:
-            airs_pre_arr = airs_raw
-        if airs_cal is not None:
-            airs_post_arr = airs_cal
-
-    # Override from file flags if provided
-    if fgs1_pre:
-        fgs1_pre_arr = _load_simple(fgs1_pre)
-    if fgs1_post:
-        fgs1_post_arr = _load_simple(fgs1_post)
-    if airs_pre:
-        airs_pre_arr = _load_simple(airs_pre)
-    if airs_post:
-        airs_post_arr = _load_simple(airs_post)
-
-    # Sanity
-    if fgs1_pre_arr is None and fgs1_post_arr is None and airs_pre_arr is None and airs_post_arr is None:
-        console.print("[red]No inputs provided. See --help for options.[/red]")
-        raise typer.Exit(2)
-
-    # Compute
-    summary: Dict[str, Any] = {
-        "sampling_rate_hz": rate,
-        "welch": welch_cfg.__dict__,
-        "bands": {b[2]: [b[0], b[1]] for b in bands_for_summary},
-        "results": {}
-    }
-
-    with console.status("[bold green]Computing Welch PSDs...[/bold green]"):
-        if fgs1_pre_arr is not None or fgs1_post_arr is not None:
-            res_fgs1 = _compute_compare(
-                fgs1_pre_arr, fgs1_post_arr, rate, welch_cfg,
-                label="FGS1", outdir=outdir, bands_for_summary=bands_for_summary,
-                is_airs=False, html=html, html_open=open_html
-            )
-            summary["results"]["FGS1"] = res_fgs1
-
-        if airs_pre_arr is not None or airs_post_arr is not None:
-            res_airs = _compute_compare(
-                airs_pre_arr, airs_post_arr, rate, welch_cfg,
-                label="AIRS", outdir=outdir, bands_for_summary=bands_for_summary,
-                is_airs=True, airs_reduce=airs_reduce, airs_heatmap=airs_heatmap,
-                html=html, html_open=open_html
-            )
-            summary["results"]["AIRS"] = res_airs
-
-    # Export JSON/CSV
-    json_path = os.path.join(outdir, "fft_summary.json")
-    with open(json_path, "w", encoding="utf-8") as f:
-        json.dump(summary, f, indent=2)
-    console.print(f"[green]Wrote[/green] {json_path}")
-
-    # CSV table (bands × {pre,post,ratio} for each label)
-    csv_path = os.path.join(outdir, "fft_summary.csv")
-    with open(csv_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        header = ["label", "band", "fmin", "fmax", "pre_power", "post_power", "ratio", "peak_f_pre", "peak_f_post"]
-        writer.writerow(header)
-        for label, res in summary["results"].items():
-            if not res or "bands" not in res:
-                continue
-            peak_pre = res.get("peak", {}).get("pre", {}).get("f", "")
-            peak_post = res.get("peak", {}).get("post", {}).get("f", "")
-            for band_name, row in res["bands"].items():
-                writer.writerow([
-                    label, band_name, row["band"][0], row["band"][1],
-                    row["pre"], row["post"], row["ratio"], peak_pre, peak_post
-                ])
-    console.print(f"[green]Wrote[/green] {csv_path}")
-
-    # Markdown mini-report
-    if report_md:
-        md_path = os.path.join(outdir, "fft_report.md")
-        with open(md_path, "w", encoding="utf-8") as f:
-            f.write(f"# FFT Power Compare Report\n\n")
-            f.write(f"- Sampling rate: **{rate} Hz**\n")
-            f.write(f"- Welch: `nperseg={welch_nperseg}`, `overlap={welch_overlap}`, `window={welch_window}`\n\n")
-            for label, res in summary["results"].items():
-                f.write(f"## {label}\n\n")
-                figs = res.get("figures", [])
-                for fig in figs:
-                    if fig.endswith(".png"):
-                        f.write(f"![{fig}]({fig})\n\n")
-                if "peak" in res:
-                    pk = res["peak"]
-                    f.write(f"- Peak pre: f={pk['pre']['f']:.6g} Hz; post: f={pk['post']['f']:.6g} Hz\n\n")
-                f.write("| Band | fmin | fmax | Pre | Post | Ratio |\n")
-                f.write("|---:|---:|---:|---:|---:|---:|\n")
-                for bname, row in res["bands"].items():
-                    f.write(f"| {bname} | {row['band'][0]:.3e} | {row['band'][1]:.3e} | "
-                            f"{row['pre']:.3e} | {row['post']:.3e} | {row['ratio']:.3f} |\n")
-                f.write("\n")
-        console.print(f"[green]Wrote[/green] {md_path}")
-
-    # Pretty print table
-    if pretty:
-        table = Table(title="Band Power Summary", box=box.SIMPLE_HEAVY)
-        table.add_column("Label", justify="left", no_wrap=True)
-        table.add_column("Band", justify="right")
-        table.add_column("fmin..fmax [Hz]", justify="right")
-        table.add_column("Pre", justify="right")
-        table.add_column("Post", justify="right")
-        table.add_column("Ratio", justify="right")
-        for label, res in summary["results"].items():
-            for bname, row in res.get("bands", {}).items():
-                table.add_row(
-                    label,
-                    bname,
-                    f"{row['band'][0]:.2e}..{row['band'][1]:.2e}",
-                    f"{row['pre']:.3e}",
-                    f"{row['post']:.3e}",
-                    f"{row['ratio']:.3f}"
-                )
-        console.print(Panel(table, title="FFT Compare", border_style="cyan"))
-
-    # Append to audit log (CLI call trace)
-    if log_append:
-        log_dir = _ensure_dir("logs")
-        log_path = os.path.join(log_dir, "v50_debug_log.md")
-        cmd = " ".join([os.path.basename(sys.argv[0])] + sys.argv[1:])
-        with open(log_path, "a", encoding="utf-8") as f:
-            f.write(f"- [{time.strftime('%Y-%m-%d %H:%M:%S')}] fft_power_compare : `{cmd}` "
-                    f"=> outdir `{outdir}` ; elapsed={time.time()-t0:.2f}s\n")
-        console.print(f"[blue]Appended audit[/blue] {log_path}")
-
-    console.rule("[bold green]Done")
-    return
-
-
-# ----------------------------- Entrypoint ------------------------------------ #
 
 if __name__ == "__main__":
-    try:
-        app()
-    except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
-        sys.exit(1)
+    sys.exit(main())
