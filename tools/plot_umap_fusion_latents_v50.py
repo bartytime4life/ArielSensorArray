@@ -1,603 +1,477 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-tools/plot_umap_fusion_latents_v50.py
+plot_umap_fusion_latents_v50.py
 
-SpectraMind V50 — UMAP Fusion Latents Plotter (Upgraded)
-=========================================================
+SpectraMind V50 — Tools: UMAP projection for fused latent spaces.
 
-Purpose
--------
-Project the fused latent representations (e.g., AIRS ⨂ FGS1 ⨂ metadata ⨂ symbolic)
-to 2D/3D with UMAP, then render an interactive Plotly figure with rich overlays:
-
-• Color/size by entropy, SHAP magnitude, symbolic violation, cluster label, or any column
-• Confidence shading (size/opacity mapping)
-• Symbolic rule hyperlinks per point (planet-level pages)
-• Optional deduplication of duplicate planet IDs
-• 2D / 3D UMAP, with reproducible seeds
-• Exports interactive HTML and static PNG/SVG
-• CLI- and diagnostics-ready logging
-
-Typical Inputs
+What this does
 --------------
-• --embeddings  : .npy (N×D) or .csv (columns: id, f1..fD or arbitrary)
-• --labels      : CSV (planet_id,label,cluster,...) for hover + color categories
-• --overlays    : JSON/CSV with per-planet scalar vectors (entropy, shap, symbolic, etc.)
-• --link-template : "reports/planet_{planet_id}.html" to embed point hyperlinks
+- Loads one or more latent arrays (e.g., *.npy or *.pt) produced by different subsystems
+  (time, spectral, graph, metadata encoders).
+- Optionally standardizes and/or PCA pre-reduces each latent block.
+- Fuses blocks (concat by feature axis, aligned by row/row-index) into a single matrix.
+- Runs UMAP to produce a 2D (or 3D) embedding.
+- Plots and saves publication-ready figures (PNG/SVG), plus CSV with coordinates & labels.
+- Can color the embedding by a label column (categorical) or a numeric column (continuous).
+- Offers KMeans clustering overlay and silhouette score to sanity-check structure.
+- Deterministic runs via `--seed` (umap-learn + numpy + torch).
 
-Examples
---------
+Why
+---
+UMAP helps diagnose whether the fused representation separates scientifically meaningful
+classes (e.g., planet types, stellar classes) or encodes spurious artifacts. Put this in the
+diagnostic phase to quickly eyeball the geometry of your latent space across runs.
+
+Usage (examples)
+----------------
+# Minimal (two latent blocks, color by a label CSV):
 python tools/plot_umap_fusion_latents_v50.py \
-  --embeddings outputs/latents/fusion_latents.npy \
-  --labels outputs/diagnostics/planet_labels.csv \
-  --overlays entropy:outputs/diagnostics/entropy.csv \
-  --overlays symbolic:outputs/diagnostics/symbolic_scores.json \
-  --color-by entropy --size-by entropy \
-  --dim 3 --outdir outputs/umap/fusion --html --png
+  --latents path/to/time_latents.npy path/to/spectral_latents.pt \
+  --labels-csv path/to/labels.csv --label-col planet_class \
+  --outdir outputs/umap/ --title "V50 UMAP (time+spectral)"
 
+# With standardization, PCA per-block, and KMeans overlay:
 python tools/plot_umap_fusion_latents_v50.py \
-  --embeddings outputs/latents/fusion_latents.csv \
-  --labels outputs/diagnostics/planet_labels.csv \
-  --dedupe --link-template 'reports/planet_{planet_id}.html' \
-  --color-by cluster --dim 2 --outdir outputs/umap/fusion --html --svg
+  --latents enc/time.npy enc/spec.npy enc/gnn.pt \
+  --std --pca-k 64 --kmeans 8 --silhouette \
+  --labels-csv meta/labels.csv --label-col star_type \
+  --metric cosine --neighbors 30 --min-dist 0.05 \
+  --outdir outputs/umap/ --title "Fusion UMAP" --seed 42
 
-Notes
------
-• Requires: numpy, pandas, umap-learn, plotly, scikit-learn (for StandardScaler), kaleido (for static export)
-• Designed to be called from `spectramind diagnose umap-fusion` or standalone.
-
-Author
-------
-SpectraMind V50 – Architect & Master Programmer
+Dependencies
+------------
+- numpy, pandas, matplotlib, seaborn, scikit-learn, umap-learn, torch (optional for *.pt)
 """
+
 from __future__ import annotations
 
-import argparse
 import json
+import math
 import os
+import sys
+import warnings
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Any, List, Tuple, Optional
+from typing import Iterable, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import pandas as pd
-
-# UMAP + preprocessing
-try:
-    import umap
-except Exception as _e:
-    umap = None
-
+import typer
+from matplotlib import pyplot as plt
+from matplotlib.colors import ListedColormap
+from sklearn.decomposition import PCA
+from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score
 from sklearn.preprocessing import StandardScaler
+from umap import UMAP
 
-# Plotting
-import plotly.express as px
-import plotly.graph_objects as go
+# Optional torch support for *.pt latent tensors
+try:
+    import torch
 
-# ---------------------------------------------------------------------
-# I/O Utils
-# ---------------------------------------------------------------------
+    _TORCH_OK = True
+except Exception:
+    _TORCH_OK = False
 
+# Rich logging (pretty console)
+try:
+    from rich.console import Console
+    from rich.table import Table
+    from rich.progress import track
+    from rich.logging import RichHandler
+    import logging
 
-def _load_embeddings(path: str, id_col: Optional[str] = None) -> Tuple[pd.DataFrame, np.ndarray]:
-    """
-    Load embeddings matrix and associated planet ids (if found).
-    Accepts:
-      • .npy  : returns df with index 0..N-1 (no ids) and X as ndarray
-      • .csv  : if id_col provided (or column 'planet_id' exists), use it as id
-                else attempt first column as id if dtype is object, else no id
-    Returns:
-      df_meta : DataFrame with 'planet_id' column if present
-      X       : ndarray of shape (N, D)
-    """
-    p = Path(path)
-    if p.suffix.lower() == ".npy":
-        X = np.load(p)
-        if X.ndim != 2:
-            raise ValueError(f"Expected 2D npy for embeddings, got {X.shape}")
-        df_meta = pd.DataFrame({"idx": np.arange(X.shape[0])})
-        return df_meta, X
-
-    if p.suffix.lower() == ".csv":
-        df = pd.read_csv(p)
-        df_cols = df.columns.tolist()
-        # Determine id col
-        if id_col and id_col in df.columns:
-            ids = df[id_col].astype(str).tolist()
-            feat_df = df.drop(columns=[id_col])
-        elif "planet_id" in df.columns:
-            ids = df["planet_id"].astype(str).tolist()
-            feat_df = df.drop(columns=["planet_id"])
-        else:
-            # If first column is non-numeric treat as id
-            first = df_cols[0]
-            if not pd.api.types.is_numeric_dtype(df[first]):
-                ids = df[first].astype(str).tolist()
-                feat_df = df.drop(columns=[first])
-            else:
-                ids = [str(i) for i in range(len(df))]
-                feat_df = df
-        # keep numeric columns only for X
-        feat_df = feat_df.select_dtypes(include=[np.number])
-        X = feat_df.values
-        df_meta = pd.DataFrame({"planet_id": ids})
-        return df_meta, X
-
-    raise ValueError(f"Unsupported embeddings file type: {path}")
-
-
-def _load_labels(path: Optional[str]) -> pd.DataFrame:
-    """
-    Load labels CSV (columns may include planet_id, label, cluster, etc.)
-    """
-    if path is None:
-        return pd.DataFrame()
-    df = pd.read_csv(path)
-    # Ensure planet_id is string (consistent join key)
-    if "planet_id" in df.columns:
-        df["planet_id"] = df["planet_id"].astype(str)
-    return df
-
-
-def _load_overlay(name_path: str) -> Tuple[str, pd.DataFrame]:
-    """
-    Load an overlay mapping 'name:path' into a DataFrame with columns [planet_id, <overlay_name>]
-    File can be CSV or JSON.
-      • CSV: expects columns (planet_id, value) or multi-column; will melt non-id columns.
-      • JSON:
-          - { "planet_id": value, ... }
-          - { "data": { "planet_id": value, ... } }
-          - { "planet_id": ..., "value": ... } list-like
-    Returns (overlay_name, df)
-    """
-    if ":" not in name_path:
-        raise ValueError("Overlay must be specified as name:path (e.g., entropy:entropy.csv)")
-    name, path = name_path.split(":", 1)
-    p = Path(path)
-    if not p.exists():
-        raise FileNotFoundError(f"Overlay file not found: {path}")
-
-    if p.suffix.lower() == ".csv":
-        df = pd.read_csv(p)
-        if "planet_id" in df.columns and "value" in df.columns and df.shape[1] == 2:
-            df = df.rename(columns={"value": name})
-            df["planet_id"] = df["planet_id"].astype(str)
-            return name, df[["planet_id", name]]
-        # If multiple columns: keep numeric, melt to long then aggregate if repeated
-        if "planet_id" in df.columns:
-            df["planet_id"] = df["planet_id"].astype(str)
-            numeric_cols = [c for c in df.columns if c != "planet_id" and pd.api.types.is_numeric_dtype(df[c])]
-            if len(numeric_cols) == 0:
-                raise ValueError(f"No numeric columns in overlay CSV: {path}")
-            # Combine numerics into one (mean)
-            df[name] = df[numeric_cols].mean(axis=1)
-            return name, df[["planet_id", name]]
-        # If no planet_id given: assume row order is planet index, construct planet_id
-        df[name] = df.mean(axis=1, numeric_only=True)
-        df["planet_id"] = [str(i) for i in range(len(df))]
-        return name, df[["planet_id", name]]
-
-    if p.suffix.lower() == ".json":
-        with open(p, "r") as f:
-            obj = json.load(f)
-        # Normalize into {planet_id: value}
-        if isinstance(obj, dict) and "data" in obj and isinstance(obj["data"], dict):
-            mapping = obj["data"]
-        elif isinstance(obj, dict):
-            mapping = obj
-        elif isinstance(obj, list):
-            # list of {planet_id:..., value:...}
-            mapping = {str(d.get("planet_id", i)): d.get("value", np.nan) for i, d in enumerate(obj)}
-        else:
-            raise ValueError(f"Unsupported JSON overlay structure: {path}")
-        df = pd.DataFrame({"planet_id": [str(k) for k in mapping.keys()], name: list(mapping.values())})
-        return name, df
-
-    raise ValueError(f"Unsupported overlay file type: {path}")
-
-
-def _dedupe(df: pd.DataFrame, key: str, keep: str = "first") -> pd.DataFrame:
-    if key not in df.columns:
-        return df
-    return df.drop_duplicates(subset=[key], keep=keep)
-
-
-# ---------------------------------------------------------------------
-# UMAP Projection
-# ---------------------------------------------------------------------
-
-
-def _umap_embed(
-    X: np.ndarray,
-    dim: int = 2,
-    n_neighbors: int = 30,
-    min_dist: float = 0.1,
-    metric: str = "euclidean",
-    random_state: int = 1337,
-) -> np.ndarray:
-    """
-    Fit UMAP on standardized X and return embedding of shape (N, dim).
-    """
-    if umap is None:
-        raise RuntimeError(
-            "umap-learn is not installed. Please install it via `pip install umap-learn`."
-        )
-    scaler = StandardScaler(with_mean=True, with_std=True)
-    Xs = scaler.fit_transform(X)
-    reducer = umap.UMAP(
-        n_components=dim,
-        n_neighbors=n_neighbors,
-        min_dist=min_dist,
-        metric=metric,
-        random_state=random_state,
+    console = Console()
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(message)s",
+        datefmt="[%X]",
+        handlers=[RichHandler(console=console, markup=True)],
     )
-    Z = reducer.fit_transform(Xs)
-    return Z
+    log = logging.getLogger("umap_fusion")
+except Exception:
+    # Fallback if rich isn't available
+    import logging
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+    log = logging.getLogger("umap_fusion")
+    console = None  # type: ignore
 
 
-# ---------------------------------------------------------------------
-# Plot Builders
-# ---------------------------------------------------------------------
+app = typer.Typer(add_completion=False, no_args_is_help=True, help=__doc__)
 
 
-def _make_hover_text(row: pd.Series, extra_cols: List[str]) -> str:
-    parts = [f"planet_id={row.get('planet_id', 'NA')}"]
-    for c in ["label", "cluster"]:
-        if c in row:
-            parts.append(f"{c}={row[c]}")
-    for c in extra_cols:
-        if c in row:
-            val = row[c]
-            if isinstance(val, float):
-                parts.append(f"{c}={val:.5f}")
-            else:
-                parts.append(f"{c}={val}")
-    return "<br>".join(parts)
+# ------------------------------- Utilities --------------------------------- #
 
 
-def _link_for(planet_id: str, template: Optional[str]) -> Optional[str]:
-    if not template:
-        return None
+def _set_all_seeds(seed: Optional[int]) -> None:
+    if seed is None:
+        return
+    import random
+
+    np.random.seed(seed)
+    random.seed(seed)
     try:
-        return template.format(planet_id=planet_id)
+        import torch
+
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        # ensure some determinism, may slow down
+        torch.backends.cudnn.deterministic = True  # type: ignore
+        torch.backends.cudnn.benchmark = False  # type: ignore
     except Exception:
-        return None
+        pass
 
 
-def _auto_color_sequence(n: int) -> List[str]:
-    base = px.colors.qualitative.Set2 + px.colors.qualitative.Plotly + px.colors.qualitative.Safe
-    seq = (base * ((n // len(base)) + 1))[:n]
-    return seq
+def _load_latent(path: Union[str, Path]) -> np.ndarray:
+    """Load a latent block from .npy or .pt; returns float32 numpy array."""
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(f"latent file not found: {path}")
+    if path.suffix.lower() == ".npy":
+        arr = np.load(path, mmap_mode="r")
+        arr = np.asarray(arr, dtype=np.float32)
+        return arr
+    if path.suffix.lower() == ".pt":
+        if not _TORCH_OK:
+            raise RuntimeError(f"torch not available to load {path}")
+        t = torch.load(path, map_location="cpu")
+        if isinstance(t, torch.nn.Module):
+            raise ValueError(f"{path} appears to be a module; provide tensor array")
+        if isinstance(t, (tuple, list)):
+            # try first element
+            t = t[0]
+        if not isinstance(t, torch.Tensor):
+            raise ValueError(f"Unsupported PT object in {path}: {type(t)}")
+        return t.detach().float().cpu().numpy()
+    raise ValueError(f"Unsupported latent extension: {path.suffix}")
 
 
-def _plot_interactive(
-    df: pd.DataFrame,
-    dim: int,
-    color_by: Optional[str],
-    size_by: Optional[str],
-    opacity_by: Optional[str],
-    link_template: Optional[str],
-    title: str,
-) -> go.Figure:
-
-    # Compute hover text
-    extra_cols = []
-    for c in [color_by, size_by, opacity_by]:
-        if c and c not in ["cluster", "label", "planet_id"] and c not in extra_cols:
-            extra_cols.append(c)
-
-    hover_text = df.apply(lambda r: _make_hover_text(r, extra_cols), axis=1)
-
-    # Build base scatter
-    if dim == 3:
-        x, y, z = df["umap_x"], df["umap_y"], df["umap_z"]
-        scatter_cls = go.Scatter3d
-        coords = dict(x=x, y=y, z=z)
-        mode = "markers"
-    else:
-        x, y = df["umap_x"], df["umap_y"]
-        scatter_cls = go.Scattergl
-        coords = dict(x=x, y=y)
-        mode = "markers"
-
-    marker = dict(
-        size=8,
-        opacity=0.9,
-        line=dict(width=0.5, color="rgba(0,0,0,0.3)"),
-    )
-
-    # Size mapping
-    if size_by and size_by in df.columns and pd.api.types.is_numeric_dtype(df[size_by]):
-        svals = df[size_by].astype(float)
-        # Normalize for size range [6,18]
-        s_norm = (svals - np.nanmin(svals)) / (np.nanmax(svals) - np.nanmin(svals) + 1e-12)
-        marker["size"] = (s_norm * 12 + 6).tolist()
-
-    # Opacity mapping (confidence shading)
-    if opacity_by and opacity_by in df.columns and pd.api.types.is_numeric_dtype(df[opacity_by]):
-        ovals = df[opacity_by].astype(float)
-        # Normalize [0.4, 1.0]
-        o_norm = (ovals - np.nanmin(ovals)) / (np.nanmax(ovals) - np.nanmin(ovals) + 1e-12)
-        marker["opacity"] = (o_norm * 0.6 + 0.4).tolist()
-
-    # Color mapping
-    color_kwargs: Dict[str, Any] = {}
-    if color_by and color_by in df.columns:
-        if pd.api.types.is_numeric_dtype(df[color_by]):
-            color_kwargs.update(
-                color=df[color_by],
-                colorscale="Viridis",
-                showscale=True,
-                colorbar=dict(title=color_by),
-            )
-        else:
-            # categorical color
-            cats = df[color_by].astype(str).values
-            # plotly express friendly figure if 2D — but we use graph_objects for consistency
-            # Build category -> color map
-            uniq = sorted(pd.unique(cats))
-            palette = _auto_color_sequence(len(uniq))
-            cmap = {u: palette[i] for i, u in enumerate(uniq)}
-            marker["color"] = [cmap[v] for v in cats]
-            # build a legend via separate traces if 2D; for 3D we can still split traces
-            if dim == 3:
-                # We'll split below by category
-                pass
-            else:
-                # Single trace with legend disabled; then add dummy traces for legend
-                pass
-
-    # Build link array for clicking (customdata with URL)
-    links = [ _link_for(pid, link_template) for pid in df["planet_id"].astype(str) ] if "planet_id" in df.columns else [None]*len(df)
-
-    # Create figure; if categorical color, we may split traces for legend
-    if color_by and color_by in df.columns and not pd.api.types.is_numeric_dtype(df[color_by]):
-        uniq = sorted(pd.unique(df[color_by].astype(str)))
-        fig = go.Figure()
-        for u in uniq:
-            m = df[color_by].astype(str) == u
-            sub_coords = {k: np.array(v)[m] for k, v in coords.items()}
-            sub_marker = marker.copy()
-            if isinstance(sub_marker.get("size"), list):
-                sub_marker["size"] = (np.array(sub_marker["size"])[m]).tolist()
-            if isinstance(sub_marker.get("opacity"), list):
-                sub_marker["opacity"] = (np.array(sub_marker["opacity"])[m]).tolist()
-            sub_marker["color"] = _auto_color_sequence(1)[0]  # consistent but simple
-            # use deterministic color mapping
-            palette = _auto_color_sequence(len(uniq))
-            cmap = {uu: palette[i] for i, uu in enumerate(uniq)}
-            sub_marker["color"] = cmap[u]
-            sub_hover = hover_text[m]
-            sub_links = (np.array(links)[m]).tolist() if links else None
-
-            scatter = scatter_cls(
-                **sub_coords,
-                mode=mode,
-                name=f"{color_by}={u}",
-                text=sub_hover,
-                hoverinfo="text",
-                marker=sub_marker,
-                customdata=sub_links,
-            )
-            fig.add_trace(scatter)
-    else:
-        # Single trace with numeric color or no color_by
-        fig = go.Figure()
-        scatter = scatter_cls(
-            **coords,
-            mode=mode,
-            name="planets",
-            text=hover_text,
-            hoverinfo="text",
-            marker=marker,
-            customdata=links,
-            **color_kwargs,
-        )
-        fig.add_trace(scatter)
-
-    # Click-to-open links (in HTML): use Plotly JS to add onclick handler (template injection)
-    # This is best-effort; some viewers may block popups.
-    fig.update_layout(
-        title=title,
-        template="plotly_white",
-        legend=dict(itemsizing="constant"),
-        margin=dict(l=40, r=20, t=60, b=40),
-    )
-    if dim == 3:
-        fig.update_scenes(
-            xaxis_title="UMAP-1",
-            yaxis_title="UMAP-2",
-            zaxis_title="UMAP-3",
-        )
-    else:
-        fig.update_xaxes(title_text="UMAP-1")
-        fig.update_yaxes(title_text="UMAP-2")
-
-    return fig
+def _align_blocks(blocks: List[np.ndarray]) -> List[np.ndarray]:
+    """Ensure all blocks share the same number of rows. If not, raise error."""
+    rows = [b.shape[0] for b in blocks]
+    if len(set(rows)) != 1:
+        raise ValueError(f"Row count mismatch across blocks: {rows} — latents must align by row.")
+    return blocks
 
 
-# ---------------------------------------------------------------------
-# Main Workflow
-# ---------------------------------------------------------------------
+def _standardize(block: np.ndarray) -> np.ndarray:
+    scaler = StandardScaler(with_mean=True, with_std=True)
+    return scaler.fit_transform(block)
 
 
-def run(
-    embeddings: str,
-    labels: Optional[str],
-    overlays: List[str],
-    dedupe: bool,
-    dim: int,
-    n_neighbors: int,
-    min_dist: float,
-    metric: str,
-    color_by: Optional[str],
-    size_by: Optional[str],
-    opacity_by: Optional[str],
-    link_template: Optional[str],
-    title: str,
-    seed: int,
-    outdir: str,
-    save_html: bool,
-    save_png: bool,
-    save_svg: bool,
-    id_col: Optional[str],
-):
+def _pca_reduce(block: np.ndarray, k: int) -> np.ndarray:
+    if k <= 0 or k >= block.shape[1]:
+        return block
+    p = PCA(n_components=k, random_state=0, svd_solver="auto")
+    return p.fit_transform(block)
+
+
+def _merge_blocks(blocks: List[np.ndarray]) -> np.ndarray:
+    return np.concatenate(blocks, axis=1).astype(np.float32)
+
+
+def _make_outdir(outdir: Union[str, Path]) -> Path:
     out = Path(outdir)
     out.mkdir(parents=True, exist_ok=True)
+    return out
 
-    # Load embeddings
-    df_meta, X = _load_embeddings(embeddings, id_col=id_col)
 
-    # Attach planet_id if present in labels later
-    if "planet_id" not in df_meta.columns:
-        df_meta["planet_id"] = df_meta.get("idx", np.arange(X.shape[0])).astype(str)
+def _save_csv_coords(
+    coords: np.ndarray,
+    labels_df: Optional[pd.DataFrame],
+    out_csv: Path,
+    label_col: Optional[str],
+    color_by: Optional[str],
+) -> None:
+    df = pd.DataFrame(coords, columns=["umap_1", "umap_2"] if coords.shape[1] == 2 else ["umap_1", "umap_2", "umap_3"])
+    if labels_df is not None:
+        df = pd.concat([df, labels_df.reset_index(drop=True)], axis=1)
+    # Reorder columns to put coloring columns up front if present
+    cols = list(df.columns)
+    front = []
+    for c in [label_col, color_by]:
+        if c and c in df.columns and c not in front:
+            front.append(c)
+    cols = [*front, *[c for c in cols if c not in front]]
+    df = df[cols]
+    df.to_csv(out_csv, index=False)
 
-    # Load labels and join
-    df_lab = _load_labels(labels)
-    df = df_meta.copy()
-    if not df_lab.empty:
-        df = df.merge(df_lab, on="planet_id", how="left")
 
-    # Load overlays (multiple)
-    for ov in overlays or []:
-        name, df_ov = _load_overlay(ov)
-        df = df.merge(df_ov, on="planet_id", how="left")
+def _auto_figsize(n: int) -> Tuple[int, int]:
+    # heuristic
+    if n < 2_000:
+        return (6, 5)
+    if n < 20_000:
+        return (7, 6)
+    return (8, 7)
 
-    # Deduplicate
-    if dedupe:
-        df = _dedupe(df, "planet_id", keep="first")
-        # apply same filter to X if original had duplicates
-        if len(df) < X.shape[0]:
-            keep_ids = set(df["planet_id"].astype(str))
-            # Construct mask by original order
-            pid_all = df_meta["planet_id"].astype(str).tolist()
-            mask = np.array([pid in keep_ids for pid in pid_all])
-            X = X[mask]
 
-    # Sanity for color/size/opacity columns
-    for col in [color_by, size_by, opacity_by]:
-        if col and col not in df.columns and col not in ["cluster", "label"]:
-            raise ValueError(f"--{col} was requested but not present in merged dataframe columns.")
+def _scatter_plot(
+    coords: np.ndarray,
+    labels_df: Optional[pd.DataFrame],
+    out_png: Path,
+    title: str,
+    label_col: Optional[str],
+    color_by: Optional[str],
+    alpha: float = 0.8,
+    point_size: float = 8.0,
+) -> None:
+    import seaborn as sns
 
-    # Compute UMAP
-    Z = _umap_embed(
-        X=X,
-        dim=dim,
-        n_neighbors=n_neighbors,
+    plt.figure(figsize=_auto_figsize(coords.shape[0]))
+    ax = plt.gca()
+
+    if labels_df is None or (color_by is None and label_col is None):
+        # plain scatter
+        plt.scatter(coords[:, 0], coords[:, 1], s=point_size, alpha=alpha, c="#4C78A8")
+        plt.title(title)
+        plt.xlabel("UMAP-1")
+        plt.ylabel("UMAP-2")
+        plt.tight_layout()
+        plt.savefig(out_png, dpi=250)
+        plt.close()
+        return
+
+    key = color_by or label_col
+    series = labels_df[key].reset_index(drop=True)
+    if series.dtype.kind in "ifu":  # numeric
+        sc = plt.scatter(
+            coords[:, 0],
+            coords[:, 1],
+            s=point_size,
+            alpha=alpha,
+            c=series.values,
+            cmap="viridis",
+        )
+        cbar = plt.colorbar(sc, pad=0.01)
+        cbar.set_label(key)
+    else:
+        # categorical
+        palette = sns.color_palette("husl", n_colors=series.nunique())
+        cat2idx = {cat: i for i, cat in enumerate(series.astype("category").cat.categories)}
+        idx = series.astype("category").cat.codes.values
+        plt.scatter(coords[:, 0], coords[:, 1], s=point_size, alpha=alpha, c=np.array(palette)[idx])
+        # build legend (up to 20 entries to keep readable)
+        uniq = series.astype("category").cat.categories
+        handles = []
+        from matplotlib.lines import Line2D
+
+        for i, cat in enumerate(uniq[:20]):
+            handles.append(Line2D([0], [0], marker="o", color="w", label=str(cat), markerfacecolor=palette[i], markersize=6))
+        if len(uniq) > 20:
+            handles.append(Line2D([0], [0], marker="o", color="w", label="... (truncated)", markerfacecolor="#bbb", markersize=6))
+        ax.legend(handles=handles, title=key, bbox_to_anchor=(1.04, 1), loc="upper left", borderaxespad=0)
+
+    plt.title(title)
+    plt.xlabel("UMAP-1")
+    plt.ylabel("UMAP-2")
+    plt.tight_layout()
+    plt.savefig(out_png, dpi=300)
+    plt.close()
+
+
+# ------------------------------- CLI Core ---------------------------------- #
+
+
+@app.command("run")
+def run_umap(
+    latents: List[Path] = typer.Option(..., "--latents", "-i", help="Paths to latent blocks (*.npy or *.pt). Order matters."),
+    outdir: Path = typer.Option("outputs/umap", "--outdir", "-o", help="Output directory."),
+    labels_csv: Optional[Path] = typer.Option(None, "--labels-csv", help="Optional CSV with labels/metadata aligned by row."),
+    label_col: Optional[str] = typer.Option(None, "--label-col", help="Categorical label column for legend."),
+    color_by: Optional[str] = typer.Option(None, "--color-by", help="Column to color points (categorical or numeric)."),
+    std: bool = typer.Option(False, "--std", help="Standardize each block before fusion."),
+    pca_k: int = typer.Option(0, "--pca-k", help="Optional PCA dims per block before fusion (0 = no PCA)."),
+    n_components: int = typer.Option(2, "--components", help="UMAP embedding dimensions (2 or 3)."),
+    neighbors: int = typer.Option(15, "--neighbors", "-k", help="UMAP n_neighbors."),
+    min_dist: float = typer.Option(0.1, "--min-dist", help="UMAP min_dist."),
+    metric: str = typer.Option("euclidean", "--metric", help="UMAP metric (euclidean, cosine, etc.)."),
+    densmap: bool = typer.Option(False, "--densmap", help="Use densMAP variant (umap-learn>=0.5)."),
+    seed: Optional[int] = typer.Option(42, "--seed", help="Random seed for determinism."),
+    sample: int = typer.Option(0, "--sample", help="Optional subsample N rows before UMAP (0 = all)."),
+    kmeans: int = typer.Option(0, "--kmeans", help="Optional overlay KMeans clusters (k>1)."),
+    silhouette: bool = typer.Option(False, "--silhouette", help="Compute silhouette score (if kmeans>1)."),
+    title: str = typer.Option("UMAP (fusion latents)", "--title", help="Figure title."),
+    save_svg: bool = typer.Option(False, "--svg", help="Also save SVG figure."),
+    point_size: float = typer.Option(8.0, "--point-size", help="Marker size."),
+    alpha: float = typer.Option(0.8, "--alpha", help="Marker alpha."),
+):
+    """
+    Fuse latent blocks, run UMAP, and save plots + CSV.
+
+    Assumptions:
+    - Each latent file is [N x D_i]; all share the same N (row alignment).
+    - labels_csv (if provided) has N rows aligned with the latent rows in the same order.
+    """
+    _set_all_seeds(seed)
+    outdir = _make_outdir(outdir)
+
+    # Load
+    blocks: List[np.ndarray] = []
+    log.info(f"[bold]- Loading {len(latents)} latent blocks[/bold]")
+    for p in latents:
+        log.info(f"  • {p}")
+        arr = _load_latent(p)
+        if arr.ndim != 2:
+            raise ValueError(f"Latent must be 2D [N x D], got {arr.shape} in {p}")
+        blocks.append(arr)
+
+    _align_blocks(blocks)
+    N = blocks[0].shape[0]
+    log.info(f"Rows: {N} | Block dims: {[b.shape[1] for b in blocks]}")
+
+    # Optional per-block preprocessing
+    if std:
+        blocks = [track((_standardize(b) for b in blocks), description="Standardizing blocks", total=len(blocks))]
+        blocks = list(blocks)
+    if pca_k > 0:
+        blocks = [track((_pca_reduce(b, pca_k) for b in blocks), description=f"PCA→{pca_k} per block", total=len(blocks))]
+        blocks = list(blocks)
+
+    # Fuse
+    X = _merge_blocks(blocks)
+    log.info(f"Fused latent: {X.shape}")
+
+    # Optional subsampling
+    if sample and sample > 0 and sample < X.shape[0]:
+        idx = np.random.RandomState(seed).choice(X.shape[0], size=sample, replace=False)
+        X = X[idx]
+        idx_map = idx
+        log.info(f"Subsampled: {X.shape[0]} rows")
+    else:
+        idx_map = np.arange(X.shape[0])
+
+    # Load labels if provided and align with subsample
+    labels_df = None
+    if labels_csv is not None:
+        labels_df = pd.read_csv(labels_csv)
+        if len(labels_df) != N:
+            raise ValueError(f"labels_csv rows ({len(labels_df)}) != N ({N})")
+        labels_df = labels_df.iloc[idx_map].reset_index(drop=True)
+
+    # UMAP
+    log.info("[bold]- Running UMAP[/bold]")
+    umap = UMAP(
+        n_components=n_components,
+        n_neighbors=neighbors,
         min_dist=min_dist,
         metric=metric,
+        densmap=densmap,
         random_state=seed,
     )
-    if dim == 3:
-        df["umap_x"], df["umap_y"], df["umap_z"] = Z[:, 0], Z[:, 1], Z[:, 2]
-    else:
-        df["umap_x"], df["umap_y"] = Z[:, 0], Z[:, 1]
+    coords = umap.fit_transform(X)
+    log.info(f"UMAP coords: {coords.shape}")
 
-    # Interactive plot
-    fig = _plot_interactive(
-        df=df,
-        dim=dim,
+    # Optional KMeans
+    km_labels = None
+    km_info = {}
+    if kmeans and kmeans > 1:
+        log.info(f"[bold]- KMeans (k={kmeans})[/bold]")
+        km = KMeans(n_clusters=kmeans, n_init="auto", random_state=seed)
+        km_labels = km.fit_predict(coords)
+        km_info = {
+            "inertia": float(km.inertia_),
+            "centroids": km.cluster_centers_.tolist(),
+        }
+        if silhouette and coords.shape[0] > kmeans:
+            try:
+                sil = silhouette_score(coords, km_labels)
+                km_info["silhouette"] = float(sil)
+                log.info(f"Silhouette score: {sil:.4f}")
+            except Exception as e:
+                log.warning(f"Silhouette failed: {e}")
+
+    # Save CSV (coords + labels + kmeans)
+    out_csv = outdir / "umap_coords.csv"
+    df_labels = labels_df.copy() if labels_df is not None else None
+    if km_labels is not None:
+        if df_labels is None:
+            df_labels = pd.DataFrame()
+        df_labels["kmeans"] = km_labels
+    _save_csv_coords(coords, df_labels, out_csv, label_col, color_by)
+    log.info(f"Saved: {out_csv}")
+
+    # Save JSON meta
+    meta = {
+        "N": int(coords.shape[0]),
+        "d_fused": int(X.shape[1]),
+        "blocks": [{"path": str(p), "shape": list(b.shape)} for p, b in zip(latents, blocks)],
+        "umap": {
+            "n_components": n_components,
+            "n_neighbors": neighbors,
+            "min_dist": min_dist,
+            "metric": metric,
+            "densmap": densmap,
+            "random_state": seed,
+        },
+        "kmeans": km_info,
+        "label_col": label_col,
+        "color_by": color_by,
+        "subsample": int(sample) if sample else 0,
+    }
+    with open(outdir / "umap_meta.json", "w") as f:
+        json.dump(meta, f, indent=2)
+
+    # Plot
+    out_png = outdir / "umap.png"
+    _scatter_plot(
+        coords=coords[:, :2],
+        labels_df=df_labels,
+        out_png=out_png,
+        title=title,
+        label_col=label_col,
         color_by=color_by,
-        size_by=size_by,
-        opacity_by=opacity_by,
-        link_template=link_template,
-        title=title or "UMAP Fusion Latents",
+        alpha=alpha,
+        point_size=point_size,
     )
-
-    # Save
-    stem = f"umap_fusion_dim{dim}"
-    if save_html:
-        html_path = out / f"{stem}.html"
-        fig.write_html(str(html_path), include_plotlyjs="cdn", full_html=True)
-        # Inject click handler for links to open in new tab (if customdata present)
-        # Users can add a small JS snippet later if needed; Plotly doesn't natively open URLs on point click.
-
-    if save_png:
-        try:
-            fig.write_image(str(out / f"{stem}.png"), scale=2)
-        except Exception as e:
-            print(f"[WARN] Static PNG export failed (is kaleido installed?): {e}")
-
+    log.info(f"Saved: {out_png}")
     if save_svg:
-        try:
-            fig.write_image(str(out / f"{stem}.svg"))
-        except Exception as e:
-            print(f"[WARN] Static SVG export failed (is kaleido installed?): {e}")
+        out_svg = outdir / "umap.svg"
+        # Re-render in SVG to keep vector quality
+        _scatter_plot(
+            coords=coords[:, :2],
+            labels_df=df_labels,
+            out_png=out_svg,
+            title=title,
+            label_col=label_col,
+            color_by=color_by,
+            alpha=alpha,
+            point_size=point_size,
+        )
+        log.info(f"Saved: {out_svg}")
 
-    # Export the annotated dataframe
-    df.to_csv(out / f"{stem}_data.csv", index=False)
-
-    print(f"[OK] UMAP fusion plot saved to: {out.absolute()}")
-
-
-# ---------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------
-
-
-def build_argparser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(
-        description="SpectraMind V50 — UMAP Fusion Latents Plotter (Upgraded)",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    p.add_argument("--embeddings", type=str, required=True, help=".npy or .csv embeddings")
-    p.add_argument("--labels", type=str, default=None, help="CSV with planet_id, labels/cluster columns")
-    p.add_argument(
-        "--overlays",
-        type=str,
-        nargs="*",
-        default=[],
-        help="Overlay spec(s) name:path (e.g., entropy:entropy.csv symbolic:symbolic.json shap:shap.csv)",
-    )
-    p.add_argument("--dedupe", action="store_true", help="Drop duplicate planet_id rows (keep first)")
-    p.add_argument("--id-col", type=str, default=None, help="ID column name in embeddings CSV (if present)")
-
-    # UMAP params
-    p.add_argument("--dim", type=int, default=2, choices=[2, 3], help="UMAP projection dimension")
-    p.add_argument("--n-neighbors", type=int, default=30, help="UMAP n_neighbors")
-    p.add_argument("--min-dist", type=float, default=0.1, help="UMAP min_dist")
-    p.add_argument("--metric", type=str, default="euclidean", help="UMAP metric")
-
-    # Visual encodings
-    p.add_argument("--color-by", type=str, default=None, help="Column to color points by")
-    p.add_argument("--size-by", type=str, default=None, help="Column to size points by (numeric)")
-    p.add_argument("--opacity-by", type=str, default=None, help="Column to opacity-map points by (numeric)")
-    p.add_argument("--link-template", type=str, default=None, help="Template like 'reports/planet_{planet_id}.html'")
-
-    # Output
-    p.add_argument("--title", type=str, default="UMAP Fusion Latents", help="Figure title")
-    p.add_argument("--seed", type=int, default=1337, help="Random seed for UMAP")
-    p.add_argument("--outdir", type=str, default="outputs/umap_fusion", help="Output directory")
-    p.add_argument("--html", action="store_true", help="Export interactive HTML")
-    p.add_argument("--png", action="store_true", help="Export static PNG (requires kaleido)")
-    p.add_argument("--svg", action="store_true", help="Export static SVG (requires kaleido)")
-    return p
+    # Small terminal table
+    if console is not None:
+        tbl = Table(title="UMAP Fusion Latents — Summary")
+        tbl.add_column("Key", style="bold cyan")
+        tbl.add_column("Value")
+        tbl.add_row("Rows", str(coords.shape[0]))
+        tbl.add_row("Fused Dim", str(X.shape[1]))
+        tbl.add_row("Blocks", ", ".join([f"{p.name}({b.shape[1]})" for p, b in zip(latents, blocks)]))
+        if label_col:
+            tbl.add_row("Label Col", label_col)
+        if color_by:
+            tbl.add_row("Color By", color_by)
+        tbl.add_row("Metric", metric)
+        tbl.add_row("Neighbors", str(neighbors))
+        tbl.add_row("Min Dist", str(min_dist))
+        if kmeans and km_info:
+            tbl.add_row("KMeans k", str(kmeans))
+            if "silhouette" in km_info:
+                tbl.add_row("Silhouette", f"{km_info['silhouette']:.4f}")
+        console.print(tbl)
 
 
-def main():
-    args = build_argparser().parse_args()
-    run(
-        embeddings=args.embeddings,
-        labels=args.labels,
-        overlays=args.overlays,
-        dedupe=args.dedupe,
-        dim=args.dim,
-        n_neighbors=args.n_neighbors,
-        min_dist=args.min_dist,
-        metric=args.metric,
-        color_by=args.color_by,
-        size_by=args.size_by,
-        opacity_by=args.opacity_by,
-        link_template=args.link_template,
-        title=args.title,
-        seed=args.seed,
-        outdir=args.outdir,
-        save_html=args.html,
-        save_png=args.png,
-        save_svg=args.svg,
-        id_col=args.id_col,
-    )
+@app.callback()
+def _callback():
+    """SpectraMind V50 — UMAP fusion latent plotting tool."""
+    pass
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        app()
+    except KeyboardInterrupt:
+        log.warning("Interrupted by user")
