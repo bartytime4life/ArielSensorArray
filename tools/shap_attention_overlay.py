@@ -1,439 +1,843 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-shap_attention_overlay.py
+tools/shap_attention_overlay.py
 
-Overlay SHAP attributions on attention maps for SpectraMind V50 spectral channels (N≈283).
+SpectraMind V50 — SHAP × Attention Overlay (Ultimate, Challenge‑Grade)
 
-What it does
+Purpose
+-------
+Fuse per‑bin SHAP attributions with neural attention weights to localize and
+explain spectral regions that most strongly influence model predictions.
+
+This tool ingests SHAP and attention tensors in flexible shapes, reduces them
+to aligned per‑planet × per‑bin matrices, applies configurable normalizations,
+computes fusion overlays (product, weighted‑sum, geometric mean, rank‑average),
+and exports:
+  • Per‑planet Top‑K bin tables (with wavelengths),
+  • Planet×Bin heatmaps for SHAP, attention, and fusion,
+  • Per‑planet μ(λ) line plots with fusion band overlays,
+  • A self‑contained HTML mini‑dashboard with quick links,
+  • CSV/JSON manifests and a run hash trail for reproducibility.
+
+Input shapes (flexible)
+-----------------------
+• SHAP:
+  - (P, B)                 → per‑planet per‑bin |SHAP|
+  - (P, I, B)              → per‑planet per‑input per‑bin → reduced via sum(|.|, axis=1)
+  - (B,)                   → a global per‑bin vector, broadcast to P
+• Attention:
+  - (P, B)                 → per‑planet per‑bin attention
+  - (P, H, B)              → per‑planet per‑head per‑bin → reduced via mean(axis=1)
+  - (B,)                   → a global per‑bin vector, broadcast to P
+• μ (optional):
+  - (P, B)                 → predicted spectrum for overlay plots (per planet)
+• Wavelengths (optional):
+  - (B,)                   → wavelength grid (μm/nm/index)
+
+Notation: P=planets, B=bins, I=input features, H=attention heads.
+
+Outputs
+-------
+outdir/
+  shap_attention_fusion.csv                 # long table (planet_id, bin, λ, shap, attn, fusion)
+  topk_bins_per_planet.csv                  # per‑planet top‑K rows
+  heatmap_fusion.png/.html                 # planet×bin heatmap (fusion)
+  heatmap_shap.png/.html                   # planet×bin heatmap (|SHAP|)
+  heatmap_attention.png/.html              # planet×bin heatmap (attention)
+  overlay_planet_<id>.png                  # μ(λ) with fusion band (first N planets)
+  overlay_distribution.png                  # distributions of SHAP/ATTN/FUSION
+  shap_attention_overlay_manifest.json
+  run_hash_summary_v50.json                 # append‑only reproducibility log
+  dashboard.html                            # quick links + preview
+
+CLI Example
+-----------
+poetry run python tools/shap_attention_overlay.py \
+  --shap outputs/shap/shap_values.npy \
+  --attention outputs/attn/decoder_attn.npy \
+  --mu outputs/predictions/mu.npy \
+  --wavelengths data/wavelengths.npy \
+  --metadata data/planet_metadata.csv \
+  --fusion product --alpha 1.0 --beta 1.0 \
+  --norm-shap zscore --norm-attn minmax \
+  --topk 20 --first-n 24 \
+  --outdir outputs/shap_attention_overlay --open-browser
+
+Design Notes
 ------------
-1) Loads per-channel SHAP values (vector length N) and an attention matrix (N×N or H×N×N).
-2) Harmonizes shapes (averages heads if needed), normalizes, and validates alignment with an
-   optional wavelength grid (N vector).
-3) Produces:
-   • A heatmap figure of the attention matrix with a SHAP “importance ribbon” aligned to axes.
-   • A ranked bar chart of top‑K channels by |SHAP|.
-   • A CSV report with per‑channel metrics (wavelength, shap_value, |shap| rank, attention degree).
-4) Saves artifacts (PNG/HTML optional) to a chosen output directory with reproducible file names.
+• Deterministic: no RNG used; ordering is stable.
+• No external network calls. Plotly/Matplotlib degrade gracefully to CSV.
+• Robust loaders & shape normalization ensure drop‑in integration.
+• Append‑only audit logging to logs/v50_debug_log.md and logs/v50_runs.jsonl.
 
-CLI examples
-------------
-# Minimal: attn (npy/npz/csv), shap (npy/npz/csv)
-python shap_attention_overlay.py \
-  --attention ./artifacts/attn_heads.npz \
-  --shap ./artifacts/shap_values.npy \
-  --wavelengths ./data/wavelengths_283.csv \
-  --out-dir ./reports/diag_run_01
-
-# Specify top-K and dpi
-python shap_attention_overlay.py \
-  --attention attn.npy --shap shap.csv --wavelengths waves.npy \
-  --topk 20 --dpi 250 --title "Planet-123 SHAP×Attention Overlay" --out-dir ./reports/planet_123
-
-Design notes
-------------
-• CLI-first, reproducible artifacts, rich console logs, and self-contained validation per SpectraMind V50
-  engineering standards (Typer + Rich; headless plotting).  
-• Produces lightweight “UI-like” diagnostics (PNG/CSV) that can be consumed by the CLI/CI workflow. 
-
-Author: SpectraMind V50 Tools
 """
 
 from __future__ import annotations
 
+import argparse
+import datetime as _dt
+import hashlib
+import json
 import os
 import sys
-import json
-import math
+import textwrap
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
-import pandas as pd
-import matplotlib
-matplotlib.use("Agg")  # headless rendering for CI/servers
-import matplotlib.pyplot as plt
 
-import typer
-from rich.console import Console
-from rich.table import Table
-from rich.panel import Panel
-from rich.progress import track
-from rich import box
+# Tabular I/O
+try:
+    import pandas as pd
+except Exception as e:
+    raise RuntimeError("pandas is required. Please `pip install pandas`.") from e
 
-app = typer.Typer(add_completion=False, help="Overlay SHAP attributions on attention maps.")
-console = Console()
+# Optional visualizations
+try:
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    _MPL_OK = True
+except Exception:
+    _MPL_OK = False
+
+try:
+    import plotly.graph_objects as go
+    import plotly.io as pio
+    _PLOTLY_OK = True
+except Exception:
+    _PLOTLY_OK = False
 
 
-# ---------- Utilities ----------
+# ==============================================================================
+# Utilities: time, dirs, hashing, audit logging
+# ==============================================================================
 
-def _load_vector_or_matrix(path: Path, key: Optional[str] = None) -> np.ndarray:
+def _now_iso() -> str:
+    return _dt.datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def _ensure_dir(p: Path) -> None:
+    p.mkdir(parents=True, exist_ok=True)
+
+
+def _hash_jsonable(obj: Any) -> str:
+    b = json.dumps(obj, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(b).hexdigest()
+
+
+@dataclass
+class AuditLogger:
+    md_path: Path
+    jsonl_path: Path
+
+    def log(self, event: Dict[str, Any]) -> None:
+        _ensure_dir(self.md_path.parent)
+        _ensure_dir(self.jsonl_path.parent)
+        row = dict(event)
+        row.setdefault("timestamp", _now_iso())
+        # JSONL (machine‑readable)
+        with open(self.jsonl_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        # Markdown (human‑readable)
+        md = textwrap.dedent(f"""
+        ---
+        time: {row["timestamp"]}
+        tool: shap_attention_overlay
+        action: {row.get("action","run")}
+        status: {row.get("status","ok")}
+        shap: {row.get("shap","")}
+        attention: {row.get("attention","")}
+        mu: {row.get("mu","")}
+        wavelengths: {row.get("wavelengths","")}
+        metadata: {row.get("metadata","")}
+        fusion: {row.get("fusion","product")}
+        norm_shap: {row.get("norm_shap","none")}
+        norm_attn: {row.get("norm_attn","none")}
+        outdir: {row.get("outdir","")}
+        message: {row.get("message","")}
+        """).strip() + "\n"
+        with open(self.md_path, "a", encoding="utf-8") as f:
+            f.write(md)
+
+
+def _update_run_hash_summary(outdir: Path, manifest: Dict[str, Any]) -> None:
+    path = outdir / "run_hash_summary_v50.json"
+    payload = {"runs": []}
+    if path.exists():
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+            if not isinstance(payload, dict) or "runs" not in payload:
+                payload = {"runs": []}
+        except Exception:
+            payload = {"runs": []}
+    payload["runs"].append({"hash": _hash_jsonable(manifest), "timestamp": _now_iso(), "manifest": manifest})
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
+
+
+# ==============================================================================
+# Robust loaders
+# ==============================================================================
+
+def _load_array_any(path: Path) -> np.ndarray:
     """
-    Load a vector or matrix from .npy / .npz(/key) / .csv file.
-    CSV: loads numeric frame → np.ndarray (squeeze).
-    NPZ: uses first array if key not provided.
+    Load array from .npy/.npz/.csv/.tsv/.parquet/.feather → np.ndarray
     """
-    ext = path.suffix.lower()
-    if ext == ".npy":
-        arr = np.load(path)
-    elif ext == ".npz":
-        data = np.load(path)
-        if key is not None:
-            if key not in data.files:
-                raise KeyError(f"Key '{key}' not found in NPZ ({data.files}).")
-            arr = data[key]
-        else:
-            # Pick the first array
-            first = data.files[0]
-            arr = data[first]
-    elif ext == ".csv":
-        df = pd.read_csv(path, header=None)
-        arr = df.values
-        if arr.ndim == 2 and (arr.shape[1] == 1 or arr.shape[0] == 1):
-            arr = arr.squeeze()
+    s = path.suffix.lower()
+    if s == ".npy":
+        return np.asarray(np.load(path, allow_pickle=False))
+    if s == ".npz":
+        z = np.load(path, allow_pickle=False)
+        for k in z.files:
+            return np.asarray(z[k])
+        raise ValueError(f"No arrays found in {path}")
+    if s in {".csv", ".tsv"}:
+        df = pd.read_csv(path) if s == ".csv" else pd.read_csv(path, sep="\t")
+        return df.to_numpy()
+    if s == ".parquet":
+        return pd.read_parquet(path).to_numpy()
+    if s == ".feather":
+        return pd.read_feather(path).to_numpy()
+    raise ValueError(f"Unsupported array format: {path}")
+
+
+def _load_metadata_any(path: Optional[Path], n_planets: int) -> pd.DataFrame:
+    if path is None:
+        return pd.DataFrame({"planet_id": [f"planet_{i:04d}" for i in range(n_planets)]})
+    s = path.suffix.lower()
+    if s in {".csv", ".tsv"}:
+        df = pd.read_csv(path) if s == ".csv" else pd.read_csv(path, sep="\t")
+    elif s == ".json":
+        df = pd.read_json(path)
+    elif s == ".parquet":
+        df = pd.read_parquet(path)
+    elif s == ".feather":
+        df = pd.read_feather(path)
     else:
-        raise ValueError(f"Unsupported file extension: {ext}")
-    return np.asarray(arr)
+        raise ValueError(f"Unsupported metadata format: {path}")
+    if "planet_id" not in df.columns:
+        df = df.copy()
+        df["planet_id"] = [f"planet_{i:04d}" for i in range(len(df))]
+    return df.iloc[:n_planets].copy()
 
 
-def _ensure_2d_attention(attn: np.ndarray) -> np.ndarray:
-    """
-    Convert attention to (N, N). If attn is (H, N, N), average across heads.
-    """
-    if attn.ndim == 3:
-        # (H, N, N) → mean over heads
-        attn2 = np.nanmean(attn, axis=0)
-    elif attn.ndim == 2:
-        attn2 = attn
-    else:
-        raise ValueError(f"Attention array must be 2D or 3D; got shape {attn.shape}.")
-    # Replace NaNs/infs
-    attn2 = np.nan_to_num(attn2, nan=0.0, posinf=0.0, neginf=0.0)
-    # Clip small negatives due to numeric noise
-    attn2 = np.clip(attn2, a_min=0.0, a_max=None)
-    # Normalize to [0,1] (robust)
-    maxv = attn2.max()
-    if maxv > 0:
-        attn2 = attn2 / maxv
-    return attn2
+# ==============================================================================
+# Shape alignment & reduction
+# ==============================================================================
 
-
-def _normalize_shap(shap: np.ndarray, mode: str = "zscore") -> np.ndarray:
+def _align_bins(arr: np.ndarray, B: int, name: str) -> np.ndarray:
     """
-    Normalize SHAP values for visualization; keep sign for coloring.
-      mode="zscore": (x - mu) / std
-      mode="maxabs": x / max(|x|)
-      mode="none":   unchanged (but NaNs→0)
+    Truncate/pad last dimension to B bins.
     """
-    shap = shap.astype(float)
-    shap = np.nan_to_num(shap, nan=0.0, posinf=0.0, neginf=0.0)
-    if mode == "zscore":
-        mu = shap.mean()
-        sd = shap.std()
-        if sd > 0:
-            out = (shap - mu) / sd
-        else:
-            out = shap - mu
-    elif mode == "maxabs":
-        denom = np.max(np.abs(shap))
-        out = shap / denom if denom > 0 else shap
-    elif mode == "none":
-        out = shap
-    else:
-        raise ValueError(f"Unknown normalization mode: {mode}")
+    if arr.shape[-1] == B:
+        return arr
+    out = np.zeros(arr.shape[:-1] + (B,), dtype=float)
+    copy = min(B, arr.shape[-1])
+    out[..., :copy] = arr[..., :copy]
     return out
 
 
-def _compute_attention_degree(attn: np.ndarray, symmetrize: bool = True) -> np.ndarray:
+def _prepare_shap(shap: np.ndarray, P: int, B: int) -> np.ndarray:
     """
-    Compute an attention-degree score per channel (row/col sums).
-    If symmetrize=True, do (attn + attn.T) / 2 first.
+    Normalize SHAP to (P, B) non‑negative (absolute) matrix.
+    Accepted shapes: (P,B), (P,I,B), (B,)
+    Reduction: sum of abs across inputs if (P,I,B).
+    Broadcast per‑bin vector to P if (B,).
     """
-    A = attn
-    if symmetrize:
-        A = 0.5 * (A + A.T)
-    # Degree-like measure (sum of connections)
-    deg = A.sum(axis=1)
-    return deg
+    a = np.asarray(shap, dtype=float)
+    if a.ndim == 1:
+        a = a[None, :]              # 1 × B
+        a = np.repeat(a, P, axis=0) # P × B
+    elif a.ndim == 2:
+        # (P,B) expected
+        if a.shape[0] != P and a.shape[1] == P:
+            # possibly (B,P) → transpose
+            a = a.T
+        if a.shape[0] != P:
+            # broadcast if can
+            if a.shape[0] == 1:
+                a = np.repeat(a, P, axis=0)
+            else:
+                raise ValueError(f"SHAP planets P mismatch; got {a.shape}, expected P={P}")
+    elif a.ndim == 3:
+        # (P,I,B) → reduce abs sum on I
+        if a.shape[0] != P:
+            raise ValueError(f"SHAP leading dim != P; got {a.shape}, P={P}")
+        a = np.sum(np.abs(a), axis=1)  # P × B
+    else:
+        raise ValueError(f"Unsupported SHAP shape: {a.shape}")
+    a = _align_bins(a, B, "shap")
+    a = np.abs(a)
+    a = np.nan_to_num(a, nan=0.0, posinf=0.0, neginf=0.0)
+    return a
 
 
-def _safe_mkdir(path: Path):
-    path.mkdir(parents=True, exist_ok=True)
-
-
-def _save_csv_report(path: Path, wavelengths: Optional[np.ndarray], shap: np.ndarray,
-                     shap_norm: np.ndarray, attn_deg: np.ndarray):
+def _prepare_attention(attn: np.ndarray, P: int, B: int) -> np.ndarray:
     """
-    Save a per-channel report as CSV.
+    Normalize attention to (P, B) non‑negative matrix.
+    Accepted shapes: (P,B), (P,H,B), (B,)
+    Reduction: mean across heads if (P,H,B).
+    Broadcast per‑bin vector to P if (B,).
     """
-    N = len(shap)
-    idx = np.arange(N)
-    df = pd.DataFrame({
-        "index": idx,
-        "wavelength": wavelengths if wavelengths is not None else np.repeat(np.nan, N),
-        "shap_value": shap,
-        "shap_abs": np.abs(shap),
-        "shap_norm": shap_norm,
-        "attn_degree": attn_deg
-    })
-    # Rank by |shap|
-    df["shap_abs_rank"] = df["shap_abs"].rank(ascending=False, method="dense").astype(int)
-    df.sort_values("shap_abs_rank", inplace=True)
-    df.to_csv(path, index=False)
+    a = np.asarray(attn, dtype=float)
+    if a.ndim == 1:
+        a = a[None, :]
+        a = np.repeat(a, P, axis=0)
+    elif a.ndim == 2:
+        if a.shape[0] != P and a.shape[1] == P:
+            a = a.T
+        if a.shape[0] != P:
+            if a.shape[0] == 1:
+                a = np.repeat(a, P, axis=0)
+            else:
+                raise ValueError(f"Attention planets P mismatch; got {a.shape}, expected P={P}")
+    elif a.ndim == 3:
+        if a.shape[0] != P:
+            raise ValueError(f"Attention leading dim != P; got {a.shape}, P={P}")
+        a = a.mean(axis=1)  # P × B
+    else:
+        raise ValueError(f"Unsupported attention shape: {a.shape}")
+    a = _align_bins(a, B, "attention")
+    a = np.maximum(a, 0.0)
+    a = np.nan_to_num(a, nan=0.0, posinf=0.0, neginf=0.0)
+    return a
 
 
-def _pretty_title(title: Optional[str], fallback: str) -> str:
-    return title if (title is not None and len(title.strip()) > 0) else fallback
+def _normalize_rows(X: np.ndarray, mode: str, eps: float = 1e-12) -> np.ndarray:
+    """
+    Normalize row‑wise (per planet) according to mode: none|zscore|minmax|l1|l2
+    """
+    if mode == "none":
+        return X
+    X = X.astype(float)
+    if mode == "zscore":
+        m = X.mean(axis=1, keepdims=True)
+        s = X.std(axis=1, keepdims=True) + eps
+        return (X - m) / s
+    if mode == "minmax":
+        lo = X.min(axis=1, keepdims=True)
+        hi = X.max(axis=1, keepdims=True)
+        return (X - lo) / (hi - lo + eps)
+    if mode == "l1":
+        d = np.sum(np.abs(X), axis=1, keepdims=True) + eps
+        return X / d
+    if mode == "l2":
+        d = np.sqrt(np.sum(X * X, axis=1, keepdims=True)) + eps
+        return X / d
+    raise ValueError(f"Unknown normalization mode: {mode}")
 
 
-# ---------- Plotting ----------
+def _rank_normalize_rows(X: np.ndarray, eps: float = 1e-12) -> np.ndarray:
+    """
+    Convert each row to ranks in [0,1] (0=lowest,1=highest), ties handled by average rank.
+    """
+    P, B = X.shape
+    out = np.zeros_like(X, dtype=float)
+    for p in range(P):
+        order = np.argsort(X[p])
+        ranks = np.empty(B, dtype=float)
+        ranks[order] = np.arange(B, dtype=float)
+        out[p] = ranks / max(1.0, B - 1.0)
+    return out
 
-def plot_attention_with_shap(
-    out_png: Path,
-    attn: np.ndarray,
-    shap_norm: np.ndarray,
-    wavelengths: Optional[np.ndarray],
-    title: str,
-    dpi: int = 200,
-    cmap_attn: str = "viridis",
-    cmap_shap: str = "coolwarm",
+
+# ==============================================================================
+# Fusion strategies
+# ==============================================================================
+
+def fuse_scores(
+    shapM: np.ndarray, attnM: np.ndarray,
+    method: str,
+    alpha: float, beta: float,
+    w_shap: float, w_attn: float,
+    use_rank: bool = False
+) -> np.ndarray:
+    """
+    Compute fusion per row (planet) across bins.
+
+    method:
+      • product   : (shap^alpha) * (attn^beta)
+      • wsum      : w_shap * shap + w_attn * attn
+      • geom      : sqrt(shap * attn)
+      • rank-avg  : average of rank‑normalized (or rank if use_rank=True)
+    """
+    S = np.maximum(shapM, 0.0)
+    A = np.maximum(attnM, 0.0)
+
+    if use_rank:
+        S_r = _rank_normalize_rows(S)
+        A_r = _rank_normalize_rows(A)
+        S = S_r
+        A = A_r
+
+    if method == "product":
+        return np.power(S, alpha) * np.power(A, beta)
+    if method == "wsum":
+        return w_shap * S + w_attn * A
+    if method == "geom":
+        return np.sqrt(S * A)
+    if method == "rank-avg":
+        S_r = _rank_normalize_rows(S) if not use_rank else S
+        A_r = _rank_normalize_rows(A) if not use_rank else A
+        return 0.5 * (S_r + A_r)
+    raise ValueError(f"Unknown fusion method: {method}")
+
+
+# ==============================================================================
+# Visualization
+# ==============================================================================
+
+def _save_heatmap(Z: np.ndarray, title: str, out_png: Path, out_html: Path) -> None:
+    """
+    Planet×Bin heatmap. Plotly HTML if available (first‑class), Matplotlib PNG if available, CSV fallback.
+    """
+    _ensure_dir(out_png.parent)
+    if _PLOTLY_OK:
+        fig = go.Figure(data=go.Heatmap(z=Z, colorscale="Viridis", colorbar=dict(title="value")))
+        fig.update_layout(title=title, xaxis_title="bin", yaxis_title="planet index", template="plotly_white")
+        pio.write_html(fig, file=str(out_html), auto_open=False, include_plotlyjs="cdn")
+    if _MPL_OK:
+        plt.figure(figsize=(12, 6))
+        vmax = np.percentile(Z, 99.0) if np.any(np.isfinite(Z)) else 1.0
+        plt.imshow(Z, aspect="auto", interpolation="nearest", cmap="viridis", vmin=0.0, vmax=max(vmax, 1e-12))
+        plt.colorbar(label="value")
+        plt.xlabel("bin")
+        plt.ylabel("planet index")
+        plt.title(title)
+        plt.tight_layout()
+        plt.savefig(out_png, dpi=160)
+        plt.close()
+    if not _PLOTLY_OK and not _MPL_OK:
+        pd.DataFrame(Z).to_csv(out_png.with_suffix(".csv"), index=False)
+
+
+def _save_overlay_mu_fusion(
+    wl: np.ndarray, mu_row: Optional[np.ndarray], shap_row: np.ndarray, attn_row: np.ndarray,
+    fusion_row: np.ndarray, planet_label: str, out_png: Path
 ) -> None:
     """
-    Render a figure: attention heatmap with SHAP importance ribbons on top/left axes.
+    Per‑planet line plot of μ(λ) with shaded fusion band and lines for SHAP/Attention (normalized).
+    Fallback to CSV if Matplotlib unavailable or μ missing.
     """
-    N = attn.shape[0]
-    fig = plt.figure(figsize=(10, 9), constrained_layout=True)
-    gs = fig.add_gridspec(nrows=6, ncols=6)
+    _ensure_dir(out_png.parent)
+    if not _MPL_OK or mu_row is None:
+        df = pd.DataFrame({
+            "wavelength": wl,
+            "mu": mu_row if mu_row is not None else np.zeros_like(wl),
+            "shap": shap_row, "attention": attn_row, "fusion": fusion_row
+        })
+        df.to_csv(out_png.with_suffix(".csv"), index=False)
+        return
 
-    # Top ribbon (SHAP across columns)
-    ax_top = fig.add_subplot(gs[0, 1:6])
-    # Left ribbon (SHAP across rows) – align orientation
-    ax_left = fig.add_subplot(gs[1:6, 0])
-    # Main heatmap
-    ax = fig.add_subplot(gs[1:6, 1:6])
+    # Normalize shap/attn for visualization to [0,1]
+    def mm(v):
+        v = np.asarray(v, dtype=float)
+        lo, hi = np.min(v), np.max(v)
+        return (v - lo) / (hi - lo + 1e-12) if hi > lo else np.zeros_like(v)
 
-    # Main heatmap
-    hm = ax.imshow(attn, interpolation="nearest", aspect="auto", cmap=cmap_attn)
-    cbar = fig.colorbar(hm, ax=ax, fraction=0.046, pad=0.02)
-    cbar.set_label("Attention (normalized)")
+    S = mm(shap_row)
+    A = mm(attn_row)
+    F = mm(fusion_row)
 
-    # X/Y ticks hint (reduce clutter)
-    step = max(1, N // 10)
-    xticks = np.arange(0, N, step)
-    yticks = np.arange(0, N, step)
-    ax.set_xticks(xticks)
-    ax.set_yticks(yticks)
-
-    if wavelengths is not None and wavelengths.shape[0] == N:
-        # Show wavelengths on coarse ticks
-        xlabels = [f"{wavelengths[i]:.3f}" for i in xticks]
-        ylabels = [f"{wavelengths[i]:.3f}" for i in yticks]
-        ax.set_xticklabels(xlabels, rotation=45, ha="right", fontsize=8)
-        ax.set_yticklabels(ylabels, fontsize=8)
-        ax.set_xlabel("Wavelength index (tick labels = μm)")
-        ax.set_ylabel("Wavelength index (tick labels = μm)")
-    else:
-        ax.set_xlabel("Channel")
-        ax.set_ylabel("Channel")
-
-    ax.set_title(title, fontsize=12)
-
-    # Top SHAP ribbon (color = shap_norm; magnitude encoded by color)
-    shap_top = shap_norm.reshape(1, -1)  # (1, N)
-    im_top = ax_top.imshow(shap_top, aspect="auto", cmap=cmap_shap, vmin=-np.max(np.abs(shap_norm)), vmax=np.max(np.abs(shap_norm)))
-    ax_top.set_yticks([])
-    ax_top.set_xticks(xticks)
-    if wavelengths is not None and wavelengths.shape[0] == N:
-        ax_top.set_xticklabels([f"{wavelengths[i]:.3f}" for i in xticks], rotation=45, ha="right", fontsize=8)
-        ax_top.set_title("SHAP (normalized) across channels", fontsize=10)
-    else:
-        ax_top.set_xticklabels(xticks, rotation=45, ha="right", fontsize=8)
-        ax_top.set_title("SHAP (normalized) across channels", fontsize=10)
-
-    # Left SHAP ribbon (vertical)
-    shap_left = shap_norm.reshape(-1, 1)  # (N, 1)
-    im_left = ax_left.imshow(shap_left, aspect="auto", cmap=cmap_shap, vmin=-np.max(np.abs(shap_norm)), vmax=np.max(np.abs(shap_norm)))
-    ax_left.set_xticks([])
-    ax_left.set_yticks(yticks)
-    if wavelengths is not None and wavelengths.shape[0] == N:
-        ax_left.set_yticklabels([f"{wavelengths[i]:.3f}" for i in yticks], fontsize=8)
-    else:
-        ax_left.set_yticklabels(yticks, fontsize=8)
-
-    # Colorbar for SHAP ribbons (shared)
-    cbar2 = fig.colorbar(im_left, ax=[ax_left, ax_top], fraction=0.046, pad=0.02)
-    cbar2.set_label("SHAP (normalized)")
-
-    fig.suptitle("Attention × SHAP Overlay", fontsize=13, y=0.99)
-    fig.savefig(out_png, dpi=dpi)
-    plt.close(fig)
-
-
-def plot_topk_shap_bars(
-    out_png: Path,
-    shap: np.ndarray,
-    wavelengths: Optional[np.ndarray],
-    topk: int = 15,
-    dpi: int = 200,
-    palette: str = "coolwarm"
-) -> None:
-    """
-    Plot the top-K channels by |SHAP| as a horizontal bar chart.
-    """
-    N = len(shap)
-    idx = np.arange(N)
-    df = pd.DataFrame({
-        "index": idx,
-        "wavelength": wavelengths if wavelengths is not None else np.repeat(np.nan, N),
-        "shap_value": shap,
-        "shap_abs": np.abs(shap)
-    })
-    df = df.sort_values("shap_abs", ascending=False).head(topk)
-    df = df.iloc[::-1]  # largest on top
-    labels = [f"{i} | {w:.3f} μm" if not np.isnan(w) else f"{i}" for i, w in zip(df["index"], df["wavelength"])]
-
-    # Color by sign (positive vs negative SHAP)
-    colors = [plt.get_cmap(palette)(0.85) if v >= 0 else plt.get_cmap(palette)(0.15) for v in df["shap_value"]]
-
-    fig, ax = plt.subplots(figsize=(8, max(4, int(topk * 0.35))))
-    ax.barh(labels, df["shap_value"], color=colors)
-    ax.axvline(0.0, color="k", linewidth=1)
-    ax.set_xlabel("SHAP value")
-    ax.set_title(f"Top-{topk} Channels by |SHAP|")
+    plt.figure(figsize=(12, 5))
+    plt.plot(wl, mu_row, lw=2.0, color="#0b5fff", label="μ(λ)")
+    plt.fill_between(wl, mu_row, mu_row + 0.15 * (F - 0.5), color="#22c55e", alpha=0.2, label="Fusion band (scaled)")
+    plt.plot(wl, mu_row + 0.15 * (S - 0.5), lw=1.2, color="#f59e0b", alpha=0.9, label="SHAP (scaled)")
+    plt.plot(wl, mu_row + 0.15 * (A - 0.5), lw=1.2, color="#ef4444", alpha=0.9, label="Attention (scaled)")
+    plt.title(f"μ × Fusion Overlay — {planet_label}")
+    plt.xlabel("wavelength (index or μm)")
+    plt.ylabel("μ (arbitrary scale)")
+    plt.legend(ncol=2, fontsize=9)
+    plt.grid(alpha=0.25)
     plt.tight_layout()
-    fig.savefig(out_png, dpi=dpi)
-    plt.close(fig)
+    plt.savefig(out_png, dpi=160)
+    plt.close()
 
 
-# ---------- CLI ----------
+def _save_distributions(shapM: np.ndarray, attnM: np.ndarray, fusionM: np.ndarray, out_png: Path) -> None:
+    if not _MPL_OK:
+        pd.DataFrame({
+            "shap": shapM.flatten(), "attention": attnM.flatten(), "fusion": fusionM.flatten()
+        }).to_csv(out_png.with_suffix(".csv"), index=False)
+        return
+    _ensure_dir(out_png.parent)
+    plt.figure(figsize=(12, 6))
+    plt.subplot(1, 3, 1); plt.hist(shapM.flatten(), bins=50); plt.title("|SHAP|"); plt.grid(alpha=0.2)
+    plt.subplot(1, 3, 2); plt.hist(attnM.flatten(), bins=50); plt.title("Attention"); plt.grid(alpha=0.2)
+    plt.subplot(1, 3, 3); plt.hist(fusionM.flatten(), bins=50); plt.title("Fusion"); plt.grid(alpha=0.2)
+    plt.tight_layout()
+    plt.savefig(out_png, dpi=160)
+    plt.close()
 
-@app.command()
-def run(
-    attention: Path = typer.Option(..., exists=True, help="Path to attention matrix .npy/.npz/.csv (N×N or H×N×N)."),
-    shap: Path = typer.Option(..., exists=True, help="Path to SHAP vector .npy/.npz/.csv (length N)."),
-    wavelengths: Optional[Path] = typer.Option(None, exists=True, help="Optional wavelengths .npy/.npz/.csv (length N)."),
-    attn_key: Optional[str] = typer.Option(None, help="Optional NPZ key for attention."),
-    shap_key: Optional[str] = typer.Option(None, help="Optional NPZ key for SHAP."),
-    waves_key: Optional[str] = typer.Option(None, help="Optional NPZ key for wavelengths."),
-    normalize: str = typer.Option("zscore", help="SHAP normalization: zscore | maxabs | none"),
-    topk: int = typer.Option(15, min=1, help="Top‑K channels by |SHAP| to show in bar chart."),
-    dpi: int = typer.Option(200, help="Figure DPI."),
-    title: Optional[str] = typer.Option(None, help="Custom title on heatmap."),
-    out_dir: Path = typer.Option(Path("./reports/shap_attention_overlay"), help="Output directory for artifacts."),
-    cmap_attn: str = typer.Option("viridis", help="Matplotlib colormap for attention."),
-    cmap_shap: str = typer.Option("coolwarm", help="Matplotlib colormap for SHAP."),
-    symmetrize: bool = typer.Option(True, help="Symmetrize attention before computing degree."),
-):
-    """
-    Create overlay diagnostics of SHAP attributions and attention matrices and export a CSV report.
-    """
-    console.rule("[bold cyan]SHAP × Attention Overlay")
-    _safe_mkdir(out_dir)
 
-    with console.status("[bold green]Loading inputs..."):
-        attn_arr = _load_vector_or_matrix(attention, key=attn_key)
-        shap_vec = _load_vector_or_matrix(shap, key=shap_key).squeeze()
-        waves = None
-        if wavelengths is not None:
-            waves = _load_vector_or_matrix(wavelengths, key=waves_key).squeeze()
+# ==============================================================================
+# Orchestration
+# ==============================================================================
 
-    # Validate shapes
-    attn2 = _ensure_2d_attention(attn_arr)
-    N = attn2.shape[0]
-    if attn2.shape[0] != attn2.shape[1]:
-        raise ValueError(f"Attention must be square (N×N); got {attn2.shape}.")
-    if shap_vec.ndim != 1:
-        shap_vec = shap_vec.squeeze()
-    if shap_vec.shape[0] != N:
-        raise ValueError(f"SHAP length {shap_vec.shape[0]} != attention size {N}.")
-    if waves is not None and waves.shape[0] != N:
-        raise ValueError(f"Wavelength length {waves.shape[0]} != attention size {N}.")
+@dataclass
+class Config:
+    shap_path: Path
+    attention_path: Path
+    mu_path: Optional[Path]
+    wavelengths_path: Optional[Path]
+    metadata_path: Optional[Path]
+    outdir: Path
+    fusion: str
+    alpha: float
+    beta: float
+    w_shap: float
+    w_attn: float
+    use_rank: bool
+    norm_shap: str
+    norm_attn: str
+    topk: int
+    first_n: int
+    html_name: str
+    open_browser: bool
 
-    # Normalize SHAP (retain sign for color)
-    shap_norm = _normalize_shap(shap_vec, mode=normalize)
 
-    # Compute per-channel attention degree (useful in CSV)
-    attn_degree = _compute_attention_degree(attn2, symmetrize=symmetrize)
+def run(cfg: Config, audit: AuditLogger) -> int:
+    _ensure_dir(cfg.outdir)
 
-    # Prepare outputs
-    base = _pretty_title(title, "Attention×SHAP")
-    fname_base = base.lower().replace(" ", "_").replace("/", "_")
-    heatmap_png = out_dir / f"{fname_base}_heatmap.png"
-    bars_png = out_dir / f"{fname_base}_top{topk}_bars.png"
-    report_csv = out_dir / f"{fname_base}_report.csv"
-    meta_json = out_dir / f"{fname_base}_meta.json"
+    # Load SHAP/Attention
+    shap_raw = _load_array_any(cfg.shap_path)
+    attn_raw = _load_array_any(cfg.attention_path)
 
-    # Plot
-    console.log(f"[bold]N[/bold]={N} • Rendering heatmap → {heatmap_png.name}")
-    plot_attention_with_shap(
-        out_png=heatmap_png,
-        attn=attn2,
-        shap_norm=shap_norm,
-        wavelengths=waves,
-        title=base,
-        dpi=dpi,
-        cmap_attn=cmap_attn,
-        cmap_shap=cmap_shap,
+    # μ optional
+    mu = _load_array_any(cfg.mu_path) if cfg.mu_path else None
+    if mu is not None and mu.ndim == 1:
+        mu = mu[None, :]
+    # Determine P, B robustly
+    P = None
+    B = None
+    for arr in (mu, shap_raw, attn_raw):
+        if arr is None:
+            continue
+        if arr.ndim == 3:
+            P = arr.shape[0] if P is None else P
+            B = arr.shape[-1] if B is None else B
+        elif arr.ndim == 2:
+            P = arr.shape[0] if P is None else P
+            B = arr.shape[1] if B is None else B
+        elif arr.ndim == 1:
+            B = arr.shape[0] if B is None else B
+    if P is None or B is None:
+        raise ValueError("Unable to infer (P,B). Provide at least one of SHAP/ATTN/μ with unambiguous shape.")
+
+    # Align μ to P×B
+    if mu is not None:
+        if mu.shape != (P, B):
+            # truncate/pad
+            out = np.zeros((P, B), dtype=float)
+            copyP = min(P, mu.shape[0])
+            copyB = min(B, mu.shape[1])
+            out[:copyP, :copyB] = mu[:copyP, :copyB]
+            mu = out
+
+    # Wavelengths
+    wl = None
+    if cfg.wavelengths_path:
+        arr = _load_array_any(cfg.wavelengths_path)
+        wl = arr.reshape(-1).astype(float)
+        if wl.shape[0] != B:
+            tmp = np.zeros(B, dtype=float)
+            tmp[:min(B, wl.shape[0])] = wl[:min(B, wl.shape[0])]
+            wl = tmp
+    if wl is None:
+        wl = np.arange(B, dtype=float)
+
+    # Metadata
+    meta_df = _load_metadata_any(cfg.metadata_path, n_planets=P)
+    planet_ids = meta_df["planet_id"].astype(str).tolist()
+
+    # Prepare matrices
+    shapM = _prepare_shap(shap_raw, P, B)          # P×B
+    attnM = _prepare_attention(attn_raw, P, B)     # P×B
+
+    # Row‑wise normalization (optional)
+    shapN = _normalize_rows(shapM, cfg.norm_shap)
+    attnN = _normalize_rows(attnM, cfg.norm_attn)
+
+    # Fusion
+    fusionM = fuse_scores(
+        shapN, attnN,
+        method=cfg.fusion,
+        alpha=cfg.alpha, beta=cfg.beta,
+        w_shap=cfg.w_shap, w_attn=cfg.w_attn,
+        use_rank=cfg.use_rank
     )
+    fusionM = np.nan_to_num(fusionM, nan=0.0, posinf=0.0, neginf=0.0)
 
-    console.log(f"Rendering top‑{topk} SHAP bars → {bars_png.name}")
-    plot_topk_shap_bars(
-        out_png=bars_png,
-        shap=shap_vec,
-        wavelengths=waves,
-        topk=topk,
-        dpi=dpi,
-    )
+    # Long table export
+    rows = []
+    for p in range(P):
+        pid = planet_ids[p] if p < len(planet_ids) else f"planet_{p:04d}"
+        for b in range(B):
+            rows.append({
+                "planet_id": pid,
+                "bin": b,
+                "wavelength": float(wl[b]),
+                "shap": float(shapM[p, b]),
+                "attention": float(attnM[p, b]),
+                "fusion": float(fusionM[p, b]),
+            })
+    long_df = pd.DataFrame(rows)
+    long_csv = cfg.outdir / "shap_attention_fusion.csv"
+    long_df.to_csv(long_csv, index=False)
 
-    # CSV report
-    console.log(f"Saving per‑channel CSV report → {report_csv.name}")
-    _save_csv_report(report_csv, waves, shap_vec, shap_norm, attn_degree)
+    # Per‑planet Top‑K
+    topk_rows = []
+    K = max(1, int(cfg.topk))
+    for p in range(P):
+        pid = planet_ids[p] if p < len(planet_ids) else f"planet_{p:04d}"
+        idx = np.argpartition(-fusionM[p], kth=min(K-1, B-1))[:K]
+        # sort for readability
+        idx = idx[np.argsort(-fusionM[p, idx])]
+        for rank, b in enumerate(idx, 1):
+            topk_rows.append({
+                "planet_id": pid, "rank": rank, "bin": int(b), "wavelength": float(wl[b]),
+                "fusion": float(fusionM[p, b]),
+                "shap": float(shapM[p, b]),
+                "attention": float(attnM[p, b]),
+            })
+    topk_df = pd.DataFrame(topk_rows)
+    topk_csv = cfg.outdir / "topk_bins_per_planet.csv"
+    topk_df.to_csv(topk_csv, index=False)
 
-    # Meta
-    meta = {
-        "attention_path": str(attention),
-        "shap_path": str(shap),
-        "wavelengths_path": str(wavelengths) if wavelengths else None,
-        "normalize": normalize,
-        "symmetrize": symmetrize,
-        "N": int(N),
-        "topk": int(topk),
-        "figures": {
-            "heatmap_png": str(heatmap_png),
-            "topk_bars_png": str(bars_png),
+    # Heatmaps
+    _save_heatmap(fusionM, "Fusion (SHAP×Attention)", cfg.outdir / "heatmap_fusion.png", cfg.outdir / "heatmap_fusion.html")
+    _save_heatmap(shapM,   "|SHAP|",                 cfg.outdir / "heatmap_shap.png",   cfg.outdir / "heatmap_shap.html")
+    _save_heatmap(attnM,   "Attention",              cfg.outdir / "heatmap_attention.png", cfg.outdir / "heatmap_attention.html")
+
+    # Distributions
+    _save_distributions(shapM, attnM, fusionM, cfg.outdir / "overlay_distribution.png")
+
+    # Per‑planet overlays (first N)
+    Nshow = max(0, int(cfg.first_n))
+    for p in range(min(P, Nshow)):
+        pid = planet_ids[p] if p < len(planet_ids) else f"planet_{p:04d}"
+        mu_row = mu[p] if mu is not None else None
+        _save_overlay_mu_fusion(wl, mu_row, shapM[p], attnM[p], fusionM[p], pid, cfg.outdir / f"overlay_planet_{p:04d}.png")
+
+    # Dashboard
+    dashboard_html = cfg.outdir / (cfg.html_name if cfg.html_name.endswith(".html") else "shap_attention_overlay.html")
+    preview = topk_df.head(40).to_html(index=False)
+    quick_links = textwrap.dedent(f"""
+    <ul>
+      <li><a href="{long_csv.name}" target="_blank" rel="noopener">{long_csv.name}</a></li>
+      <li><a href="{topk_csv.name}" target="_blank" rel="noopener">{topk_csv.name}</a></li>
+      <li><a href="heatmap_fusion.html" target="_blank" rel="noopener">heatmap_fusion.html</a> / <a href="heatmap_fusion.png" target="_blank" rel="noopener">PNG</a></li>
+      <li><a href="heatmap_shap.html" target="_blank" rel="noopener">heatmap_shap.html</a> / <a href="heatmap_shap.png" target="_blank" rel="noopener">PNG</a></li>
+      <li><a href="heatmap_attention.html" target="_blank" rel="noopener">heatmap_attention.html</a> / <a href="heatmap_attention.png" target="_blank" rel="noopener">PNG</a></li>
+      <li><a href="overlay_distribution.png" target="_blank" rel="noopener">overlay_distribution.png</a></li>
+    </ul>
+    """).strip()
+
+    html = f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>SpectraMind V50 — SHAP × Attention Overlay</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="light dark" />
+<style>
+  :root {{ --bg:#0b0e14; --fg:#e6edf3; --muted:#9aa4b2; --card:#111827; --border:#2b3240; --brand:#0b5fff; }}
+  body {{ background:var(--bg); color:var(--fg); font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; margin:2rem; line-height:1.5; }}
+  .card {{ background:var(--card); border:1px solid var(--border); border-radius:14px; padding:1rem 1.25rem; margin-bottom:1rem; }}
+  a {{ color:var(--brand); text-decoration:none; }} a:hover {{ text-decoration:underline; }}
+  table {{ border-collapse: collapse; width: 100%; font-size: .95rem; }}
+  th, td {{ border:1px solid var(--border); padding:.4rem .5rem; }} th {{ background:#0f172a; }}
+  .pill {{ display:inline-block; padding:.15rem .6rem; border-radius:999px; background:#0f172a; border:1px solid var(--border); }}
+</style>
+</head>
+<body>
+  <header class="card">
+    <h1>SHAP × Attention Overlay — SpectraMind V50</h1>
+    <div>Generated: <span class="pill">{_now_iso()}</span> • fusion={cfg.fusion} • α={cfg.alpha} β={cfg.beta} • w=({cfg.w_shap},{cfg.w_attn})</div>
+  </header>
+
+  <section class="card">
+    <h2>Quick Links</h2>
+    {quick_links}
+  </section>
+
+  <section class="card">
+    <h2>Preview — Top‑K Bins (first 40 rows)</h2>
+    {preview}
+  </section>
+
+  <footer class="card">
+    <small>© SpectraMind V50 • norm(|SHAP|)={cfg.norm_shap} • norm(attn)={cfg.norm_attn} • rank_mode={"on" if cfg.use_rank else "off"}</small>
+  </footer>
+</body>
+</html>
+"""
+    dashboard_html.write_text(html, encoding="utf-8")
+
+    # Manifest
+    manifest = {
+        "tool": "shap_attention_overlay",
+        "timestamp": _now_iso(),
+        "inputs": {
+            "shap": str(cfg.shap_path),
+            "attention": str(cfg.attention_path),
+            "mu": str(cfg.mu_path) if cfg.mu_path else None,
+            "wavelengths": str(cfg.wavelengths_path) if cfg.wavelengths_path else None,
+            "metadata": str(cfg.metadata_path) if cfg.metadata_path else None,
         },
-        "report_csv": str(report_csv),
-        "colormaps": {"attention": cmap_attn, "shap": cmap_shap},
-        "notes": "Artifacts created for SHAP×Attention overlay diagnostics.",
+        "params": {
+            "fusion": cfg.fusion, "alpha": cfg.alpha, "beta": cfg.beta,
+            "w_shap": cfg.w_shap, "w_attn": cfg.w_attn, "use_rank": cfg.use_rank,
+            "norm_shap": cfg.norm_shap, "norm_attn": cfg.norm_attn,
+            "topk": cfg.topk, "first_n": cfg.first_n,
+        },
+        "shapes": {
+            "P": int(P), "B": int(B)
+        },
+        "outputs": {
+            "long_csv": str(long_csv),
+            "topk_csv": str(topk_csv),
+            "heatmap_fusion_png": str(cfg.outdir / "heatmap_fusion.png"),
+            "heatmap_fusion_html": str(cfg.outdir / "heatmap_fusion.html"),
+            "heatmap_shap_png": str(cfg.outdir / "heatmap_shap.png"),
+            "heatmap_shap_html": str(cfg.outdir / "heatmap_shap.html"),
+            "heatmap_attention_png": str(cfg.outdir / "heatmap_attention.png"),
+            "heatmap_attention_html": str(cfg.outdir / "heatmap_attention.html"),
+            "overlay_distribution_png": str(cfg.outdir / "overlay_distribution.png"),
+            "dashboard_html": str(dashboard_html),
+        }
     }
-    with open(meta_json, "w", encoding="utf-8") as f:
-        json.dump(meta, f, indent=2)
+    with open(cfg.outdir / "shap_attention_overlay_manifest.json", "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2)
+    _update_run_hash_summary(cfg.outdir, manifest)
 
-    # Pretty console summary
-    table = Table(title="Artifacts", box=box.SIMPLE_HEAVY)
-    table.add_column("Type", style="bold")
-    table.add_column("Path")
-    table.add_row("Heatmap", str(heatmap_png))
-    table.add_row("Top‑K Bars", str(bars_png))
-    table.add_row("CSV Report", str(report_csv))
-    table.add_row("Meta JSON", str(meta_json))
-    console.print(table)
+    # Audit success
+    audit.log({
+        "action": "run",
+        "status": "ok",
+        "shap": str(cfg.shap_path),
+        "attention": str(cfg.attention_path),
+        "mu": str(cfg.mu_path) if cfg.mu_path else "",
+        "wavelengths": str(cfg.wavelengths_path) if cfg.wavelengths_path else "",
+        "metadata": str(cfg.metadata_path) if cfg.metadata_path else "",
+        "fusion": cfg.fusion,
+        "norm_shap": cfg.norm_shap,
+        "norm_attn": cfg.norm_attn,
+        "outdir": str(cfg.outdir),
+        "message": f"Computed fusion overlays for P={P}, B={B}; dashboard={dashboard_html.name}",
+    })
 
-    # Final panel
-    console.print(
-        Panel.fit(
-            f"[green]Done![/green]\nSaved artifacts to: [bold]{out_dir}[/bold]\n"
-            f"[dim]Tip: include these diagnostics in your CLI/CI runs for reproducibility.[/dim]",
-            title="SHAP × Attention Overlay",
-            border_style="cyan",
-        )
+    # Optionally open dashboard
+    if cfg.open_browser and dashboard_html.exists():
+        try:
+            import webbrowser
+            webbrowser.open_new_tab(dashboard_html.as_uri())
+        except Exception:
+            pass
+
+    return 0
+
+
+# ==============================================================================
+# CLI
+# ==============================================================================
+
+def build_argparser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="shap_attention_overlay",
+        description="Fuse SHAP and attention to localize influential spectral bins; export heatmaps & overlays."
     )
+    p.add_argument("--shap", type=Path, required=True, help="SHAP array: (P,B) or (P,I,B) or (B,).")
+    p.add_argument("--attention", type=Path, required=True, help="Attention array: (P,B) or (P,H,B) or (B,).")
+    p.add_argument("--mu", type=Path, default=None, help="Optional μ array (P,B) for line overlays.")
+    p.add_argument("--wavelengths", type=Path, default=None, help="Optional wavelengths vector (B,).")
+    p.add_argument("--metadata", type=Path, default=None, help="Optional metadata with 'planet_id' (CSV/JSON/Parquet).")
+    p.add_argument("--outdir", type=Path, required=True, help="Output directory.")
+
+    p.add_argument("--fusion", type=str, default="product", choices=["product", "wsum", "geom", "rank-avg"],
+                   help="Fusion method.")
+    p.add_argument("--alpha", type=float, default=1.0, help="Exponent for SHAP in 'product' fusion.")
+    p.add_argument("--beta", type=float, default=1.0, help="Exponent for Attention in 'product' fusion.")
+    p.add_argument("--w-shap", type=float, default=0.5, help="Weight for SHAP in 'wsum' fusion.")
+    p.add_argument("--w-attn", type=float, default=0.5, help="Weight for Attention in 'wsum' fusion.")
+    p.add_argument("--use-rank", action="store_true", help="Rank‑normalize SHAP/ATTN before fusion.")
+
+    p.add_argument("--norm-shap", type=str, default="none", choices=["none", "zscore", "minmax", "l1", "l2"],
+                   help="Row‑wise normalization for |SHAP|.")
+    p.add_argument("--norm-attn", type=str, default="none", choices=["none", "zscore", "minmax", "l1", "l2"],
+                   help="Row‑wise normalization for attention.")
+
+    p.add_argument("--topk", type=int, default=20, help="Top‑K bins per planet to export.")
+    p.add_argument("--first-n", type=int, default=24, help="Render μ overlays for first N planets (0=skip).")
+
+    p.add_argument("--html-name", type=str, default="shap_attention_overlay.html", help="Dashboard HTML filename.")
+    p.add_argument("--open-browser", action="store_true", help="Open dashboard in default browser.")
+    return p
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    args = build_argparser().parse_args(argv)
+
+    cfg = Config(
+        shap_path=args.shap.resolve(),
+        attention_path=args.attention.resolve(),
+        mu_path=args.mu.resolve() if args.mu else None,
+        wavelengths_path=args.wavelengths.resolve() if args.wavelengths else None,
+        metadata_path=args.metadata.resolve() if args.metadata else None,
+        outdir=args.outdir.resolve(),
+        fusion=str(args.fusion),
+        alpha=float(args.alpha),
+        beta=float(args.beta),
+        w_shap=float(args.w_shap),
+        w_attn=float(args.w_attn),
+        use_rank=bool(args.use_rank),
+        norm_shap=str(args.norm_shap),
+        norm_attn=str(args.norm_attn),
+        topk=int(args.topk),
+        first_n=int(args.first_n),
+        html_name=str(args.html_name),
+        open_browser=bool(args.open_browser),
+    )
+
+    audit = AuditLogger(
+        md_path=Path("logs") / "v50_debug_log.md",
+        jsonl_path=Path("logs") / "v50_runs.jsonl"
+    )
+    audit.log({
+        "action": "start",
+        "status": "running",
+        "shap": str(cfg.shap_path),
+        "attention": str(cfg.attention_path),
+        "mu": str(cfg.mu_path) if cfg.mu_path else "",
+        "wavelengths": str(cfg.wavelengths_path) if cfg.wavelengths_path else "",
+        "metadata": str(cfg.metadata_path) if cfg.metadata_path else "",
+        "fusion": cfg.fusion,
+        "norm_shap": cfg.norm_shap,
+        "norm_attn": cfg.norm_attn,
+        "outdir": str(cfg.outdir),
+        "message": "Starting shap_attention_overlay",
+    })
+
+    try:
+        rc = run(cfg, audit)
+        return rc
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        audit.log({
+            "action": "run",
+            "status": "error",
+            "shap": str(cfg.shap_path),
+            "attention": str(cfg.attention_path),
+            "outdir": str(cfg.outdir),
+            "message": f"{type(e).__name__}: {e}",
+        })
+        return 2
 
 
 if __name__ == "__main__":
-    try:
-        app()
-    except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
-        sys.exit(1)
+    sys.exit(main())
