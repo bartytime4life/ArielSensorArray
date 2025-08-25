@@ -1,80 +1,208 @@
-# assets/gui/README.md
 # SpectraMind V50 — GUI Assets
 
-This folder contains the **visual design assets, style tokens, and GUI-facing configuration** used by the SpectraMind V50 diagnostics dashboard and any optional GUI front‑ends (e.g., React/Electron, Qt). It is **GUI‑agnostic** by design: everything here can be consumed by the CLI‑generated HTML dashboard, a web frontend, or a native desktop shell.
+This folder contains the **visual design assets, style tokens, and GUI-facing configuration** used by the SpectraMind V50 diagnostics dashboard and any optional GUI front-ends (Qt, Electron/React). It is **GUI-agnostic** by design: everything here can be consumed by the CLI-generated HTML dashboard, a web frontend, or a native desktop shell.
 
-> V50 philosophy recap: the **CLI is the source of truth**. GUIs (including the HTML diagnostics dashboard) are **thin, optional layers** on top of the CLI and FastAPI endpoints. All assets in this directory must remain **portable, reproducible, and themeable**.
+> **Principle**: the **CLI is the source of truth**. GUIs (including the HTML diagnostics dashboard) are thin, optional layers on top of the CLI and FastAPI endpoints. All assets here must remain portable, reproducible, and themeable.
 
 ---
 
 ## 📦 Contents
 
 - `color_palette.json` — Design tokens (brand colors, semantic roles, data overlays, UMAP/cluster ramps).
-- `widget_styles.css` — Minimal, framework‑neutral CSS for shared widgets (cards, chips, tables, badges).
-- `icons/` *(recommended)* — SVG/PNG symbols for dashboards (status, warning, success, filters, rules).
-- `images/` *(recommended)* — Diagrams/illustrations used by the HTML dashboard / docs.
+- `widget_styles.css` — Minimal, framework-neutral CSS for shared widgets.
+- `icons/` — SVG/PNG symbols for dashboards (status, warning, success, filters, rules).
+- `images/` — Diagrams/illustrations used by the HTML dashboard / docs.
 - `README.md` — This file.
-- `ARCHITECTURE.md` — Integration diagram and data‑flow between CLI ↔ API ↔ GUI.
-
-> If `icons/` and `images/` do not exist yet, create them when adding the first asset. Keep vector (SVG) as the canonical source; export raster sizes (1x/2x/3x) only as needed.
+- `ARCHITECTURE.md` — GUI ↔ CLI integration diagram.
 
 ---
 
-## 🔌 Where these assets are used
+## 🔌 Usage
 
-- **CLI‑generated HTML dashboard** (e.g., `outputs/diagnostics/report_v*.html`):  
-  Reads `color_palette.json` and `widget_styles.css` to style UMAP/t‑SNE plots, rule tables, FFT/entropy heatmaps, COREL coverage, etc.
-
-- **Web GUI (React/Electron)** *(optional)*:  
-  Imports the same tokens for consistent theming across pages (Diagnostics, Profiles, Symbolic Rules, CLI Log Explorer).
-
-- **Native GUI (Qt/PySide)** *(optional)*:  
-  Loads tokens and applies palette at runtime; CSS variables are mapped to Qt palette/QSS.
-
-> The dashboard/GUI **must not** hard‑code colors or fonts. Consume `color_palette.json` and layer local overrides via CSS variables.
+- **HTML dashboard** (`spectramind diagnose dashboard`): reads `color_palette.json` and `widget_styles.css` to style UMAP/t-SNE plots, symbolic overlays, and tables.
+- **Web GUI (React/Electron)**: imports tokens for consistent theming across pages.
+- **Native GUI (Qt/PySide)**: maps palette values to QSS/Qt themes.
 
 ---
 
 ## 🎨 Theming & Tokens
 
-### `color_palette.json` schema
+### JSON palette example
 
 ```json
 {
-  "$schema": "https://spectramind.dev/schemas/v50/color_palette.schema.json",
-  "meta": {
-    "name": "SpectraMind V50 Default",
-    "version": "1.0.0",
-    "created": "2025-08-24T00:00:00Z"
-  },
   "brand": {
     "primary": "#2151FF",
-    "primary-contrast": "#FFFFFF",
-    "surface": "#0B0F14",
-    "surface-contrast": "#E8EEF7",
-    "muted": "#93A0B5",
     "accent": "#55E6C1",
     "warning": "#FFB020",
     "error": "#FF5D5D",
     "success": "#2ECC71"
   },
-  "data": {
-    "umap": ["#2151FF", "#55E6C1", "#FFB020", "#FF5D5D", "#C886FF", "#50B5FF", "#F56B8D"],
-    "tsne": ["#0D99FF", "#00D5A0", "#FFC857", "#F25F5C", "#A27BFF", "#4DD0E1", "#F78FB3"],
-    "heatmap-low": "#0B1020",
-    "heatmap-mid": "#3C6E71",
-    "heatmap-high": "#FFD166"
-  },
   "semantic": {
+    "surface": "#0B0F14",
+    "surface-contrast": "#E8EEF7",
     "text": "#E8EEF7",
-    "text-muted": "#A7B2C5",
-    "border": "#1E2633",
-    "card": "#111827",
-    "badge": {
-      "info": "#2151FF",
-      "ok": "#2ECC71",
-      "warn": "#FFB020",
-      "fail": "#FF5D5D"
-    }
+    "text-muted": "#A7B2C5"
+  },
+  "data": {
+    "umap": ["#2151FF", "#55E6C1", "#FFB020", "#FF5D5D"],
+    "heatmap-low": "#0B1020",
+    "heatmap-high": "#FFD166"
   }
 }
+
+CSS variable contract
+
+:root {
+  --sm-color-primary: #2151FF;
+  --sm-color-accent: #55E6C1;
+  --sm-color-warning: #FFB020;
+  --sm-color-error: #FF5D5D;
+  --sm-color-success: #2ECC71;
+
+  --sm-surface: #0B0F14;
+  --sm-surface-contrast: #E8EEF7;
+  --sm-text: #E8EEF7;
+  --sm-text-muted: #A7B2C5;
+
+  --sm-heat-low: #0B1020;
+  --sm-heat-high: #FFD166;
+}
+
+
+⸻
+
+♿ Accessibility
+	•	WCAG AA contrast for text.
+	•	Keyboard-navigable components.
+	•	ARIA roles and tooltips.
+	•	Animations respect prefers-reduced-motion.
+
+⸻
+
+🔐 Security
+	•	Static assets only (no inline scripts).
+	•	Hash assets in assets-manifest.json for cache-busting.
+	•	No secrets embedded in GUI assets.
+
+⸻
+
+🧪 Validation
+	•	Run tools/validate_palette.py to check JSON schema + WCAG contrast.
+	•	Lint widget_styles.css (Stylelint).
+	•	Smoke test: poetry run spectramind diagnose dashboard --open.
+
+⸻
+
+🔄 Versioning
+
+Every palette update bumps meta.version in JSON. Dashboard embeds palette version + hash in its footer and logs to logs/v50_debug_log.md.
+
+⸻
+
+❓ FAQ
+
+Q: Can I change the palette per report?
+Yes. Pass --palette path/to/json to spectramind diagnose dashboard.
+
+Q: Dark/light mode?
+Maintain separate JSONs (e.g. color_palette.light.json). The loader hydrates the correct one at runtime.
+
+---
+
+Now here’s the second one — **`assets/gui/ARCHITECTURE.md`** in a separate box:
+
+```markdown
+# GUI Integration Architecture — SpectraMind V50
+
+This document explains how GUI layers (HTML dashboard, React/Electron, or Qt) consume assets from `assets/gui/` and integrate with the CLI-first V50 pipeline.
+
+---
+
+## 🧭 High-level Flow
+
++———————––+
+|   Typer CLI (spectramind)|
++———–+———––+
+|
+v
+Diagnostics & Reports
+|
++——+——+
+|             |
+HTML Dashboard   FastAPI (optional)
+|             |
++— uses assets/gui —+
+|
+┌────────────────────────────┐
+│ Optional GUIs              │
+│  • Web (React/Electron)    │
+│  • Desktop (Qt/PySide)     │
+│  Consume tokens + CSS vars │
+└────────────────────────────┘
+
+---
+
+## 🧱 Layers
+
+1. **CLI (Typer)** — runs diagnostics, writes JSON + PNG + HTML, logs palette version.  
+2. **HTML Report Generator** — hydrates CSS variables from JSON, embeds plots + overlays.  
+3. **FastAPI (optional)** — read-only API for GUIs (`/api/diagnostics/summary`, `/api/assets/palette`).  
+4. **GUI shells** — React/Electron or Qt front-ends, all import same tokens.
+
+---
+
+## 🎛 Token Hydration Example
+
+React:
+
+```ts
+const tokens = await fetch('/assets/gui/color_palette.json').then(r => r.json());
+document.documentElement.style.setProperty('--sm-color-primary', tokens.brand.primary);
+
+Qt (PySide):
+
+palette = load_json("assets/gui/color_palette.json")
+app.setStyleSheet(f":root {{ --sm-color-primary: {palette['brand']['primary']}; }}")
+
+
+⸻
+
+📊 Data Contracts
+	•	diagnostic_summary.json — metrics (GLL, entropy, violations, FFT) + latent coords.
+	•	Images — static PNG/SVG, GUIs may re-render with Plotly/Qt but must follow palette colors.
+
+⸻
+
+🛡 Security
+	•	HTML report = static, no dynamic code.
+	•	FastAPI = read-only, CORS-restricted.
+	•	Electron = disable nodeIntegration, enforce CSP.
+	•	Use only sanitized SVGs for icons.
+
+⸻
+
+⚡ Performance
+	•	Lazy-load heavy scatter plots.
+	•	Cache /assets/gui/* with hash-based filenames.
+	•	WebGL for large point clouds.
+
+⸻
+
+📸 Testing
+	•	Palette validator (schema + WCAG).
+	•	Snapshot tests: render mini dashboard, compare output.
+	•	API contract tests: ensure required keys exist in JSON.
+
+⸻
+
+🔄 Traceability
+
+Every dashboard must log:
+	•	Palette version + hash.
+	•	Config + data hashes.
+	•	Timestamp of generation.
+
+This ensures byte-for-byte reproducibility across GUI and CLI runs.
+
+---
