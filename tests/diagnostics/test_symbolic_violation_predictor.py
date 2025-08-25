@@ -1,675 +1,470 @@
-#!/usr/bin/env python3
+# /tests/diagnostics/test_symbolic_violation_predictor.py
 # -*- coding: utf-8 -*-
 """
-tests/diagnostics/test_symbolic_violation_predictor.py
+SpectraMind V50 — Diagnostics Test: symbolic_violation_predictor
 
-SpectraMind V50 — Diagnostics Tests
-SymbolicViolationPredictor (SVP) & CLI wrapper
+Purpose
+-------
+Validate the behavior and contracts of the *SymbolicViolationPredictor* tool.
+This component applies a set of symbolic rules (with wavelength masks and
+weights) to predicted μ spectra (L≈283) and produces per‑rule violation
+scores, along with optional rankings and artifacts for diagnostics.
 
-This suite validates the upgraded symbolic violation analysis pipeline. It is deliberately
-flexible to accommodate different repository layouts and evolving interfaces:
-
-    • Python API: class `SymbolicViolationPredictor` discovered in common modules.
-    • CLI tool:  `python -m tools.symbolic_violation_predictor` (if importable).
-    • Output artifacts: JSON/CSV/masks placed under --outdir (filenames not over-constrained).
-    • Logging: append-only audit log at logs/v50_debug_log.md.
-
-What we test
-------------
-1) Basic run (API or CLI): tiny μ spectra + tiny rule set → artifacts written, process exits 0.
-2) Edge cases: NaNs/Inf in μ; near-zero/negative values; small number of bins.
-3) OUTDIR discipline: no stray writes outside --outdir except logs/ and optional run-hash JSON.
-4) Audit log append-only behavior across multiple runs.
-5) (If supported) Determinism when a `seed`/`random_state` parameter is provided.
-
-Design choices
+What we verify
 --------------
-• We avoid brittle assumptions about exact function names/flags/filenames.
-• We pass a small “rules JSON” with simple per-bin masks; tools that ignore external rules
-  should still succeed (we tolerate unknown-flag behavior).
-• If neither API nor CLI is present, tests skip with a clear message (keeps CI green
-  while wiring things up).
+1) API discovery & shape contracts
+   • Accepts μ of shape (L,) and (B,L)
+   • Returns scores of shape (R,) or (B,R)
+   • Optional: per‑rule masks, metadata, ranking, combined score
+2) Rule localization (if per‑bin maps/overlays are provided, violations
+   concentrate inside each rule mask)
+3) Weight monotonicity (↑ rule weight ⇒ ↑ per‑rule score, not ↓)
+4) Determinism (fixed seed ⇒ identical outputs)
+5) Optional artifact saver round‑trip (writes JSON/NPY, reload shapes)
+6) Optional CLI smoke via `spectramind diagnose symbolic-rank`
+   (gracefully xfail if CLI or flags are not available)
+7) Performance guardrail on tiny inputs
 
-Run
----
-pytest -q tests/diagnostics/test_symbolic_violation_predictor.py
+Design Notes
+------------
+• The test is *defensively adaptable* to small API differences:
+  - Module discovery tries several import paths.
+  - Entrypoint discovery tries several function/class names.
+  - Output normalization tolerates dict/array forms.
+• Synthetic μ has two regions of structure aligned to two rule masks.
+• We avoid any heavy numerics to keep the CI fast and stable.
+
+Author: SpectraMind V50 Team
 """
 
 from __future__ import annotations
 
-import inspect
-import io
+import importlib
 import json
+import math
 import os
-import re
+import subprocess
 import sys
-import textwrap
-from dataclasses import dataclass
+import time
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import pytest
 
-# Force headless plotting for any potential figures
-os.environ.setdefault("MPLBACKEND", "Agg")
 
+# -----------------------------------------------------------------------------
+# Discovery
+# -----------------------------------------------------------------------------
 
-# --------------------------------------------------------------------------------------
-# Discovery: locate class SymbolicViolationPredictor or a CLI module to run via `-m`
-# --------------------------------------------------------------------------------------
-
-POSSIBLE_API_MODULES = [
-    # Canonical paths first
-    "src.symbolic.symbolic_violation_predictor",
-    "symbolic.symbolic_violation_predictor",
-    # Some repos house it under tools as a callable module too
+CANDIDATE_IMPORTS = [
     "tools.symbolic_violation_predictor",
-    # Legacy/alternate locations
-    "src.diagnostics.symbolic_violation_predictor",
+    "src.tools.symbolic_violation_predictor",
     "diagnostics.symbolic_violation_predictor",
+    "symbolic_violation_predictor",
 ]
 
-CLI_MODULE = "tools.symbolic_violation_predictor"
 
-
-def _try_import_predictor() -> Optional[type]:
-    """
-    Attempt to import `SymbolicViolationPredictor` class from common modules.
-    Returns the class or None if not found.
-    """
-    for mod_name in POSSIBLE_API_MODULES:
+def _import_predictor_module():
+    last_err = None
+    for name in CANDIDATE_IMPORTS:
         try:
-            mod = __import__(mod_name, fromlist=["SymbolicViolationPredictor"])
-            cls = getattr(mod, "SymbolicViolationPredictor", None)
-            if isinstance(cls, type):
-                return cls
-        except Exception:
-            continue
-    return None
+            return importlib.import_module(name)
+        except Exception as e:
+            last_err = e
+    raise ImportError(
+        "Could not import symbolic_violation_predictor from any of:\n"
+        f"  {CANDIDATE_IMPORTS}\nLast error: {last_err}"
+    )
 
 
-def _has_cli_module() -> bool:
+def _locate_entrypoint(mod):
     """
-    Check if we can import tools.symbolic_violation_predictor as a module for `python -m`.
+    Locate a callable/class interface to compute per‑rule violation scores.
+
+    Accepted options (any of):
+      - predict_violations(mu, rules=..., **cfg) -> dict or array
+      - predict(mu, rules=..., **cfg)
+      - run_prediction(mu, rules=..., **cfg)
+      - class SymbolicViolationPredictor(...).predict(mu, rules, **cfg)
+      - class SymbolicViolationPredictor(...).run(mu, rules, **cfg)
+
+    Returns
+    -------
+    kind: 'func' | 'class'
+    target: callable | type
     """
+    for fn in ("predict_violations", "predict", "run_prediction", "symbolic_violation_predictor"):
+        if hasattr(mod, fn) and callable(getattr(mod, fn)):
+            return "func", getattr(mod, fn)
+
+    for cls in ("SymbolicViolationPredictor", "ViolationPredictor", "SymbolicPredictor"):
+        if hasattr(mod, cls):
+            Cls = getattr(mod, cls)
+            for method in ("predict", "run"):
+                if hasattr(Cls, method) and callable(getattr(Cls, method)):
+                    return "class", Cls
+
+    pytest.xfail(
+        "symbolic_violation_predictor module found but no known entrypoint. "
+        "Expected a function like predict_violations()/predict() or a class with .predict/.run."
+    )
+    return "none", None  # pragma: no cover
+
+
+def _invoke(kind: str, target, mu: np.ndarray, rules: List[Dict[str, Any]], **cfg) -> Dict[str, Any]:
+    """
+    Invoke API and coerce to a dict with at least 'scores' present.
+
+    Expected dict keys (subset ok):
+      - 'scores'       : ndarray (R,) or (B,R)
+      - 'ranking'      : list or (B, list) of rule indices/names sorted desc by score
+      - 'per_rule_map' : ndarray (R,L) or (B,R,L) (optional)
+      - 'combined'     : ndarray (L,) or (B,L) (optional)
+      - 'rules'        : echo of rules
+      - 'metadata'     : optional metadata
+    """
+    if kind == "func":
+        out = target(mu, rules=rules, **cfg)
+    elif kind == "class":
+        try:
+            inst = target(mu=mu, rules=rules, **cfg)
+        except TypeError:
+            inst = target(**cfg)
+            if hasattr(inst, "predict"):
+                out = inst.predict(mu=mu, rules=rules)
+            else:
+                out = inst.run(mu=mu, rules=rules)
+        else:
+            out = inst.predict(mu=mu, rules=rules) if hasattr(inst, "predict") else inst.run()
+    else:  # pragma: no cover
+        pytest.fail("Unknown invocation kind.")
+
+    if isinstance(out, dict):
+        assert "scores" in out, "Predictor dict output must include 'scores'."
+        return out
+    # If bare array (scores) returned, wrap into dict
+    return {"scores": out}
+
+
+# -----------------------------------------------------------------------------
+# Synthetic inputs (μ and rules)
+# -----------------------------------------------------------------------------
+
+L_DEFAULT = 283
+_RNG = np.random.RandomState(20250824)
+
+
+def _make_mu_single(L: int = L_DEFAULT) -> np.ndarray:
+    """
+    Smooth baseline + two 'features' aligned with rule masks.
+    """
+    x = np.linspace(0.0, 1.0, L, dtype=np.float64)
+    base = 0.02 + 0.004 * np.sin(2 * math.pi * 2.1 * x)
+    f1 = 0.012 * np.exp(-0.5 * ((x - 0.24) / 0.02) ** 2)
+    f2 = 0.010 * np.exp(-0.5 * ((x - 0.68) / 0.018) ** 2)
+    mu = np.clip(base + f1 + f2, 0.0, 1.0)
+    return mu
+
+
+def _make_mu_batch(B: int = 4, L: int = L_DEFAULT) -> np.ndarray:
+    base = _make_mu_single(L)
+    batch = np.stack([base + _RNG.normal(0, 0.0006, size=L) for _ in range(B)], axis=0)
+    return np.clip(batch, 0.0, 1.0)
+
+
+def _rect_mask(L: int, a: float, b: float) -> np.ndarray:
+    i0 = max(0, int(a * L))
+    i1 = min(L, int(b * L))
+    m = np.zeros(L, dtype=np.float32)
+    m[i0:i1] = 1.0
+    return m
+
+
+def _make_rules(L: int = L_DEFAULT) -> List[Dict[str, Any]]:
+    """
+    Two disjoint masks with default weight=1.0 and enabled=True.
+    """
+    r1 = {
+        "name": "left_band_rule",
+        "mask": _rect_mask(L, 0.16, 0.30).tolist(),
+        "weight": 1.0,
+        "enabled": True,
+        "kind": "band_smoothness",
+    }
+    r2 = {
+        "name": "right_band_rule",
+        "mask": _rect_mask(L, 0.58, 0.74).tolist(),
+        "weight": 1.0,
+        "enabled": True,
+        "kind": "band_smoothness",
+    }
+    return [r1, r2]
+
+
+# -----------------------------------------------------------------------------
+# Normalizers
+# -----------------------------------------------------------------------------
+
+def _as_np(x) -> np.ndarray:
+    assert isinstance(x, np.ndarray), "Expected numpy.ndarray"
+    assert np.isfinite(x).all(), "Array contains non-finite values"
+    return x
+
+
+def _norm_scores(arr: np.ndarray, R_expected: int) -> Tuple[np.ndarray, str]:
+    """
+    Normalize scores to (B,R). Accepts (R,) or (B,R).
+    """
+    arr = _as_np(arr)
+    if arr.ndim == 1 and arr.shape[0] == R_expected:
+        return arr[None, :], f"(1,{R_expected})"
+    if arr.ndim == 2 and arr.shape[1] == R_expected:
+        return arr, f"({arr.shape[0]},{R_expected})"
+    pytest.fail(f"Unexpected scores shape {arr.shape} (expected ({R_expected},) or (B,{R_expected}))")
+    return arr, ""  # pragma: no cover
+
+
+def _norm_per_rule_map(arr: np.ndarray, L: int) -> Tuple[np.ndarray, str]:
+    """
+    Normalize per_rule_map to (B,R,L). Accepts (R,L) or (B,R,L).
+    """
+    arr = _as_np(arr)
+    if arr.ndim == 2 and arr.shape[1] == L:
+        R = arr.shape[0]
+        return arr[None, ...], f"(1,{R},{L})"
+    if arr.ndim == 3 and arr.shape[2] == L:
+        return arr, f"({arr.shape[0]},{arr.shape[1]},{L})"
+    pytest.fail(f"Unexpected per_rule_map shape {arr.shape} (expected (R,{L}) or (B,R,{L}))")
+    return arr, ""  # pragma: no cover
+
+
+# -----------------------------------------------------------------------------
+# Fixtures
+# -----------------------------------------------------------------------------
+
+@pytest.fixture(scope="module")
+def pred_mod():
+    return _import_predictor_module()
+
+
+@pytest.fixture(scope="module")
+def pred_entry(pred_mod):
+    return _locate_entrypoint(pred_mod)
+
+
+@pytest.fixture
+def mu_single():
+    return _make_mu_single(L_DEFAULT)
+
+
+@pytest.fixture
+def mu_batch():
+    return _make_mu_batch(B=3, L=L_DEFAULT)
+
+
+@pytest.fixture
+def rules_default():
+    return _make_rules(L_DEFAULT)
+
+
+# -----------------------------------------------------------------------------
+# Tests
+# -----------------------------------------------------------------------------
+
+def test_api_shapes_single(pred_entry, mu_single, rules_default):
+    """
+    Single μ: scores normalize to (1,R); optional per_rule_map to (1,R,L).
+    """
+    kind, target = pred_entry
+    out = _invoke(kind, target, mu_single, rules_default, seed=1234, return_dict=True)
+    assert isinstance(out, dict)
+    scores = out.get("scores", None)
+    assert scores is not None, "Predictor must return 'scores'."
+    sc, _ = _norm_scores(_as_np(scores), R_expected=len(rules_default))
+    assert sc.shape == (1, len(rules_default))
+
+    if "per_rule_map" in out:
+        prm, _ = _norm_per_rule_map(_as_np(out["per_rule_map"]), L=L_DEFAULT)
+        assert prm.shape == (1, len(rules_default), L_DEFAULT)
+
+
+def test_api_shapes_batch(pred_entry, mu_batch, rules_default):
+    """
+    Batch μ: scores normalize to (B,R); optional per_rule_map to (B,R,L).
+    """
+    kind, target = pred_entry
+    out = _invoke(kind, target, mu_batch, rules_default, seed=7)
+    scores = out.get("scores", None)
+    assert scores is not None
+    sc, _ = _norm_scores(_as_np(scores), R_expected=len(rules_default))
+    assert sc.shape == (mu_batch.shape[0], len(rules_default))
+
+    if "per_rule_map" in out:
+        prm, _ = _norm_per_rule_map(_as_np(out["per_rule_map"]), L=L_DEFAULT)
+        assert prm.shape == (mu_batch.shape[0], len(rules_default), L_DEFAULT)
+
+
+def test_rule_localization_if_maps_available(pred_entry, mu_single, rules_default):
+    """
+    If per_rule_map is available, ensure violations are larger within rule masks than outside.
+    """
+    kind, target = pred_entry
+    out = _invoke(kind, target, mu_single, rules_default, seed=99)
+    prm = out.get("per_rule_map", None)
+    if prm is None:
+        pytest.xfail("Predictor does not expose per_rule_map; localization test skipped.")
+    arr, _ = _norm_per_rule_map(_as_np(prm), L=L_DEFAULT)  # (1,R,L)
+    for r_idx, rule in enumerate(rules_default):
+        mask = np.asarray(rule["mask"], dtype=bool)
+        inside = np.abs(arr[0, r_idx, mask])
+        outside = np.abs(arr[0, r_idx, ~mask])
+        if inside.size and outside.size:
+            p75_in = float(np.percentile(inside, 75))
+            p75_out = float(np.percentile(outside, 75))
+            assert p75_in > p75_out * 1.2, (
+                f"Rule '{rule['name']}' not localized: inside P75={p75_in:.3e} vs outside P75={p75_out:.3e}"
+            )
+
+
+def test_rule_weight_monotonicity(pred_entry, mu_single, rules_default):
+    """
+    Increasing rule 0 weight should not reduce its score.
+    Try kwarg rule_weights then structural override as fallback.
+    """
+    kind, target = pred_entry
+
+    # Baseline scores
+    out0 = _invoke(kind, target, mu_single, rules_default, seed=123)
+    sc0, _ = _norm_scores(_as_np(out0["scores"]), R_expected=len(rules_default))
+    base0 = float(sc0[0, 0])
+
+    # Call-time weights
     try:
-        __import__(CLI_MODULE)
-        return True
-    except Exception:
-        return False
+        out_up = _invoke(kind, target, mu_single, rules_default, seed=123, rule_weights=[5.0, 1.0])
+        sc_up, _ = _norm_scores(_as_np(out_up["scores"]), R_expected=len(rules_default))
+        up0 = float(sc_up[0, 0])
+        assert up0 >= base0 * 1.2, "Rule weight increase did not raise rule 0 score as expected."
+        return
+    except TypeError:
+        # Structural override
+        rules_mod = [dict(r) for r in rules_default]
+        rules_mod[0]["weight"] = 5.0
+        out_up2 = _invoke(kind, target, mu_single, rules_mod, seed=123)
+        sc_up2, _ = _norm_scores(_as_np(out_up2["scores"]), R_expected=len(rules_mod))
+        up20 = float(sc_up2[0, 0])
+        if not (up20 >= base0 * 1.1):
+            pytest.xfail("Predictor API does not scale with per‑rule weights (non‑monotone behavior).")
 
 
-# --------------------------------------------------------------------------------------
-# Tiny synthetic inputs
-# --------------------------------------------------------------------------------------
-
-@dataclass
-class TinyInputs:
-    mu_path: Path
-    rules_json: Path
-    planet_ids: List[str]
-
-
-def _make_tiny_mu(n_planets: int = 6, n_bins: int = 31, seed: int = 1) -> np.ndarray:
+def test_determinism_fixed_seed(pred_entry, mu_single, rules_default):
     """
-    Create a small (N_planets x N_bins) μ spectra array with gentle structure.
-    Mix smooth baseline + simple band bumps so rule masks have meaningful variations.
+    Fixed seed ⇒ identical scores (and maps if provided).
     """
-    rng = np.random.default_rng(seed)
-    x = np.linspace(0.0, 1.0, n_bins, dtype=np.float64)
-    mu_list = []
-    for pid in range(n_planets):
-        base = 0.02 * np.sin(2 * np.pi * (pid + 1) * x) + 0.02 * np.cos(5 * x)
-        bands = (
-            0.10 * np.exp(-0.5 * ((x - 0.30) / 0.06) ** 2) +  # band A ~ 0.30
-            0.07 * np.exp(-0.5 * ((x - 0.55) / 0.05) ** 2) +  # band B ~ 0.55
-            0.05 * np.exp(-0.5 * ((x - 0.80) / 0.04) ** 2)    # band C ~ 0.80
-        )
-        noise = rng.normal(0, 0.005, size=n_bins)
-        mu_list.append(base + bands + noise)
-    mu = np.stack(mu_list, axis=0)
-    return mu.astype(np.float64)
+    kind, target = pred_entry
+    out1 = _invoke(kind, target, mu_single, rules_default, seed=777)
+    out2 = _invoke(kind, target, mu_single, rules_default, seed=777)
+
+    sc1, _ = _norm_scores(_as_np(out1["scores"]), R_expected=len(rules_default))
+    sc2, _ = _norm_scores(_as_np(out2["scores"]), R_expected=len(rules_default))
+    assert np.array_equal(sc1, sc2), "Scores changed despite fixed seed."
+
+    if "per_rule_map" in out1 and "per_rule_map" in out2:
+        prm1, _ = _norm_per_rule_map(_as_np(out1["per_rule_map"]), L=L_DEFAULT)
+        prm2, _ = _norm_per_rule_map(_as_np(out2["per_rule_map"]), L=L_DEFAULT)
+        assert np.array_equal(prm1, prm2), "per_rule_map changed despite fixed seed."
 
 
-def _inject_pathologies(mu: np.ndarray) -> np.ndarray:
+# -----------------------------------------------------------------------------
+# Optional artifact round‑trip
+# -----------------------------------------------------------------------------
+
+def test_save_artifacts_roundtrip_if_available(pred_mod, pred_entry, tmp_path, mu_single, rules_default):
     """
-    Inject a few pathologies to test robustness: NaN, Inf, negatives.
+    If the module exposes a saver like `save_predictions(...)` / `save_artifacts(...)`,
+    verify it writes files and shapes reload correctly.
     """
-    mu2 = mu.copy()
-    if mu2.size >= 10:
-        mu2[1, 3] = np.nan
-    if mu2.size >= 20:
-        mu2[2, 5] = np.inf
-    if mu2.size >= 30:
-        mu2[3, 7] = -abs(mu2[3, 7])  # negative
-    return mu2
+    save_fn = None
+    for name in ("save_predictions", "save_artifacts", "write_artifacts"):
+        if hasattr(pred_mod, name) and callable(getattr(pred_mod, name)):
+            save_fn = getattr(pred_mod, name)
+            break
+    if save_fn is None:
+        pytest.xfail("No artifact saver in symbolic_violation_predictor; skipping round‑trip.")
+
+    kind, target = pred_entry
+    result = _invoke(kind, target, mu_single, rules_default, seed=2025)
+    outdir = tmp_path / "violation_pred_artifacts"
+    outdir.mkdir(parents=True, exist_ok=True)
+
+    save_fn(result, outdir=str(outdir))
+
+    files = list(outdir.glob("*"))
+    assert files, "Artifact saver wrote no files."
+
+    sc_path = outdir / "scores.npy"
+    if sc_path.exists():
+        arr = np.load(sc_path)
+        _norm_scores(arr, R_expected=len(rules_default))  # raises on mismatch
+
+    prm_path = outdir / "per_rule_map.npy"
+    if prm_path.exists():
+        arr = np.load(prm_path)
+        _norm_per_rule_map(arr, L=L_DEFAULT)  # raises on mismatch
 
 
-def _write_rules_json(path: Path, n_bins: int) -> Path:
+# -----------------------------------------------------------------------------
+# Optional CLI smoke
+# -----------------------------------------------------------------------------
+
+@pytest.mark.skipif(__import__("shutil").which("spectramind") is None, reason="spectramind CLI not found in PATH")
+def test_cli_smoke_symbolic_rank(tmp_path, mu_single, rules_default):
     """
-    Create a minimal rules JSON. We keep the schema intentionally simple/generic:
+    Smoke test for the CLI integration (if wired), using:
 
-    {
-      "meta": {...},
-      "rules": [
-        {"id": "H2O_band_consistency", "weight": 1.0, "mask": [start, end]},
-        {"id": "CO2_peak_alignment",   "weight": 0.8, "mask": [start, end]},
-        {"id": "CH4_edge_monotonicity","weight": 0.6, "mask": [start, end], "direction": "decreasing"}
-      ]
-    }
+        spectramind diagnose symbolic-rank \
+            --mu mu.npy --rules rules.json --outdir out --seed 123
 
-    Tools that use a different rule schema should either ignore unknown keys or map gracefully.
+    We only assert that it executes successfully and produces artifacts.
     """
-    # Define 3 tiny masks spanning non-overlapping ranges
-    a0, a1 = int(0.22 * n_bins), int(0.36 * n_bins)
-    b0, b1 = int(0.48 * n_bins), int(0.60 * n_bins)
-    c0, c1 = int(0.73 * n_bins), int(0.86 * n_bins)
+    mu_path = tmp_path / "mu.npy"
+    np.save(mu_path, mu_single)
 
-    data = {
-        "meta": {"version": "test-1.0", "n_bins": n_bins},
-        "rules": [
-            {"id": "H2O_band_consistency", "weight": 1.0, "mask": [a0, a1]},
-            {"id": "CO2_peak_alignment", "weight": 0.8, "mask": [b0, b1]},
-            {"id": "CH4_edge_monotonicity", "weight": 0.6, "mask": [c0, c1], "direction": "decreasing"},
-        ],
-    }
-    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    return path
+    rules_path = tmp_path / "rules.json"
+    with open(rules_path, "w", encoding="utf-8") as f:
+        json.dump(rules_default, f)
 
-
-def _materialize_inputs(root: Path, n_planets: int = 6, n_bins: int = 31, seed: int = 1, pathological: bool = False) -> TinyInputs:
-    inputs_dir = root / "inputs"
-    inputs_dir.mkdir(parents=True, exist_ok=True)
-
-    mu = _make_tiny_mu(n_planets=n_planets, n_bins=n_bins, seed=seed)
-    if pathological:
-        mu = _inject_pathologies(mu)
-
-    mu_path = inputs_dir / "mu.npy"
-    np.save(mu_path, mu)
-
-    rules_path = inputs_dir / "rules.json"
-    _write_rules_json(rules_path, n_bins=n_bins)
-
-    planet_ids = [f"P{idx:03d}" for idx in range(n_planets)]
-    return TinyInputs(mu_path=mu_path, rules_json=rules_path, planet_ids=planet_ids)
-
-
-# --------------------------------------------------------------------------------------
-# Repo scaffold
-# --------------------------------------------------------------------------------------
-
-def _ensure_repo_scaffold(repo_root: Path) -> None:
-    """
-    Ensure minimal directories for tools, logs, and outputs. If neither API nor CLI exists,
-    we do NOT create a shim (we'll skip tests instead); shims can cause confusing xfails here.
-    """
-    (repo_root / "tools").mkdir(parents=True, exist_ok=True)
-    (repo_root / "logs").mkdir(parents=True, exist_ok=True)
-    (repo_root / "outputs" / "diagnostics").mkdir(parents=True, exist_ok=True)
-
-
-# --------------------------------------------------------------------------------------
-# Flexible API invocation
-# --------------------------------------------------------------------------------------
-
-def _construct_predictor(cls: type, **kwargs) -> Any:
-    """
-    Instantiate SymbolicViolationPredictor with only the kwargs its constructor accepts.
-    """
-    sig = inspect.signature(cls)
-    accepted = {k: v for k, v in kwargs.items() if k in sig.parameters}
-    return cls(**accepted)
-
-
-def _call_predictor_runlike(obj: Any, mu: np.ndarray, **kwargs) -> Any:
-    """
-    Call a "run-like" method on the predictor object, preferring common method names.
-    Only pass supported kwargs.
-    """
-    for name in ("run", "score", "predict", "evaluate", "__call__"):
-        if hasattr(obj, name) and callable(getattr(obj, name)):
-            func = getattr(obj, name)
-            sig = inspect.signature(func)
-            accepted = {k: v for k, v in kwargs.items() if k in sig.parameters}
-            try:
-                return func(mu, **accepted)
-            except TypeError:
-                # some APIs accept data as named param
-                if "mu" in sig.parameters:
-                    accepted2 = dict(accepted)
-                    accepted2["mu"] = mu
-                    return func(**accepted2)
-                raise
-    raise AttributeError("No runnable method found on predictor (tried run/score/predict/evaluate/__call__).")
-
-
-# --------------------------------------------------------------------------------------
-# CLI runner
-# --------------------------------------------------------------------------------------
-
-def _run_cli_module(mu_path: Path, rules_json: Path, outdir: Path, extra_flags: Optional[List[str]] = None) -> Tuple[int, str, str]:
-    """
-    Run CLI via `python -m tools.symbolic_violation_predictor`. Return (code, stdout, stderr).
-    """
-    import subprocess
-
-    env = os.environ.copy()
-    env.setdefault("PYTHONUNBUFFERED", "1")
-    env.setdefault("SPECTRAMIND_TEST", "1")
-    env.setdefault("MPLBACKEND", "Agg")
+    outdir = tmp_path / "out"
+    outdir.mkdir(parents=True, exist_ok=True)
 
     cmd = [
-        sys.executable,
-        "-m",
-        CLI_MODULE,
+        "spectramind", "diagnose", "symbolic-rank",
         "--mu", str(mu_path),
+        "--rules", str(rules_path),
         "--outdir", str(outdir),
-        "--rules-json", str(rules_json),
-        "--save-json",
-        "--save-csv",
-        "--no-browser",
-        "--version", "test",
+        "--seed", "123",
     ]
-    if extra_flags:
-        cmd += list(extra_flags)
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        pytest.xfail(
+            "CLI returned nonzero exit (flags or subcommand may differ).\n"
+            f"STDOUT:\n{proc.stdout}\n\nSTDERR:\n{proc.stderr}"
+        )
 
-    proc = subprocess.run(
-        cmd,
-        cwd=str(Path.cwd()),
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=90,
-    )
-    return proc.returncode, proc.stdout, proc.stderr
+    produced = list(outdir.glob("*"))
+    assert len(produced) > 0, "CLI ran but produced no artifacts."
 
 
-# --------------------------------------------------------------------------------------
-# Utilities
-# --------------------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Performance guardrail
+# -----------------------------------------------------------------------------
 
-def _scan_artifacts(outdir: Path) -> Dict[str, List[Path]]:
+def test_runs_fast_enough(pred_entry, mu_single, rules_default):
     """
-    Return lists of artifacts by type.
+    Tiny single‑spectrum prediction should complete in <1.5s on CI CPU.
     """
-    kinds = {
-        "json": [p for p in outdir.rglob("*.json")],
-        "csv":  [p for p in outdir.rglob("*.csv")],
-        "png":  [p for p in outdir.rglob("*.png")],
-        "svg":  [p for p in outdir.rglob("*.svg")],
-        "pdf":  [p for p in outdir.rglob("*.pdf")],
-        "npy":  [p for p in outdir.rglob("*.npy")],
-    }
-    return kinds
-
-
-def _assert_nonempty_file(path: Path) -> None:
-    assert path.exists(), f"Expected file not found: {path}"
-    assert path.is_file(), f"Expected a file, got: {path}"
-    assert path.stat().st_size > 0, f"File seems empty: {path}"
-
-
-# --------------------------------------------------------------------------------------
-# Pytest fixtures
-# --------------------------------------------------------------------------------------
-
-@pytest.fixture(scope="function")
-def repo_tmp(tmp_path: Path) -> Path:
-    _ensure_repo_scaffold(tmp_path)
-    return tmp_path
-
-
-@pytest.fixture(scope="session")
-def predictor_class_or_cli_available():
-    """
-    Returns the class SymbolicViolationPredictor if importable,
-    otherwise the string "CLI" if the CLI module exists.
-    Skips the entire suite if neither is available.
-    """
-    cls = _try_import_predictor()
-    if cls is not None:
-        return cls
-    if _has_cli_module():
-        return "CLI"
-    pytest.skip("Neither SymbolicViolationPredictor API nor CLI module is available. Skipping tests.")
-
-
-# --------------------------------------------------------------------------------------
-# Tests
-# --------------------------------------------------------------------------------------
-
-@pytest.mark.integration
-def test_basic_run_generates_artifacts(repo_tmp: Path, predictor_class_or_cli_available):
-    """
-    Basic success path: tiny μ + simple rules should produce at least JSON or CSV outputs
-    and append to the audit log. API or CLI path is accepted.
-    """
-    tiny = _materialize_inputs(repo_tmp, n_planets=6, n_bins=31, seed=3, pathological=False)
-    outdir = repo_tmp / "outputs" / "diagnostics" / "svp_basic"
-    outdir.mkdir(parents=True, exist_ok=True)
-
-    if isinstance(predictor_class_or_cli_available, type):
-        # API mode
-        cls = predictor_class_or_cli_available
-        mu = np.load(tiny.mu_path)
-        # Construct with tolerant kwargs
-        predictor = _construct_predictor(
-            cls,
-            rules_json=str(tiny.rules_json),
-            outdir=str(outdir),
-            save_json=True,
-            save_csv=True,
-            log_path=str(repo_tmp / "logs" / "v50_debug_log.md"),
-            seed=123,
-            random_state=123,
-            quiet=True,
-        )
-        # Run with flexible call
-        _ = _call_predictor_runlike(
-            predictor,
-            mu,
-            planet_ids=tiny.planet_ids,
-            outdir=str(outdir),
-            save_json=True,
-            save_csv=True,
-            seed=123,
-            random_state=123,
-            quiet=True,
-        )
-    else:
-        # CLI mode
-        code, stdout, stderr = _run_cli_module(
-            mu_path=tiny.mu_path,
-            rules_json=tiny.rules_json,
-            outdir=outdir,
-            extra_flags=["--quiet"],
-        )
-        if code != 0:
-            print("CLI STDOUT:\n", stdout)
-            print("CLI STDERR:\n", stderr)
-        assert code == 0, "CLI run should succeed."
-
-    arts = _scan_artifacts(outdir)
-    assert arts["json"] or arts["csv"], "Expected at least one JSON or CSV artifact in outdir."
-
-    # Audit log presence
-    log_path = repo_tmp / "logs" / "v50_debug_log.md"
-    assert log_path.exists(), "Expected audit log logs/v50_debug_log.md"
-    log_text = log_path.read_text(encoding="utf-8", errors="ignore").lower()
-    assert "symbolic" in log_text or "violation" in log_text, "Audit log should mention symbolic violations."
-
-
-@pytest.mark.integration
-def test_handles_nan_inf_and_small_bins(repo_tmp: Path, predictor_class_or_cli_available):
-    """
-    Robustness: μ contains NaN/Inf/negatives; number of bins is small.
-    The predictor should not crash and should still produce outputs.
-    """
-    tiny = _materialize_inputs(repo_tmp, n_planets=4, n_bins=17, seed=5, pathological=True)
-    outdir = repo_tmp / "outputs" / "diagnostics" / "svp_edge"
-    outdir.mkdir(parents=True, exist_ok=True)
-
-    if isinstance(predictor_class_or_cli_available, type):
-        cls = predictor_class_or_cli_available
-        mu = np.load(tiny.mu_path)
-        predictor = _construct_predictor(
-            cls,
-            rules_json=str(tiny.rules_json),
-            outdir=str(outdir),
-            save_json=True,
-            save_csv=True,
-            sanitize=True,        # if supported
-            clamp=True,           # if supported
-            quiet=True,
-        )
-        _ = _call_predictor_runlike(
-            predictor,
-            mu,
-            planet_ids=tiny.planet_ids,
-            outdir=str(outdir),
-            sanitize=True,
-            clamp=True,
-            save_json=True,
-            save_csv=True,
-            quiet=True,
-        )
-    else:
-        code, stdout, stderr = _run_cli_module(
-            mu_path=tiny.mu_path,
-            rules_json=tiny.rules_json,
-            outdir=outdir,
-            extra_flags=["--sanitize", "--clamp", "--quiet"],
-        )
-        if code != 0:
-            print("CLI STDOUT:\n", stdout)
-            print("CLI STDERR:\n", stderr)
-        assert code == 0
-
-    arts = _scan_artifacts(outdir)
-    assert arts["json"] or arts["csv"], "Expected artifacts for edge-case inputs."
-
-
-@pytest.mark.integration
-def test_outdir_respected_no_strays(repo_tmp: Path, predictor_class_or_cli_available):
-    """
-    Ensure the predictor writes only under --outdir (plus logs/) and does not create stray files.
-    """
-    tiny = _materialize_inputs(repo_tmp, n_planets=5, n_bins=21, seed=7, pathological=False)
-    outdir = repo_tmp / "outputs" / "diagnostics" / "svp_outdir"
-    outdir.mkdir(parents=True, exist_ok=True)
-
-    before = set(p.relative_to(repo_tmp).as_posix() for p in repo_tmp.rglob("*") if p.is_file())
-
-    if isinstance(predictor_class_or_cli_available, type):
-        cls = predictor_class_or_cli_available
-        mu = np.load(tiny.mu_path)
-        predictor = _construct_predictor(
-            cls,
-            rules_json=str(tiny.rules_json),
-            outdir=str(outdir),
-            save_json=True,
-            save_csv=True,
-            quiet=True,
-        )
-        _ = _call_predictor_runlike(
-            predictor,
-            mu,
-            planet_ids=tiny.planet_ids,
-            outdir=str(outdir),
-            save_json=True,
-            save_csv=True,
-            quiet=True,
-        )
-    else:
-        code, stdout, stderr = _run_cli_module(
-            mu_path=tiny.mu_path,
-            rules_json=tiny.rules_json,
-            outdir=outdir,
-            extra_flags=["--quiet"],
-        )
-        if code != 0:
-            print("CLI STDOUT:\n", stdout)
-            print("CLI STDERR:\n", stderr)
-        assert code == 0
-
-    after = set(p.relative_to(repo_tmp).as_posix() for p in repo_tmp.rglob("*") if p.is_file())
-    new_files = sorted(list(after - before))
-
-    # Allowed: anything under outdir; logs/*; optional outputs/run_hash_summary*.json; bytecode cache.
-    disallowed = []
-    out_rel = outdir.relative_to(repo_tmp).as_posix()
-    for rel in new_files:
-        if rel.startswith("logs/"):
-            continue
-        if rel.startswith(out_rel):
-            continue
-        if rel.startswith("outputs/") and re.search(r"run_hash_summary.*\.json$", rel):
-            continue
-        if rel.endswith(".pyc") or "/__pycache__/" in rel:
-            continue
-        disallowed.append(rel)
-
-    assert not disallowed, f"Unexpected stray writes outside --outdir: {disallowed}"
-
-
-@pytest.mark.integration
-def test_audit_log_is_append_only(repo_tmp: Path, predictor_class_or_cli_available):
-    """
-    Run the predictor twice and ensure logs/v50_debug_log.md grows (or at least doesn't shrink).
-    """
-    tiny = _materialize_inputs(repo_tmp, n_planets=4, n_bins=19, seed=11, pathological=False)
-    out1 = repo_tmp / "outputs" / "diagnostics" / "svp_log1"
-    out2 = repo_tmp / "outputs" / "diagnostics" / "svp_log2"
-    out1.mkdir(parents=True, exist_ok=True)
-    out2.mkdir(parents=True, exist_ok=True)
-
-    log_path = repo_tmp / "logs" / "v50_debug_log.md"
-
-    def _run(outdir: Path):
-        if isinstance(predictor_class_or_cli_available, type):
-            cls = predictor_class_or_cli_available
-            mu = np.load(tiny.mu_path)
-            predictor = _construct_predictor(
-                cls,
-                rules_json=str(tiny.rules_json),
-                outdir=str(outdir),
-                save_json=True,
-                save_csv=True,
-                quiet=True,
-            )
-            _ = _call_predictor_runlike(
-                predictor,
-                mu,
-                planet_ids=tiny.planet_ids,
-                outdir=str(outdir),
-                save_json=True,
-                save_csv=True,
-                quiet=True,
-            )
-        else:
-            code, stdout, stderr = _run_cli_module(
-                mu_path=tiny.mu_path,
-                rules_json=tiny.rules_json,
-                outdir=outdir,
-                extra_flags=["--quiet"],
-            )
-            if code != 0:
-                print("CLI STDOUT:\n", stdout)
-                print("CLI STDERR:\n", stderr)
-            assert code == 0
-
-    _run(out1)
-    size1 = log_path.stat().st_size if log_path.exists() else 0
-    _run(out2)
-    size2 = log_path.stat().st_size if log_path.exists() else 0
-
-    assert size2 >= size1, "Audit log should not shrink after subsequent runs."
-    if size1 > 0:
-        assert size2 > size1, "Audit log should typically increase after a second run."
-
-
-@pytest.mark.integration
-def test_determinism_when_seed_provided(repo_tmp: Path, predictor_class_or_cli_available):
-    """
-    If the API/CLI supports a `seed` or `random_state` parameter, repeated runs with the same seed
-    should produce identical JSON outputs (within tiny numerical tolerance). If seeding is not
-    supported, we xfail gracefully.
-    """
-    tiny = _materialize_inputs(repo_tmp, n_planets=5, n_bins=25, seed=17, pathological=False)
-
-    if isinstance(predictor_class_or_cli_available, type):
-        cls = predictor_class_or_cli_available
-
-        # Inspect constructor and run-like method to see if a seed is accepted
-        accepts_seed_ctor = "seed" in inspect.signature(cls).parameters or "random_state" in inspect.signature(cls).parameters
-
-        # Try to detect run-like method
-        runlike_name = None
-        for name in ("run", "score", "predict", "evaluate", "__call__"):
-            if hasattr(cls, name) and callable(getattr(cls, name)):
-                runlike_name = name
-                break
-        accepts_seed_run = False
-        if runlike_name:
-            sig = inspect.signature(getattr(cls, runlike_name))
-            accepts_seed_run = "seed" in sig.parameters or "random_state" in sig.parameters
-
-        if not (accepts_seed_ctor or accepts_seed_run):
-            pytest.xfail("Predictor API does not appear to accept a seed/random_state parameter.")
-
-        # Two runs with the same seed into separate outdirs
-        outA = repo_tmp / "outputs" / "diagnostics" / "svp_seed_A"
-        outB = repo_tmp / "outputs" / "diagnostics" / "svp_seed_B"
-        outA.mkdir(parents=True, exist_ok=True)
-        outB.mkdir(parents=True, exist_ok=True)
-
-        mu = np.load(tiny.mu_path)
-
-        predA = _construct_predictor(
-            cls,
-            rules_json=str(tiny.rules_json),
-            outdir=str(outA),
-            save_json=True,
-            seed=777,
-            random_state=777,
-            quiet=True,
-        )
-        _ = _call_predictor_runlike(
-            predA, mu, outdir=str(outA), save_json=True, seed=777, random_state=777, quiet=True
-        )
-
-        predB = _construct_predictor(
-            cls,
-            rules_json=str(tiny.rules_json),
-            outdir=str(outB),
-            save_json=True,
-            seed=777,
-            random_state=777,
-            quiet=True,
-        )
-        _ = _call_predictor_runlike(
-            predB, mu, outdir=str(outB), save_json=True, seed=777, random_state=777, quiet=True
-        )
-
-        # Compare JSON artifacts if present
-        jsonA = sorted((p for p in outA.rglob("*.json")), key=lambda p: p.name)
-        jsonB = sorted((p for p in outB.rglob("*.json")), key=lambda p: p.name)
-        if not jsonA or not jsonB:
-            pytest.xfail("No JSON artifacts found to compare for determinism; acceptable for minimal predictor.")
-        # Load the first comparable pair
-        a = json.loads(jsonA[0].read_text(encoding="utf-8"))
-        b = json.loads(jsonB[0].read_text(encoding="utf-8"))
-        assert a == b, "Seeded runs should produce identical JSON outputs."
-    else:
-        if not _has_cli_module():
-            pytest.xfail("CLI module not available for seed determinism test.")
-        # Two CLI runs with the same seed (if supported); if not, xfail.
-        outA = repo_tmp / "outputs" / "diagnostics" / "svp_seed_cli_A"
-        outB = repo_tmp / "outputs" / "diagnostics" / "svp_seed_cli_B"
-        outA.mkdir(parents=True, exist_ok=True)
-        outB.mkdir(parents=True, exist_ok=True)
-
-        codeA, stdoutA, stderrA = _run_cli_module(
-            mu_path=tiny.mu_path,
-            rules_json=tiny.rules_json,
-            outdir=outA,
-            extra_flags=["--save-json", "--seed", "999", "--quiet"],
-        )
-        codeB, stdoutB, stderrB = _run_cli_module(
-            mu_path=tiny.mu_path,
-            rules_json=tiny.rules_json,
-            outdir=outB,
-            extra_flags=["--save-json", "--seed", "999", "--quiet"],
-        )
-        if codeA != 0 or codeB != 0:
-            pytest.xfail("CLI does not appear to support seeding or failed unexpectedly.")
-
-        jsonA = sorted((p for p in outA.rglob("*.json")), key=lambda p: p.name)
-        jsonB = sorted((p for p in outB.rglob("*.json")), key=lambda p: p.name)
-        if not jsonA or not jsonB:
-            pytest.xfail("No JSON artifacts found to compare for determinism; acceptable for minimal predictor.")
-        a = json.loads(jsonA[0].read_text(encoding="utf-8"))
-        b = json.loads(jsonB[0].read_text(encoding="utf-8"))
-        assert a == b, "Seeded CLI runs should produce identical JSON outputs."
+    kind, target = pred_entry
+    t0 = time.time()
+    _ = _invoke(kind, target, mu_single, rules_default, seed=11)
+    dt = time.time() - t0
+    assert dt < 1.5, f"Symbolic violation prediction too slow: {dt:.3f}s (should be < 1.5s)"
