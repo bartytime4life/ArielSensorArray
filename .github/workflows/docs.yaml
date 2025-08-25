@@ -1,8 +1,9 @@
 # .github/workflows/docs.yml
 # ==============================================================================
 # SpectraMind V50 — Docs (MkDocs Material) • build, validate, and deploy to Pages
-# - Fast & reproducible: pip cache, pinned Python
-# - Validates build (--strict), checks links (lychee), optional Mermaid diagrams
+# - Reproducible: pinned Python, pip cache, strict build, deterministic plugins
+# - Robust validation: internal links (fail) + external links (soft, retried)
+# - Optional Mermaid pre-render (npm), uploads site artifact on all runs
 # - Deploys to GitHub Pages on main; PRs build + validate only
 # ==============================================================================
 
@@ -10,11 +11,22 @@ name: docs
 
 on:
   push:
-    branches: ["main"]
+    branches: [ "main" ]
+    paths-ignore:
+      - "**/*.ipynb_checkpoints/**"
+      - ".github/ISSUE_TEMPLATE/**"
+      - ".github/FUNDING.yml"
+      - ".github/CODEOWNERS"
   pull_request:
-    branches: ["**"]
+    branches: [ "**" ]
+    paths-ignore:
+      - "**/*.ipynb_checkpoints/**"
+      - ".github/ISSUE_TEMPLATE/**"
+      - ".github/FUNDING.yml"
+      - ".github/CODEOWNERS"
   workflow_dispatch: {}
 
+# Minimal global permissions; jobs elevate only what they need
 permissions:
   contents: read
   pages: write
@@ -24,15 +36,21 @@ concurrency:
   group: docs-${{ github.ref }}
   cancel-in-progress: true
 
+defaults:
+  run:
+    # Fail fast & echo commands for easier troubleshooting
+    shell: bash -euxo pipefail
+
 jobs:
   build:
     name: Build & Validate Docs
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
 
     env:
       PYTHONUNBUFFERED: "1"
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      PIP_NO_PYTHON_VERSION_WARNING: "1"
       PY: "3.12"
       SITE_DIR: "site"
 
@@ -40,62 +58,89 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Python ${{ env.PY }}
+      - name: Set up Python ${{ env.PY }}
         id: setup-python
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PY }}
           cache: "pip"
 
-      - name: Install MkDocs & plugins
+      - name: Cache pip download directory
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: docs-pip-${{ runner.os }}-py${{ env.PY }}-${{ hashFiles('requirements-docs.txt', 'mkdocs.yml') }}
+          restore-keys: |
+            docs-pip-${{ runner.os }}-py${{ env.PY }}-
+
+      - name: Install MkDocs + plugins (pin if no requirements-docs.txt)
         run: |
           python -m pip install --upgrade pip
-          if [ -f requirements-docs.txt ]; then
+          if [[ -f requirements-docs.txt ]]; then
             pip install -r requirements-docs.txt
           else
+            # Pinned, widely compatible versions for reproducible builds
             pip install \
-              mkdocs \
-              mkdocs-material \
-              mkdocs-awesome-pages-plugin \
-              mkdocs-git-revision-date-localized-plugin \
-              mkdocs-section-index \
-              mkdocs-glightbox \
-              mkdocs-mermaid2-plugin \
-              mkdocs-minify-plugin \
-              mkdocs-redirects \
-              mkdocs-include-markdown-plugin
+              "mkdocs==1.6.1" \
+              "mkdocs-material==9.5.34" \
+              "mkdocs-awesome-pages-plugin==2.9.2" \
+              "mkdocs-git-revision-date-localized-plugin==1.2.6" \
+              "mkdocs-section-index==0.3.9" \
+              "mkdocs-glightbox==0.4.0" \
+              "mkdocs-mermaid2-plugin==1.2.1" \
+              "mkdocs-minify-plugin==0.8.0" \
+              "mkdocs-redirects==1.2.1" \
+              "mkdocs-include-markdown-plugin==6.2.2"
           fi
+          mkdocs --version
 
-      - name: Optional Mermaid diagrams (npm)
+      - name: Optional Mermaid pre-render (npm)
         run: |
-          if command -v npm >/dev/null 2>&1 && [ -f package.json ]; then
-            echo ">>> Rendering Mermaid diagrams via npm"
+          if command -v npm >/dev/null 2>&1 && [[ -f package.json ]]; then
+            echo ">>> Rendering Mermaid diagrams via npm (optional)"
             make node-ci || true
             make node-diagrams || true
           else
             echo "Skipping node/mermaid (npm or package.json not found)"
           fi
 
+      - name: Validate mkdocs.yml presence
+        run: |
+          test -f mkdocs.yml || (echo "::error::mkdocs.yml not found at repo root."; exit 1)
+
       - name: Build site (strict)
         run: |
-          if [ ! -f mkdocs.yml ]; then
-            echo "::error::mkdocs.yml not found at repo root."
-            exit 1
-          fi
           mkdocs build --strict --site-dir "${SITE_DIR}"
 
-      - name: Link check (lychee)
-        id: lychee
+      # --- Link checking passes/fails ----------------------------------------
+      # 1) Internal links (offline) must pass → fail build on errors
+      - name: Check internal links (offline)
         uses: lycheeverse/lychee-action@v1
         with:
-          # Check built site + Markdown sources (fast skip known noisy hosts)
           args: >-
-            --accept 200,206,429
+            --offline
+            --require-https
+            --verbose
+            "${{ env.SITE_DIR }}/**/*.html"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # 2) External links: allow transient failures; report but do not fail CI
+      - name: Check external links (best-effort)
+        id: lychee_external
+        uses: lycheeverse/lychee-action@v1
+        with:
+          args: >-
+            --accept 200,206,301,302,403,429
             --max-cache-age 1d
+            --retry-wait-time 3
+            --max-retries 2
+            --user-agent "Mozilla/5.0 (CI link checker)"
             --exclude "https://fonts.gstatic.com"
             --exclude "https://fonts.googleapis.com"
             --exclude "mailto:*"
             --exclude "tel:*"
+            --exclude "*.example.com"
             --verbose
             "${{ env.SITE_DIR }}/**/*.html"
             docs/**/*.md
@@ -105,9 +150,9 @@ jobs:
 
       - name: Summarize
         run: |
-          echo "MkDocs site built to: $SITE_DIR"
-          echo "Lychee status: ${{ steps.lychee.outcome }}"
-          echo "Tip: Review lychee reports in the job logs for any transient 429s."
+          echo "MkDocs site built to: ${SITE_DIR}"
+          echo "External link check outcome: ${{ steps.lychee_external.outcome }}"
+          echo "Tip: Review lychee logs above for transient 429/403s."
 
       - name: Upload Pages artifact (only main)
         if: github.ref == 'refs/heads/main'
