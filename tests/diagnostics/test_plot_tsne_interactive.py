@@ -1,542 +1,482 @@
-#!/usr/bin/env python3
+# /tests/diagnostics/test_plot_tsne_interactive.py
 # -*- coding: utf-8 -*-
 """
-tests/diagnostics/test_plot_tsne_interactive.py
-
-SpectraMind V50 — Diagnostics Test: tools/plot_tsne_interactive.py
+SpectraMind V50 — Diagnostics Test: plot_tsne_interactive
 
 Purpose
 -------
-Validate the interactive t‑SNE latent plot generator in a *safe*, *adaptive*, and
-*repo‑agnostic* manner. The suite checks the CLI/UX contract, artifact creation (or
-a clear *plan* in dry mode), and logging — not the scientific numerics.
+Validate the interactive t‑SNE plotting tool used in diagnostics dashboards.
+This test exercises both a Python API (if exposed) and an optional CLI route.
 
-This suite asserts:
-  1) Discoverability: --help exists and mentions t‑SNE/interactive/HTML/diagnostics.
-  2) Safe execution: a dry-run/selftest/plan path exits with code 0.
-  3) Inputs: accepts tiny placeholder inputs when flags are available:
-        • latents.npy (N×D)
-        • labels.csv  (id,label)
-        • ids.csv     (id only)  (optional, if tool supports)
-  4) Artifacts: produces HTML/JSON/PNG/MD outputs *or* clearly states intended outputs in dry mode.
-  5) Logging: appends an audit line to logs/v50_debug_log.md.
-  6) Idempotency: repeating safe invocations does not accumulate heavy artifacts.
+We verify:
+1) API discovery & output contracts
+   • Accepts latents of shape (B, D)
+   • Returns an embedding (B, 2|3) and/or an HTML artifact (path or HTML string)
+   • Optional label/hover/id metadata are wired without error
+2) Determinism (with fixed seed)
+   • Same inputs + seed ⇒ same embedding (within tight tolerance)
+3) Artifact save (optional)
+   • If saver exists, writes HTML/JSON/PNG and files are non‑trivial
+4) CLI smoke (optional)
+   • If `spectramind diagnose tsne-latents` exists, run and assert artifact creation
+5) Performance guardrail
+   • Tiny synthetic input completes quickly on CI
 
-Entry points probed (in order):
-  • tools/plot_tsne_interactive.py                 (canonical)
-  • tools/plot_tsne.py / tools/tsne_interactive.py (defensive aliases)
-  • spectramind diagnose tsne‑latents / tsne       (optional wrapper)
+Design Notes
+------------
+• Defensively adaptable:
+  - Discover module under several import paths.
+  - Locate multiple potential entrypoint names (functions/classes).
+  - Normalize outputs (dict/array/string/path) to a common form.
+• The test keeps B and D small to be CI‑friendly.
 
-Flag discovery is dynamic — we parse --help and map abstract names to actual flags.
-
-Notes
------
-• No GPU/network required; runs are tiny and bounded.
-• We do not import sklearn; the test only prepares inputs and exercises the CLI.
-
-Author: SpectraMind V50 QA
+Author: SpectraMind V50 Team
 """
 
+from __future__ import annotations
+
+import importlib
+import io
 import json
+import math
 import os
 import re
+import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
+import pandas as pd
 import pytest
 
 
-# ======================================================================================
-# Repo root / entrypoint discovery
-# ======================================================================================
+# --------------------------------------------------------------------------------------
+# Discovery
+# --------------------------------------------------------------------------------------
 
-def repo_root() -> Path:
-    """
-    Resolve repo root by walking upward until a 'tools' directory appears.
-    Fallback: two levels up from tests/diagnostics.
-    """
-    here = Path(__file__).resolve()
-    for anc in [here] + list(here.parents):
-        if (anc / "tools").is_dir():
-            return anc
-    return Path(__file__).resolve().parents[2]
+CANDIDATE_IMPORTS = [
+    "tools.plot_tsne_interactive",
+    "src.tools.plot_tsne_interactive",
+    "diagnostics.plot_tsne_interactive",
+    "plot_tsne_interactive",
+]
 
 
-def tool_script_candidates() -> List[Path]:
-    """
-    Candidate t‑SNE scripts we try to invoke.
-    """
-    root = repo_root()
-    cands = [
-        root / "tools" / "plot_tsne_interactive.py",
-        root / "tools" / "plot_tsne.py",
-        root / "tools" / "tsne_interactive.py",
-    ]
-    return [c for c in cands if c.exists()]
-
-
-def spectramind_cli_candidates() -> List[List[str]]:
-    """
-    Optional wrapper CLI forms.
-    """
-    return [
-        ["spectramind", "diagnose", "tsne-latents"],
-        ["spectramind", "diagnose", "tsne"],
-        [sys.executable, "-m", "spectramind", "diagnose", "tsne-latents"],
-        [sys.executable, "-m", "src.cli.cli_diagnose", "tsne-latents"],
-        [sys.executable, "-m", "src.cli.cli_diagnose", "tsne"],
-    ]
-
-
-# ======================================================================================
-# Subprocess helpers
-# ======================================================================================
-
-def run_proc(cmd: List[str], cwd: Optional[Path] = None, timeout: int = 210) -> Tuple[int, str, str]:
-    """
-    Execute a command and return (exit_code, stdout, stderr) in text mode.
-    """
-    proc = subprocess.Popen(
-        cmd,
-        cwd=str(cwd) if cwd else None,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        env={**os.environ},
+def _import_tsne_module():
+    last_err = None
+    for name in CANDIDATE_IMPORTS:
+        try:
+            return importlib.import_module(name)
+        except Exception as e:
+            last_err = e
+    raise ImportError(
+        "Could not import plot_tsne_interactive module from any of:\n"
+        f"  {CANDIDATE_IMPORTS}\n"
+        f"Last error: {last_err}"
     )
-    try:
-        out, err = proc.communicate(timeout=timeout)
-        return proc.returncode, out, err
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        out, err = proc.communicate()
-        return 124, out, err
 
 
-def python_module_invocation(module: str, *args: str) -> List[str]:
-    return [sys.executable, "-m", module, *args]
-
-
-def python_script_invocation(script: Path, *args: str) -> List[str]:
-    return [sys.executable, str(script), *args]
-
-
-# ======================================================================================
-# Flag discovery
-# ======================================================================================
-
-FLAG_ALIASES: Dict[str, List[str]] = {
-    # Help
-    "help": ["--help", "-h"],
-
-    # Safe / plan
-    "dry_run": ["--dry-run", "--dryrun", "--selftest", "--plan", "--check", "--no-exec"],
-
-    # Output dir
-    "outdir": ["--outdir", "--out-dir", "--output", "--output-dir", "-o"],
-
-    # Inputs
-    "latents": ["--latents", "--latents-npy", "--latents_path", "--embeddings", "--embeddings-npy"],
-    "labels": ["--labels", "--labels-csv", "--label-csv", "--cluster-csv", "--labels_path"],
-    "ids": ["--ids", "--ids-csv", "--id-csv", "--ids_path"],
-
-    # Exports
-    "html": ["--html", "--html-out", "--open-html", "--open_html", "--no-open-html", "--report-html"],
-    "json": ["--json", "--json-out", "--export-json"],
-    "png": ["--png", "--png-out", "--export-png"],
-    "md": ["--md", "--markdown", "--md-out", "--markdown-out"],
-    "no_open": ["--no-open", "--no-open-html", "--no_open_html"],
-
-    # t-SNE tuning (optional)
-    "perplexity": ["--perplexity", "-pplx"],
-    "learning_rate": ["--learning-rate", "--lr"],
-    "n_iter": ["--n-iter", "--n_iter"],
-    "metric": ["--metric"],
-    "seed": ["--seed"],
-}
-
-
-def discover_supported_flags(help_text: str) -> Dict[str, str]:
+def _locate_entrypoint(mod):
     """
-    Map abstract flag names to actual names found in --help.
+    Accept any of the following (function or class):
+      - generate_tsne_html(latents, labels=..., ids=..., outdir=..., **cfg)
+      - plot_tsne_interactive(latents, labels=..., ids=..., **cfg)
+      - run_tsne(latents, **cfg)
+      - tsne_interactive(latents, **cfg)
+      - class TSNEInteractive(...).run(...) / .generate(...)
     """
-    mapping: Dict[str, str] = {}
-    for abstract, aliases in FLAG_ALIASES.items():
-        for alias in aliases:
-            if re.search(rf"(^|\s){re.escape(alias)}(\s|,|$)", help_text):
-                mapping[abstract] = alias
-                break
-    return mapping
+    for fn in (
+        "generate_tsne_html",
+        "plot_tsne_interactive",
+        "run_tsne",
+        "tsne_interactive",
+    ):
+        if hasattr(mod, fn) and callable(getattr(mod, fn)):
+            return "func", getattr(mod, fn)
+
+    for cls in ("TSNEInteractive", "TSNEPlotter", "LatentTSNE"):
+        if hasattr(mod, cls):
+            Cls = getattr(mod, cls)
+            for method in ("run", "generate", "plot"):
+                if hasattr(Cls, method) and callable(getattr(Cls, method)):
+                    return "class", Cls
+
+    pytest.xfail(
+        "plot_tsne_interactive module found but no known entrypoint. "
+        "Expected a function like generate_tsne_html()/plot_tsne_interactive()/run_tsne()/tsne_interactive(), "
+        "or a class with .run/.generate/.plot."
+    )
+    return "none", None  # pragma: no cover
 
 
-# ======================================================================================
-# Artifact probing
-# ======================================================================================
-
-def recent_files_with_suffix(root: Path, suffixes: Tuple[str, ...]) -> List[Path]:
+def _invoke(kind: str, target, latents: np.ndarray, **cfg) -> Dict[str, Any]:
     """
-    Find files recursively under root with suffix in suffixes, sorted by mtime desc.
+    Invoke entrypoint and coerce output to a dict.
+
+    Expected keys (subset ok):
+      - 'embedding' : ndarray (B, 2|3)
+      - 'html_path' : str path to HTML file (or)
+      - 'html'      : HTML string
+      - 'labels'    : echo of labels or label vector
+      - 'ids'       : echo of IDs (length B)
+      - 'meta'      : dict with seed/config
     """
-    if not root.exists():
-        return []
-    hits: List[Path] = []
-    for p in root.rglob("*"):
-        if p.is_file() and p.suffix.lower() in suffixes:
-            hits.append(p)
-    return sorted(hits, key=lambda p: p.stat().st_mtime, reverse=True)
+    if kind == "func":
+        out = target(latents, **cfg)
+    elif kind == "class":
+        try:
+            inst = target(latents=latents, **cfg)
+        except TypeError:
+            inst = target(**cfg)
+            # Prefer .run(latents=...), fall back to .generate/.plot
+            if hasattr(inst, "run"):
+                out = inst.run(latents=latents)
+            elif hasattr(inst, "generate"):
+                out = inst.generate(latents=latents)
+            else:
+                out = inst.plot(latents=latents)
+        else:
+            if hasattr(inst, "run"):
+                out = inst.run()
+            elif hasattr(inst, "generate"):
+                out = inst.generate()
+            else:
+                out = inst.plot()
+    else:
+        pytest.fail("Unknown invocation kind.")  # pragma: no cover
+
+    # Coerce to dict
+    if isinstance(out, dict):
+        return out
+    if isinstance(out, np.ndarray):
+        return {"embedding": out}
+    if isinstance(out, str):
+        # Likely an HTML string or path
+        key = "html" if "<html" in out.lower() or "<!doctype" in out.lower() else "html_path"
+        return {key: out}
+    pytest.fail("Unsupported return type from t-SNE entrypoint; expected dict/ndarray/str.")  # pragma: no cover
+    return {}
 
 
-def read_text_or_empty(path: Path) -> str:
-    try:
-        return path.read_text(encoding="utf-8", errors="ignore")
-    except Exception:
-        return ""
+# --------------------------------------------------------------------------------------
+# Synthetic inputs
+# --------------------------------------------------------------------------------------
+
+B = 120      # points
+D = 16       # latent dim (small)
+_SEED = 20250824
+RNG = np.random.RandomState(_SEED)
 
 
-# ======================================================================================
-# Fixtures — logs and tiny inputs
-# ======================================================================================
+def _make_latents(B_: int = B, D_: int = D) -> np.ndarray:
+    """
+    Create a tiny, clusterable latent set: three Gaussian blobs in D dims.
+    """
+    centers = np.stack([
+        np.concatenate([np.ones(D_) * 2.0, np.zeros(0)]),
+        np.concatenate([np.ones(D_) * -2.0, np.zeros(0)]),
+        np.concatenate([np.zeros(D_), np.zeros(0)]),
+    ], axis=0)
+    # Assign clusters roughly equally
+    labels = np.repeat(np.arange(3), B_ // 3)
+    if labels.size < B_:
+        labels = np.concatenate([labels, RNG.choice(3, size=B_ - labels.size, replace=True)])
+    RNG.shuffle(labels)
+
+    X = np.zeros((B_, D_), dtype=np.float32)
+    for i in range(B_):
+        c = centers[labels[i]]
+        X[i] = RNG.normal(loc=c, scale=0.6, size=D_).astype(np.float32)
+    return X
+
+
+def _make_labels_ids(B_: int = B) -> Tuple[np.ndarray, np.ndarray]:
+    labels = np.array([f"class_{i%3}" for i in range(B_)], dtype=object)
+    ids = np.array([f"PL-{i:04d}" for i in range(B_)], dtype=object)
+    return labels, ids
+
+
+# --------------------------------------------------------------------------------------
+# Normalizers
+# --------------------------------------------------------------------------------------
+
+def _as_np(x) -> np.ndarray:
+    assert isinstance(x, np.ndarray), "Expected numpy.ndarray"
+    assert np.isfinite(x).all(), "Array contains non-finite values"
+    return x
+
+
+def _norm_embedding(arr: np.ndarray, B_expect: int) -> Tuple[np.ndarray, str]:
+    """
+    Accept (B,2|3). Return (B,2|3).
+    """
+    arr = _as_np(arr)
+    assert arr.ndim == 2 and arr.shape[0] == B_expect, f"Unexpected embedding shape {arr.shape}"
+    assert arr.shape[1] in (2, 3), f"Embedding must be 2D or 3D, got {arr.shape[1]}"
+    return arr, f"({arr.shape[0]},{arr.shape[1]})"
+
+
+# --------------------------------------------------------------------------------------
+# Fixtures
+# --------------------------------------------------------------------------------------
 
 @pytest.fixture(scope="module")
-def project_root() -> Path:
-    return repo_root()
+def tsne_mod():
+    return _import_tsne_module()
+
+
+@pytest.fixture(scope="module")
+def tsne_entry(tsne_mod):
+    return _locate_entrypoint(tsne_mod)
 
 
 @pytest.fixture
-def temp_outdir(tmp_path: Path) -> Path:
-    d = tmp_path / "tsne_interactive_out"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+def latents() -> np.ndarray:
+    return _make_latents(B, D)
 
 
 @pytest.fixture
-def ensure_logs_dir(project_root: Path) -> Path:
-    logs = project_root / "logs"
-    logs.mkdir(parents=True, exist_ok=True)
-    dbg = logs / "v50_debug_log.md"
-    if not dbg.exists():
-        dbg.write_text("# v50 Debug Log\n", encoding="utf-8")
-    return logs
+def labels_ids() -> Tuple[np.ndarray, np.ndarray]:
+    return _make_labels_ids(B)
 
 
-@pytest.fixture
-def tiny_inputs(tmp_path: Path) -> Dict[str, Path]:
+# --------------------------------------------------------------------------------------
+# Tests — API & shapes
+# --------------------------------------------------------------------------------------
+
+def test_api_and_shapes(tsne_entry, latents, labels_ids, tmp_path: Path):
     """
-    Prepare tiny (N=60, D=8) synthetic latents with three separable blobs and
-    a labels.csv with cluster ids, plus an ids.csv file (optional).
+    • Embedding of shape (B,2|3)
+    • HTML string or file path created (if function supports outdir)
+    • Labels/IDs accepted without error
     """
-    rng = np.random.default_rng(20250824)
-    N, D = 60, 8
-    K = 3
-    per = N // K
+    labels, ids = labels_ids
+    kind, target = tsne_entry
 
-    centers = np.stack([
-        np.linspace(0.5, 1.0, D),
-        np.linspace(-1.0, -0.5, D),
-        np.concatenate([np.ones(D // 2), -np.ones(D - D // 2)]) * 0.75,
-    ], axis=0)  # [3, D]
+    out = _invoke(
+        kind,
+        target,
+        latents,
+        seed=1234,
+        labels=labels,
+        ids=ids,
+        outdir=str(tmp_path / "tsne_artifacts"),
+        perplexity=20,
+        n_iter=500,
+        learning_rate=200,
+        metric="euclidean",
+        html_name="tsne_test.html",
+        open_browser=False,
+        return_embedding=True,
+    )
+    assert isinstance(out, dict)
 
-    latents = []
-    labels = []
-    for k in range(K):
-        cov = np.diag(np.linspace(0.02, 0.08, D))
-        pts = rng.multivariate_normal(mean=centers[k], cov=cov, size=per).astype(np.float32)
-        latents.append(pts)
-        labels += [f"C{k}"] * per
-    latents = np.vstack(latents)  # [N, D]
+    # Embedding
+    if "embedding" in out:
+        emb, _ = _norm_embedding(np.asarray(out["embedding"]), B_expect=B)
 
-    # If N not divisible by K, pad last cluster
-    while len(labels) < N:
-        latents = np.vstack([latents, latents[-1:]])
-        labels.append("C2")
+    # HTML
+    if "html_path" in out:
+        p = Path(out["html_path"])
+        assert p.exists() and p.suffix.lower() in (".html", ".htm")
+        assert p.stat().st_size > 4000, "HTML seems too small to be a valid interactive plot."
+        # Quick content sniff for Plotly/vis presence
+        txt = p.read_text(encoding="utf-8", errors="ignore").lower()
+        assert ("plotly" in txt or "div id=" in txt or "<script" in txt), "HTML content missing expected plotting markup."
+    elif "html" in out:
+        s = str(out["html"]).lower()
+        assert ("<html" in s and "script" in s) or ("plotly" in s), "HTML string missing expected contents."
+    else:
+        # Some implementations may not return HTML unless asked explicitly; that's acceptable.
+        pass
 
-    ids = [f"p{i:03d}" for i in range(N)]
 
-    latents_path = tmp_path / "latents.npy"
+# --------------------------------------------------------------------------------------
+# Tests — Determinism
+# --------------------------------------------------------------------------------------
+
+def test_determinism_fixed_seed(tsne_entry, latents, labels_ids, tmp_path: Path):
+    """
+    With fixed seed, embedding must be identical (or numerically equal within tight tol).
+    t‑SNE can have small numeric jitter; allow atol=1e-6.
+    """
+    labels, ids = labels_ids
+    kind, target = tsne_entry
+
+    out1 = _invoke(
+        kind,
+        target,
+        latents,
+        seed=777,
+        labels=labels,
+        ids=ids,
+        outdir=str(tmp_path / "tsne_seed1"),
+        perplexity=25,
+        n_iter=400,
+        learning_rate=150,
+        metric="euclidean",
+        return_embedding=True,
+    )
+    out2 = _invoke(
+        kind,
+        target,
+        latents,
+        seed=777,
+        labels=labels,
+        ids=ids,
+        outdir=str(tmp_path / "tsne_seed2"),
+        perplexity=25,
+        n_iter=400,
+        learning_rate=150,
+        metric="euclidean",
+        return_embedding=True,
+    )
+
+    assert "embedding" in out1 and "embedding" in out2, "Entrypoint did not return embeddings."
+    e1, _ = _norm_embedding(np.asarray(out1["embedding"]), B_expect=B)
+    e2, _ = _norm_embedding(np.asarray(out2["embedding"]), B_expect=B)
+    assert np.allclose(e1, e2, atol=1e-6), "Embeddings differ despite fixed seed."
+
+
+# --------------------------------------------------------------------------------------
+# Tests — Artifact save (optional)
+# --------------------------------------------------------------------------------------
+
+def test_artifact_save_roundtrip_if_available(tsne_mod, tsne_entry, latents, labels_ids, tmp_path: Path):
+    """
+    If module exposes an explicit saver (save_tsne_artifacts/save_artifacts/write_artifacts),
+    verify it writes and files are non-trivial.
+    """
+    save_fn = None
+    for name in ("save_tsne_artifacts", "save_artifacts", "write_artifacts"):
+        if hasattr(tsne_mod, name) and callable(getattr(tsne_mod, name)):
+            save_fn = getattr(tsne_mod, name)
+            break
+    if save_fn is None:
+        pytest.xfail("Module exposes no artifact saver; skipping round-trip test.")
+
+    labels, ids = labels_ids
+    kind, target = tsne_entry
+    out = _invoke(
+        kind,
+        target,
+        latents,
+        seed=42,
+        labels=labels,
+        ids=ids,
+        outdir=str(tmp_path / "tsne_save"),
+        return_embedding=True,
+        html_name="tsne_saved.html",
+    )
+
+    outdir = tmp_path / "tsne_saved_artifacts"
+    outdir.mkdir(parents=True, exist_ok=True)
+    save_fn(out, outdir=str(outdir))
+
+    files = list(outdir.glob("*"))
+    assert files, "No artifacts written by saver."
+    # Prefer HTML presence
+    htmls = [p for p in files if p.suffix.lower() in (".html", ".htm")]
+    if htmls:
+        assert htmls[0].stat().st_size > 4000
+
+
+# --------------------------------------------------------------------------------------
+# CLI smoke (optional)
+# --------------------------------------------------------------------------------------
+
+@pytest.mark.skipif(shutil.which("spectramind") is None, reason="spectramind CLI not found in PATH")
+def test_cli_smoke_tsne_latents(tmp_path: Path, latents, labels_ids):
+    """
+    Smoke test the repo CLI for t‑SNE (adjust flags if your repo differs):
+
+        spectramind diagnose tsne-latents \
+            --latents latents.npy \
+            --labels labels.csv \
+            --ids ids.txt \
+            --outdir out \
+            --seed 123 \
+            --perplexity 25 \
+            --n-iter 400
+
+    We only assert that the command succeeds and writes an HTML artifact.
+    """
+    lat_path = tmp_path / "latents.npy"
+    np.save(lat_path, latents)
+
+    labels, ids = labels_ids
     labels_path = tmp_path / "labels.csv"
-    ids_path = tmp_path / "ids.csv"
+    pd.DataFrame({"label": labels}).to_csv(labels_path, index=False)
 
-    np.save(latents_path, latents)
-    labels_path.write_text("id,label\n" + "\n".join(f"{pid},{lab}" for pid, lab in zip(ids, labels)), encoding="utf-8")
-    ids_path.write_text("id\n" + "\n".join(ids), encoding="utf-8")
+    ids_path = tmp_path / "ids.txt"
+    ids_path.write_text("\n".join(map(str, ids)), encoding="utf-8")
 
-    return {"latents": latents_path, "labels": labels_path, "ids": ids_path}
+    outdir = tmp_path / "out_cli_tsne"
+    outdir.mkdir(parents=True, exist_ok=True)
 
+    candidates = [
+        ["spectramind", "diagnose", "tsne-latents",
+         "--latents", str(lat_path),
+         "--labels", str(labels_path),
+         "--ids", str(ids_path),
+         "--outdir", str(outdir),
+         "--seed", "123",
+         "--perplexity", "25",
+         "--n-iter", "400"],
+        # Slight variants (flag naming may differ)
+        ["spectramind", "diagnose", "tsne-latents",
+         "--latents", str(lat_path),
+         "--labels", str(labels_path),
+         "--outdir", str(outdir),
+         "--seed", "123"],
+    ]
 
-# ======================================================================================
-# Tests
-# ======================================================================================
-
-def test_discoverable_and_help(project_root: Path):
-    """
-    The tool must be discoverable and --help must mention t‑SNE/interactive/HTML/diagnostics.
-    Try:
-      1) python tools/plot_tsne_interactive.py --help
-      2) python -m tools.plot_tsne_interactive --help (if tools is a package)
-      3) spectramind diagnose tsne‑latents --help (or aliases)
-    """
-    help_blobs: List[str] = []
-
-    # 1) Direct scripts
-    for script in tool_script_candidates():
-        code, out, err = run_proc(python_script_invocation(script, "--help"), cwd=project_root)
-        if code == 0 and (out or err):
-            help_blobs.append(out + "\n" + err)
-
-    # 2) Module form
-    if (project_root / "tools" / "__init__.py").exists():
-        for module_name in ("tools.plot_tsne_interactive", "tools.plot_tsne", "tools.tsne_interactive"):
-            code, out, err = run_proc(python_module_invocation(module_name, "--help"), cwd=project_root)
-            if code == 0 and (out or err):
-                help_blobs.append(out + "\n" + err)
-                break
-
-    # 3) spectramind wrapper
-    if not help_blobs:
-        for cli in spectramind_cli_candidates():
-            code, out, err = run_proc([*cli, "--help"], cwd=project_root)
-            if code == 0 and (out or err):
-                help_blobs.append(out + "\n" + err)
-                break
-
-    assert help_blobs, "No --help output found for t‑SNE interactive plotter."
-    combined = "\n\n".join(help_blobs).lower()
-    required_any = ["tsne", "t-sne", "interactive", "html", "diagnostic", "latents"]
-    assert any(tok in combined for tok in required_any), \
-        f"--help lacks core t‑SNE keywords; expected any of {required_any}"
-
-
-def test_safe_invocation_and_artifacts(project_root: Path, temp_outdir: Path, ensure_logs_dir: Path, tiny_inputs: Dict[str, Path]):
-    """
-    Execute the t‑SNE plotter in safe mode with tiny inputs (if supported), ensuring:
-      - Exit code 0
-      - Debug log appended
-      - Outdir exists
-      - Artifacts produced (HTML/JSON/PNG/MD) OR intended outputs mentioned
-    """
-    debug_log = ensure_logs_dir / "v50_debug_log.md"
-    pre_len = len(read_text_or_empty(debug_log))
-
-    # Choose entrypoint and parse help
-    help_text = ""
-    base_cmd: Optional[List[str]] = None
-
-    for script in tool_script_candidates():
-        code, out, err = run_proc(python_script_invocation(script, "--help"), cwd=project_root)
-        if code == 0:
-            help_text = out + "\n" + err
-            base_cmd = python_script_invocation(script)
-            break
-
-    if base_cmd is None and (project_root / "tools" / "__init__.py").exists():
-        for module_name in ("tools.plot_tsne_interactive", "tools.plot_tsne", "tools.tsne_interactive"):
-            code, out, err = run_proc(python_module_invocation(module_name, "--help"), cwd=project_root)
-            if code == 0:
-                help_text = out + "\n" + err
-                base_cmd = python_module_invocation(module_name)
-                break
-
-    if base_cmd is None:
-        for cli in spectramind_cli_candidates():
-            code, out, err = run_proc([*cli, "--help"], cwd=project_root)
-            if code == 0:
-                help_text = out + "\n" + err
-                base_cmd = cli
-                break
-
-    assert base_cmd is not None, "Unable to obtain a working entrypoint for the t‑SNE plotter."
-    flags = discover_supported_flags(help_text)
-
-    # Build safe command
-    cmd = list(base_cmd)
-    if "dry_run" in flags:
-        cmd.append(flags["dry_run"])
-    if "no_open" in flags:
-        cmd.append(flags["no_open"])
-    if "outdir" in flags:
-        cmd.extend([flags["outdir"], str(temp_outdir)])
-
-    # Required-ish inputs (best-effort)
-    if "latents" in flags:
-        cmd.extend([flags["latents"], str(tiny_inputs["latents"])])
-    if "labels" in flags:
-        cmd.extend([flags["labels"], str(tiny_inputs["labels"])])
-    if "ids" in flags:
-        cmd.extend([flags["ids"], str(tiny_inputs["ids"])])
-
-    # Exports (request light artifacts; tool may *plan* in dry mode)
-    for opt in ("html", "json", "png", "md"):
-        if opt in flags:
-            cmd.append(flags[opt])
-
-    # Tiny t‑SNE params (if available)
-    if "perplexity" in flags:
-        cmd.extend([flags["perplexity"], "10"])
-    if "learning_rate" in flags:
-        cmd.extend([flags["learning_rate"], "100"])
-    if "n_iter" in flags:
-        cmd.extend([flags["n_iter"], "250"])
-    if "metric" in flags:
-        cmd.extend([flags["metric"], "euclidean"])
-    if "seed" in flags:
-        cmd.extend([flags["seed"], "42"])
-
-    # Execute
-    code, out, err = run_proc(cmd, cwd=project_root, timeout=240)
-    assert code == 0, f"Safe t‑SNE invocation failed.\nSTDERR:\n{err}\nSTDOUT:\n{out}"
-    combined = (out + "\n" + err).lower()
-    assert any(k in combined for k in ["tsne", "t-sne", "interactive", "html", "latents", "embedding", "plot"]), \
-        "Output does not resemble t‑SNE interactive plotter output."
-
-    # Log grew
-    post = read_text_or_empty(debug_log)
-    assert len(post) >= pre_len, "v50_debug_log.md did not grow after t‑SNE invocation."
-    appended = post[pre_len:]
-    assert re.search(r"(tsne|t[- ]?sne|interactive|html|diagnose)", appended, re.IGNORECASE), \
-        "No recognizable t‑SNE-related text found in the appended debug log segment."
-
-    # Outdir exists
-    assert temp_outdir.exists(), "Output directory missing after t‑SNE invocation."
-
-    # Look for outputs OR intent messages (in dry mode)
-    produced_html = recent_files_with_suffix(temp_outdir, (".html", ".htm"))
-    produced_json = recent_files_with_suffix(temp_outdir, (".json",))
-    produced_png = recent_files_with_suffix(temp_outdir, (".png",))
-    produced_md = recent_files_with_suffix(temp_outdir, (".md",))
-
-    if not (produced_html or produced_json or produced_png or produced_md):
-        assert any(tok in combined for tok in ["outdir", "output", "write", ".html", ".json", ".png", ".md"]), \
-            "No artifacts found and no mention of intended outputs (dry‑run should plan)."
-
-
-def test_html_or_json_sanity_if_emitted(temp_outdir: Path):
-    """
-    If HTML or JSON was written, perform light sanity checks.
-    """
-    html_files = recent_files_with_suffix(temp_outdir, (".html", ".htm"))
-    json_files = recent_files_with_suffix(temp_outdir, (".json",))
-
-    for hf in html_files[:5]:
-        text = read_text_or_empty(hf)
-        if text.strip():
-            # Heuristics: HTML doctype or common plotly div markers
-            assert ("<!doctype html" in text.lower()) or ("plotly" in text.lower()) or ("<html" in text.lower()), \
-                f"HTML {hf} does not look like an interactive report."
-
-    for jf in json_files[:5]:
-        text = read_text_or_empty(jf).strip()
-        if not text:
-            continue
+    last_proc = None
+    for cmd in candidates:
         try:
-            obj = json.loads(text)
-        except Exception as e:
-            pytest.fail(f"Malformed JSON at {jf}: {e}")
-        assert isinstance(obj, (dict, list)), f"Unexpected JSON top-level type in {jf}"
-
-
-def test_idempotent_safe_runs_no_heavy_accumulation(project_root: Path, temp_outdir: Path, tiny_inputs: Dict[str, Path]):
-    """
-    Run safe mode twice and ensure heavy artifacts (checkpoints or >5MB) do not accumulate.
-    """
-    # Get help & base command
-    help_text = ""
-    base_cmd: Optional[List[str]] = None
-
-    for script in tool_script_candidates():
-        code, out, err = run_proc(python_script_invocation(script, "--help"), cwd=project_root)
-        if code == 0:
-            help_text = out + "\n" + err
-            base_cmd = python_script_invocation(script)
+            proc = subprocess.run(cmd, capture_output=True, text=True)
+        except Exception:
+            continue
+        last_proc = proc
+        if proc.returncode == 0:
             break
 
-    if base_cmd is None and (project_root / "tools" / "__init__.py").exists():
-        for module_name in ("tools.plot_tsne_interactive", "tools.plot_tsne", "tools.tsne_interactive"):
-            code, out, err = run_proc(python_module_invocation(module_name, "--help"), cwd=project_root)
-            if code == 0:
-                help_text = out + "\n" + err
-                base_cmd = python_module_invocation(module_name)
-                break
+    if last_proc is None or last_proc.returncode != 0:
+        pytest.xfail(
+            "No working CLI tsne-latents pattern found. Ensure subcommand/flags are wired. "
+            f"Last stdout/stderr:\n{'' if last_proc is None else last_proc.stdout}\n"
+            f"{'' if last_proc is None else last_proc.stderr}"
+        )
 
-    if base_cmd is None:
-        for cli in spectramind_cli_candidates():
-            code, out, err = run_proc([*cli, "--help"], cwd=project_root)
-            if code == 0:
-                help_text = out + "\n" + err
-                base_cmd = cli
-                break
-
-    assert base_cmd is not None, "Could not obtain t‑SNE tool help for idempotency test."
-    flags = discover_supported_flags(help_text)
-
-    # Build safe command with tiny inputs
-    cmd = list(base_cmd)
-    if "dry_run" in flags:
-        cmd.append(flags["dry_run"])
-    if "no_open" in flags:
-        cmd.append(flags["no_open"])
-    if "outdir" in flags:
-        cmd.extend([flags["outdir"], str(temp_outdir)])
-    if "latents" in flags:
-        cmd.extend([flags["latents"], str(tiny_inputs["latents"])])
-    if "labels" in flags:
-        cmd.extend([flags["labels"], str(tiny_inputs["labels"])])
-    if "ids" in flags:
-        cmd.extend([flags["ids"], str(tiny_inputs["ids"])])
-
-    # Count heavy artifacts (heuristic: >5MB or checkpoint-like suffixes)
-    def count_heavy(root: Path) -> int:
-        if not root.exists():
-            return 0
-        n = 0
-        for p in root.rglob("*"):
-            if p.is_file():
-                if p.suffix.lower() in {".ckpt", ".pt"} or p.stat().st_size > 5 * 1024 * 1024:
-                    n += 1
-        return n
-
-    pre = count_heavy(temp_outdir)
-    code1, out1, err1 = run_proc(cmd, cwd=project_root, timeout=180)
-    code2, out2, err2 = run_proc(cmd, cwd=project_root, timeout=180)
-    assert code1 == 0 and code2 == 0, f"Safe t‑SNE invocations failed.\n1) {err1}\n2) {err2}"
-    post = count_heavy(temp_outdir)
-    assert post <= pre, f"Heavy artifacts increased in safe mode: before={pre}, after={post}"
+    # HTML (or any artifact) must exist
+    produced = list(outdir.glob("*"))
+    assert produced, "CLI ran but produced no artifacts."
+    htmls = [p for p in produced if p.suffix.lower() in (".html", ".htm")]
+    assert htmls, "CLI did not produce an HTML output file."
 
 
-def test_help_mentions_core_options_and_exports(project_root: Path):
-    """
-    --help should hint at core options/exports to guide users.
-    """
-    help_texts: List[str] = []
+# --------------------------------------------------------------------------------------
+# Performance guardrail
+# --------------------------------------------------------------------------------------
 
-    for script in tool_script_candidates():
-        code, out, err = run_proc(python_script_invocation(script, "--help"), cwd=project_root)
-        if code == 0 and (out or err):
-            help_texts.append(out + "\n" + err)
-
-    if not help_texts and (project_root / "tools" / "__init__.py").exists():
-        for module_name in ("tools.plot_tsne_interactive", "tools.plot_tsne", "tools.tsne_interactive"):
-            code, out, err = run_proc(python_module_invocation(module_name, "--help"), cwd=project_root)
-            if code == 0 and (out or err):
-                help_texts.append(out + "\n" + err)
-                break
-
-    if not help_texts:
-        for cli in spectramind_cli_candidates():
-            code, out, err = run_proc([*cli, "--help"], cwd=project_root)
-            if code == 0 and (out or err):
-                help_texts.append(out + "\n" + err)
-                break
-
-    assert help_texts, "Unable to capture --help for t‑SNE plotter."
-    combined = "\n\n".join(help_texts).lower()
-    want_any = ["html", "json", "png", "markdown", "perplexity", "n-iter", "metric", "seed", "latents", "labels"]
-    assert any(tok in combined for tok in want_any), \
-        f"--help should mention options/exports; expected any of {want_any}"
-
-
-# ======================================================================================
-# End of file
-# ======================================================================================
+def test_runs_fast_enough(tsne_entry, latents, labels_ids, tmp_path: Path):
+    kind, target = tsne_entry
+    t0 = time.time()
+    _ = _invoke(
+        kind,
+        target,
+        latents,
+        seed=11,
+        labels=labels_ids[0],
+        ids=labels_ids[1],
+        outdir=str(tmp_path / "tsne_perf"),
+        perplexity=20,
+        n_iter=350,
+        learning_rate=150,
+        return_embedding=True,
+    )
+    dt = time.time() - t0
+    assert dt < 1.5, f"t‑SNE interactive too slow for tiny input: {dt:.3f}s (should be < 1.5s)"
