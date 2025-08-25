@@ -1,0 +1,117 @@
+name: Funding Links Guard
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - ".github/FUNDING.yml"
+      - ".github/workflows/FUNDING.yml"
+  pull_request:
+    paths:
+      - ".github/FUNDING.yml"
+      - ".github/workflows/FUNDING.yml"
+  schedule:
+    - cron: "0 9 1 * *"  # Monthly, 09:00 America/Chicago
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Allowed custom funding domains (comma-separated). Add/remove to fit your org.
+  ALLOWLIST_CUSTOM_DOMAINS: "buymeacoffee.com,opencollective.com,github.com,patreon.com,ko-fi.com,thanks.dev,gitpoap.io"
+  # Minimum number of funding entries required across all keys (>=1 recommended)
+  MIN_REQUIRED_ENTRIES: "1"
+
+jobs:
+  validate-funding:
+    name: Validate .github/FUNDING.yml
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (shallow)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Ensure funding file exists
+        id: exists
+        run: |
+          if [ ! -f ".github/FUNDING.yml" ] && [ ! -f ".github/FUNDING.yaml" ]; then
+            echo "❌ Missing .github/FUNDING.yml"
+            exit 1
+          fi
+          echo "FUNDING_FILE=$( [ -f .github/FUNDING.yml ] && echo .github/FUNDING.yml || echo .github/FUNDING.yaml )" >> "$GITHUB_OUTPUT"
+
+      - name: Parse & validate funding entries
+        id: validate
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const yaml = require('js-yaml');
+
+            const fundingPath = process.env.FUNDING_FILE || '.github/FUNDING.yml';
+            const raw = fs.readFileSync(fundingPath, 'utf8');
+
+            let doc;
+            try {
+              doc = yaml.load(raw) || {};
+            } catch (e) {
+              core.setFailed(`❌ Invalid YAML in ${fundingPath}: ${e.message}`);
+              return;
+            }
+
+            // Supported keys per GitHub docs + 'custom'
+            const supportedKeys = new Set([
+              'github', 'patreon', 'open_collective', 'ko_fi', 'tidelift',
+              'community_bridge', 'liberapay', 'issuehunt', 'otechie',
+              'lfx_crowdfunding', 'polar', 'thanks_dev', 'buy_me_a_coffee', 'custom'
+            ]);
+
+            // Confirm only supported keys are used
+            const keys = Object.keys(doc);
+            const unknown = keys.filter(k => !supportedKeys.has(k));
+            if (unknown.length) {
+              core.setFailed(`❌ Unknown keys in ${fundingPath}: ${unknown.join(', ')}`);
+              return;
+            }
+
+            // Normalize entries to arrays for counting
+            const toArr = v => Array.isArray(v) ? v : (v ? [v] : []);
+            let count = 0;
+            for (const k of keys) count += toArr(doc[k]).length;
+
+            const minRequired = parseInt(process.env.MIN_REQUIRED_ENTRIES || '1', 10);
+            if (count < minRequired) {
+              core.setFailed(`❌ Not enough funding entries (found ${count}, require >= ${minRequired}).`);
+              return;
+            }
+
+            // Validate custom URLs against allowlist
+            const customs = toArr(doc.custom || []);
+            const allowlist = (process.env.ALLOWLIST_CUSTOM_DOMAINS || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+            const bad = [];
+            for (const u of customs) {
+              try {
+                const url = new URL(u);
+                const host = url.hostname.replace(/^www\./, '').toLowerCase();
+                if (!allowlist.some(ok => host === ok || host.endsWith(`.${ok}`))) {
+                  bad.push(u);
+                }
+              } catch {
+                bad.push(u);
+              }
+            }
+            if (bad.length) {
+              core.setFailed(`❌ Disallowed or invalid custom funding URL(s): ${bad.join(', ')}`);
+              return;
+            }
+
+            core.info(`✅ ${fundingPath} looks good. Total entries: ${count}`);
+            core.setOutput('total', String(count));
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "Funding file: ${{ steps.exists.outputs.FUNDING_FILE }}"
+          echo "Entries total: ${{ steps.validate.outputs.total || 'n/a' }}"
