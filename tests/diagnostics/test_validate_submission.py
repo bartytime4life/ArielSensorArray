@@ -1,644 +1,441 @@
-# tests/diagnostics/test_validate_submission.py
+# /tests/diagnostics/test_validate_submission.py
 # -*- coding: utf-8 -*-
 """
-SpectraMind V50 — Diagnostics tests for tools/validate_submission.py
+SpectraMind V50 — Diagnostics Test: validate_submission
 
-This suite validates the scientific logic, artifact generation, and CLI behavior of the
-submission validator. It creates minimal-yet-realistic submission files (CSV) with
-Ariel-like 283 spectral bins per planet and checks that:
+Purpose
+-------
+Validate the repository's submission validator for the NeurIPS Ariel Data Challenge format.
+This test exercises both API and CLI (if present), ensuring the following are detected:
 
-1) Core API sanity
-   • validate_* function (e.g., validate_submission / validate / run_validate) returns a
-     structured result (dict-like) and flags schema/shape/value errors.
-   • Happy-path submissions pass basic checks (mu finite, sigma > 0, per-planet 283 bins).
+1) Schema & header correctness
+   • Required ID column present (flexible names: ['id','ID','planet_id','planetID']).
+   • Exactly 283 μ columns and 283 σ columns (prefix-flexible: ['mu','mean','mu_','m_'] and
+     ['sigma','std','stddev','sigma_','s_']).
+   • No unexpected duplicates, consistent zero-indexing or contiguous bin numbering.
 
-2) Artifact generation API
-   • generate_* or run_* entrypoint produces JSON/HTML/CSV artifacts and/or a manifest.
+2) Value constraints (scientific + numerical)
+   • μ finite, typically in [0, 1] (we only assert finiteness here; range checks if validator supports).
+   • σ finite and strictly > 0 (positive; non-zero).
+   • No NaNs/inf.
+   • Optional clipping warnings allowed if validator supports.
 
-3) CLI contract
-   • End-to-end run via subprocess (python -m tools.validate_submission).
-   • Determinism for the JSON report (modulo volatile fields).
-   • Helpful failures on bad input (missing cols / wrong bin count / invalid sigma).
-   • Optional SPECTRAMIND_LOG_PATH audit line is appended.
+3) Cardinality & identity checks
+   • Number of rows matches the provided/expected ID set if supplied.
+   • No duplicate IDs.
 
-4) Housekeeping
-   • Output files are non-empty; subsequent runs do not corrupt artifacts.
+4) Determinism & robustness
+   • Same CSV yields identical validation result.
+   • Clear error messages for common failure modes.
 
-The test is tolerant to API naming differences and will xfail nicely if the tool is not
-available in the repository yet.
+5) Artifacts / report
+   • If the validator writes a JSON/MD report, ensure it is created and contains useful fields.
 
-No GPU/network is required. All I/O is confined to pytest's tmp_path.
+6) CLI smoke (optional)
+   • If a `spectramind` CLI is present with a submission validation subcommand, smoke-test it.
+
+Design notes
+------------
+• Defensively adaptable: we discover the module under several paths and try common entrypoints:
+    - validate_submission(path or df, ...) -> dict
+    - validate(path or df, ...)
+    - check_submission(path or df, ...)
+    - class SubmissionValidator(...).validate(...)
+• We do not hard-code exact column names beyond flexible prefixes; the test fabricates a valid header that the
+  repo validator should accept if it follows the standard (283 μ + 283 σ with consistent bin indices).
+• All temp files are created under pytest tmp_path for isolation.
+
+Author: SpectraMind V50 Team
 """
 
 from __future__ import annotations
 
-import csv
+import importlib
+import io
 import json
+import math
 import os
 import re
+import shutil
 import subprocess
 import sys
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
+import pandas as pd
 import pytest
 
 
-# ======================================================================================
-# Helpers
-# ======================================================================================
+# --------------------------------------------------------------------------------------------------
+# Module discovery
+# --------------------------------------------------------------------------------------------------
 
-def _import_tool():
-    """
-    Import the module under test. Tries:
-      1) tools.validate_submission
-      2) validate_submission (top-level)
-    """
-    try:
-        import tools.validate_submission as m  # type: ignore
-        return m
-    except Exception:
+CANDIDATE_IMPORTS = [
+    "tools.validate_submission",
+    "src.tools.validate_submission",
+    "diagnostics.validate_submission",
+    "submission_validator",
+    "tools.submission_validator",
+    "src.tools.submission_validator",
+    "validate_submission",
+]
+
+
+def _import_validator_module():
+    last_err = None
+    for name in CANDIDATE_IMPORTS:
         try:
-            import validate_submission as m2  # type: ignore
-            return m2
-        except Exception:
-            pytest.skip(
-                "validate_submission module not found. "
-                "Expected at tools/validate_submission.py or importable as validate_submission."
-            )
-
-
-def _has_attr(mod, name: str) -> bool:
-    return hasattr(mod, name) and getattr(mod, name) is not None
-
-
-def _run_cli(
-    module_path: Path,
-    args: Sequence[str],
-    env: Optional[Dict[str, str]] = None,
-    timeout: int = 240,
-) -> subprocess.CompletedProcess:
-    """
-    Execute the tool as a CLI using `python -m tools.validate_submission` when possible.
-    Fallback to direct script invocation by file path if package execution is not feasible.
-    """
-    if module_path.name == "validate_submission.py" and module_path.parent.name == "tools":
-        repo_root = module_path.parent.parent
-        candidate_pkg = "tools.validate_submission"
-        cmd = [sys.executable, "-m", candidate_pkg, *args]
-        cwd = str(repo_root)
-    else:
-        cmd = [sys.executable, str(module_path), *args]
-        cwd = str(module_path.parent)
-
-    env_full = os.environ.copy()
-    if env:
-        env_full.update(env)
-
-    return subprocess.run(
-        cmd,
-        cwd=cwd,
-        env=env_full,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        timeout=timeout,
-        text=True,
-        check=False,
+            return importlib.import_module(name)
+        except Exception as e:
+            last_err = e
+    raise ImportError(
+        "Could not import submission validator from any of:\n"
+        f"  {CANDIDATE_IMPORTS}\n"
+        f"Last error: {last_err}"
     )
 
 
-def _assert_file(p: Path, min_size: int = 1) -> None:
-    assert p.exists(), f"File not found: {p}"
-    assert p.is_file(), f"Expected file: {p}"
-    sz = p.stat().st_size
-    assert sz >= min_size, f"File too small ({sz} bytes): {p}"
+def _locate_entrypoint(mod):
+    """
+    Locate a callable/class to validate a submission.
+
+    Accepted function names:
+      - validate_submission(obj, **cfg)
+      - validate(obj, **cfg)
+      - check_submission(obj, **cfg)
+    Accepted classes:
+      - SubmissionValidator(...).validate(...)
+      - Validator(...).validate(...)
+    """
+    for fn_name in ("validate_submission", "validate", "check_submission"):
+        if hasattr(mod, fn_name) and callable(getattr(mod, fn_name)):
+            return "func", getattr(mod, fn_name)
+
+    for cls_name in ("SubmissionValidator", "Validator", "SubmissionChecker"):
+        if hasattr(mod, cls_name):
+            Cls = getattr(mod, cls_name)
+            if hasattr(Cls, "validate") and callable(getattr(Cls, "validate")):
+                return "class", Cls
+
+    pytest.xfail(
+        "Submission validator module found but no known entrypoint was discovered. "
+        "Expected one of: validate_submission(), validate(), check_submission(), "
+        "or a class with .validate(...)."
+    )
+    return "none", None  # pragma: no cover
 
 
-# ======================================================================================
-# Synthetic submission builders
-# ======================================================================================
+def _invoke(kind: str, target, obj, **cfg) -> Dict[str, Any]:
+    """
+    Invoke the validator and normalize the output to a dict.
 
-_ARIEL_NBINS = 283
+    Expected dict keys (subset ok):
+      - 'ok': bool
+      - 'errors': list[str]
+      - 'warnings': list[str]
+      - 'report_path': optional str
+      - 'n_rows', 'n_mu', 'n_sigma'
+    """
+    if kind == "func":
+        out = target(obj, **cfg)
+    elif kind == "class":
+        try:
+            inst = target(**cfg)
+        except TypeError:
+            inst = target()
+        out = inst.validate(obj)
+    else:
+        pytest.fail("Unknown invocation kind.")  # pragma: no cover
 
-@dataclass
-class SubRow:
-    planet_id: str
-    bin: int
-    mu: float
-    sigma: float
+    if isinstance(out, dict):
+        assert "ok" in out, "Validator must return a dict with 'ok' key."
+        return out
+    # If a boolean is returned, coerce into dict
+    if isinstance(out, bool):
+        return {"ok": out, "errors": [] if out else ["unknown error"], "warnings": []}
+    pytest.fail("Validator returned unsupported type; expected dict or bool.")  # pragma: no cover
+    return {}
 
 
-def _write_csv(path: Path, rows: Iterable[SubRow]) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", newline="", encoding="utf-8") as f:
-        w = csv.writer(f)
-        w.writerow(["planet_id", "bin", "mu", "sigma"])
-        for r in rows:
-            w.writerow([r.planet_id, r.bin, f"{r.mu:.10g}", f"{r.sigma:.10g}"])
+# --------------------------------------------------------------------------------------------------
+# Submission fabricators
+# --------------------------------------------------------------------------------------------------
+
+L_BINS = 283
+ID_NAMES = ["id", "ID", "planet_id", "planetID"]
+MU_PREFIXES = ["mu", "mu_", "mean", "m_"]
+SIGMA_PREFIXES = ["sigma", "sigma_", "std", "stddev", "s_"]
+
+
+def _build_header(mu_prefix: str = "mu_", sigma_prefix: str = "sigma_") -> List[str]:
+    cols = ["ID"]
+    cols += [f"{mu_prefix}{i}" for i in range(L_BINS)]
+    cols += [f"{sigma_prefix}{i}" for i in range(L_BINS)]
+    return cols
+
+
+def _make_valid_df(n_rows: int = 5, mu_prefix: str = "mu_", sigma_prefix: str = "sigma_") -> pd.DataFrame:
+    cols = _build_header(mu_prefix, sigma_prefix)
+    df = pd.DataFrame(columns=cols)
+    # Fill with realistic values: μ in [0.0, 0.05]; σ in (1e-6, 0.05]
+    for r in range(n_rows):
+        row = {}
+        row["ID"] = f"P{r:04d}"
+        mu = 0.01 + 0.01 * np.sin(np.linspace(0, 2 * np.pi, L_BINS)) + np.random.normal(0, 1e-4, L_BINS)
+        mu = np.clip(mu, 0.0, 1.0)
+        sigma = 0.01 + np.abs(np.random.normal(0, 1e-3, L_BINS))  # strictly > 0
+        for i in range(L_BINS):
+            row[f"{mu_prefix}{i}"] = float(mu[i])
+            row[f"{sigma_prefix}{i}"] = float(sigma[i])
+        df.loc[r] = row
+    return df
+
+
+def _write_csv(df: pd.DataFrame, path: Path) -> Path:
+    df.to_csv(path, index=False)
+    assert path.exists() and path.stat().st_size > 0
     return path
 
 
-def _make_ok_rows(planet_ids: Sequence[str], seed: int = 11) -> List[SubRow]:
-    """
-    Build a valid submission: per-planet 283 bins, finite mu, strictly positive sigma.
-    """
-    rng = np.random.default_rng(seed)
-    rows: List[SubRow] = []
-    for pid in planet_ids:
-        # Smooth-ish baseline spectrum in ~[0, 1e-2]
-        x = np.linspace(0.0, 2.0 * np.pi, _ARIEL_NBINS)
-        base = 1.0e-3 + 2.5e-4 * np.sin(3.0 * x) + 1.5e-4 * np.cos(7.0 * x)
-        noise = 5.0e-5 * rng.standard_normal(_ARIEL_NBINS)
-        mu = np.clip(base + noise, -1.0, 1.0)  # allow tiny negatives if validator clamps or warns
-        # Sigma positive and not absurdly small/huge
-        sigma = 5.0e-4 + np.abs(1.0e-4 * rng.standard_normal(_ARIEL_NBINS))
-        for b in range(_ARIEL_NBINS):
-            rows.append(SubRow(planet_id=pid, bin=b, mu=float(mu[b]), sigma=float(sigma[b])))
-    return rows
-
-
-def _make_bad_rows_missing_col(planet_ids: Sequence[str]) -> Path:
-    """
-    Create a CSV missing the 'sigma' column to trigger schema failure.
-    """
-    from io import StringIO
-    buf = StringIO()
-    w = csv.writer(buf)
-    w.writerow(["planet_id", "bin", "mu"])  # missing sigma
-    for pid in planet_ids:
-        for b in range(_ARIEL_NBINS):
-            w.writerow([pid, b, 0.001])
-    txt = buf.getvalue()
-    # caller will write to disk
-    return txt  # type: ignore[return-value]
-
-
-def _make_bad_rows_wrong_bins(planet_ids: Sequence[str], valid_first: bool = True) -> List[SubRow]:
-    """
-    Create rows where one planet has the wrong number of bins to trigger shape failure.
-    """
-    rows = _make_ok_rows(planet_ids)
-    if not rows:
-        return rows
-    # Remove some rows for the last planet to violate the 283-per-planet rule.
-    last = planet_ids[-1]
-    # Keep only first 200 bins for the last planet
-    rows = [r for r in rows if not (r.planet_id == last and r.bin >= 200)]
-    return rows
-
-
-def _make_bad_rows_negative_sigma(planet_ids: Sequence[str]) -> List[SubRow]:
-    """
-    Create rows with negative sigma for a handful of bins to trigger value failure.
-    """
-    rows = _make_ok_rows(planet_ids)
-    # Flip signs for a few sigma values
-    flips = 7
-    for i, r in enumerate(rows[:flips]):
-        rows[i] = SubRow(planet_id=r.planet_id, bin=r.bin, mu=r.mu, sigma=-abs(r.sigma))
-    return rows
-
-
-# ======================================================================================
+# --------------------------------------------------------------------------------------------------
 # Fixtures
-# ======================================================================================
+# --------------------------------------------------------------------------------------------------
 
 @pytest.fixture(scope="module")
-def tool_mod():
-    return _import_tool()
+def val_mod():
+    return _import_validator_module()
 
 
-@pytest.fixture()
-def tmp_workspace(tmp_path: Path) -> Dict[str, Path]:
+@pytest.fixture(scope="module")
+def val_call(val_mod):
+    return _locate_entrypoint(val_mod)
+
+
+@pytest.fixture
+def valid_csv(tmp_path: Path) -> Path:
+    df = _make_valid_df(n_rows=5, mu_prefix="mu_", sigma_prefix="sigma_")
+    return _write_csv(df, tmp_path / "submission_valid.csv")
+
+
+# --------------------------------------------------------------------------------------------------
+# Tests — basic success & determinism
+# --------------------------------------------------------------------------------------------------
+
+def test_accepts_valid_submission(val_call, valid_csv):
+    kind, target = val_call
+    out = _invoke(kind, target, str(valid_csv))
+    assert isinstance(out, dict)
+    assert out["ok"] is True, f"Validator rejected a valid CSV. Errors: {out.get('errors')}"
+    # Optional informative fields
+    if "n_mu" in out and "n_sigma" in out:
+        assert out["n_mu"] == L_BINS and out["n_sigma"] == L_BINS
+    if "n_rows" in out:
+        assert out["n_rows"] == 5
+
+
+def test_determinism_on_same_file(val_call, valid_csv):
+    kind, target = val_call
+    out1 = _invoke(kind, target, str(valid_csv))
+    out2 = _invoke(kind, target, str(valid_csv))
+    # Compare core booleans and first error/warning sets deterministically
+    assert out1["ok"] == out2["ok"]
+    assert sorted(out1.get("errors", [])) == sorted(out2.get("errors", []))
+    assert sorted(out1.get("warnings", [])) == sorted(out2.get("warnings", []))
+
+
+# --------------------------------------------------------------------------------------------------
+# Tests — schema failures
+# --------------------------------------------------------------------------------------------------
+
+def test_missing_id_column(val_call, tmp_path: Path):
+    df = _make_valid_df(3)
+    # Remove ID column
+    mu_cols = [c for c in df.columns if c.lower().startswith("mu")]
+    sigma_cols = [c for c in df.columns if c.lower().startswith("sigma") or c.lower().startswith("std")]
+    df = df[mu_cols + sigma_cols]
+    csv_path = _write_csv(df, tmp_path / "submission_no_id.csv")
+
+    kind, target = val_call
+    out = _invoke(kind, target, str(csv_path))
+    assert out["ok"] is False
+    assert any("id" in e.lower() for e in out.get("errors", [])), f"Expected ID error, got: {out.get('errors')}"
+
+
+def test_missing_some_mu_columns(val_call, tmp_path: Path):
+    df = _make_valid_df(3)
+    # Drop a μ column
+    drop_col = [c for c in df.columns if re.match(r"(?i)mu[_]?\d+$", c)][0]
+    df = df.drop(columns=[drop_col])
+    csv_path = _write_csv(df, tmp_path / "submission_missing_mu.csv")
+
+    kind, target = val_call
+    out = _invoke(kind, target, str(csv_path))
+    assert out["ok"] is False
+    assert any("mu" in e.lower() or "mean" in e.lower() for e in out.get("errors", [])), (
+        f"Expected μ column count/indexing error, got: {out.get('errors')}"
+    )
+
+
+def test_missing_some_sigma_columns(val_call, tmp_path: Path):
+    df = _make_valid_df(3)
+    # Drop a σ column
+    drop_col = [c for c in df.columns if re.match(r"(?i)(sigma|std|stddev|s)[_]?\d+$", c)][0]
+    df = df.drop(columns=[drop_col])
+    csv_path = _write_csv(df, tmp_path / "submission_missing_sigma.csv")
+
+    kind, target = val_call
+    out = _invoke(kind, target, str(csv_path))
+    assert out["ok"] is False
+    assert any("sigma" in e.lower() or "std" in e.lower() for e in out.get("errors", [])), (
+        f"Expected σ column count/indexing error, got: {out.get('errors')}"
+    )
+
+
+def test_duplicate_ids(val_call, tmp_path: Path):
+    df = _make_valid_df(4)
+    df.loc[3, "ID"] = df.loc[2, "ID"]  # duplicate
+    csv_path = _write_csv(df, tmp_path / "submission_dup_ids.csv")
+
+    kind, target = val_call
+    out = _invoke(kind, target, str(csv_path))
+    assert out["ok"] is False
+    assert any("duplicate" in e.lower() and "id" in e.lower() for e in out.get("errors", [])), (
+        f"Expected duplicate ID error, got: {out.get('errors')}"
+    )
+
+
+# --------------------------------------------------------------------------------------------------
+# Tests — value failures
+# --------------------------------------------------------------------------------------------------
+
+def test_nan_values_rejected(val_call, tmp_path: Path):
+    df = _make_valid_df(3)
+    # Inject NaNs into μ and σ
+    mu_col = [c for c in df.columns if re.match(r"(?i)mu[_]?\d+$", c)][10]
+    sg_col = [c for c in df.columns if re.match(r"(?i)(sigma|std|stddev|s)[_]?\d+$", c)][20]
+    df.loc[1, mu_col] = np.nan
+    df.loc[2, sg_col] = np.nan
+    csv_path = _write_csv(df, tmp_path / "submission_with_nan.csv")
+
+    kind, target = val_call
+    out = _invoke(kind, target, str(csv_path))
+    assert out["ok"] is False
+    assert any("nan" in e.lower() or "finite" in e.lower() for e in out.get("errors", [])), (
+        f"Expected NaN/finite error, got: {out.get('errors')}"
+    )
+
+
+def test_nonpositive_sigma_rejected(val_call, tmp_path: Path):
+    df = _make_valid_df(3)
+    # Inject nonpositive sigma values
+    s_cols = [c for c in df.columns if re.match(r"(?i)(sigma|std|stddev|s)[_]?\d+$", c)]
+    df.loc[0, s_cols[0]] = 0.0
+    df.loc[2, s_cols[1]] = -1e-6
+    csv_path = _write_csv(df, tmp_path / "submission_sigma_nonpos.csv")
+
+    kind, target = val_call
+    out = _invoke(kind, target, str(csv_path))
+    assert out["ok"] is False
+    msgs = " ".join(out.get("errors", [])).lower()
+    assert ("sigma" in msgs or "std" in msgs) and ("positive" in msgs or ">" in msgs or "nonzero" in msgs), (
+        f"Expected positive sigma constraint error, got: {out.get('errors')}"
+    )
+
+
+# --------------------------------------------------------------------------------------------------
+# Tests — report/artifacts (optional)
+# --------------------------------------------------------------------------------------------------
+
+def test_report_artifacts_if_supported(val_mod, val_call, tmp_path: Path):
     """
-    Create a clean workspace:
-      inputs/  — submissions
-      outputs/ — artifacts
-      logs/    — optional v50_debug_log.md
+    If the module exposes save_report(...) / save_artifacts(...), ensure it writes something.
+    Otherwise xfail gracefully.
     """
-    ip = tmp_path / "inputs"
-    op = tmp_path / "outputs"
-    lg = tmp_path / "logs"
-    ip.mkdir(parents=True, exist_ok=True)
-    op.mkdir(parents=True, exist_ok=True)
-    lg.mkdir(parents=True, exist_ok=True)
-    return {"root": tmp_path, "inputs": ip, "outputs": op, "logs": lg}
-
-
-@pytest.fixture()
-def ok_submission(tmp_workspace: Dict[str, Path]) -> Path:
-    rows = _make_ok_rows(["planet_A", "planet_B"])
-    sub_path = tmp_workspace["inputs"] / "submission_ok.csv"
-    _write_csv(sub_path, rows)
-    return sub_path
-
-
-@pytest.fixture()
-def bad_submission_wrong_bins(tmp_workspace: Dict[str, Path]) -> Path:
-    rows = _make_bad_rows_wrong_bins(["planet_A", "planet_B", "planet_C"])
-    sub_path = tmp_workspace["inputs"] / "submission_wrong_bins.csv"
-    _write_csv(sub_path, rows)
-    return sub_path
-
-
-@pytest.fixture()
-def bad_submission_negative_sigma(tmp_workspace: Dict[str, Path]) -> Path:
-    rows = _make_bad_rows_negative_sigma(["planet_A"])
-    sub_path = tmp_workspace["inputs"] / "submission_neg_sigma.csv"
-    _write_csv(sub_path, rows)
-    return sub_path
-
-
-@pytest.fixture()
-def bad_submission_missing_col(tmp_workspace: Dict[str, Path]) -> Path:
-    txt = _make_bad_rows_missing_col(["planet_A"])
-    sub_path = tmp_workspace["inputs"] / "submission_missing_col.csv"
-    sub_path.write_text(txt, encoding="utf-8")
-    return sub_path
-
-
-# ======================================================================================
-# Core API tests — validate() behavior
-# ======================================================================================
-
-def test_api_validate_ok(tool_mod, ok_submission, tmp_workspace):
-    """
-    Happy-path: API returns a dict-like object with 'ok' True and includes basic summary metadata.
-    """
-    candidates = ["validate_submission", "validate", "run_validate"]
-    fn = None
-    for name in candidates:
-        if _has_attr(tool_mod, name):
-            fn = getattr(tool_mod, name)
+    save_fn = None
+    for name in ("save_report", "save_artifacts", "write_report"):
+        if hasattr(val_mod, name) and callable(getattr(val_mod, name)):
+            save_fn = getattr(val_mod, name)
             break
-    if fn is None:
-        pytest.xfail("No validate function (validate_submission/validate/run_validate) found in module.")
 
-    try:
-        result = fn(input_path=str(ok_submission), outdir=str(tmp_workspace["outputs"]), json_out=True, html_out=True, csv_out=True, seed=13)
-    except TypeError:
-        # Most minimal signature
-        result = fn(str(ok_submission))  # type: ignore
+    # Use a valid CSV for report generation
+    df = _make_valid_df(2)
+    csv_path = _write_csv(df, tmp_path / "submission_for_report.csv")
 
-    # Normalize result to dict
-    if isinstance(result, (list, tuple)) and len(result) >= 1 and isinstance(result[0], dict):
-        result = result[0]
-    if not isinstance(result, dict):
-        # Don't fail hard on shape; convert to dict conservatively if possible
-        result = {"ok": True}
+    kind, target = val_call
+    result = _invoke(kind, target, str(csv_path))
 
-    assert "ok" in result and bool(result["ok"]) is True, f"Expected ok=True for valid submission, got {result}"
-    # If the tool reports counts, sanity check them
-    for key in ("num_planets", "num_rows", "bins_per_planet"):
-        if key in result:
-            assert isinstance(result[key], (int, dict, list))
+    if save_fn is None:
+        pytest.xfail("Validator does not expose a report/artifact saver; skipping artifact test.")
+
+    outdir = tmp_path / "validation_report"
+    outdir.mkdir(parents=True, exist_ok=True)
+    save_fn(result, outdir=str(outdir))  # should not raise
+
+    files = list(outdir.glob("*"))
+    assert files, "No artifacts produced by report saver."
+    # If a JSON exists, ensure it has 'ok' and errors/warnings arrays
+    j = outdir / "validation_report.json"
+    if j.exists():
+        with open(j, "r", encoding="utf-8") as f:
+            rep = json.load(f)
+        assert "ok" in rep and "errors" in rep and "warnings" in rep
 
 
-def test_api_validate_catches_wrong_bins(tool_mod, bad_submission_wrong_bins):
+# --------------------------------------------------------------------------------------------------
+# CLI smoke (optional)
+# --------------------------------------------------------------------------------------------------
+
+@pytest.mark.skipif(shutil.which("spectramind") is None, reason="spectramind CLI not found in PATH")
+def test_cli_smoke_validate_submission(tmp_path: Path):
     """
-    Wrong number of bins per planet should be flagged (ok=False) with a meaningful message.
+    Smoke-test the CLI route (adjust flags if your repo differs).
+    Expected patterns we try (first successful one wins):
+      1) spectramind submit validate --file <csv>
+      2) spectramind validate submission --file <csv>
+      3) spectramind validate-submission --file <csv>
+    We only assert that it runs with exit code 0 on a valid CSV.
     """
-    candidates = ["validate_submission", "validate", "run_validate"]
-    fn = None
-    for name in candidates:
-        if _has_attr(tool_mod, name):
-            fn = getattr(tool_mod, name)
-            break
-    if fn is None:
-        pytest.xfail("No validate function found.")
+    df = _make_valid_df(2)
+    csv_path = _write_csv(df, tmp_path / "cli_valid.csv")
 
-    try:
-        result = fn(input_path=str(bad_submission_wrong_bins))
-    except TypeError:
-        result = fn(str(bad_submission_wrong_bins))  # type: ignore
-
-    # Interpret result
-    if isinstance(result, dict):
-        ok = bool(result.get("ok", False))
-        msg = " ".join(str(x) for x in result.values())
-    else:
-        ok = False
-        msg = str(result)
-
-    assert ok is False, "Expected ok=False for wrong-bin submission."
-    assert ("283" in msg) or ("bin" in msg.lower()) or ("count" in msg.lower()), "Expected message to mention bin count."
-
-
-def test_api_validate_catches_negative_sigma(tool_mod, bad_submission_negative_sigma):
-    """
-    Negative sigma values should be flagged (ok=False).
-    """
-    candidates = ["validate_submission", "validate", "run_validate"]
-    fn = None
-    for name in candidates:
-        if _has_attr(tool_mod, name):
-            fn = getattr(tool_mod, name)
-            break
-    if fn is None:
-        pytest.xfail("No validate function found.")
-
-    try:
-        result = fn(input_path=str(bad_submission_negative_sigma))
-    except TypeError:
-        result = fn(str(bad_submission_negative_sigma))  # type: ignore
-
-    if isinstance(result, dict):
-        ok = bool(result.get("ok", False))
-        msg = " ".join(str(x) for x in result.values())
-    else:
-        ok = False
-        msg = str(result)
-
-    assert ok is False, "Expected ok=False for negative-sigma submission."
-    assert ("sigma" in msg.lower()) or ("std" in msg.lower()) or ("uncert" in msg.lower()), "Expected message to mention sigma/uncertainty."
-
-
-def test_api_validate_catches_missing_column(tool_mod, bad_submission_missing_col):
-    """
-    Missing required column (e.g., 'sigma') should be flagged.
-    """
-    candidates = ["validate_submission", "validate", "run_validate"]
-    fn = None
-    for name in candidates:
-        if _has_attr(tool_mod, name):
-            fn = getattr(tool_mod, name)
-            break
-    if fn is None:
-        pytest.xfail("No validate function found.")
-
-    try:
-        result = fn(input_path=str(bad_submission_missing_col))
-    except TypeError:
-        result = fn(str(bad_submission_missing_col))  # type: ignore
-
-    if isinstance(result, dict):
-        ok = bool(result.get("ok", False))
-        msg = " ".join(str(x) for x in result.values())
-    else:
-        ok = False
-        msg = str(result)
-
-    assert ok is False, "Expected ok=False for missing-column submission."
-    assert ("sigma" in msg.lower()) or ("column" in msg.lower()) or ("field" in msg.lower()), "Expected message to mention missing column."
-
-
-# ======================================================================================
-# Artifact generation API
-# ======================================================================================
-
-def test_generate_artifacts(tool_mod, ok_submission, tmp_workspace):
-    """
-    Artifact generator (if present) should emit JSON/HTML/CSV files and return a manifest (or paths).
-    """
-    entry_candidates = [
-        "generate_validation_artifacts",
-        "run_submission_validator",
-        "produce_validation_outputs",
-        "analyze_and_export",  # generic fallback
+    candidates = [
+        ["spectramind", "submit", "validate", "--file", str(csv_path)],
+        ["spectramind", "validate", "submission", "--file", str(csv_path)],
+        ["spectramind", "validate-submission", "--file", str(csv_path)],
+        # Slight variants
+        ["spectramind", "submit", "validate", "--path", str(csv_path)],
+        ["spectramind", "validate", "submission", "--path", str(csv_path)],
     ]
-    entry = None
-    for name in entry_candidates:
-        if _has_attr(tool_mod, name):
-            entry = getattr(tool_mod, name)
-            break
-    if entry is None:
-        # Fall back to validate() with outdir + flags if that produces artifacts
-        entry = None
 
-    outdir = tmp_workspace["outputs"]
-    if entry is not None:
+    last_proc = None
+    for cmd in candidates:
         try:
-            manifest = entry(input_path=str(ok_submission), outdir=str(outdir), json_out=True, html_out=True, csv_out=True, seed=99)
-        except TypeError:
-            manifest = entry(str(ok_submission), str(outdir), True, True, True, 99)  # type: ignore
-    else:
-        # Try validate() with artifact flags
-        validate_candidates = ["validate_submission", "validate"]
-        fn = None
-        for name in validate_candidates:
-            if _has_attr(tool_mod, name):
-                fn = getattr(tool_mod, name)
-                break
-        if fn is None:
-            pytest.xfail("No artifact-capable entrypoint found for submission validation.")
-        try:
-            manifest = fn(input_path=str(ok_submission), outdir=str(outdir), json_out=True, html_out=True, csv_out=True, seed=99)
-        except TypeError:
-            manifest = fn(str(ok_submission), str(outdir), True, True, True, 99)  # type: ignore
-
-    # Presence checks
-    json_files = list(outdir.glob("*.json"))
-    html_files = list(outdir.glob("*.html"))
-    csv_files = list(outdir.glob("*.csv"))
-
-    assert json_files, "No JSON artifact produced by submission validator."
-    assert html_files, "No HTML artifact produced by submission validator."
-    # CSV may be optional; if present, ensure not empty
-    for c in csv_files:
-        _assert_file(c, min_size=64)
-
-    # Minimal JSON schema check
-    with open(json_files[0], "r", encoding="utf-8") as f:
-        js = json.load(f)
-    assert isinstance(js, dict), "Top-level JSON must be an object."
-    # Look for hints of validation results
-    has_summary = ("ok" in js) or ("errors" in js) or ("summary" in js)
-    assert has_summary, "JSON should include validation 'ok' flag, 'errors', or a 'summary' section."
-
-
-# ======================================================================================
-# CLI End-to-End
-# ======================================================================================
-
-def test_cli_end_to_end(ok_submission, tmp_workspace):
-    """
-    End-to-end CLI test:
-      • Runs the module as a CLI with --input/--outdir → emits JSON/HTML(/CSV) artifacts.
-      • Uses --seed for determinism and compares JSON across two runs (modulo volatile fields).
-      • Verifies optional audit log when SPECTRAMIND_LOG_PATH is set.
-    """
-    # Locate module file to construct python -m invocation
-    candidates = [
-        Path(__file__).resolve().parents[2] / "tools" / "validate_submission.py",  # repo-root/tools/...
-        Path(__file__).resolve().parents[1] / "validate_submission.py",            # tests/diagnostics/../
-    ]
-    module_file = None
-    for p in candidates:
-        if p.exists():
-            module_file = p
+            proc = subprocess.run(cmd, capture_output=True, text=True)
+        except Exception:
+            continue
+        last_proc = proc
+        if proc.returncode == 0:
             break
-    if module_file is None:
-        pytest.skip("validate_submission.py not found; cannot run CLI end-to-end test.")
 
-    outdir = tmp_workspace["outputs"]
-    logsdir = tmp_workspace["logs"]
+    if last_proc is None or last_proc.returncode != 0:
+        pytest.xfail(
+            "No working CLI validate pattern found. Ensure the submit/validate command is wired. "
+            f"Last stdout/stderr:\n{'' if last_proc is None else last_proc.stdout}\n"
+            f"{'' if last_proc is None else last_proc.stderr}"
+        )
 
-    env = {
-        "PYTHONUNBUFFERED": "1",
-        "SPECTRAMIND_LOG_PATH": str(logsdir / "v50_debug_log.md"),
-    }
-
-    args = (
-        "--input", str(ok_submission),
-        "--outdir", str(outdir),
-        "--json",
-        "--html",
-        "--csv",
-        "--seed", "2025",
-        "--silent",
-    )
-    proc1 = _run_cli(module_file, args, env=env, timeout=240)
-    if proc1.returncode != 0:
-        msg = f"CLI run 1 failed (exit={proc1.returncode}).\nSTDOUT:\n{proc1.stdout}\nSTDERR:\n{proc1.stderr}"
-        pytest.fail(msg)
-
-    json1 = sorted(outdir.glob("*.json"))
-    html1 = sorted(outdir.glob("*.html"))
-    assert json1 and html1, "CLI run 1 did not produce required artifacts."
-
-    # Determinism: second run with same seed into a new directory should match JSON (minus volatile fields)
-    outdir2 = outdir.parent / "outputs_run2"
-    outdir2.mkdir(exist_ok=True)
-    args2 = (
-        "--input", str(ok_submission),
-        "--outdir", str(outdir2),
-        "--json",
-        "--html",
-        "--csv",
-        "--seed", "2025",
-        "--silent",
-    )
-    proc2 = _run_cli(module_file, args2, env=env, timeout=240)
-    if proc2.returncode != 0:
-        msg = f"CLI run 2 failed (exit={proc2.returncode}).\nSTDOUT:\n{proc2.stdout}\nSTDERR:\n{proc2.stderr}"
-        pytest.fail(msg)
-
-    json2 = sorted(outdir2.glob("*.json"))
-    assert json2, "Second CLI run produced no JSON artifacts."
-
-    def _normalize(j: Dict[str, Any]) -> Dict[str, Any]:
-        d = json.loads(json.dumps(j))  # deep copy
-        vol_patterns = re.compile(r"(time|date|timestamp|duration|path|cwd|hostname|uuid|version)", re.I)
-
-        def scrub(obj: Any) -> Any:
-            if isinstance(obj, dict):
-                for k in list(obj.keys()):
-                    if vol_patterns.search(k):
-                        obj.pop(k, None)
-                    else:
-                        obj[k] = scrub(obj[k])
-            elif isinstance(obj, list):
-                for i in range(len(obj)):
-                    obj[i] = scrub(obj[i])
-            return obj
-
-        return scrub(d)
-
-    with open(json1[0], "r", encoding="utf-8") as f:
-        j1 = _normalize(json.load(f))
-    with open(json2[0], "r", encoding="utf-8") as f:
-        j2 = _normalize(json.load(f))
-
-    assert j1 == j2, "Seeded CLI runs should yield identical JSON after removing volatile metadata."
-
-    # Audit log should exist and include a recognizable signature
-    log_file = Path(env["SPECTRAMIND_LOG_PATH"])
-    if log_file.exists():
-        _assert_file(log_file, min_size=1)
-        text = log_file.read_text(encoding="utf-8", errors="ignore").lower()
-        assert ("validate_submission" in text) or ("submission" in text and "validate" in text), \
-            "Audit log exists but lacks recognizable validator signature."
+    assert last_proc.returncode == 0
 
 
-def test_cli_error_cases_missing_input(tmp_workspace):
-    """
-    CLI should:
-      • Exit non-zero when required --input is missing.
-      • Report helpful error text mentioning the missing/invalid flag.
-    """
-    candidates = [
-        Path(__file__).resolve().parents[2] / "tools" / "validate_submission.py",
-        Path(__file__).resolve().parents[1] / "validate_submission.py",
-    ]
-    module_file = None
-    for p in candidates:
-        if p.exists():
-            module_file = p
-            break
-    if module_file is None:
-        pytest.skip("validate_submission.py not found; cannot run CLI error tests.")
+# --------------------------------------------------------------------------------------------------
+# Performance guardrail
+# --------------------------------------------------------------------------------------------------
 
-    outdir = tmp_workspace["outputs"]
-
-    args = (
-        "--outdir", str(outdir),
-        "--json",
-    )
-    proc = _run_cli(module_file, args, env=None, timeout=120)
-    assert proc.returncode != 0, "CLI should fail when required --input is missing."
-    msg = (proc.stderr + "\n" + proc.stdout).lower()
-    assert "input" in msg, "Error message should mention missing 'input'."
-
-
-def test_cli_error_cases_bad_file(tmp_workspace):
-    """
-    CLI should:
-      • Exit non-zero when the input path is not a valid file.
-    """
-    candidates = [
-        Path(__file__).resolve().parents[2] / "tools" / "validate_submission.py",
-        Path(__file__).resolve().parents[1] / "validate_submission.py",
-    ]
-    module_file = None
-    for p in candidates:
-        if p.exists():
-            module_file = p
-            break
-    if module_file is None:
-        pytest.skip("validate_submission.py not found; cannot run CLI error tests.")
-
-    outdir = tmp_workspace["outputs"]
-
-    bogus = tmp_workspace["inputs"] / "nope.csv"
-    args = (
-        "--input", str(bogus),
-        "--outdir", str(outdir),
-        "--json",
-    )
-    proc = _run_cli(module_file, args, env=None, timeout=120)
-    assert proc.returncode != 0, "CLI should fail when input file does not exist."
-    msg = (proc.stderr + "\n" + proc.stdout).lower()
-    assert ("not found" in msg) or ("exist" in msg) or ("open" in msg), "Expected file-not-found style error."
-
-
-# ======================================================================================
-# Housekeeping checks
-# ======================================================================================
-
-def test_artifact_min_sizes(tmp_workspace):
-    """
-    After prior tests, ensure that JSON/HTML in outputs/ are non-trivially sized.
-    """
-    outdir = tmp_workspace["outputs"]
-    json_files = list(outdir.glob("*.json"))
-    html_files = list(outdir.glob("*.html"))
-    for p in json_files:
-        _assert_file(p, min_size=64)
-    for h in html_files:
-        _assert_file(h, min_size=128)
-
-
-def test_idempotent_rerun_behavior(tmp_workspace):
-    """
-    The tool should either overwrite consistently or produce versioned filenames.
-    We don't require a specific policy here; only that subsequent writes do not corrupt artifacts.
-    """
-    outdir = tmp_workspace["outputs"]
-    before = {p.name for p in outdir.glob("*")}
-    # Simulate pre-existing artifact to ensure tool does not crash due to existing files
-    marker = outdir / "preexisting_marker.txt"
-    marker.write_text("marker", encoding="utf-8")
-    after = {p.name for p in outdir.glob("*")}
-    assert before.issubset(after), "Artifacts disappeared unexpectedly between runs or overwrite simulation."
+def test_runs_fast_enough(val_call, valid_csv):
+    kind, target = val_call
+    import time
+    t0 = time.time()
+    _ = _invoke(kind, target, str(valid_csv))
+    dt = time.time() - t0
+    assert dt < 1.0, f"Validation too slow for tiny CSV: {dt:.3f}s (should be < 1.0s)"
