@@ -5,7 +5,7 @@
     "component": "assets",
     "version": "1.0.0",
     "created": "2025-08-25T00:00:00Z",
-    "description": "Manifest of all static assets for GUI, logos, diagrams, guides, and dashboards."
+    "description": "Manifest of all GUI, style, logo, doc, and dashboard assets."
   },
   "assets": {
     "gui": {
@@ -13,7 +13,7 @@
         "path": "gui/color_palette.json",
         "type": "theme",
         "hash": "sha256-PLACEHOLDER_HASH_COLOR",
-        "version": "1.0.0"
+        "version": "1.2.0"
       },
       "widget_styles.css": {
         "path": "gui/widget_styles.css",
@@ -31,6 +31,12 @@
         "path": "gui/ARCHITECTURE.md",
         "type": "doc",
         "hash": "sha256-PLACEHOLDER_HASH_GUI_ARCH",
+        "version": "1.0.0"
+      },
+      "GUI_GUIDE.md": {
+        "path": "gui/GUI_GUIDE.md",
+        "type": "doc",
+        "hash": "sha256-PLACEHOLDER_HASH_GUI_GUIDE",
         "version": "1.0.0"
       }
     },
