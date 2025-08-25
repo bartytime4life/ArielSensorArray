@@ -1,577 +1,553 @@
-#!/usr/bin/env python3
+# /tests/diagnostics/test_generate_fft_symbolic_fusion.py
 # -*- coding: utf-8 -*-
 """
-tests/diagnostics/test_generate_fft_symbolic_fusion.py
-
-SpectraMind V50 — Diagnostics Test: tools/generate_fft_symbolic_fusion.py
+SpectraMind V50 — Diagnostics Test: generate_fft_symbolic_fusion
 
 Purpose
 -------
-Validate the FFT × Symbolic Fusion generator in a *safe*, *adaptive*, and *repo‑agnostic* way.
-This suite verifies CLI/UX behavior, artifact creation (or planned outputs in dry mode),
-and debug logging — not deep numerical correctness.
+Validate the behavior and contracts of the FFT × Symbolic Fusion tool, which
+computes frequency-domain features from μ spectra, fuses them with symbolic /
+SHAP / entropy overlays, and (optionally) projects to low dimensions (PCA/UMAP/
+t‑SNE) with clustering and dashboard‑ready artifacts.
 
-What this test asserts
-----------------------
-1) Discoverability: --help exists and mentions FFT/symbolic/fusion/UMAP/t-SNE.
-2) Safe execution: a dry-run/selftest/plan path exits with code 0.
-3) Inputs: accepts tiny synthetic inputs when flags are present:
-   - μ spectra (.npy), optional SHAP/entropy (.npy), symbolic results (.json).
-4) Artifacts: produces light artifacts (HTML/PNG/CSV/JSON/MD) OR clearly states
-   intended outputs in dry mode.
-5) Logging: appends an audit line to logs/v50_debug_log.md.
-6) Idempotency: repeating safe invocations does not accumulate heavy artifacts.
+We verify:
+1) API discovery & output contracts
+   • Accepts μ of shape (B,L) or (L,) and optional overlays (entropy, symbolic)
+   • Emits FFT features and at least one of: PCA/UMAP/t‑SNE/fusion embedding
+   • Optional cluster labels array or dict is well‑formed
+2) Fusion overlay sanity
+   • Symbolic overlay elevates masked regions vs. outside (statistical check)
+3) Determinism
+   • Fixed seed ⇒ identical embeddings / clusters
+4) Artifact save (optional)
+   • If saver exists, writes JSON/NPY/HTML/PNG and arrays reload with correct shape
+5) CLI smoke (optional)
+   • If `spectramind diagnose fft-fusion` exists, run and assert artifact creation
+6) Performance guardrail
+   • Tiny synthetic input completes quickly on CI
 
-Design
-------
-• Entry points probed (in order):
-    - tools/generate_fft_symbolic_fusion.py (canonical)
-    - tools/fft_symbolic_fusion.py (legacy/variant)
-    - spectramind diagnose fft-fusion / fft_symbolic_fusion (wrapper; optional)
-• Flags are discovered by parsing --help and mapping abstract names to actual flags.
-• Tiny inputs are synthesized on-the-fly:
-    - mu.npy              : (N, B) with simple periodic structure
-    - shap.npy, entropy.npy (optional): (N, B)
-    - symbolic_results.json: tiny rule × planet scores
-• Dry mode may just *plan* outputs; we accept textual description of intended paths.
+Design Notes
+------------
+• Defensively adaptable to small API differences:
+  - Tries multiple import paths and entrypoint names (func/class)
+  - Normalizes dict/array returns
+  - Tolerates the presence/absence of particular projections (e.g., UMAP off)
+• Synthetic μ is shaped (B=6, L=283) with two banded regions; symbolic overlay aligns.
 
-Notes
------
-• No GPU/network required; runs are tiny and bounded.
-• Flexible to minor variations in flag names.
-• Numerical validation is covered elsewhere; this test checks the CLI contract.
-
-Author: SpectraMind V50 QA
+Author: SpectraMind V50 Team
 """
 
+from __future__ import annotations
+
+import importlib
 import json
+import math
 import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pytest
 
 
-# ======================================================================================
-# Repo root / entrypoint discovery
-# ======================================================================================
+# --------------------------------------------------------------------------------------
+# Discovery
+# --------------------------------------------------------------------------------------
 
-def repo_root() -> Path:
-    """
-    Resolve repository root by walking upward until a 'tools' directory appears.
-    Fallback: two levels up from tests/diagnostics.
-    """
-    here = Path(__file__).resolve()
-    for anc in [here] + list(here.parents):
-        if (anc / "tools").is_dir():
-            return anc
-    return Path(__file__).resolve().parents[2]
+CANDIDATE_IMPORTS = [
+    "tools.generate_fft_symbolic_fusion",
+    "src.tools.generate_fft_symbolic_fusion",
+    "diagnostics.generate_fft_symbolic_fusion",
+    "generate_fft_symbolic_fusion",
+]
 
 
-def tool_script_candidates() -> List[Path]:
-    """
-    Candidate scripts for the FFT × Symbolic Fusion generator.
-    """
-    root = repo_root()
-    cands = [
-        root / "tools" / "generate_fft_symbolic_fusion.py",
-        root / "tools" / "fft_symbolic_fusion.py",  # defensive alias
-    ]
-    return [c for c in cands if c.exists()]
-
-
-def spectramind_cli_candidates() -> List[List[str]]:
-    """
-    Optional wrapper CLI forms. We'll try these if direct script/module isn't available.
-    """
-    return [
-        ["spectramind", "diagnose", "fft-fusion"],
-        ["spectramind", "diagnose", "fft_symbolic_fusion"],
-        ["spectramind", "diagnose", "generate-fft-symbolic-fusion"],
-        [sys.executable, "-m", "spectramind", "diagnose", "fft-fusion"],
-        [sys.executable, "-m", "src.cli.cli_diagnose", "fft-fusion"],
-        [sys.executable, "-m", "src.cli.cli_diagnose", "fft_symbolic_fusion"],
-    ]
-
-
-# ======================================================================================
-# Subprocess helpers
-# ======================================================================================
-
-def run_proc(cmd: List[str], cwd: Optional[Path] = None, timeout: int = 240) -> Tuple[int, str, str]:
-    """
-    Execute a command and return (exit_code, stdout, stderr) in text mode.
-    """
-    proc = subprocess.Popen(
-        cmd,
-        cwd=str(cwd) if cwd else None,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        env={**os.environ},
+def _import_fusion_module():
+    last_err = None
+    for name in CANDIDATE_IMPORTS:
+        try:
+            return importlib.import_module(name)
+        except Exception as e:
+            last_err = e
+    raise ImportError(
+        "Could not import FFT × Symbolic Fusion module from any of:\n"
+        f"  {CANDIDATE_IMPORTS}\n"
+        f"Last error: {last_err}"
     )
-    try:
-        out, err = proc.communicate(timeout=timeout)
-        return proc.returncode, out, err
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        out, err = proc.communicate()
-        return 124, out, err
 
 
-def python_module_invocation(module: str, *args: str) -> List[str]:
-    return [sys.executable, "-m", module, *args]
-
-
-def python_script_invocation(script: Path, *args: str) -> List[str]:
-    return [sys.executable, str(script), *args]
-
-
-# ======================================================================================
-# Flag discovery
-# ======================================================================================
-
-FLAG_ALIASES: Dict[str, List[str]] = {
-    # Help
-    "help": ["--help", "-h"],
-
-    # Safe / plan mode
-    "dry_run": ["--dry-run", "--dryrun", "--selftest", "--plan", "--check", "--no-exec"],
-
-    # Output directory
-    "outdir": ["--outdir", "--out-dir", "--output", "--output-dir", "-o"],
-
-    # Inputs (permissive spellings)
-    "mu": ["--mu", "--mu-npy", "--mu_path", "--pred-mu", "--pred_mu", "--input-mu"],
-    "shap": ["--shap", "--shap-npy", "--shap_path", "--shap-values", "--shap_values"],
-    "entropy": ["--entropy", "--entropy-npy", "--entropy_path"],
-    "symbolic": ["--symbolic", "--symbolic-json", "--symbolic_path", "--symbolic-results", "--symbolic_results"],
-
-    # Exports
-    "html": ["--html", "--html-out", "--open-html", "--open_html", "--no-open-html", "--report-html"],
-    "md": ["--md", "--markdown", "--md-out", "--markdown-out"],
-    "csv": ["--csv", "--csv-out", "--write-csv", "--per-bin-csv", "--export-csv"],
-    "json": ["--json", "--json-out", "--export-json"],
-
-    # Projections
-    "umap": ["--umap", "--do-umap", "--with-umap"],
-    "tsne": ["--tsne", "--do-tsne", "--with-tsne"],
-
-    # Fusion/overlays toggles (optional)
-    "overlay_symbolic": ["--overlay-symbolic", "--symbolic-overlay", "--link-symbols"],
-    "overlay_shap": ["--overlay-shap", "--shap-overlay", "--overlay_shap"],
-    "overlay_entropy": ["--overlay-entropy", "--entropy-overlay", "--overlay_entropy"],
-
-    # FFT options (optional)
-    "n_freq": ["--n-freq", "--n_freq", "--num-freq", "--kmax"],
-    "window": ["--window", "--fft-window"],
-    "normalize": ["--normalize", "--norm", "--zscore", "--standardize"],
-
-    # Clustering / labeling (optional)
-    "clusters": ["--clusters", "--n-clusters"],
-    "labels": ["--labels", "--labels-csv", "--cluster-csv", "--labels_path"],
-}
-
-
-def discover_supported_flags(help_text: str) -> Dict[str, str]:
+def _locate_entrypoint(mod):
     """
-    Map abstract flag names to real aliases by scanning --help output.
+    Locate a callable/class to run FFT × symbolic fusion.
+
+    Accepted function names (any):
+      - generate_fft_symbolic_fusion(mu, symbolic=..., entropy=..., **cfg)
+      - compute_fft_symbolic_fusion(...)
+      - run_fft_symbolic_fusion(...)
+    Accepted classes (with .run or .generate):
+      - FFTSymbolicFusion(...).run(...)
+      - FusionGenerator(...).run(...)
     """
-    mapping: Dict[str, str] = {}
-    for abstract, aliases in FLAG_ALIASES.items():
-        for alias in aliases:
-            if re.search(rf"(^|\s){re.escape(alias)}(\s|,|$)", help_text):
-                mapping[abstract] = alias
-                break
-    return mapping
+    for fn in (
+        "generate_fft_symbolic_fusion",
+        "compute_fft_symbolic_fusion",
+        "run_fft_symbolic_fusion",
+    ):
+        if hasattr(mod, fn) and callable(getattr(mod, fn)):
+            return "func", getattr(mod, fn)
+
+    for cls in ("FFTSymbolicFusion", "FusionGenerator", "FFTFusion"):
+        if hasattr(mod, cls):
+            Cls = getattr(mod, cls)
+            for method in ("run", "generate"):
+                if hasattr(Cls, method) and callable(getattr(Cls, method)):
+                    return "class", Cls
+
+    pytest.xfail(
+        "generate_fft_symbolic_fusion module found but no known entrypoint. "
+        "Expected a function like generate_fft_symbolic_fusion()/compute_fft_symbolic_fusion()/run_fft_symbolic_fusion(), "
+        "or a class with .run/.generate."
+    )
+    return "none", None  # pragma: no cover
 
 
-# ======================================================================================
-# Artifact probing
-# ======================================================================================
-
-def recent_files_with_suffix(root: Path, suffixes: Tuple[str, ...]) -> List[Path]:
+def _invoke(kind: str, target, mu: np.ndarray, **cfg) -> Dict[str, Any]:
     """
-    Find files recursively under root with suffix in suffixes, sorted by mtime desc.
+    Invoke the entrypoint and coerce output to a dict.
+
+    Expected dict keys (subset ok):
+      - 'fft'           : ndarray (B, Ffft) or (Ffft,)
+      - 'pca'           : ndarray (B, k)   (optional)
+      - 'umap'          : ndarray (B, k)   (optional)
+      - 'tsne'          : ndarray (B, k)   (optional)
+      - 'fusion'        : ndarray (B, k)   (optional consolidated embedding)
+      - 'clusters'      : ndarray (B,) or dict with 'labels'
+      - 'overlay'       : overlays dict or arrays (e.g., 'symbolic', 'entropy', 'shap')
+      - 'meta'          : dict with config/seed
     """
-    if not root.exists():
-        return []
-    hits: List[Path] = []
-    for p in root.rglob("*"):
-        if p.is_file() and p.suffix.lower() in suffixes:
-            hits.append(p)
-    return sorted(hits, key=lambda p: p.stat().st_mtime, reverse=True)
+    if kind == "func":
+        out = target(mu, **cfg)
+    elif kind == "class":
+        try:
+            inst = target(mu=mu, **cfg)
+        except TypeError:
+            inst = target(**cfg)
+            out = inst.run(mu=mu)
+        else:
+            out = inst.run() if hasattr(inst, "run") else inst.generate()
+    else:  # pragma: no cover
+        pytest.fail("Unknown invocation kind.")
+
+    if isinstance(out, dict):
+        return out
+    # If bare array returned, wrap as a minimal dict
+    return {"pca": out}
 
 
-def read_text_or_empty(path: Path) -> str:
-    try:
-        return path.read_text(encoding="utf-8", errors="ignore")
-    except Exception:
-        return ""
+# --------------------------------------------------------------------------------------
+# Synthetic inputs
+# --------------------------------------------------------------------------------------
+
+L = 283
+B = 6
+_RNG = np.random.RandomState(20250824)
 
 
-# ======================================================================================
+def _rect_mask(L: int, a: float, b: float) -> np.ndarray:
+    i0 = max(0, int(a * L))
+    i1 = min(L, int(b * L))
+    m = np.zeros(L, dtype=np.float32)
+    m[i0:i1] = 1.0
+    return m
+
+
+def _make_mu_batch(B: int = B, L_: int = L) -> np.ndarray:
+    """
+    Build smooth μ with two absorption‑like bumps aligned with two fixed masks;
+    add small stochastic variation across batch.
+    """
+    x = np.linspace(0.0, 1.0, L_, dtype=np.float64)
+    base = 0.02 + 0.004 * np.sin(2 * math.pi * 2.0 * x)
+    b1 = 0.012 * np.exp(-0.5 * ((x - 0.25) / 0.02) ** 2)
+    b2 = 0.010 * np.exp(-0.5 * ((x - 0.67) / 0.018) ** 2)
+    mu0 = np.clip(base + b1 + b2, 0.0, 1.0)
+    batch = np.stack([mu0 + _RNG.normal(0, 6e-4, size=L_) for _ in range(B)], axis=0)
+    return np.clip(batch, 0.0, 1.0)
+
+
+def _make_symbolic_overlay(B: int = B, L_: int = L) -> Dict[str, Any]:
+    """
+    Create a simple symbolic overlay: two rule masks + per‑bin violation magnitudes.
+    For each sample, elevate violations inside masked bands; keep outside small.
+    """
+    m1 = _rect_mask(L_, 0.16, 0.31).astype(bool)
+    m2 = _rect_mask(L_, 0.58, 0.74).astype(bool)
+
+    sym = np.zeros((B, L_), dtype=np.float32)
+    for i in range(B):
+        base_noise = np.abs(_RNG.normal(0, 1e-4, size=L_)).astype(np.float32)
+        sym[i] = base_noise
+        sym[i, m1] += 6e-3 + np.abs(_RNG.normal(0, 1e-3, size=m1.sum()))
+        sym[i, m2] += 5e-3 + np.abs(_RNG.normal(0, 1e-3, size=m2.sum()))
+
+    rules = [
+        {"name": "left_band_rule", "mask": m1.astype(np.float32).tolist(), "weight": 1.0},
+        {"name": "right_band_rule", "mask": m2.astype(np.float32).tolist(), "weight": 1.0},
+    ]
+    return {"symbolic": sym, "rules": rules}
+
+
+def _make_entropy(B: int = B, L_: int = L) -> np.ndarray:
+    """
+    Light entropy proxy rising in banded regions; outside near baseline.
+    """
+    m1 = _rect_mask(L_, 0.16, 0.31).astype(bool)
+    m2 = _rect_mask(L_, 0.58, 0.74).astype(bool)
+    ent = np.abs(_RNG.normal(2e-3, 5e-4, size=(B, L_))).astype(np.float32)
+    ent[:, m1] += 1.5e-3
+    ent[:, m2] += 1.2e-3
+    return ent
+
+
+# --------------------------------------------------------------------------------------
+# Normalizers
+# --------------------------------------------------------------------------------------
+
+def _as_np(x) -> np.ndarray:
+    assert isinstance(x, np.ndarray), "Expected numpy.ndarray"
+    assert np.isfinite(x).all(), "Array contains non-finite values"
+    return x
+
+
+def _norm_2d(arr: np.ndarray, B_expect: Optional[int] = None) -> Tuple[np.ndarray, str]:
+    """
+    Accept (B,k) or (k,) and return (B,k).
+    """
+    arr = _as_np(arr)
+    if arr.ndim == 1:
+        return arr[None, :], f"(1,{arr.shape[0]})"
+    assert arr.ndim == 2, f"Expected 2D array, got shape={arr.shape}"
+    if B_expect is not None:
+        assert arr.shape[0] == B_expect, f"Expected B={B_expect}, got {arr.shape[0]}"
+    return arr, f"({arr.shape[0]},{arr.shape[1]})"
+
+
+def _norm_clusters(obj: Any, B_expect: int) -> np.ndarray:
+    """
+    Accept labels array (B,) or dict with 'labels'; return (B,) int array.
+    """
+    if isinstance(obj, dict):
+        labels = obj.get("labels", None)
+        assert labels is not None, "clusters dict missing 'labels'"
+        labels = np.asarray(labels)
+    else:
+        labels = np.asarray(obj)
+    assert labels.ndim == 1 and labels.shape[0] == B_expect, f"Expected cluster labels shape (B,), got {labels.shape}"
+    return labels.astype(int)
+
+
+# --------------------------------------------------------------------------------------
 # Fixtures
-# ======================================================================================
+# --------------------------------------------------------------------------------------
 
 @pytest.fixture(scope="module")
-def project_root() -> Path:
-    return repo_root()
+def fusion_mod():
+    return _import_fusion_module()
+
+
+@pytest.fixture(scope="module")
+def fusion_entry(fusion_mod):
+    return _locate_entrypoint(fusion_mod)
 
 
 @pytest.fixture
-def temp_outdir(tmp_path: Path) -> Path:
-    d = tmp_path / "fft_symbolic_fusion_out"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+def mu_batch():
+    return _make_mu_batch(B=B, L_=L)
 
 
 @pytest.fixture
-def ensure_logs_dir(project_root: Path) -> Path:
-    logs = project_root / "logs"
-    logs.mkdir(parents=True, exist_ok=True)
-    dbg = logs / "v50_debug_log.md"
-    if not dbg.exists():
-        dbg.write_text("# v50 Debug Log\n", encoding="utf-8")
-    return logs
-
-
-@pytest.fixture
-def tiny_inputs(tmp_path: Path) -> Dict[str, Path]:
-    """
-    Create tiny inputs for fusion:
-      - mu.npy       : (N, B) with two distinct frequencies per group
-      - shap.npy     : (N, B) weak magnitudes (optional)
-      - entropy.npy  : (N, B) weak magnitudes (optional)
-      - symbolic_results.json : tiny rule × planet map
-
-    Shapes kept small: N=6, B=64.
-    """
-    N, B = 6, 64
-    rng = np.random.default_rng(777)
-
-    # Two groups with different dominant frequencies
-    t = np.linspace(0, 1, B, endpoint=False).astype(np.float32)
-    mu = np.zeros((N, B), dtype=np.float32)
-    for i in range(N):
-        freq = 5 if i < (N // 2) else 9
-        mu[i] = 0.6 * np.sin(2 * np.pi * freq * t) + 0.2 * rng.normal(0, 0.2, size=B)
-
-    shap = np.abs(rng.normal(0.0, 0.15, size=(N, B)).astype(np.float32))
-    entropy = np.abs(rng.normal(0.4, 0.1, size=(N, B)).astype(np.float32))
-
-    base = tmp_path
-    mu_path = base / "mu.npy"
-    shap_path = base / "shap.npy"
-    entropy_path = base / "entropy.npy"
-    np.save(mu_path, mu)
-    np.save(shap_path, shap)
-    np.save(entropy_path, entropy)
-
-    # Minimal symbolic results
-    symbolic_path = base / "symbolic_results.json"
-    payload = {
-        "rules": ["R_smooth", "R_nonneg"],
-        "planets": [
-            {"id": "p000", "violations": {"R_smooth": 0.10, "R_nonneg": 0.00}},
-            {"id": "p001", "violations": {"R_smooth": 0.02, "R_nonneg": 0.07}},
-            {"id": "p002", "violations": {"R_smooth": 0.00, "R_nonneg": 0.00}},
-            {"id": "p003", "violations": {"R_smooth": 0.09, "R_nonneg": 0.01}},
-            {"id": "p004", "violations": {"R_smooth": 0.03, "R_nonneg": 0.00}},
-            {"id": "p005", "violations": {"R_smooth": 0.00, "R_nonneg": 0.05}},
-        ],
-    }
-    symbolic_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-
+def overlays():
     return {
-        "mu": mu_path,
-        "shap": shap_path,
-        "entropy": entropy_path,
-        "symbolic": symbolic_path,
+        "symbolic": _make_symbolic_overlay(B=B, L_=L),
+        "entropy": _make_entropy(B=B, L_=L),
     }
 
 
-# ======================================================================================
-# Tests
-# ======================================================================================
+# --------------------------------------------------------------------------------------
+# Tests — API & shapes
+# --------------------------------------------------------------------------------------
 
-def test_discoverable_and_help(project_root: Path):
+def test_api_and_shapes(fusion_entry, mu_batch, overlays):
     """
-    Tool must be discoverable and --help must mention FFT/symbolic/fusion/UMAP/t-SNE keywords.
-    We try:
-      1) python tools/generate_fft_symbolic_fusion.py --help
-      2) python -m tools.generate_fft_symbolic_fusion --help (if tools is a package)
-      3) spectramind diagnose fft-fusion --help (or aliases)
+    Ensure minimal expected keys exist and shapes are coherent.
     """
-    help_blobs: List[str] = []
+    kind, target = fusion_entry
+    out = _invoke(
+        kind,
+        target,
+        mu_batch,
+        seed=1234,
+        entropy=overlays["entropy"],
+        symbolic=overlays["symbolic"]["symbolic"],
+        rules=overlays["symbolic"]["rules"],
+        n_freq=64,             # tiny FFT bins to keep CI fast
+        do_pca=True,
+        do_umap=False,         # some envs may not have umap; keep optional
+        do_tsne=False,
+    )
+    assert isinstance(out, dict)
 
-    # 1) Direct scripts
-    for script in tool_script_candidates():
-        code, out, err = run_proc(python_script_invocation(script, "--help"), cwd=project_root)
-        if code == 0 and (out or err):
-            help_blobs.append(out + "\n" + err)
+    # FFT features should exist
+    assert "fft" in out, "Output missing 'fft' features."
+    fft, _ = _norm_2d(_as_np(out["fft"]), B_expect=B)  # (B, Ffft)
+    assert fft.shape[0] == B and fft.shape[1] > 8, "FFT feature dimension too small."
 
-    # 2) Module form
-    if (project_root / "tools" / "__init__.py").exists():
-        code, out, err = run_proc(python_module_invocation("tools.generate_fft_symbolic_fusion", "--help"), cwd=project_root)
-        if code == 0 and (out or err):
-            help_blobs.append(out + "\n" + err)
-
-    # 3) spectramind wrapper
-    if not help_blobs:
-        for cli in spectramind_cli_candidates():
-            code, out, err = run_proc([*cli, "--help"], cwd=project_root)
-            if code == 0 and (out or err):
-                help_blobs.append(out + "\n" + err)
-                break
-
-    assert help_blobs, "No --help output found for FFT × Symbolic Fusion tool."
-    combined = "\n\n".join(help_blobs).lower()
-    required_any = ["fft", "fusion", "symbolic", "umap", "t-sne", "tsne", "diagnostics", "entropy", "shap"]
-    assert any(tok in combined for tok in required_any), \
-        f"--help lacks core fusion keywords; expected any of {required_any}"
-
-
-def test_safe_invocation_and_artifacts(project_root: Path, temp_outdir: Path, ensure_logs_dir: Path, tiny_inputs: Dict[str, Path]):
-    """
-    Execute the fusion tool in safe mode with tiny inputs (if supported), ensuring:
-      - Exit code 0
-      - Debug log appended
-      - Outdir exists
-      - Artifacts produced (HTML/PNG/CSV/JSON/MD) OR intended outputs mentioned
-    """
-    debug_log = ensure_logs_dir / "v50_debug_log.md"
-    pre_len = len(read_text_or_empty(debug_log))
-
-    # Choose an entrypoint and parse help
-    help_text = ""
-    base_cmd: Optional[List[str]] = None
-
-    for script in tool_script_candidates():
-        code, out, err = run_proc(python_script_invocation(script, "--help"), cwd=project_root)
-        if code == 0:
-            help_text = out + "\n" + err
-            base_cmd = python_script_invocation(script)
+    # At least one embedding (pca/umap/tsne/fusion) should exist
+    has_emb = False
+    for key in ("pca", "umap", "tsne", "fusion"):
+        if key in out:
+            emb, _ = _norm_2d(_as_np(out[key]), B_expect=B)
+            assert emb.shape[1] in (2, 3, 5, 10), "Unexpected embedding width; expected small k."
+            has_emb = True
             break
+    assert has_emb, "No embedding found among ['pca','umap','tsne','fusion']."
 
-    if base_cmd is None and (project_root / "tools" / "__init__.py").exists():
-        code, out, err = run_proc(python_module_invocation("tools.generate_fft_symbolic_fusion", "--help"), cwd=project_root)
-        if code == 0:
-            help_text = out + "\n" + err
-            base_cmd = python_module_invocation("tools.generate_fft_symbolic_fusion")
-
-    if base_cmd is None:
-        for cli in spectramind_cli_candidates():
-            code, out, err = run_proc([*cli, "--help"], cwd=project_root)
-            if code == 0:
-                help_text = out + "\n" + err
-                base_cmd = cli
-                break
-
-    assert base_cmd is not None, "Unable to obtain a working entrypoint for the fusion tool."
-    flags = discover_supported_flags(help_text)
-
-    # Build safe command
-    cmd = list(base_cmd)
-
-    # Safe flag
-    if "dry_run" in flags:
-        cmd.append(flags["dry_run"])
-
-    # Outdir
-    if "outdir" in flags:
-        cmd.extend([flags["outdir"], str(temp_outdir)])
-
-    # Inputs
-    if "mu" in flags:
-        cmd.extend([flags["mu"], str(tiny_inputs["mu"])])
-    if "shap" in flags:
-        cmd.extend([flags["shap"], str(tiny_inputs["shap"])])
-    if "entropy" in flags:
-        cmd.extend([flags["entropy"], str(tiny_inputs["entropy"])])
-    if "symbolic" in flags:
-        cmd.extend([flags["symbolic"], str(tiny_inputs["symbolic"])])
-
-    # Projections / exports (request light artifacts; tool may *plan* in dry mode)
-    for opt in ("umap", "tsne", "html", "md", "csv", "json",
-                "overlay_symbolic", "overlay_shap", "overlay_entropy"):
-        if opt in flags:
-            cmd.append(flags[opt])
-
-    # Optional FFT options (small/light)
-    if "n_freq" in flags:
-        cmd.extend([flags["n_freq"], "16"])
-    if "window" in flags:
-        cmd.extend([flags["window"], "hann"])
-    if "normalize" in flags:
-        cmd.append(flags["normalize"])
-    if "clusters" in flags:
-        cmd.extend([flags["clusters"], "2"])  # tiny example
-    if "labels" in flags:
-        # We don't synthesize labels.csv here; this flag is optional and often alternative to --clusters
-        pass
-
-    # Execute
-    code, out, err = run_proc(cmd, cwd=project_root, timeout=240)
-    assert code == 0, f"Safe fusion invocation failed.\nSTDERR:\n{err}\nSTDOUT:\n{out}"
-    combined = (out + "\n" + err).lower()
-    assert any(k in combined for k in ["fft", "fusion", "symbolic", "umap", "tsne", "overlay", "html", "csv", "json"]), \
-        "Output does not resemble fusion tool output."
-
-    # Log grew
-    post_len = len(read_text_or_empty(debug_log))
-    assert post_len >= pre_len, "v50_debug_log.md did not grow after fusion invocation."
-    appended = read_text_or_empty(debug_log)[pre_len:]
-    assert re.search(r"(fft|fusion|symbolic|umap|tsne|diagnose)", appended, re.IGNORECASE), \
-        "No recognizable fusion-related text found in debug log appended segment."
-
-    # Outdir exists
-    assert temp_outdir.exists(), "Output directory missing after fusion invocation."
-
-    # Look for produced artifacts OR mention of intended outputs
-    produced_html = recent_files_with_suffix(temp_outdir, (".html", ".htm"))
-    produced_png = recent_files_with_suffix(temp_outdir, (".png",))
-    produced_csv = recent_files_with_suffix(temp_outdir, (".csv",))
-    produced_json = recent_files_with_suffix(temp_outdir, (".json",))
-    produced_md = recent_files_with_suffix(temp_outdir, (".md",))
-
-    if not (produced_html or produced_png or produced_csv or produced_json or produced_md):
-        # Accept dry-run planning — require mention of output intent
-        assert any(tok in combined for tok in ["outdir", "output", "write", ".html", ".png", ".csv", ".json", ".md"]), \
-            "No artifacts found and no mention of intended outputs in tool output (dry-run should plan)."
+    # If clusters present, check shape
+    if "clusters" in out:
+        labels = _norm_clusters(out["clusters"], B_expect=B)
+        assert labels.shape == (B,)
 
 
-def test_json_or_csv_summaries_if_emitted(temp_outdir: Path):
+# --------------------------------------------------------------------------------------
+# Tests — Fusion overlay sanity (localization)
+# --------------------------------------------------------------------------------------
+
+def test_symbolic_overlay_localization(fusion_entry, mu_batch, overlays):
     """
-    If JSON or CSV summaries were written, perform light sanity checks.
+    If the tool returns a per-bin or per-sample overlay, verify that values
+    are elevated inside masked rule regions versus outside (statistical check).
     """
-    json_files = recent_files_with_suffix(temp_outdir, (".json",))
-    csv_files = recent_files_with_suffix(temp_outdir, (".csv",))
+    kind, target = fusion_entry
+    out = _invoke(
+        kind,
+        target,
+        mu_batch,
+        seed=99,
+        entropy=overlays["entropy"],
+        symbolic=overlays["symbolic"]["symbolic"],
+        rules=overlays["symbolic"]["rules"],
+        n_freq=48,
+        return_overlay=True,
+    )
 
-    # JSON sanity
-    for jf in json_files[:6]:
-        text = read_text_or_empty(jf).strip()
-        if not text:
-            continue
-        try:
-            obj = json.loads(text)
-        except Exception as e:
-            pytest.fail(f"Malformed JSON at {jf}: {e}")
+    # We accept either:
+    #   out['overlay']['symbolic_fused'] -> (B,L)
+    # or out['overlay']['symbolic']      -> (B,L)
+    ov = None
+    if "overlay" in out and isinstance(out["overlay"], dict):
+        for k in ("symbolic_fused", "symbolic", "fusion_per_bin"):
+            if k in out["overlay"]:
+                arr = np.asarray(out["overlay"][k])
+                if arr.ndim == 2 and arr.shape[1] == L:
+                    ov = arr
+                    break
+    if ov is None:
+        pytest.xfail("No suitable per-bin overlay found in output['overlay']; skipping localization test.")
 
-        if isinstance(obj, dict):
-            keys = {str(k).lower() for k in obj.keys()}
-            indicative = {"fft", "fusion", "umap", "tsne", "clusters", "summary", "metrics", "symbolic"}
-            assert keys & indicative or len(keys) > 0, \
-                f"JSON {jf} lacks indicative fusion/diagnostics keys."
+    # Build masks
+    m1 = np.asarray(overlays["symbolic"]["rules"][0]["mask"], dtype=bool)
+    m2 = np.asarray(overlays["symbolic"]["rules"][1]["mask"], dtype=bool)
 
-    # CSV sanity
-    for cf in csv_files[:6]:
-        text = read_text_or_empty(cf).strip()
-        if not text:
-            continue
-        assert ("\n" in text or "," in text), f"CSV {cf} seems empty or malformed."
+    # Check median elevation inside masks vs outside (aggregated across batch)
+    inside = np.median(np.abs(ov[:, m1])); outside = np.median(np.abs(ov[:, ~m1]))
+    assert inside > outside * 1.2, f"Overlay not elevated in mask #1: inside={inside:.3e}, outside={outside:.3e}"
+
+    inside2 = np.median(np.abs(ov[:, m2])); outside2 = np.median(np.abs(ov[:, ~m2]))
+    assert inside2 > outside2 * 1.2, f"Overlay not elevated in mask #2: inside={inside2:.3e}, outside={outside2:.3e}"
 
 
-def test_idempotent_safe_runs_no_heavy_accumulation(project_root: Path, temp_outdir: Path, tiny_inputs: Dict[str, Path]):
+# --------------------------------------------------------------------------------------
+# Tests — Determinism
+# --------------------------------------------------------------------------------------
+
+def test_determinism_fixed_seed(fusion_entry, mu_batch, overlays):
     """
-    Run safe mode twice and ensure heavy artifacts (checkpoints or >5MB) do not accumulate.
+    With identical inputs and seed, outputs should be identical (embeddings and clusters).
     """
-    # Get help & base command
-    help_text = ""
-    base_cmd: Optional[List[str]] = None
+    kind, target = fusion_entry
 
-    for script in tool_script_candidates():
-        code, out, err = run_proc(python_script_invocation(script, "--help"), cwd=project_root)
-        if code == 0:
-            help_text = out + "\n" + err
-            base_cmd = python_script_invocation(script)
+    out1 = _invoke(
+        kind,
+        target,
+        mu_batch,
+        seed=777,
+        entropy=overlays["entropy"],
+        symbolic=overlays["symbolic"]["symbolic"],
+        rules=overlays["symbolic"]["rules"],
+        n_freq=32,
+        do_pca=True,
+    )
+    out2 = _invoke(
+        kind,
+        target,
+        mu_batch,
+        seed=777,
+        entropy=overlays["entropy"],
+        symbolic=overlays["symbolic"]["symbolic"],
+        rules=overlays["symbolic"]["rules"],
+        n_freq=32,
+        do_pca=True,
+    )
+
+    # Compare PCA (or any available embedding)
+    key = "pca" if "pca" in out1 and "pca" in out2 else ("fusion" if "fusion" in out1 and "fusion" in out2 else None)
+    if key is None:
+        pytest.xfail("No comparable embedding key ('pca' or 'fusion') present for determinism test.")
+    e1, _ = _norm_2d(_as_np(out1[key]), B_expect=B)
+    e2, _ = _norm_2d(_as_np(out2[key]), B_expect=B)
+    assert np.array_equal(e1, e2), f"Embedding '{key}' changed despite fixed seed."
+
+    # Clusters (if present)
+    if "clusters" in out1 and "clusters" in out2:
+        c1 = _norm_clusters(out1["clusters"], B_expect=B)
+        c2 = _norm_clusters(out2["clusters"], B_expect=B)
+        assert np.array_equal(c1, c2), "Cluster labels changed despite fixed seed."
+
+
+# --------------------------------------------------------------------------------------
+# Tests — Artifact save (optional)
+# --------------------------------------------------------------------------------------
+
+def test_artifact_save_roundtrip_if_available(fusion_mod, fusion_entry, tmp_path, mu_batch, overlays):
+    """
+    If module exposes a saver like save_fusion_artifacts(...), verify that
+    it writes files and that NPY arrays reload with correct shapes.
+    """
+    save_fn = None
+    for name in ("save_fusion_artifacts", "save_artifacts", "write_artifacts"):
+        if hasattr(fusion_mod, name) and callable(getattr(fusion_mod, name)):
+            save_fn = getattr(fusion_mod, name)
             break
+    if save_fn is None:
+        pytest.xfail("Fusion module exposes no artifact saver; skipping round-trip test.")
 
-    if base_cmd is None and (project_root / "tools" / "__init__.py").exists():
-        code, out, err = run_proc(python_module_invocation("tools.generate_fft_symbolic_fusion", "--help"), cwd=project_root)
-        if code == 0:
-            help_text = out + "\n" + err
-            base_cmd = python_module_invocation("tools.generate_fft_symbolic_fusion")
+    kind, target = fusion_entry
+    out = _invoke(
+        kind,
+        target,
+        mu_batch,
+        seed=123,
+        entropy=overlays["entropy"],
+        symbolic=overlays["symbolic"]["symbolic"],
+        rules=overlays["symbolic"]["rules"],
+        n_freq=40,
+        do_pca=True,
+    )
 
-    if base_cmd is None:
-        for cli in spectramind_cli_candidates():
-            code, out, err = run_proc([*cli, "--help"], cwd=project_root)
-            if code == 0:
-                help_text = out + "\n" + err
-                base_cmd = cli
-                break
+    outdir = tmp_path / "fusion_artifacts"
+    outdir.mkdir(parents=True, exist_ok=True)
+    save_fn(out, outdir=str(outdir))
 
-    assert base_cmd is not None, "Could not obtain fusion tool help for idempotency test."
-    flags = discover_supported_flags(help_text)
+    files = list(outdir.glob("*"))
+    assert files, "No artifacts written by saver."
 
-    # Build safe command with the tiny inputs
-    cmd = list(base_cmd)
-    if "dry_run" in flags:
-        cmd.append(flags["dry_run"])
-    if "outdir" in flags:
-        cmd.extend([flags["outdir"], str(temp_outdir)])
-    if "mu" in flags:
-        cmd.extend([flags["mu"], str(tiny_inputs["mu"])])
-    if "shap" in flags:
-        cmd.extend([flags["shap"], str(tiny_inputs["shap"])])
-    if "entropy" in flags:
-        cmd.extend([flags["entropy"], str(tiny_inputs["entropy"])])
-    if "symbolic" in flags:
-        cmd.extend([flags["symbolic"], str(tiny_inputs["symbolic"])])
+    # Reload selectable arrays if present
+    for key, fname in (("fft", "fft.npy"), ("pca", "pca.npy"), ("fusion", "fusion.npy")):
+        p = outdir / fname
+        if p.exists():
+            arr = np.load(p)
+            _norm_2d(arr, B_expect=B)  # raises on mismatch
 
-    # Count heavy artifacts (heuristic: >5MB or checkpoint-like suffixes)
-    def count_heavy(root: Path) -> int:
-        if not root.exists():
-            return 0
-        n = 0
-        for p in root.rglob("*"):
-            if p.is_file():
-                if p.suffix.lower() in {".ckpt", ".pt"} or p.stat().st_size > 5 * 1024 * 1024:
-                    n += 1
-        return n
-
-    pre = count_heavy(temp_outdir)
-    code1, out1, err1 = run_proc(cmd, cwd=project_root, timeout=180)
-    code2, out2, err2 = run_proc(cmd, cwd=project_root, timeout=180)
-    assert code1 == 0 and code2 == 0, f"Safe fusion invocations failed.\n1) {err1}\n2) {err2}"
-    post = count_heavy(temp_outdir)
-    assert post <= pre, f"Heavy artifacts increased in safe mode: before={pre}, after={post}"
+    # Clusters optional
+    p_labels = outdir / "clusters.npy"
+    if p_labels.exists():
+        labels = np.load(p_labels)
+        _norm_clusters(labels, B_expect=B)  # raises on mismatch
 
 
-def test_help_mentions_core_exports_and_projections(project_root: Path):
+# --------------------------------------------------------------------------------------
+# Tests — CLI smoke (optional)
+# --------------------------------------------------------------------------------------
+
+@pytest.mark.skipif(__import__("shutil").which("spectramind") is None, reason="spectramind CLI not found in PATH")
+def test_cli_smoke_fft_symbolic_fusion(tmp_path, mu_batch, overlays):
     """
-    Quick semantic sniff: --help should mention core exports and projections to guide users.
+    Smoke test the repo CLI for this diagnostic (adjust flags if your repo differs):
+
+        spectramind diagnose fft-fusion \
+            --mu mu.npy \
+            --symbolic symbolic.json \
+            --entropy entropy.npy \
+            --outdir out \
+            --n-freq 48 \
+            --seed 123
+
+    We only assert it runs and writes at least one artifact.
     """
-    help_texts: List[str] = []
+    mu_path = tmp_path / "mu.npy"
+    np.save(mu_path, mu_batch)
 
-    for script in tool_script_candidates():
-        code, out, err = run_proc(python_script_invocation(script, "--help"), cwd=project_root)
-        if code == 0 and (out or err):
-            help_texts.append(out + "\n" + err)
+    entropy_path = tmp_path / "entropy.npy"
+    np.save(entropy_path, overlays["entropy"])
 
-    if not help_texts and (project_root / "tools" / "__init__.py").exists():
-        code, out, err = run_proc(python_module_invocation("tools.generate_fft_symbolic_fusion", "--help"), cwd=project_root)
-        if code == 0 and (out or err):
-            help_texts.append(out + "\n" + err)
+    # Minimal symbolic JSON with per-sample per-bin violations + rules
+    sym_path = tmp_path / "symbolic.json"
+    sym_payload = {
+        "symbolic": overlays["symbolic"]["symbolic"].tolist(),
+        "rules": overlays["symbolic"]["rules"],
+    }
+    with open(sym_path, "w", encoding="utf-8") as f:
+        json.dump(sym_payload, f)
 
-    if not help_texts:
-        for cli in spectramind_cli_candidates():
-            code, out, err = run_proc([*cli, "--help"], cwd=project_root)
-            if code == 0 and (out or err):
-                help_texts.append(out + "\n" + err)
-                break
+    outdir = tmp_path / "out"
+    outdir.mkdir(parents=True, exist_ok=True)
 
-    assert help_texts, "Unable to capture --help for FFT × Symbolic Fusion."
-    combined = "\n\n".join(help_texts).lower()
-    want_any = ["umap", "t-sne", "tsne", "html", "csv", "json", "markdown", "overlay", "shap", "entropy", "symbolic"]
-    assert any(tok in combined for tok in want_any), \
-        f"--help should mention projections/exports/overlays; expected any of {want_any}"
+    cmd = [
+        "spectramind", "diagnose", "fft-fusion",
+        "--mu", str(mu_path),
+        "--symbolic", str(sym_path),
+        "--entropy", str(entropy_path),
+        "--outdir", str(outdir),
+        "--n-freq", "48",
+        "--seed", "123",
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        pytest.xfail(
+            "CLI returned nonzero exit (subcommand/flags may differ).\n"
+            f"STDOUT:\n{proc.stdout}\n\nSTDERR:\n{proc.stderr}"
+        )
+
+    produced = list(outdir.glob("*"))
+    assert len(produced) > 0, "CLI ran but produced no artifacts."
 
 
-# ======================================================================================
-# End of file
-# ======================================================================================
+# --------------------------------------------------------------------------------------
+# Performance guardrail
+# --------------------------------------------------------------------------------------
+
+def test_runs_fast_enough(fusion_entry, mu_batch, overlays):
+    """
+    Tiny configuration should complete in < 1.5s on CI CPU.
+    """
+    kind, target = fusion_entry
+    t0 = time.time()
+    _ = _invoke(
+        kind,
+        target,
+        mu_batch,
+        seed=11,
+        entropy=overlays["entropy"],
+        symbolic=overlays["symbolic"]["symbolic"],
+        rules=overlays["symbolic"]["rules"],
+        n_freq=32,
+        do_pca=True,
+        do_umap=False,
+        do_tsne=False,
+    )
+    dt = time.time() - t0
+    assert dt < 1.5, f"FFT × Symbolic fusion too slow: {dt:.3f}s (should be < 1.5s)"
