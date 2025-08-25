@@ -7,10 +7,9 @@ Design goals
 - Deterministic tests (fixed seeds across numpy / Python / PyTorch).
 - Hermetic runs (no unwanted net / GUI / non‑deterministic backends).
 - Fast dev loop (mark/skip slow by default; easy opt-in with --runslow).
-- Helpful utilities (temp project dir, sample spectrum tensors, CLI runner).
+- Helpful utilities (temp project dir, sample spectrum tensors, CLI runners).
 
-All fixtures are safe to import even if optional deps (torch, hydra, typer)
-are not installed — they degrade gracefully.
+All fixtures degrade gracefully if optional deps (torch, hydra, typer) are absent.
 """
 
 from __future__ import annotations
@@ -18,6 +17,7 @@ from __future__ import annotations
 import os
 import random
 import sys
+import subprocess
 from pathlib import Path
 from typing import Generator, Optional
 
@@ -28,7 +28,7 @@ import pytest
 # Global, once-per-session test configuration
 # -----------------------------------------------------------------------------
 
-# Make matplotlib fully headless in any test (if present).
+# Headless rendering for any matplotlib usage
 os.environ.setdefault("MPLBACKEND", "Agg")
 
 # Silence some noisy tooling for CI speed/stability.
@@ -36,30 +36,37 @@ os.environ.setdefault("PYTHONHASHSEED", "0")
 os.environ.setdefault("PIP_DISABLE_PIP_VERSION_CHECK", "1")
 os.environ.setdefault("PIP_NO_PYTHON_VERSION_WARNING", "1")
 
-# Optional: encourage libraries to act deterministically when they can.
-os.environ.setdefault("TF_DETERMINISTIC_OPS", "1")       # if TF present
-os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":16:8")  # cudnn/cublas (if used)
+# Encourage deterministic backends (when present)
+os.environ.setdefault("TF_DETERMINISTIC_OPS", "1")
+os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":16:8")
 
-# Prefer reproducible thread counts if libs respect it.
+# Pin BLAS threads for reproducibility on shared runners
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 os.environ.setdefault("MKL_NUM_THREADS", "1")
 
+# Helpful in CI for Hydra tracebacks
+os.environ.setdefault("HYDRA_FULL_ERROR", "1")
+
+# Prefer offline behavior during tests (opt-out per-test if needed)
+os.environ.setdefault("KAGGLE_OFFLINE", "1")
+
+# -----------------------------------------------------------------------------
+# Seeding helpers
+# -----------------------------------------------------------------------------
 
 def _seed_all(seed: int) -> None:
     """Seed Python, NumPy, and (optionally) PyTorch."""
     random.seed(seed)
     np.random.seed(seed)
-
-    try:  # optional dependency
+    try:
         import torch
 
         torch.manual_seed(seed)
         torch.use_deterministic_algorithms(True, warn_only=True)
-        # Ensure CuDNN is deterministic where possible
         torch.backends.cudnn.deterministic = True  # type: ignore[attr-defined]
         torch.backends.cudnn.benchmark = False     # type: ignore[attr-defined]
     except Exception:
-        # It's okay if torch isn't available during docs/lint jobs
+        # Optional dependency; fine if unavailable
         pass
 
 
@@ -71,21 +78,104 @@ def _session_determinism() -> None:
 
 
 @pytest.fixture(autouse=True)
-def _function_rng() -> Generator[np.random.Generator, None, None]:
+def _function_rng(request: pytest.FixtureRequest) -> Generator[np.random.Generator, None, None]:
     """
-    A per-test NumPy Generator seeded from the global seed + nodeid hash.
-    This keeps tests independent yet reproducible.
+    Per-test NumPy Generator seeded from global seed + nodeid hash for independence.
     """
-    # The calling test nodeid is not available here directly; use a stable fallback.
-    # For better isolation, individual tests can pass their own seed.
-    seed = int(os.environ.get("PYTEST_GLOBAL_SEED", "42")) ^ (hash(os.getcwd()) & 0xFFFFFFFF)
-    rng = np.random.default_rng(seed)
+    base = int(os.environ.get("PYTEST_GLOBAL_SEED", "42"))
+    node_hash = hash(request.node.nodeid) & 0xFFFFFFFF
+    rng = np.random.default_rng(base ^ node_hash)
     yield rng
 
+# -----------------------------------------------------------------------------
+# PyTest knobs: marks, options, and slow test handling
+# -----------------------------------------------------------------------------
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--runslow",
+        action="store_true",
+        default=False,
+        help="Run tests marked as slow.",
+    )
+    parser.addoption(
+        "--cli",
+        action="store",
+        default="spectramind",
+        help='Subprocess CLI entry to invoke (e.g., "spectramind" or "python -m spectramind").',
+    )
+    parser.addoption(
+        "--no-network",
+        action="store_true",
+        default=False,
+        help="Disallow network access during tests (export SPECTRAMIND_NO_NETWORK=1).",
+    )
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    config.addinivalue_line("markers", "slow: marks tests as slow (deselect with '-m \"not slow\"')")
+    config.addinivalue_line("markers", "gpu: tests requiring CUDA/GPU")
+    config.addinivalue_line("markers", "integration: full pipeline or external resources")
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    if config.getoption("--runslow"):
+        return
+    skip_slow = pytest.mark.skip(reason="need --runslow to run")
+    for item in items:
+        if "slow" in item.keywords:
+            item.add_marker(skip_slow)
 
 # -----------------------------------------------------------------------------
-# CLI helpers (optional Typer integration)
+# Logging: ensure INFO is visible on failures
 # -----------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def _caplog_level(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level("INFO")
+
+# -----------------------------------------------------------------------------
+# Paths & temp project layout
+# -----------------------------------------------------------------------------
+
+@pytest.fixture(scope="session")
+def repo_root() -> Path:
+    # Resolve repo root by walking up until pyproject or .git
+    cur = Path(__file__).resolve().parent
+    for _ in range(10):
+        if (cur / "pyproject.toml").exists() or (cur / ".git").exists():
+            return cur.parent if cur.name == "tests" else cur
+        if cur.parent == cur:
+            break
+        cur = cur.parent
+    return Path(__file__).resolve().parent.parent
+
+@pytest.fixture()
+def tmp_project_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """
+    Create a throwaway 'project root' with expected subdirs so code that writes
+    into logs/, outputs/, artifacts/ works in tests without touching the repo.
+    """
+    for sub in ("logs", "outputs", "artifacts", "data"):
+        (tmp_path / sub).mkdir(parents=True, exist_ok=True)
+
+    # Point project-level envs to the temp dir if code relies on them.
+    monkeypatch.setenv("SPECTRAMIND_HOME", str(tmp_path))
+    if os.environ.get("HYDRA_FULL_ERROR") != "1":
+        monkeypatch.setenv("HYDRA_FULL_ERROR", "1")
+    if os.environ.get("KAGGLE_OFFLINE") != "1":
+        monkeypatch.setenv("KAGGLE_OFFLINE", "1")
+
+    # Ensure temporary project is importable if tests dynamically import modules there
+    if str(tmp_path) not in sys.path:
+        sys.path.insert(0, str(tmp_path))
+
+    return tmp_path
+
+# -----------------------------------------------------------------------------
+# CLI helpers (Typer & subprocess)
+# -----------------------------------------------------------------------------
+
 @pytest.fixture(scope="session")
 def cli_app() -> Optional["typer.Typer"]:
     """
@@ -94,8 +184,7 @@ def cli_app() -> Optional["typer.Typer"]:
     """
     try:
         import typer  # type: ignore
-        from spectramind import cli  # project: src/spectramind/cli.py with `app = Typer(...)`
-
+        from spectramind import cli  # src/spectramind/cli.py with `app = Typer(...)`
         if hasattr(cli, "app"):
             return cli.app  # type: ignore
     except Exception:
@@ -119,69 +208,44 @@ def cli_runner(cli_app) -> "typer.testing.CliRunner":
     return CliRunner()
 
 
-# -----------------------------------------------------------------------------
-# PyTest knobs: marks, options, and slow test handling
-# -----------------------------------------------------------------------------
-def pytest_addoption(parser: pytest.Parser) -> None:
-    parser.addoption(
-        "--runslow",
-        action="store_true",
-        default=False,
-        help="Run tests marked as slow.",
-    )
-
-
-def pytest_configure(config: pytest.Config) -> None:
-    config.addinivalue_line("markers", "slow: marks tests as slow (deselect with '-m \"not slow\"')")
-    config.addinivalue_line("markers", "gpu: tests requiring CUDA/GPU")
-    config.addinivalue_line("markers", "integration: full pipeline or external resources")
-
-
-def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    if config.getoption("--runslow"):
-        return
-    skip_slow = pytest.mark.skip(reason="need --runslow to run")
-    for item in items:
-        if "slow" in item.keywords:
-            item.add_marker(skip_slow)
-
-
-# -----------------------------------------------------------------------------
-# Logging, temp project dir, and handy data fixtures
-# -----------------------------------------------------------------------------
-@pytest.fixture(autouse=True)
-def _caplog_level(caplog: pytest.LogCaptureFixture) -> None:
-    # Ensure useful INFO logs appear during failing tests
-    caplog.set_level("INFO")
-
-
 @pytest.fixture()
-def tmp_project_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def cli_subprocess(pytestconfig: pytest.Config):
     """
-    Create a throwaway 'project root' with expected subdirs so code that writes
-    into logs/, outputs/, artifacts/ works in tests without touching the repo.
+    Subprocess fallback/alternative CLI runner.
+
+    Usage:
+        out = cli_subprocess("diagnose --help")
     """
-    for sub in ("logs", "outputs", "artifacts", "data"):
-        (tmp_path / sub).mkdir(parents=True, exist_ok=True)
+    entry = pytestconfig.getoption("--cli")
 
-    # Point any project-level envs to the temp dir if code relies on them.
-    monkeypatch.setenv("SPECTRAMIND_HOME", str(tmp_path))
-    monkeypatch.setenv("HYDRA_FULL_ERROR", "1")  # helpful in CI
-    # Avoid accidental online calls during tests (opt-out if needed per-test)
-    monkeypatch.setenv("KAGGLE_OFFLINE", "1")
+    def _run(args: str, cwd: Optional[Path] = None) -> str:
+        if isinstance(entry, str) and entry.strip().startswith("python -m"):
+            cmd = entry.split() + args.split()
+        else:
+            cmd = [entry] + args.split()
+        proc = subprocess.run(
+            cmd,
+            cwd=str(cwd) if cwd else None,
+            capture_output=True,
+            text=True,
+        )
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"CLI failed: {' '.join(cmd)}\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+            )
+        return proc.stdout
 
-    # Add tmp project to sys.path for dynamic module discovery (optional)
-    if str(tmp_path) not in sys.path:
-        sys.path.insert(0, str(tmp_path))
+    return _run
 
-    return tmp_path
-
+# -----------------------------------------------------------------------------
+# Useful data fixtures
+# -----------------------------------------------------------------------------
 
 @pytest.fixture()
 def sample_wavelengths() -> np.ndarray:
     """
-    A canonical 283-length wavelength grid (float64) spanning 0.5–5.0 microns.
-    Adjust bounds to match your pipeline if needed.
+    Canonical 283-length wavelength grid (float64) spanning 0.5–5.0 microns.
+    Adjust bounds to match the pipeline if needed.
     """
     return np.linspace(0.5, 5.0, 283, dtype=np.float64)
 
@@ -189,8 +253,8 @@ def sample_wavelengths() -> np.ndarray:
 @pytest.fixture()
 def sample_spectrum(sample_wavelengths: np.ndarray, _function_rng) -> np.ndarray:
     """
-    A physically-plausible toy transmission spectrum: smooth baseline plus
-    a few Gaussian absorption features. Non-negative and bounded in [0, 1].
+    Toy transmission spectrum: smooth baseline plus a few Gaussian absorption features.
+    Non-negative and bounded in [0, 1].
     """
     wl = sample_wavelengths
     baseline = 0.02 + 0.005 * np.sin(2 * np.pi * wl / wl.max())
@@ -198,22 +262,18 @@ def sample_spectrum(sample_wavelengths: np.ndarray, _function_rng) -> np.ndarray
     def gauss(mu: float, sigma: float, amp: float) -> np.ndarray:
         return amp * np.exp(-0.5 * ((wl - mu) / sigma) ** 2)
 
-    # Mix a few lines; parameters chosen to be gentle.
     spectrum = baseline.copy()
     spectrum += gauss(mu=1.4, sigma=0.04, amp=0.015)
     spectrum += gauss(mu=2.7, sigma=0.06, amp=0.010)
     spectrum += gauss(mu=4.3, sigma=0.08, amp=0.008)
 
-    # Add tiny noise to avoid pathological exact-equality assertions
     spectrum += _function_rng.normal(0.0, 5e-5, size=spectrum.shape)
-
-    # Clamp to physically meaningful range
     return np.clip(spectrum, 0.0, 1.0)
 
+# -----------------------------------------------------------------------------
+# Optional: Hypothesis profile for fast & stable property tests
+# -----------------------------------------------------------------------------
 
-# -----------------------------------------------------------------------------
-# Optional: Hypothesis defaults (if installed) for fast & stable property tests
-# -----------------------------------------------------------------------------
 try:
     from hypothesis import HealthCheck, Phase, settings
 
@@ -227,13 +287,12 @@ try:
     )
     settings.load_profile(os.environ.get("HYPOTHESIS_PROFILE", "spectramind_fast"))
 except Exception:
-    # Hypothesis not installed — fine for CI shards where not needed.
     pass
 
+# -----------------------------------------------------------------------------
+# Optional Hydra isolation (if tests compose configs)
+# -----------------------------------------------------------------------------
 
-# -----------------------------------------------------------------------------
-# Optional Hydra isolation (if your tests compose configs)
-# -----------------------------------------------------------------------------
 @pytest.fixture()
 def hydra_clear_global_state() -> Generator[None, None, None]:
     """
@@ -241,16 +300,21 @@ def hydra_clear_global_state() -> Generator[None, None, None]:
     Only activates if Hydra is present in the environment.
     """
     try:
-        from hydra import initialize, compose  # noqa: F401
         from hydra.core.global_hydra import GlobalHydra
 
-        # Before: ensure no prior state
         if GlobalHydra.instance().is_initialized():
             GlobalHydra.instance().clear()
         yield
-        # After: clear again
         if GlobalHydra.instance().is_initialized():
             GlobalHydra.instance().clear()
     except Exception:
-        # If hydra isn't installed or used, do nothing
         yield
+
+# -----------------------------------------------------------------------------
+# Optional session-wide network guard
+# -----------------------------------------------------------------------------
+
+@pytest.fixture(scope="session", autouse=True)
+def _network_guard(pytestconfig: pytest.Config) -> None:
+    if pytestconfig.getoption("--no-network"):
+        os.environ["SPECTRAMIND_NO_NETWORK"] = "1"
