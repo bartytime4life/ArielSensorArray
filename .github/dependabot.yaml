@@ -1,8 +1,96 @@
 version: 2
 updates:
+  # -----------------------------------------------------------------------------
+  # Python dependencies (pip / Poetry)
+  # -----------------------------------------------------------------------------
   - package-ecosystem: "pip"
     directory: "/"
-    schedule: { interval: "weekly" }
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/Chicago"
+    commit-message:
+      prefix: "deps(pip)"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "python"
+      - "pip"
+      - "automerge-candidate"   # You can remove this if you prefer manual labeling only
+    assignees:
+      - "AndyBarta"
+    reviewers:
+      - "AndyBarta"
+    versioning-strategy: "lockfile-only"
+    groups:
+      core-libs:
+        patterns:
+          - "torch*"
+          - "tensorflow*"
+          - "transformers*"
+          - "hydra-core*"
+          - "omegaconf*"
+      dev-tools:
+        patterns:
+          - "pytest*"
+          - "black"
+          - "ruff"
+          - "isort"
+          - "mypy"
+          - "pre-commit"
+          - "nbqa*"
+      viz-tools:
+        patterns:
+          - "matplotlib*"
+          - "plotly*"
+          - "seaborn*"
+
+  # -----------------------------------------------------------------------------
+  # GitHub Actions workflow dependencies
+  # -----------------------------------------------------------------------------
   - package-ecosystem: "github-actions"
     directory: "/"
-    schedule: { interval: "weekly" }
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/Chicago"
+    commit-message:
+      prefix: "deps(actions)"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "ci"
+      - "github-actions"
+      - "automerge-candidate"   # You can remove this if you prefer manual labeling only
+    assignees:
+      - "AndyBarta"
+    reviewers:
+      - "AndyBarta"
+    groups:
+      actions-core:
+        patterns:
+          - "actions/*"
+      actions-ci:
+        patterns:
+          - "github/*"
+          - "codecov/*"
+          - "pypa/*"
+
+  # -----------------------------------------------------------------------------
+  # Security alerts (prioritized hotfixes)
+  # -----------------------------------------------------------------------------
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "daily"
+    allow:
+      - dependency-type: "all"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "security"
+    commit-message:
+      prefix: "fix(security)"
+      include: "scope"
