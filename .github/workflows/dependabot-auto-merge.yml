@@ -1,0 +1,66 @@
+name: "Dependabot Auto-Merge"
+on:
+  pull_request_target:
+    types: [opened, edited, labeled, synchronize]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  automerge:
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: "${{ secrets.GITHUB_TOKEN }}"
+
+      - name: Decide if this PR is eligible for auto-merge
+        id: decide
+        run: |
+          labels="${{ toJson(github.event.pull_request.labels.*.name) }}"
+          has_label() { echo "$labels" | grep -qi "\"$1\""; }
+
+          ELIGIBLE="false"
+
+          # 1) Explicit opt-in via label
+          if has_label "automerge-candidate"; then
+            ELIGIBLE="true"
+          fi
+
+          # 2) Dev-tools on pip (black/ruff/isort/mypy/pre-commit/nbqa/pytest*)
+          if [ "${{ steps.meta.outputs.package-ecosystem }}" = "pip" ]; then
+            pkgs="${{ steps.meta.outputs.dependency-names }}"
+            if echo "$pkgs" | grep -Eq '(black|ruff|isort|mypy|pre-commit|nbqa|pytest)'; then
+              ELIGIBLE="true"
+            fi
+          fi
+
+          # 3) Patch/minor updates to GitHub Actions are safe to auto-merge
+          if [ "${{ steps.meta.outputs.package-ecosystem }}" = "github-actions" ]; then
+            case "${{ steps.meta.outputs.update-type }}" in
+              version-update:semver-patch|version-update:semver-minor)
+                ELIGIBLE="true"
+              ;;
+            esac
+          fi
+
+          echo "eligible=$ELIGIBLE" >> "$GITHUB_OUTPUT"
+
+      # Optional: auto-approve to satisfy branch protection (if allowed)
+      - name: Auto-approve
+        if: steps.decide.outputs.eligible == 'true'
+        uses: hmarr/auto-approve-action@v4
+        with:
+          github-token: "${{ secrets.GITHUB_TOKEN }}"
+
+      - name: Enable GitHub auto-merge (squash)
+        if: steps.decide.outputs.eligible == 'true'
+        uses: peter-evans/enable-pull-request-automerge@v3
+        with:
+          token: "${{ secrets.GITHUB_TOKEN }}"
+          pull-request-number: ${{ github.event.pull_request.number }}
+          merge-method: squash
