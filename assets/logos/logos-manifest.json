@@ -1,0 +1,90 @@
+{
+  "$schema": "https://spectramind.dev/schemas/v50/assets-manifest.schema.json",
+  "meta": {
+    "project": "SpectraMind V50",
+    "component": "assets/logos",
+    "version": "1.0.0",
+    "created": "2025-08-25T00:00:00Z",
+    "description": "Logos and iconography for dashboards, web/desktop GUIs, and branding."
+  },
+  "logos": {
+    "logo.svg": {
+      "path": "logos/logo.svg",
+      "type": "image",
+      "hash": "sha256-PLACEHOLDER_HASH_LOGO_SVG",
+      "version": "1.0.0"
+    },
+    "logo.png": {
+      "path": "logos/logo.png",
+      "type": "image",
+      "hash": "sha256-PLACEHOLDER_HASH_LOGO_PNG",
+      "version": "1.0.0"
+    },
+    "favicon.ico": {
+      "path": "logos/favicon.ico",
+      "type": "image",
+      "hash": "sha256-PLACEHOLDER_HASH_FAVICON",
+      "version": "1.0.0"
+    },
+    "icon-192.png": {
+      "path": "logos/icon-192.png",
+      "type": "image",
+      "hash": "sha256-PLACEHOLDER_HASH_ICON_192",
+      "version": "1.0.0"
+    },
+    "icon-512.png": {
+      "path": "logos/icon-512.png",
+      "type": "image",
+      "hash": "sha256-PLACEHOLDER_HASH_ICON_512",
+      "version": "1.0.0"
+    },
+    "logo-dark.svg": {
+      "path": "logos/logo-dark.svg",
+      "type": "image",
+      "hash": "sha256-PLACEHOLDER_HASH_LOGO_DARK",
+      "version": "1.0.0"
+    },
+    "logo-light.svg": {
+      "path": "logos/logo-light.svg",
+      "type": "image",
+      "hash": "sha256-PLACEHOLDER_HASH_LOGO_LIGHT",
+      "version": "1.0.0"
+    },
+    "status-ok.svg": {
+      "path": "logos/status-ok.svg",
+      "type": "image",
+      "hash": "sha256-PLACEHOLDER_HASH_STATUS_OK",
+      "version": "1.0.0"
+    },
+    "status-warn.svg": {
+      "path": "logos/status-warn.svg",
+      "type": "image",
+      "hash": "sha256-PLACEHOLDER_HASH_STATUS_WARN",
+      "version": "1.0.0"
+    },
+    "status-error.svg": {
+      "path": "logos/status-error.svg",
+      "type": "image",
+      "hash": "sha256-PLACEHOLDER_HASH_STATUS_ERROR",
+      "version": "1.0.0"
+    },
+    "symbolic-rule.svg": {
+      "path": "logos/symbolic-rule.svg",
+      "type": "image",
+      "hash": "sha256-PLACEHOLDER_HASH_SYMBOLIC_RULE",
+      "version": "1.0.0"
+    },
+    "fft-spectrum.svg": {
+      "path": "logos/fft-spectrum.svg",
+      "type": "image",
+      "hash": "sha256-PLACEHOLDER_HASH_FFT_SPECTRUM",
+      "version": "1.0.0"
+    },
+    "umap-cluster.svg": {
+      "path": "logos/umap-cluster.svg",
+      "type": "image",
+      "hash": "sha256-PLACEHOLDER_HASH_UMAP_CLUSTER",
+      "version": "1.0.0"
+    }
+  }
+}
