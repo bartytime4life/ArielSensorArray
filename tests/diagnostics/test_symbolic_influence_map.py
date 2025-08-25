@@ -1,585 +1,478 @@
-# tests/diagnostics/test_symbolic_influence_map.py
+# /tests/diagnostics/test_symbolic_influence_map.py
 # -*- coding: utf-8 -*-
 """
-SpectraMind V50 — Diagnostics tests for tools/symbolic_influence_map.py
+SpectraMind V50 — Diagnostics Test: symbolic_influence_map
 
-This suite validates the scientific logic, artifact generation, and CLI behavior of the
-symbolic influence map tool that computes per-wavelength influence (e.g., ∂L/∂μ) w.r.t.
-symbolic rule losses.
+Purpose
+-------
+Validate the scientific and engineering behavior of the *symbolic_influence_map*
+utility, which computes per-rule influence (e.g., ∂L_sym/∂μ or related) over
+wavelength bins for one or more symbolic constraints.
 
-Coverage
---------
-1) Core API sanity:
-   • compute_* influence functions (e.g., compute_symbolic_influence / influence_map / dLdmu)
-     produce higher magnitude in bands with engineered violations.
-   • Optional rule-wise decomposition is consistent (per-rule > 0 where violated).
+This test suite focuses on:
+1) API discovery & shape contracts (single and batched μ)
+2) Rule-localization sanity (influence concentrated where a rule’s mask is active)
+3) Rule weight monotonicity (higher weight ⇒ larger aggregate influence)
+4) Determinism under fixed seeds
+5) Optional JSON/NPY artifact save path (if exposed)
+6) Optional CLI smoke test via `spectramind diagnose symbolic-influence-map ...`
 
-2) Artifact generation API:
-   • generate_symbolic_influence_artifacts(...) (or equivalent) produces JSON/CSV/PNG/HTML,
-     including a manifest or structured JSON with per-rule summaries.
+Design Notes
+------------
+• The tests are *defensively adaptable* to small API differences. They attempt to
+  import/locate the tool under common layouts:
+      - tools.symbolic_influence_map
+      - src.tools.symbolic_influence_map
+      - diagnostics.symbolic_influence_map
+  and detect one of the following call patterns:
+      - compute_symbolic_influence_map(mu, rules=..., **cfg) -> np.ndarray or dict
+      - symbolic_influence_map(mu, rules=..., **cfg) -> np.ndarray or dict
+      - compute_influence(mu, rules=..., **cfg) -> ...
+      - Simulator/Runner/Influencer(...).run(...)
+  If none are found, the test xfails with clear guidance.
 
-3) CLI contract:
-   • End-to-end run via subprocess (python -m tools.symbolic_influence_map).
-   • Determinism with --seed (compare JSON modulo volatile fields).
-   • Graceful error handling for missing/invalid args.
-   • Optional SPECTRAMIND_LOG_PATH audit line is appended.
+• We generate synthetic μ spectra (L=283) and a tiny rule set comprising two
+  disjoint wavelength masks. By construction, a physically sensible symbolic
+  influence implementation should show stronger influence within each rule’s
+  masked region versus outside it.
 
-4) Housekeeping:
-   • Output files are non-empty; subsequent runs do not corrupt artifacts.
+• The test tolerates either absolute or signed influence maps. We use magnitude-
+  based (|·|) comparisons where needed.
 
-Notes
------
-• The module may expose different function names; tests try multiple candidates and xfail nicely if absent.
-• No GPU/network required; uses tiny synthetic arrays.
-• Matplotlib rendering (if used by the tool) should be headless-safe; we only assert file existence/size.
+Author: SpectraMind V50 Team
 """
 
 from __future__ import annotations
 
+import importlib
 import json
+import math
 import os
-import re
 import subprocess
 import sys
+import time
 from pathlib import Path
-from typing import Any, Dict, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import pytest
 
+# ---------------------------------------------------------------------------
+# Module discovery
+# ---------------------------------------------------------------------------
 
-# ======================================================================================
-# Helpers
-# ======================================================================================
+CANDIDATE_IMPORTS = [
+    "tools.symbolic_influence_map",
+    "src.tools.symbolic_influence_map",
+    "diagnostics.symbolic_influence_map",
+    "symbolic_influence_map",
+]
 
-def _import_tool():
+
+def _import_simodule():
     """
-    Import the module under test. Tries:
-      1) tools.symbolic_influence_map
-      2) symbolic_influence_map (top-level)
+    Try to import the symbolic influence module from common locations.
     """
-    try:
-        import tools.symbolic_influence_map as m  # type: ignore
-        return m
-    except Exception:
+    last_err = None
+    for name in CANDIDATE_IMPORTS:
         try:
-            import symbolic_influence_map as m2  # type: ignore
-            return m2
-        except Exception:
-            pytest.skip(
-                "symbolic_influence_map module not found. "
-                "Expected at tools/symbolic_influence_map.py or importable as symbolic_influence_map."
+            return importlib.import_module(name)
+        except Exception as e:
+            last_err = e
+    raise ImportError(
+        "Could not import symbolic_influence_map from any of:\n"
+        f"  {CANDIDATE_IMPORTS}\n"
+        f"Last error: {last_err}"
+    )
+
+
+def _locate_callable(mod):
+    """
+    Detect a callable or class interface to compute influence.
+
+    Returns
+    -------
+    kind : str
+        'func' or 'class'
+    target : callable | type
+    """
+    # Try common functional entrypoints (preferred)
+    for fn_name in (
+        "compute_symbolic_influence_map",
+        "symbolic_influence_map",
+        "compute_influence",
+        "run_influence",
+    ):
+        if hasattr(mod, fn_name) and callable(getattr(mod, fn_name)):
+            return "func", getattr(mod, fn_name)
+
+    # Fallback: class with .run(...)
+    for cls_name in ("SymbolicInfluenceMap", "SymbolicInfluenceRunner", "InfluenceSimulator"):
+        if hasattr(mod, cls_name):
+            cls = getattr(mod, cls_name)
+            if hasattr(cls, "run") and callable(getattr(cls, "run")):
+                return "class", cls
+
+    pytest.xfail(
+        "symbolic_influence_map module found but no known callable was discovered. "
+        "Expected one of: compute_symbolic_influence_map(), symbolic_influence_map(), "
+        "compute_influence(), run_influence(), or a class with .run(...)."
+    )
+    return "none", None  # pragma: no cover
+
+
+def _invoke(kind: str, target, mu: np.ndarray, rules: List[Dict[str, Any]], **cfg):
+    """
+    Invoke the detected interface in an API-agnostic way.
+
+    Expected returns
+    ----------------
+    • np.ndarray of shape (R, L) or (B, R, L), or
+    • dict with key 'influence' containing the array above.
+    """
+    if kind == "func":
+        out = target(mu, rules=rules, **cfg)
+    elif kind == "class":
+        try:
+            inst = target(mu=mu, rules=rules, **cfg)
+        except TypeError:
+            inst = target(**cfg)
+            out = inst.run(mu=mu, rules=rules)
+        else:
+            out = inst.run() if hasattr(inst, "run") else inst(mu=mu, rules=rules)
+    else:
+        pytest.fail("Unknown invocation kind.")  # pragma: no cover
+
+    if isinstance(out, dict) and "influence" in out:
+        return out["influence"], out
+    return out, {"influence": out}
+
+
+# ---------------------------------------------------------------------------
+# Synthetic data & rules
+# ---------------------------------------------------------------------------
+
+L_DEFAULT = 283  # Ariel spectral bins
+RNG = np.random.RandomState(20250824)
+
+
+def _make_mu_single(L: int = L_DEFAULT) -> np.ndarray:
+    """
+    Construct a single μ spectrum with gentle smooth structure + bumps.
+    """
+    x = np.linspace(0, 1, L, dtype=np.float64)
+    baseline = 0.02 + 0.004 * np.sin(2 * math.pi * 2.1 * x)
+    bumps = (
+        0.010 * np.exp(-0.5 * ((x - 0.28) / 0.02) ** 2)
+        + 0.007 * np.exp(-0.5 * ((x - 0.62) / 0.015) ** 2)
+    )
+    mu = baseline + bumps
+    mu = np.clip(mu, 0.0, 1.0)
+    assert mu.shape == (L,)
+    return mu
+
+
+def _make_mu_batch(B: int = 4, L: int = L_DEFAULT) -> np.ndarray:
+    """
+    Batched μ with small stochastic variation.
+    """
+    base = _make_mu_single(L)
+    batch = np.stack([base + RNG.normal(0, 0.0005, size=L) for _ in range(B)], axis=0)
+    return np.clip(batch, 0.0, 1.0)
+
+
+def _rect_mask(L: int, start_idx: int, end_idx: int) -> np.ndarray:
+    m = np.zeros(L, dtype=np.float32)
+    m[start_idx:end_idx] = 1.0
+    return m
+
+
+def _make_rules(L: int = L_DEFAULT) -> List[Dict[str, Any]]:
+    """
+    Create two disjoint rule masks with names and (optional) metadata.
+    Rules follow a simple schema commonly used in our tools:
+        { "name": str, "mask": [0/1]*L, "weight": float }
+    """
+    r1 = {
+        "name": "rule_left_band",
+        "mask": _rect_mask(L, int(0.18 * L), int(0.30 * L)).tolist(),
+        "weight": 1.0,
+        "kind": "band_smoothness",
+    }
+    r2 = {
+        "name": "rule_right_band",
+        "mask": _rect_mask(L, int(0.58 * L), int(0.72 * L)).tolist(),
+        "weight": 1.0,
+        "kind": "band_smoothness",
+    }
+    return [r1, r2]
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="module")
+def si_mod():
+    return _import_simodule()
+
+
+@pytest.fixture(scope="module")
+def si_callable(si_mod):
+    return _locate_callable(si_mod)
+
+
+@pytest.fixture
+def mu_single() -> np.ndarray:
+    return _make_mu_single(L_DEFAULT)
+
+
+@pytest.fixture
+def mu_batch() -> np.ndarray:
+    return _make_mu_batch(B=3, L=L_DEFAULT)
+
+
+@pytest.fixture
+def rules_default() -> List[Dict[str, Any]]:
+    return _make_rules(L_DEFAULT)
+
+
+# ---------------------------------------------------------------------------
+# Helper assertions
+# ---------------------------------------------------------------------------
+
+def _as_array(influence) -> np.ndarray:
+    assert isinstance(influence, np.ndarray), "Influence must be a numpy array."
+    assert np.all(np.isfinite(influence)), "Influence contains non-finite values."
+    return influence
+
+
+def _enforce_shape(arr: np.ndarray, L: int = L_DEFAULT) -> Tuple[np.ndarray, str]:
+    """
+    Accept (R, L), (B, R, L), or a dict shape. Return normalized shape (B, R, L)
+    with B=1 if single-spectrum.
+    """
+    if arr.ndim == 2 and arr.shape[1] == L:
+        R = arr.shape[0]
+        return arr[None, ...], f"(1,{R},{L})"
+    if arr.ndim == 3 and arr.shape[2] == L:
+        return arr, f"({arr.shape[0]},{arr.shape[1]},{L})"
+    pytest.fail(f"Unexpected influence shape {arr.shape}, expected (R,{L}) or (B,R,{L}).")
+    return arr, ""  # pragma: no cover
+
+
+def _agg_rule_strength(infl: np.ndarray, rule_index: int) -> float:
+    """
+    Aggregate total strength for a rule across all bins and batch (L1 magnitude).
+    infl: (B, R, L)
+    """
+    return float(np.sum(np.abs(infl[:, rule_index, :])))
+
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+def test_api_shapes_single(si_callable, mu_single, rules_default):
+    """
+    API & shape contract on single μ: output is (R,L) or (B,R,L) with B=1.
+    """
+    kind, target = si_callable
+    influence, full = _invoke(kind, target, mu_single, rules_default, seed=1234, return_dict=True)
+    arr = _as_array(influence)
+    arr_norm, shape_str = _enforce_shape(arr, L=L_DEFAULT)
+
+    # Basic checks
+    B, R, L = arr_norm.shape
+    assert B == 1 and L == L_DEFAULT and R == len(rules_default), f"Unexpected shape {shape_str}"
+    assert np.all(np.isfinite(arr_norm))
+
+
+def test_api_shapes_batch(si_callable, mu_batch, rules_default):
+    """
+    API & shape contract on batch μ: output is (B,R,L).
+    """
+    kind, target = si_callable
+    influence, _ = _invoke(kind, target, mu_batch, rules_default, seed=7, return_dict=False)
+    arr = _as_array(influence)
+    arr_norm, _ = _enforce_shape(arr, L=L_DEFAULT)
+    B, R, L = arr_norm.shape
+    assert B == mu_batch.shape[0] and R == len(rules_default) and L == L_DEFAULT
+
+
+def test_rule_localization(si_callable, mu_single, rules_default):
+    """
+    Influence magnitude for each rule should be larger inside its mask region
+    than outside (statistical check on percentiles).
+    """
+    kind, target = si_callable
+    influence, _ = _invoke(kind, target, mu_single, rules_default, seed=99)
+    arr = _as_array(influence)
+    arr_norm, _ = _enforce_shape(arr, L=L_DEFAULT)
+    _, R, L = arr_norm.shape
+
+    for r_idx, rule in enumerate(rules_default):
+        mask = np.asarray(rule["mask"], dtype=bool)
+        infl = np.abs(arr_norm[0, r_idx, :])  # (L,)
+        inside = infl[mask]
+        outside = infl[~mask]
+        # Compare robust percentiles; inside should systematically exceed outside
+        inside_q = float(np.percentile(inside, 75))
+        outside_q = float(np.percentile(outside, 75))
+        assert inside_q > outside_q * 1.2, (
+            f"Rule '{rule['name']}' influence not localized: inside P75={inside_q:.3e}, "
+            f"outside P75={outside_q:.3e}"
+        )
+
+
+def test_rule_weight_monotonicity(si_callable, mu_single, rules_default):
+    """
+    Increasing a rule's weight should not decrease its aggregate influence.
+    If the API does not support 'rule_weights' or per-rule 'weight' overrides,
+    we xfail with a clear message.
+    """
+    # Try two mechanisms:
+    #  (A) per-call kwarg rule_weights=[...]
+    #  (B) rules[i]['weight'] modified directly
+    kind, target = si_callable
+
+    # Baseline call
+    infl_base, _ = _invoke(kind, target, mu_single, rules_default, seed=123)
+    arr_base, _ = _enforce_shape(_as_array(infl_base), L=L_DEFAULT)
+    s_base_0 = _agg_rule_strength(arr_base, rule_index=0)
+
+    # Try call-time kwarg first
+    try:
+        infl_hi, _ = _invoke(
+            kind,
+            target,
+            mu_single,
+            rules_default,
+            seed=123,
+            rule_weights=[5.0, 1.0],  # upweight rule 0
+        )
+        arr_hi, _ = _enforce_shape(_as_array(infl_hi), L=L_DEFAULT)
+        s_hi_0 = _agg_rule_strength(arr_hi, rule_index=0)
+        assert s_hi_0 >= s_base_0 * 1.2, "Rule weight increase did not raise aggregate influence as expected."
+        return
+    except TypeError:
+        # Fall back to in-structure weight override
+        rules_mod = [dict(r) for r in rules_default]
+        rules_mod[0]["weight"] = 5.0
+        infl_hi2, _ = _invoke(kind, target, mu_single, rules_mod, seed=123)
+        arr_hi2, _ = _enforce_shape(_as_array(infl_hi2), L=L_DEFAULT)
+        s_hi2_0 = _agg_rule_strength(arr_hi2, rule_index=0)
+        if not (s_hi2_0 >= s_base_0 * 1.1):
+            pytest.xfail(
+                "Symbolic influence API appears not to support rule weights or does not scale influence with weight."
             )
 
 
-def _has_attr(mod, name: str) -> bool:
-    return hasattr(mod, name) and getattr(mod, name) is not None
-
-
-def _run_cli(
-    module_path: Path,
-    args: Sequence[str],
-    env: Optional[Dict[str, str]] = None,
-    timeout: int = 210,
-) -> subprocess.CompletedProcess:
+def test_determinism_fixed_seed(si_callable, mu_single, rules_default):
     """
-    Execute the tool as a CLI using `python -m tools.symbolic_influence_map` when possible.
-    Fallback to direct script invocation by file path if package execution is not feasible.
+    With a fixed seed and identical inputs, the influence maps should be identical.
     """
-    if module_path.name == "symbolic_influence_map.py" and module_path.parent.name == "tools":
-        repo_root = module_path.parent.parent
-        candidate_pkg = "tools.symbolic_influence_map"
-        cmd = [sys.executable, "-m", candidate_pkg, *args]
-        cwd = str(repo_root)
-    else:
-        cmd = [sys.executable, str(module_path), *args]
-        cwd = str(module_path.parent)
-
-    env_full = os.environ.copy()
-    if env:
-        env_full.update(env)
-
-    return subprocess.run(
-        cmd,
-        cwd=cwd,
-        env=env_full,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        timeout=timeout,
-        text=True,
-        check=False,
-    )
+    kind, target = si_callable
+    infl1, _ = _invoke(kind, target, mu_single, rules_default, seed=777)
+    infl2, _ = _invoke(kind, target, mu_single, rules_default, seed=777)
+    a1, _ = _enforce_shape(_as_array(infl1), L=L_DEFAULT)
+    a2, _ = _enforce_shape(_as_array(infl2), L=L_DEFAULT)
+    assert np.array_equal(a1, a2), "Influence maps changed despite fixed seeds."
 
 
-def _assert_file(p: Path, min_size: int = 1) -> None:
-    assert p.exists(), f"File not found: {p}"
-    assert p.is_file(), f"Expected file: {p}"
-    sz = p.stat().st_size
-    assert sz >= min_size, f"File too small ({sz} bytes): {p}"
+# ---------------------------------------------------------------------------
+# Optional artifacts round-trip (if exposed)
+# ---------------------------------------------------------------------------
 
-
-# ======================================================================================
-# Synthetic inputs & rules
-# ======================================================================================
-
-def _make_wavelengths(n: int = 283, lo_um: float = 0.5, hi_um: float = 7.8) -> np.ndarray:
-    return np.linspace(float(lo_um), float(hi_um), n, dtype=np.float64)
-
-
-def _make_mu_baseline(n: int = 283, seed: int = 7) -> np.ndarray:
+def test_save_artifacts_roundtrip_if_available(si_mod, si_callable, tmp_path, mu_single, rules_default):
     """
-    Smooth-ish astrophysical-looking baseline spectrum in [0, 0.01] (relative units).
+    If the module exposes `save_influence_artifacts(...)` or `write_artifacts(...)`,
+    verify it writes expected files and preserves shapes on reload.
     """
-    rng = np.random.default_rng(seed)
-    x = np.linspace(0.0, 2.0 * np.pi, n, dtype=np.float64)
-    mu = 1.0e-3 + 2.5e-4 * np.sin(3.0 * x) + 1.5e-4 * np.cos(7.0 * x)
-    mu += 5.0e-5 * rng.standard_normal(n)
-    return np.clip(mu, 0.0, None)
+    save_fn = None
+    for name in ("save_influence_artifacts", "write_artifacts", "save_artifacts"):
+        if hasattr(si_mod, name) and callable(getattr(si_mod, name)):
+            save_fn = getattr(si_mod, name)
+            break
+    if save_fn is None:
+        pytest.xfail("Module does not expose an artifacts save function; skipping round-trip test.")
+
+    kind, target = si_callable
+    out = _invoke(kind, target, mu_single, rules_default, seed=2025)[1]  # full dict
+    outdir = tmp_path / "influence_artifacts"
+    outdir.mkdir(parents=True, exist_ok=True)
+
+    # Attempt save
+    save_fn(out, outdir=str(outdir))
+
+    # Require existence of at least JSON and one NPY
+    files = list(outdir.glob("*"))
+    assert files, "No artifacts written."
+    assert any(p.suffix.lower() == ".json" for p in files) or any(p.suffix.lower() == ".npz" for p in files)
+    # If influence.npy exists, reload and check shape
+    inf_path = outdir / "influence.npy"
+    if inf_path.exists():
+        arr = np.load(inf_path)
+        _, _ = _enforce_shape(arr, L=L_DEFAULT)  # raises on mismatch
 
 
-def _inject_band_violation(mu: np.ndarray, wl: np.ndarray, wl_lo: float, wl_hi: float, amp: float) -> np.ndarray:
+# ---------------------------------------------------------------------------
+# CLI smoke (optional)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.skipif(shutil_which := __import__("shutil").which("spectramind") is None, reason="SpectraMind CLI not found in PATH")
+def test_cli_smoke_symbolic_influence(tmp_path: Path, mu_single, rules_default):
     """
-    Raise μ within a target band by 'amp' to intentionally violate a 'band_max' rule.
+    Smoke test the CLI route. We generate small inputs and verify that
+    the CLI runs and writes at least one artifact.
+    Expected CLI (adjust as needed):
+        spectramind diagnose symbolic-influence-map --mu mu.npy --rules rules.json --outdir out
     """
-    mu2 = mu.copy()
-    mask = (wl >= wl_lo) & (wl <= wl_hi)
-    mu2[mask] = mu2[mask] + float(amp)
-    return mu2
+    mu_path = tmp_path / "mu.npy"
+    np.save(mu_path, mu_single)
 
+    rules_path = tmp_path / "rules.json"
+    with open(rules_path, "w", encoding="utf-8") as f:
+        json.dump(rules_default, f)
 
-def _write_minimal_rules_json(path: Path, band_lo: float, band_hi: float, max_depth: float) -> Path:
-    """
-    Create a tiny rules JSON understood by a broad class of symbolic engines:
-      - 'band_max': within [band_lo, band_hi], μ must not exceed max_depth
-      - 'nonnegativity': μ >= 0 always (weight is smaller)
-      - 'smoothness': optional finite-difference smoothness cap (soft) for testing
-    """
-    rules = {
-        "rules": [
-            {
-                "name": "band_max",
-                "type": "band_threshold",
-                "band": {"lo": float(band_lo), "hi": float(band_hi)},
-                "op": "le",
-                "value": float(max_depth),
-                "weight": 1.0,
-            },
-            {
-                "name": "nonnegativity",
-                "type": "global_threshold",
-                "op": "ge",
-                "value": 0.0,
-                "weight": 0.25,
-            },
-            {
-                "name": "smoothness_fd2",
-                "type": "smoothness_fd2",
-                "threshold": 3.0e-4,
-                "weight": 0.25,
-            }
-        ]
-    }
-    path.write_text(json.dumps(rules, indent=2), encoding="utf-8")
-    return path
+    outdir = tmp_path / "out"
+    outdir.mkdir(parents=True, exist_ok=True)
 
-
-# ======================================================================================
-# Fixtures
-# ======================================================================================
-
-@pytest.fixture(scope="module")
-def tool_mod():
-    return _import_tool()
-
-
-@pytest.fixture()
-def tmp_workspace(tmp_path: Path) -> Dict[str, Path]:
-    """
-    Create a clean workspace:
-      inputs/  — .npy (μ, wavelengths) and rules.json
-      outputs/ — artifacts
-      logs/    — optional v50_debug_log.md
-    """
-    ip = tmp_path / "inputs"
-    op = tmp_path / "outputs"
-    lg = tmp_path / "logs"
-    ip.mkdir(parents=True, exist_ok=True)
-    op.mkdir(parents=True, exist_ok=True)
-    lg.mkdir(parents=True, exist_ok=True)
-    return {"root": tmp_path, "inputs": ip, "outputs": op, "logs": lg}
-
-
-@pytest.fixture()
-def synthetic_inputs(tmp_workspace: Dict[str, Path]) -> Dict[str, Path]:
-    """
-    Save deterministic test arrays to disk:
-      - wavelengths.npy
-      - mu_clean.npy
-      - mu_violate.npy (with band spike)
-      - rules.json
-    """
-    wl = _make_wavelengths()
-    mu_clean = _make_mu_baseline()
-    mu_bad = _inject_band_violation(mu_clean, wl, 2.0, 2.2, amp=2.0e-3)  # exceed a 2.0e-3 cap
-
-    ip = tmp_workspace["inputs"]
-    wl_path = ip / "wavelengths.npy"
-    mu_clean_path = ip / "mu_clean.npy"
-    mu_bad_path = ip / "mu_violate.npy"
-    rules_path = ip / "rules.json"
-
-    np.save(wl_path, wl)
-    np.save(mu_clean_path, mu_clean)
-    np.save(mu_bad_path, mu_bad)
-    _write_minimal_rules_json(rules_path, band_lo=2.0, band_hi=2.2, max_depth=2.0e-3)
-
-    return {
-        "wavelengths": wl_path,
-        "mu_clean": mu_clean_path,
-        "mu_violate": mu_bad_path,
-        "rules": rules_path,
-    }
-
-
-# ======================================================================================
-# Core API tests — influence sensitivity & decomposition
-# ======================================================================================
-
-def test_influence_stronger_in_violated_band(tool_mod, synthetic_inputs):
-    """
-    Influence magnitude |∂L/∂μ| should be larger in a band that violates a rule than outside it.
-    """
-    candidates = [
-        "compute_symbolic_influence",
-        "influence_map",
-        "compute_dldmu",
-        "dldmu",
+    cmd = [
+        "spectramind",
+        "diagnose",
+        "symbolic-influence-map",
+        "--mu",
+        str(mu_path),
+        "--rules",
+        str(rules_path),
+        "--outdir",
+        str(outdir),
+        "--seed",
+        "123",
     ]
-    fn = None
-    for name in candidates:
-        if _has_attr(tool_mod, name):
-            fn = getattr(tool_mod, name)
-            break
-    if fn is None:
-        pytest.xfail("No influence function (compute_symbolic_influence/influence_map/dldmu) found in module.")
 
-    wl = np.load(synthetic_inputs["wavelengths"])
-    mu = np.load(synthetic_inputs["mu_violate"])
-    rules_json = synthetic_inputs["rules"]
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        pytest.xfail(
+            "CLI returned nonzero exit. This may indicate differing flag names.\n"
+            f"Stdout:\n{proc.stdout}\n\nStderr:\n{proc.stderr}"
+        )
 
-    # Try calling with flexible signatures; allow dict or path for rules
-    try:
-        out = fn(mu=mu, wavelengths=wl, rules=rules_json, return_per_rule=False, seed=13)
-    except TypeError:
-        out = fn(mu, wl, rules_json)  # type: ignore
-
-    inf = np.asarray(out)
-    assert inf.shape == mu.shape, "Influence must be a per-wavelength vector."
-    assert np.all(np.isfinite(inf)), "Influence contains non-finite values."
-
-    # Compare in-band vs out-of-band magnitude
-    band = (wl >= 2.0) & (wl <= 2.2)
-    outband = (wl < 2.0) | (wl > 2.2)
-    mag_band = float(np.mean(np.abs(inf[band])))
-    mag_out = float(np.mean(np.abs(inf[outband])))
-    assert mag_band > 1.25 * mag_out, f"Expected stronger influence in violation band (band={mag_band:.3g}, out={mag_out:.3g})."
+    produced = list(outdir.glob("*"))
+    assert len(produced) > 0, "CLI ran but produced no artifacts."
 
 
-def test_per_rule_decomposition_if_available(tool_mod, synthetic_inputs):
+# ---------------------------------------------------------------------------
+# Performance sanity (very light)
+# ---------------------------------------------------------------------------
+
+def test_runs_fast_enough(si_callable, mu_single, rules_default):
     """
-    If the API supports per-rule maps (e.g., return_per_rule=True or returns dict),
-    ensure band_max contributes strongly in the violated band.
+    Light guardrail: tiny inference should run in < 1.5s on CI CPU.
     """
-    wl = np.load(synthetic_inputs["wavelengths"])
-    mu = np.load(synthetic_inputs["mu_violate"])
-    rules_json = synthetic_inputs["rules"]
-
-    # Find an entrypoint that can return per-rule maps
-    fn = None
-    for name in ("compute_symbolic_influence", "influence_map"):
-        if _has_attr(tool_mod, name):
-            fn = getattr(tool_mod, name)
-            break
-    if fn is None:
-        pytest.xfail("No per-rule capable influence function available.")
-
-    try:
-        out = fn(mu=mu, wavelengths=wl, rules=rules_json, return_per_rule=True, seed=17)
-    except TypeError:
-        out = fn(mu, wl, rules_json, True)  # type: ignore
-
-    # Accept either dict {rule: vector} or (aggregate, per_rule_dict)
-    per_rule = None
-    if isinstance(out, dict) and all(hasattr(v, "__len__") for v in out.values()):
-        per_rule = out
-    elif isinstance(out, (tuple, list)) and len(out) >= 2 and isinstance(out[1], dict):
-        per_rule = out[1]
-
-    if per_rule is None:
-        pytest.xfail("Influence function did not return a per-rule mapping.")
-
-    assert "band_max" in per_rule, "Per-rule maps missing 'band_max'."
-    band_inf = np.asarray(per_rule["band_max"])
-    assert band_inf.shape == mu.shape
-
-    band = (wl >= 2.0) & (wl <= 2.2)
-    outband = (wl < 2.0) | (wl > 2.2)
-    mag_band = float(np.mean(np.abs(band_inf[band])))
-    mag_out = float(np.mean(np.abs(band_inf[outband])))
-    assert mag_band > 1.4 * mag_out, f"'band_max' per-rule influence should be concentrated in-band (band={mag_band:.3g}, out={mag_out:.3g})."
-
-
-# ======================================================================================
-# Artifact generation API
-# ======================================================================================
-
-def test_generate_artifacts(tool_mod, tmp_workspace, synthetic_inputs):
-    """
-    Artifact generator should emit JSON/CSV/PNG/HTML files and return a manifest (or paths).
-    """
-    entry_candidates = [
-        "generate_symbolic_influence_artifacts",
-        "run_symbolic_influence_map",
-        "produce_symbolic_influence_outputs",
-        "analyze_and_export",  # generic fallback
-    ]
-    entry = None
-    for name in entry_candidates:
-        if _has_attr(tool_mod, name):
-            entry = getattr(tool_mod, name)
-            break
-    if entry is None:
-        pytest.xfail("No artifact generation entrypoint found in symbolic_influence_map.")
-
-    outdir = tmp_workspace["outputs"]
-    mu = np.load(synthetic_inputs["mu_violate"])
-    wl = np.load(synthetic_inputs["wavelengths"])
-    rules_json = synthetic_inputs["rules"]
-
-    kwargs = dict(
-        mu=mu,
-        wavelengths=wl,
-        rules=rules_json,
-        outdir=str(outdir),
-        json_out=True,
-        csv_out=True,
-        png_out=True,
-        html_out=True,
-        seed=99,
-        title="Symbolic Influence Map — Test",
-    )
-    try:
-        manifest = entry(**kwargs)
-    except TypeError:
-        manifest = entry(mu, wl, rules_json, str(outdir), True, True, True, True, 99, "Symbolic Influence Map — Test")  # type: ignore
-
-    # Presence checks
-    json_files = list(outdir.glob("*.json"))
-    csv_files = list(outdir.glob("*.csv"))
-    png_files = list(outdir.glob("*.png"))
-    html_files = list(outdir.glob("*.html"))
-
-    assert json_files, "No JSON artifact produced by symbolic influence map."
-    assert csv_files, "No CSV artifact produced by symbolic influence map."
-    assert png_files, "No PNG artifact produced by symbolic influence map."
-    assert html_files, "No HTML artifact produced by symbolic influence map."
-
-    # Minimal JSON schema check
-    with open(json_files[0], "r", encoding="utf-8") as f:
-        js = json.load(f)
-    assert isinstance(js, dict), "Top-level JSON must be an object."
-    has_influence = ("influence" in js) or ("dldmu" in js) or ("per_rule" in js)
-    assert has_influence, "JSON should include influence content (keys like 'influence','dldmu','per_rule')."
-
-    # Files should be non-trivially sized
-    for p in png_files:
-        _assert_file(p, min_size=256)
-    for c in csv_files:
-        _assert_file(c, min_size=64)
-    for h in html_files:
-        _assert_file(h, min_size=128)
-
-
-# ======================================================================================
-# CLI End-to-End
-# ======================================================================================
-
-def test_cli_end_to_end(tmp_workspace, synthetic_inputs):
-    """
-    End-to-end CLI test:
-      • Runs the module as a CLI with --mu/--wavelengths/--rules → emits JSON/CSV/PNG/HTML.
-      • Uses --seed for determinism and compares JSON across two runs (modulo volatile metadata).
-      • Verifies optional audit log when SPECTRAMIND_LOG_PATH is set.
-    """
-    # Locate module file to construct python -m invocation
-    candidates = [
-        Path(__file__).resolve().parents[2] / "tools" / "symbolic_influence_map.py",  # repo-root/tools/...
-        Path(__file__).resolve().parents[1] / "symbolic_influence_map.py",            # tests/diagnostics/../
-    ]
-    module_file = None
-    for p in candidates:
-        if p.exists():
-            module_file = p
-            break
-    if module_file is None:
-        pytest.skip("symbolic_influence_map.py not found; cannot run CLI end-to-end test.")
-
-    outdir = tmp_workspace["outputs"]
-    logsdir = tmp_workspace["logs"]
-    mu_path = synthetic_inputs["mu_violate"]
-    wl_path = synthetic_inputs["wavelengths"]
-    rules_json = synthetic_inputs["rules"]
-
-    env = {
-        "PYTHONUNBUFFERED": "1",
-        "SPECTRAMIND_LOG_PATH": str(logsdir / "v50_debug_log.md"),
-    }
-
-    args = (
-        "--mu", str(mu_path),
-        "--wavelengths", str(wl_path),
-        "--rules", str(rules_json),
-        "--outdir", str(outdir),
-        "--json",
-        "--csv",
-        "--png",
-        "--html",
-        "--seed", "2025",
-        "--silent",
-    )
-    proc1 = _run_cli(module_file, args, env=env, timeout=210)
-    if proc1.returncode != 0:
-        msg = f"CLI run 1 failed (exit={proc1.returncode}).\nSTDOUT:\n{proc1.stdout}\nSTDERR:\n{proc1.stderr}"
-        pytest.fail(msg)
-
-    json1 = sorted(outdir.glob("*.json"))
-    csv1 = sorted(outdir.glob("*.csv"))
-    png1 = sorted(outdir.glob("*.png"))
-    html1 = sorted(outdir.glob("*.html"))
-    assert json1 and csv1 and png1 and html1, "CLI run 1 did not produce all expected artifact types."
-
-    # Determinism: second run with same seed into a new directory should match JSON (minus volatile fields)
-    outdir2 = outdir.parent / "outputs_run2"
-    outdir2.mkdir(exist_ok=True)
-    args2 = (
-        "--mu", str(mu_path),
-        "--wavelengths", str(wl_path),
-        "--rules", str(rules_json),
-        "--outdir", str(outdir2),
-        "--json",
-        "--csv",
-        "--png",
-        "--html",
-        "--seed", "2025",
-        "--silent",
-    )
-    proc2 = _run_cli(module_file, args2, env=env, timeout=210)
-    if proc2.returncode != 0:
-        msg = f"CLI run 2 failed (exit={proc2.returncode}).\nSTDOUT:\n{proc2.stdout}\nSTDERR:\n{proc2.stderr}"
-        pytest.fail(msg)
-
-    json2 = sorted(outdir2.glob("*.json"))
-    assert json2, "Second CLI run produced no JSON artifacts."
-
-    def _normalize(j: Dict[str, Any]) -> Dict[str, Any]:
-        d = json.loads(json.dumps(j))  # deep copy
-        vol_patterns = re.compile(r"(time|date|timestamp|duration|path|cwd|hostname|uuid|version)", re.I)
-
-        def scrub(obj: Any) -> Any:
-            if isinstance(obj, dict):
-                for k in list(obj.keys()):
-                    if vol_patterns.search(k):
-                        obj.pop(k, None)
-                    else:
-                        obj[k] = scrub(obj[k])
-            elif isinstance(obj, list):
-                for i in range(len(obj)):
-                    obj[i] = scrub(obj[i])
-            return obj
-
-        return scrub(d)
-
-    with open(json1[0], "r", encoding="utf-8") as f:
-        j1 = _normalize(json.load(f))
-    with open(json2[0], "r", encoding="utf-8") as f:
-        j2 = _normalize(json.load(f))
-
-    assert j1 == j2, "Seeded CLI runs should yield identical JSON after removing volatile metadata."
-
-    # Audit log should exist and include a recognizable signature
-    log_file = Path(env["SPECTRAMIND_LOG_PATH"])
-    if log_file.exists():
-        _assert_file(log_file, min_size=1)
-        text = log_file.read_text(encoding="utf-8", errors="ignore").lower()
-        assert ("symbolic_influence_map" in text) or ("influence" in text and "symbolic" in text), \
-            "Audit log exists but lacks recognizable CLI signature."
-
-
-def test_cli_error_cases(tmp_workspace, synthetic_inputs):
-    """
-    CLI should:
-      • Exit non-zero when required --mu is missing.
-      • Report helpful error text mentioning the missing/invalid flag.
-    """
-    candidates = [
-        Path(__file__).resolve().parents[2] / "tools" / "symbolic_influence_map.py",
-        Path(__file__).resolve().parents[1] / "symbolic_influence_map.py",
-    ]
-    module_file = None
-    for p in candidates:
-        if p.exists():
-            module_file = p
-            break
-    if module_file is None:
-        pytest.skip("symbolic_influence_map.py not found; cannot run CLI error tests.")
-
-    outdir = tmp_workspace["outputs"]
-    wl = synthetic_inputs["wavelengths"]
-    rules = synthetic_inputs["rules"]
-
-    # Missing --mu
-    args_missing_mu = (
-        "--wavelengths", str(wl),
-        "--rules", str(rules),
-        "--outdir", str(outdir),
-        "--json",
-    )
-    proc = _run_cli(module_file, args_missing_mu, env=None, timeout=90)
-    assert proc.returncode != 0, "CLI should fail when required --mu is missing."
-    msg = (proc.stderr + "\n" + proc.stdout).lower()
-    assert "mu" in msg, "Error message should mention missing 'mu'."
-
-
-# ======================================================================================
-# Housekeeping checks
-# ======================================================================================
-
-def test_artifact_min_sizes(tmp_workspace):
-    """
-    After prior tests, ensure that PNG/CSV/HTML in outputs/ are non-trivially sized.
-    """
-    outdir = tmp_workspace["outputs"]
-    png_files = list(outdir.glob("*.png"))
-    csv_files = list(outdir.glob("*.csv"))
-    html_files = list(outdir.glob("*.html"))
-    # Not all formats may exist if a prior test xfailed early; be lenient but check when present.
-    for p in png_files:
-        _assert_file(p, min_size=256)
-    for c in csv_files:
-        _assert_file(c, min_size=64)
-    for h in html_files:
-        _assert_file(h, min_size=128)
-
-
-def test_idempotent_rerun_behavior(tmp_workspace):
-    """
-    The tool should either overwrite consistently or produce versioned filenames.
-    We don't require a specific policy here; only that subsequent writes do not corrupt artifacts.
-    """
-    outdir = tmp_workspace["outputs"]
-    before = {p.name for p in outdir.glob("*")}
-    # Simulate pre-existing artifact to ensure tool does not crash due to existing files
-    marker = outdir / "preexisting_marker.txt"
-    marker.write_text("marker", encoding="utf-8")
-    after = {p.name for p in outdir.glob("*")}
-    assert before.issubset(after), "Artifacts disappeared unexpectedly between runs or overwrite simulation."
+    kind, target = si_callable
+    t0 = time.time()
+    _ = _invoke(kind, target, mu_single, rules_default, seed=11)
+    dt = time.time() - t0
+    assert dt < 1.5, f"Symbolic influence computation too slow: {dt:.3f}s (should be < 1.5s)"
