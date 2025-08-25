@@ -1,716 +1,298 @@
+# tests/diagnostics/test_spectral_shap_gradient.py
 # -*- coding: utf-8 -*-
 """
-tests/diagnostics/test_analyze_fft_autocorr_mu.py
+Diagnostic tests for gradient-based spectral attributions.
 
-SpectraMind V50 — Diagnostics tests for tools/analyze_fft_autocorr_mu.py
+Goals
+-----
+1) Sanity check GradientSHAP/IntegratedGradients on a simple spectral model
+   (283 channels) with properties we can verify analytically.
+2) Enforce reproducibility (fixed seeds) and CPU/GPU parity.
+3) Validate completeness: sum of attributions ~= f(x) - f(baseline).
+4) Validate localization: a linear model whose weights have a peaked profile
+   should yield attributions that peak at the same wavelengths.
+5) Validate shape/batch handling.
 
-This suite validates the scientific logic, artifact generation, and CLI behavior of the
-FFT + autocorrelation diagnostic tool used on μ spectra. It is designed to be robust to
-minor API differences while enforcing core guarantees of the SpectraMind V50 tooling:
-determinism (with seeds), artifact creation (JSON/CSV/PNG/HTML), reasonable scientific
-properties (e.g., FFT peak for sinusoidal content; autocorrelation periodicity), and
-audit logging (v50_debug_log.md) when enabled.
+These tests are deliberately self-contained (no external data needed) so they
+can run in CI quickly and deterministically.
 
-Coverage
---------
-1) Core API sanity:
-   • compute_fft_power(...) on constant vs. sinusoid.
-   • compute_autocorr(...) periodicity and r[0] maximum.
-
-2) Artifact generation API:
-   • generate_fft_autocorr_artifacts(...)/run_fft_autocorr_diagnostics(...) produces JSON/CSV/PNG/HTML.
-   • JSON manifest contains expected fields (freq axis, power, autocorr summary).
-
-3) CLI contract:
-   • End-to-end run via subprocess (python -m tools.analyze_fft_autocorr_mu).
-   • Determinism with --seed: JSON equality modulo volatile fields.
-   • Graceful error handling for missing/invalid args.
-   • Optional SPECTRAMIND_LOG_PATH audit line is appended.
-
-4) Housekeeping:
-   • Output files are nonempty and stable across re-runs (idempotent/versioned is fine).
-   • PNG/CSV/HTML presence checks (minimum size thresholds).
-
-Assumptions
------------
-• The module lives at tools/analyze_fft_autocorr_mu.py and exposes one or more of:
-    - compute_fft_power(signal, fs=None, n_freq=None, window=None, **kw)
-    - compute_autocorr(signal, max_lag=None, **kw)
-    - generate_fft_autocorr_artifacts(...) / run_fft_autocorr_diagnostics(...)
-• Or similar names:
-    - fft_power, power_spectrum, spectrum_fft
-    - autocorr, autocorrelation, compute_acf
-
-• CLI accepts flags such as:
-    --mu <path.npy>
-    --wavelengths <path.npy>   (optional)
-    --outdir <dir>
-    --json --csv --png --html  (any subset allowed)
-    --n-freq <int>             (optional)
-    --seed <int>               (optional)
-    --silent                   (optional)
-  The exact set can vary; tests are tolerant but require basic functionality.
-
-Implementation notes
---------------------
-• These tests use lightweight synthetic data and no GPU/network.
-• Numerical checks use tolerant comparisons and avoid brittle equality on floats.
-• Where an API surface is missing, tests xfail with an explanation instead of silently passing.
-
-Author: SpectraMind V50 test harness
+Usage
+-----
+pytest -q tests/diagnostics/test_spectral_shap_gradient.py
 """
 
 from __future__ import annotations
 
-import json
 import math
 import os
-import re
-import subprocess
 import sys
-from pathlib import Path
-from typing import Any, Dict, Optional, Sequence, Tuple
+from typing import Optional
 
 import numpy as np
 import pytest
 
+# Optional torch/captum imports with graceful skip
+torch = pytest.importorskip("torch", reason="Requires PyTorch for attribution tests")
 
-# =================================================================================================
+# Captum is preferred, but if unavailable we fallback to Integrated Gradients-like logic
+try:
+    from captum.attr import GradientShap, IntegratedGradients
+    _HAS_CAPTUM = True
+except Exception:  # pragma: no cover
+    _HAS_CAPTUM = False
+
+
+# -------------------------------
 # Helpers
-# =================================================================================================
+# -------------------------------
 
-def _import_tool():
-    """
-    Import the module under test.
+SEED = 1337
+N_CHANNELS = 283  # Ariel AIRS spectral length
+DTYPE = torch.float32
 
-    Tries:
-      1) tools.analyze_fft_autocorr_mu
-      2) analyze_fft_autocorr_mu  (top-level)
+
+def _set_all_seeds(seed: int = SEED) -> None:
+    import random
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+
+def _device(requested: Optional[str] = None) -> torch.device:
+    if requested == "cuda" and torch.cuda.is_available():
+        return torch.device("cuda")
+    return torch.device("cpu")
+
+
+class LinearSpectralModel(torch.nn.Module):
     """
-    try:
-        import tools.analyze_fft_autocorr_mu as m  # type: ignore
-        return m
-    except Exception:
+    Simple linear spectral regressor: y = x @ w + b
+
+    For tests we often set bias=False to match completeness with baseline=0.
+    """
+
+    def __init__(self, n_features: int, bias: bool = False):
+        super().__init__()
+        self.fc = torch.nn.Linear(n_features, 1, bias=bias)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: (B, F)
+        return self.fc(x).squeeze(-1)  # (B,)
+
+
+def _gaussian_weights(n: int, center: float, sigma: float, amplitude: float = 1.0) -> np.ndarray:
+    xs = np.arange(n)
+    return amplitude * np.exp(-0.5 * ((xs - center) / sigma) ** 2)
+
+
+def _build_peaked_linear_model(
+    device: torch.device,
+    center: float = 140.0,
+    sigma: float = 8.0,
+    amplitude: float = 1.0,
+    bias: bool = False,
+) -> LinearSpectralModel:
+    model = LinearSpectralModel(N_CHANNELS, bias=bias).to(device=device, dtype=DTYPE)
+    w = _gaussian_weights(N_CHANNELS, center=center, sigma=sigma, amplitude=amplitude).astype(np.float32)
+    with torch.no_grad():
+        model.fc.weight.copy_(torch.from_numpy(w).unsqueeze(0).to(device=device, dtype=DTYPE))
+        if bias:
+            model.fc.bias.zero_()
+    model.eval()
+    return model
+
+
+def _gradient_shap_or_ig(model: torch.nn.Module, input_: torch.Tensor, baseline: torch.Tensor) -> torch.Tensor:
+    """
+    Compute attributions with GradientSHAP if available, else Integrated Gradients.
+    Returns attributions with same shape as input_ (B, F).
+    """
+    if _HAS_CAPTUM:
         try:
-            import analyze_fft_autocorr_mu as m2  # type: ignore
-            return m2
-        except Exception:
-            pytest.skip(
-                "analyze_fft_autocorr_mu module not found. "
-                "Expected at tools/analyze_fft_autocorr_mu.py or importable as analyze_fft_autocorr_mu."
+            gs = GradientShap(model)
+            # For GS, we provide a distribution of baselines by adding small noise.
+            baseline_dist = baseline.unsqueeze(0).repeat(16, 1)  # 16 samples
+            attr = gs.attribute(
+                input_,
+                baselines=baseline_dist,
+                n_samples=64,
+                stdevs=0.02,
+                return_convergence_delta=False,
             )
-
-
-def _has_attr(mod, name: str) -> bool:
-    return hasattr(mod, name) and getattr(mod, name) is not None
-
-
-def _run_cli(
-    module_path: Path,
-    args: Sequence[str],
-    env: Optional[Dict[str, str]] = None,
-    timeout: int = 180,
-) -> subprocess.CompletedProcess:
-    """
-    Execute the tool as a CLI using `python -m tools.analyze_fft_autocorr_mu` when possible.
-    Fallback to direct script invocation by file path if package execution is not feasible.
-    """
-    # Determine repository root if we have .../tools/analyze_fft_autocorr_mu.py
-    if module_path.name == "analyze_fft_autocorr_mu.py" and module_path.parent.name == "tools":
-        repo_root = module_path.parent.parent
-        candidate_pkg = "tools.analyze_fft_autocorr_mu"
-        cmd = [sys.executable, "-m", candidate_pkg, *args]
-        cwd = str(repo_root)
+            return attr
+        except Exception:
+            # Fallback to IG if GS path fails for any reason
+            ig = IntegratedGradients(model)
+            return ig.attribute(input_, baselines=baseline, n_steps=128)
     else:
-        cmd = [sys.executable, str(module_path), *args]
-        cwd = str(module_path.parent)
-
-    env_full = os.environ.copy()
-    if env:
-        env_full.update(env)
-
-    return subprocess.run(
-        cmd,
-        cwd=cwd,
-        env=env_full,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        timeout=timeout,
-        text=True,
-        check=False,
-    )
+        # Minimal IG-like fallback (requires captum if we wanted exact; here we implement simple IG)
+        return _simple_integrated_gradients(model, input_, baseline, steps=128)
 
 
-def _assert_file(p: Path, min_size: int = 1) -> None:
-    assert p.exists(), f"File not found: {p}"
-    assert p.is_file(), f"Expected file: {p}"
-    sz = p.stat().st_size
-    assert sz >= min_size, f"File too small ({sz} bytes): {p}"
-
-
-def _fft_peak_index(power: np.ndarray) -> int:
-    """Return the index of the largest element (argmax) in a 1D power array."""
-    return int(np.argmax(np.asarray(power)))
-
-
-# =================================================================================================
-# Synthetic inputs (signals & wavelengths)
-# =================================================================================================
-
-def _make_mu_constant(n: int, value: float = 0.5) -> np.ndarray:
-    return np.full((n,), float(value), dtype=np.float64)
-
-
-def _make_mu_sine(n: int, cycles: float = 5.0, amp: float = 1.0, bias: float = 0.0, phase: float = 0.0) -> np.ndarray:
-    t = np.linspace(0.0, 2.0 * math.pi * cycles, n, dtype=np.float64)
-    return bias + amp * np.sin(t + phase)
-
-
-def _make_mu_sine_plus_noise(n: int, cycles: float = 5.0, amp: float = 1.0, noise: float = 0.1, seed: int = 7) -> np.ndarray:
-    rng = np.random.default_rng(seed)
-    clean = _make_mu_sine(n, cycles=cycles, amp=amp, bias=0.0, phase=0.0)
-    return clean + noise * rng.standard_normal(n).astype(np.float64)
-
-
-def _make_wavelengths(n: int, lo_um: float = 0.5, hi_um: float = 7.8) -> np.ndarray:
-    # Ariel-esque continuous bins (not used by FFT math, but useful metadata and optional bin-weighting)
-    return np.linspace(float(lo_um), float(hi_um), n, dtype=np.float64)
-
-
-# =================================================================================================
-# Fixtures
-# =================================================================================================
-
-@pytest.fixture(scope="module")
-def tool_mod():
-    return _import_tool()
-
-
-@pytest.fixture()
-def tmp_workspace(tmp_path: Path) -> Dict[str, Path]:
+@torch.no_grad()
+def _simple_integrated_gradients(model: torch.nn.Module, x: torch.Tensor, x0: torch.Tensor, steps: int = 128) -> torch.Tensor:
     """
-    Create a clean workspace:
-      inputs/  — for .npy μ and wavelength arrays
-      outputs/ — for artifacts
-      logs/    — for optional v50_debug_log.md
+    Simple IG implementation (for environments w/o captum). Computes path integral
+    via Riemann sum along straight-line path from x0 to x.
     """
-    ip = tmp_path / "inputs"
-    op = tmp_path / "outputs"
-    lg = tmp_path / "logs"
-    ip.mkdir(parents=True, exist_ok=True)
-    op.mkdir(parents=True, exist_ok=True)
-    lg.mkdir(parents=True, exist_ok=True)
-    return {"root": tmp_path, "inputs": ip, "outputs": op, "logs": lg}
+    # Ensure we need gradients
+    model.requires_grad_(True)
+
+    # IG usually requires grads; here we compute grads via autograd with enable_grad.
+    with torch.enable_grad():
+        alphas = torch.linspace(0.0, 1.0, steps=steps, dtype=x.dtype, device=x.device).view(-1, 1, 1)
+        interp = x0.unsqueeze(0) + alphas * (x.unsqueeze(0) - x0.unsqueeze(0))  # (steps, B, F)
+        interp.requires_grad_(True)
+
+        # Flatten steps and batch to evaluate in one go
+        S, B, F = interp.shape
+        flat = interp.reshape(S * B, F)
+        out = model(flat).reshape(S, B)  # (steps, B)
+
+        grads = torch.autograd.grad(
+            outputs=out.sum(dim=0),  # sum over steps dim to keep shape (B,)
+            inputs=interp,
+            grad_outputs=torch.ones_like(out.sum(dim=0)),
+            create_graph=False,
+            retain_graph=False,
+        )[0]  # (steps, B, F)
+
+        avg_grads = grads.mean(dim=0)  # (B, F)
+        attributions = (x - x0) * avg_grads
+        return attributions
 
 
-@pytest.fixture()
-def synthetic_inputs(tmp_workspace: Dict[str, Path]) -> Dict[str, Path]:
+# -------------------------------
+# PyTest fixtures
+# -------------------------------
+
+@pytest.fixture(scope="module", autouse=True)
+def _fix_seeds():
+    _set_all_seeds(SEED)
+    yield
+
+
+@pytest.fixture(params=["cpu"] + (["cuda"] if torch.cuda.is_available() else []))
+def device(request) -> torch.device:
+    return _device(request.param)
+
+
+# -------------------------------
+# Tests
+# -------------------------------
+
+def test_shapes_and_basic_forward(device):
+    model = _build_peaked_linear_model(device=device, bias=False)
+    x = torch.zeros(4, N_CHANNELS, dtype=DTYPE, device=device)
+    y = model(x)
+    assert y.shape == (4,)
+    assert torch.allclose(y, torch.zeros(4, device=device, dtype=DTYPE), atol=1e-7)
+
+
+def test_completeness_property_linear_model(device):
     """
-    Save deterministic test arrays to disk:
-      - mu_constant.npy
-      - mu_sine.npy
-      - mu_sine_noise.npy
-      - wavelengths.npy
+    Completeness (a.k.a. sensitivity to baseline): sum(attrib) ~= f(x) - f(baseline).
+    With a linear model and baseline zero, this should hold to tight tolerance.
     """
-    n = 512  # power of two for FFT convenience; moderate for speed
-    wl = _make_wavelengths(n)
-    mu_const = _make_mu_constant(n, 0.25)
-    mu_sine = _make_mu_sine(n, cycles=8.0, amp=0.8, bias=0.1)
-    mu_noisy = _make_mu_sine_plus_noise(n, cycles=8.0, amp=0.8, noise=0.05, seed=123)
+    model = _build_peaked_linear_model(device=device, bias=False)
+    baseline = torch.zeros(1, N_CHANNELS, dtype=DTYPE, device=device)
+    x = torch.randn(1, N_CHANNELS, dtype=DTYPE, device=device) * 0.1  # small amplitude keeps linear region
+    x.requires_grad_(True)
 
-    ip = tmp_workspace["inputs"]
-    wl_path = ip / "wavelengths.npy"
-    const_path = ip / "mu_constant.npy"
-    sine_path = ip / "mu_sine.npy"
-    noisy_path = ip / "mu_sine_noise.npy"
+    attrs = _gradient_shap_or_ig(model, x, baseline)  # (1, F)
+    pred = model(x)  # (1,)
+    pred_base = model(baseline)  # (1,)
 
-    np.save(wl_path, wl)
-    np.save(const_path, mu_const)
-    np.save(sine_path, mu_sine)
-    np.save(noisy_path, mu_noisy)
+    lhs = attrs.sum(dim=1)  # (1,)
+    rhs = (pred - pred_base)  # (1,)
 
-    return {
-        "wavelengths": wl_path,
-        "mu_constant": const_path,
-        "mu_sine": sine_path,
-        "mu_sine_noise": noisy_path,
-    }
+    assert lhs.shape == rhs.shape
+    assert torch.allclose(lhs, rhs, atol=5e-4), f"Completeness failed: sum(attrs)={lhs.item():.6f}, delta={rhs.item():.6f}"
 
 
-# =================================================================================================
-# Core API tests — FFT & Autocorrelation
-# =================================================================================================
-
-def test_fft_power_peak_detection(tool_mod, synthetic_inputs):
+def test_localization_matches_weight_profile(device):
     """
-    On a pure sinusoid, FFT power spectrum should have a clear dominant peak (excluding DC if biased).
-    On a constant signal, FFT power should be concentrated at DC (index 0) with negligible other bins.
+    If the true model weights have a Gaussian peak at a center index, the attribution
+    vector on a small positive input (and baseline zero) should correlate strongly
+    with the weight vector.
     """
-    # Identify FFT function
-    candidates = [
-        "compute_fft_power",    # expected return: (freq, power) or dict
-        "fft_power",
-        "power_spectrum",
-        "spectrum_fft",
-        "analyze_fft",          # may return a richer structure
-    ]
-    fn = None
-    for name in candidates:
-        if _has_attr(tool_mod, name):
-            fn = getattr(tool_mod, name)
-            break
-    if fn is None:
-        pytest.xfail("No FFT function (compute_fft_power/fft_power/...) found in analyze_fft_autocorr_mu.")
+    center = 140.0
+    sigma = 8.0
+    model = _build_peaked_linear_model(device=device, center=center, sigma=sigma, amplitude=1.0, bias=False)
 
-    mu_sine = np.load(synthetic_inputs["mu_sine"])
-    mu_const = np.load(synthetic_inputs["mu_constant"])
+    baseline = torch.zeros(1, N_CHANNELS, dtype=DTYPE, device=device)
+    x = torch.full((1, N_CHANNELS), 0.1, dtype=DTYPE, device=device)  # uniform small positive flux
+    attrs = _gradient_shap_or_ig(model, x, baseline).detach().cpu().numpy().reshape(-1)
 
-    # Try calling the function and normalize expected shape
-    def _call(signal: np.ndarray):
-        try:
-            out = fn(signal, fs=None, n_freq=None, window=None)
-        except TypeError:
-            out = fn(signal)  # type: ignore
-        # Normalize to (freq, power) numpy arrays
-        if isinstance(out, dict):
-            f = np.asarray(out.get("freq") or out.get("frequency") or out.get("f"))
-            p = np.asarray(out.get("power") or out.get("P") or out.get("spectrum"))
-            assert f is not None and p is not None, "FFT dict missing freq/power."
-            return f, p
-        elif isinstance(out, (tuple, list)) and len(out) >= 2:
-            f = np.asarray(out[0])
-            p = np.asarray(out[1])
-            return f, p
-        else:
-            pytest.fail("Unknown return type from FFT function; expected (freq, power) or dict.")
-    f_sine, p_sine = _call(mu_sine)
-    f_const, p_const = _call(mu_const)
+    w = model.fc.weight.detach().cpu().numpy().reshape(-1)
+    # Normalize both before correlation
+    attrs = (attrs - attrs.mean()) / (attrs.std() + 1e-12)
+    w_norm = (w - w.mean()) / (w.std() + 1e-12)
 
-    # Basic shape assertions
-    assert p_sine.ndim == 1 and p_sine.size > 4, "FFT power for sine should be a 1D array."
-    assert p_const.shape == p_sine.shape, "FFT shapes should match for equal-length signals."
-
-    # Peak behavior: constant should peak at DC; sine should have a non-DC dominant peak (allow bias).
-    idx_peak_const = _fft_peak_index(p_const)
-    idx_peak_sine = _fft_peak_index(p_sine)
-
-    assert idx_peak_const == 0, f"Constant sequence should have DC peak at index 0, got {idx_peak_const}."
-    assert idx_peak_sine != 0, "Sine spectrum should have dominant non-DC peak."
-
-    # Sine should have much stronger non-DC vs constant's non-DC energy
-    non_dc_energy_const = float(np.sum(p_const[1:]))
-    non_dc_energy_sine = float(np.sum(p_sine[1:]))
-    assert non_dc_energy_sine > 10.0 * max(non_dc_energy_const, 1e-18), \
-        "Sine non-DC energy should handily exceed constant's non-DC energy."
+    corr = float(np.clip(np.corrcoef(attrs, w_norm)[0, 1], -1.0, 1.0))
+    assert corr > 0.95, f"Attribution should align with weight peak; corr={corr:.4f}"
 
 
-def test_autocorr_periodicity(tool_mod, synthetic_inputs):
+def test_reproducibility_fixed_seed(device):
     """
-    Autocorrelation of a sinusoid shows periodic structure with r[0] being the maximum.
-    Constant signal autocorrelation is flat-ish with dominant zero-lag.
+    With all seeds fixed and identical inputs, attributions should be identical.
     """
-    candidates = [
-        "compute_autocorr",
-        "autocorr",
-        "autocorrelation",
-        "compute_acf",
-    ]
-    fn = None
-    for name in candidates:
-        if _has_attr(tool_mod, name):
-            fn = getattr(tool_mod, name)
-            break
-    if fn is None:
-        pytest.xfail("No autocorrelation function found in analyze_fft_autocorr_mu.")
+    _set_all_seeds(SEED)
+    model = _build_peaked_linear_model(device=device, bias=False)
+    baseline = torch.zeros(2, N_CHANNELS, dtype=DTYPE, device=device)
+    x = torch.randn(2, N_CHANNELS, dtype=DTYPE, device=device) * 0.05
 
-    mu_sine = np.load(synthetic_inputs["mu_sine"])
-    mu_const = np.load(synthetic_inputs["mu_constant"])
+    _set_all_seeds(SEED)
+    attrs1 = _gradient_shap_or_ig(model, x, baseline)
 
-    # Call and normalize outputs
-    def _call(signal: np.ndarray):
-        try:
-            out = fn(signal, max_lag=None, normalize=True)
-        except TypeError:
-            out = fn(signal)  # type: ignore
-        # Accept return as array or dict with 'acf'/'autocorr'
-        if isinstance(out, dict):
-            ac = np.asarray(out.get("acf") or out.get("autocorr") or out.get("r"))
-        else:
-            ac = np.asarray(out)
-        assert ac.ndim == 1 and ac.size >= 8, "Autocorr should be 1D with reasonable length."
-        return ac
+    _set_all_seeds(SEED)
+    attrs2 = _gradient_shap_or_ig(model, x, baseline)
 
-    ac_sine = _call(mu_sine)
-    ac_const = _call(mu_const)
-
-    # r[0] maximum & approx 1.0 if normalized
-    assert abs(ac_sine[0] - 1.0) <= 1e-6 or ac_sine[0] >= 0.999, "Sine ACF r[0] should be ~1.0 when normalized."
-    assert abs(ac_const[0] - 1.0) <= 1e-6 or ac_const[0] >= 0.999, "Constant ACF r[0] should be ~1.0 when normalized."
-    assert ac_sine[0] >= np.max(ac_sine[1:]) - 1e-12, "Zero-lag should be the maximum of ACF for sine."
-    assert ac_const[0] >= np.max(ac_const[1:]) - 1e-12, "Zero-lag should be the maximum of ACF for constant."
-
-    # Periodicity for sine: mean of top-k non-zero-lag peaks should be positive and notably larger than median
-    k = min(5, ac_sine.size - 1)
-    # Avoid trivial lag 0; examine coarse grid of lags to catch periodic peaks
-    candidate_lags = np.arange(1, min(64, ac_sine.size), dtype=int)
-    topk_vals = np.sort(ac_sine[candidate_lags])[-k:]
-    assert float(np.mean(topk_vals)) > float(np.median(ac_sine)) + 0.05, \
-        "Sine ACF should show non-trivial periodic peaks above median baseline."
+    assert torch.allclose(attrs1, attrs2, atol=1e-6), "Attributions changed despite fixed seeds."
 
 
-# =================================================================================================
-# Artifact Generation API
-# =================================================================================================
-
-def test_generate_artifacts(tool_mod, tmp_workspace, synthetic_inputs):
+def test_batch_support_and_per_sample_completeness(device):
     """
-    Artifact generator should emit JSON/CSV/PNG/HTML files and return a manifest (or paths).
+    Ensure attribution works for batches and completeness holds per sample.
     """
-    entry_candidates = [
-        "generate_fft_autocorr_artifacts",
-        "run_fft_autocorr_diagnostics",
-        "produce_fft_autocorr_outputs",
-        "analyze_and_export",  # generic fallback
-    ]
-    entry = None
-    for name in entry_candidates:
-        if _has_attr(tool_mod, name):
-            entry = getattr(tool_mod, name)
-            break
-    if entry is None:
-        pytest.xfail("No artifact generation entrypoint found in analyze_fft_autocorr_mu.")
+    model = _build_peaked_linear_model(device=device, bias=False)
+    B = 4
+    baseline = torch.zeros(B, N_CHANNELS, dtype=DTYPE, device=device)
+    x = torch.randn(B, N_CHANNELS, dtype=DTYPE, device=device) * 0.05
+    attrs = _gradient_shap_or_ig(model, x, baseline)
+    assert attrs.shape == x.shape
 
-    outdir = tmp_workspace["outputs"]
-    mu = np.load(synthetic_inputs["mu_sine_noise"])
-    wl = np.load(synthetic_inputs["wavelengths"])
-
-    kwargs = dict(
-        mu=mu,
-        wavelengths=wl,
-        outdir=str(outdir),
-        json_out=True,
-        csv_out=True,
-        png_out=True,
-        html_out=True,
-        n_freq=128,
-        seed=99,
-        title="FFT+ACF Test Artifacts",
-    )
-    try:
-        manifest = entry(**kwargs)
-    except TypeError:
-        manifest = entry(mu, wl, str(outdir), True, True, True, True, 128, 99, "FFT+ACF Test Artifacts")  # type: ignore
-
-    # Presence checks
-    json_files = list(outdir.glob("*.json"))
-    csv_files = list(outdir.glob("*.csv"))
-    png_files = list(outdir.glob("*.png"))
-    html_files = list(outdir.glob("*.html"))
-
-    assert json_files, "No JSON artifact produced by artifact generator."
-    assert csv_files, "No CSV artifact produced by artifact generator."
-    assert png_files, "No PNG artifact produced by artifact generator."
-    assert html_files, "No HTML artifact produced by artifact generator."
-
-    # Validate a JSON schema minimally
-    with open(json_files[0], "r", encoding="utf-8") as f:
-        js = json.load(f)
-    assert isinstance(js, dict), "Top-level JSON must be an object."
-    has_fft = ("fft" in js) or ("power" in js) or ("spectrum" in js) or ("freq" in js)
-    has_acf = ("acf" in js) or ("autocorr" in js) or ("autocorrelation" in js)
-    assert has_fft, "JSON should include FFT/power content (keys like 'fft','power','spectrum','freq')."
-    assert has_acf, "JSON should include autocorr content (keys like 'acf','autocorr','autocorrelation')."
-
-    # Files should be non-trivially sized to avoid zero-byte outputs
-    for p in png_files:
-        _assert_file(p, min_size=256)
-    for c in csv_files:
-        _assert_file(c, min_size=64)
-    for h in html_files:
-        _assert_file(h, min_size=128)
+    pred = model(x)
+    pred0 = model(baseline)
+    lhs = attrs.sum(dim=1)
+    rhs = pred - pred0
+    assert torch.allclose(lhs, rhs, atol=1e-3)
 
 
-# =================================================================================================
-# CLI End-to-End
-# =================================================================================================
-
-def test_cli_end_to_end(tmp_workspace, synthetic_inputs):
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+def test_cpu_gpu_parity():
     """
-    End-to-end CLI test:
-      • Runs the module as a CLI with --mu/--wavelengths → emits JSON/CSV/PNG/HTML.
-      • Uses --seed for determinism and compares JSON across two runs (modulo volatile metadata).
-      • Verifies optional audit log when SPECTRAMIND_LOG_PATH is set.
+    Ensure CPU vs CUDA attributions are numerically close for the same inputs/model.
     """
-    # Locate module file to construct python -m invocation
-    candidates = [
-        Path(__file__).resolve().parents[2] / "tools" / "analyze_fft_autocorr_mu.py",  # repo-root/tools/...
-        Path(__file__).resolve().parents[1] / "analyze_fft_autocorr_mu.py",            # tests/diagnostics/../
-    ]
-    module_file = None
-    for p in candidates:
-        if p.exists():
-            module_file = p
-            break
-    if module_file is None:
-        pytest.skip("analyze_fft_autocorr_mu.py not found; cannot run CLI end-to-end test.")
+    device_cpu = torch.device("cpu")
+    device_gpu = torch.device("cuda")
 
-    outdir = tmp_workspace["outputs"]
-    logsdir = tmp_workspace["logs"]
-    mu_path = synthetic_inputs["mu_sine_noise"]
-    wl_path = synthetic_inputs["wavelengths"]
+    model_cpu = _build_peaked_linear_model(device=device_cpu, bias=False)
+    # Copy weights to GPU model
+    model_gpu = _build_peaked_linear_model(device=device_gpu, bias=False)
+    with torch.no_grad():
+        model_gpu.fc.weight.copy_(model_cpu.fc.weight.to(device_gpu))
+        if model_gpu.fc.bias is not None:
+            model_gpu.fc.bias.copy_((model_cpu.fc.bias or 0.0).to(device_gpu))
 
-    env = {
-        "PYTHONUNBUFFERED": "1",
-        "SPECTRAMIND_LOG_PATH": str(logsdir / "v50_debug_log.md"),
-    }
+    B = 3
+    x_cpu = torch.randn(B, N_CHANNELS, dtype=DTYPE, device=device_cpu) * 0.05
+    base_cpu = torch.zeros(B, N_CHANNELS, dtype=DTYPE, device=device_cpu)
 
-    args = (
-        "--mu", str(mu_path),
-        "--wavelengths", str(wl_path),
-        "--outdir", str(outdir),
-        "--json",
-        "--csv",
-        "--png",
-        "--html",
-        "--n-freq", "128",
-        "--seed", "2025",
-        "--silent",
-    )
-    proc1 = _run_cli(module_file, args, env=env, timeout=210)
-    if proc1.returncode != 0:
-        msg = f"CLI run 1 failed (exit={proc1.returncode}).\nSTDOUT:\n{proc1.stdout}\nSTDERR:\n{proc1.stderr}"
-        pytest.fail(msg)
+    x_gpu = x_cpu.to(device_gpu)
+    base_gpu = base_cpu.to(device_gpu)
 
-    json1 = sorted(outdir.glob("*.json"))
-    csv1 = sorted(outdir.glob("*.csv"))
-    png1 = sorted(outdir.glob("*.png"))
-    html1 = sorted(outdir.glob("*.html"))
-
-    assert json1 and csv1 and png1 and html1, "CLI run 1 did not produce all expected artifact types."
-
-    # Determinism check: second run with same seed into a new directory should match JSON content
-    outdir2 = outdir.parent / "outputs_run2"
-    outdir2.mkdir(exist_ok=True)
-    args2 = (
-        "--mu", str(mu_path),
-        "--wavelengths", str(wl_path),
-        "--outdir", str(outdir2),
-        "--json",
-        "--csv",
-        "--png",
-        "--html",
-        "--n-freq", "128",
-        "--seed", "2025",
-        "--silent",
-    )
-    proc2 = _run_cli(module_file, args2, env=env, timeout=210)
-    if proc2.returncode != 0:
-        msg = f"CLI run 2 failed (exit={proc2.returncode}).\nSTDOUT:\n{proc2.stdout}\nSTDERR:\n{proc2.stderr}"
-        pytest.fail(msg)
-
-    json2 = sorted(outdir2.glob("*.json"))
-    assert json2, "Second CLI run produced no JSON artifacts."
-
-    # Normalize JSON: drop volatile fields (timestamps, host, absolute paths, durations)
-    def _normalize(j: Dict[str, Any]) -> Dict[str, Any]:
-        d = json.loads(json.dumps(j))  # deep copy
-        vol_patterns = re.compile(r"(time|date|timestamp|duration|path|cwd|hostname|uuid|version)", re.I)
-
-        def scrub(obj: Any) -> Any:
-            if isinstance(obj, dict):
-                keys = list(obj.keys())
-                for k in keys:
-                    if vol_patterns.search(k):
-                        obj.pop(k, None)
-                    else:
-                        obj[k] = scrub(obj[k])
-            elif isinstance(obj, list):
-                for i in range(len(obj)):
-                    obj[i] = scrub(obj[i])
-            return obj
-
-        return scrub(d)
-
-    with open(json1[0], "r", encoding="utf-8") as f:
-        j1 = _normalize(json.load(f))
-    with open(json2[0], "r", encoding="utf-8") as f:
-        j2 = _normalize(json.load(f))
-
-    assert j1 == j2, "Seeded CLI runs should yield identical JSON after removing volatile metadata."
-
-    # Audit log should exist and include a recognizable signature
-    log_file = Path(env["SPECTRAMIND_LOG_PATH"])
-    if log_file.exists():
-        _assert_file(log_file, min_size=1)
-        text = log_file.read_text(encoding="utf-8", errors="ignore").lower()
-        assert ("analyze_fft_autocorr_mu" in text) or ("fft" in text and "autocorr" in text), \
-            "Audit log exists but lacks recognizable CLI signature."
-
-
-def test_cli_error_cases(tmp_workspace, synthetic_inputs):
-    """
-    CLI should:
-      • Exit non-zero when required --mu is missing.
-      • Report helpful error text mentioning the missing/invalid flag.
-      • Handle invalid numeric args (e.g., --n-freq -5) by failing or sanitizing with a warning.
-    """
-    candidates = [
-        Path(__file__).resolve().parents[2] / "tools" / "analyze_fft_autocorr_mu.py",
-        Path(__file__).resolve().parents[1] / "analyze_fft_autocorr_mu.py",
-    ]
-    module_file = None
-    for p in candidates:
-        if p.exists():
-            module_file = p
-            break
-    if module_file is None:
-        pytest.skip("analyze_fft_autocorr_mu.py not found; cannot run CLI error tests.")
-
-    outdir = tmp_workspace["outputs"]
-    wl = synthetic_inputs["wavelengths"]
-
-    # Missing --mu
-    args_missing_mu = (
-        "--wavelengths", str(wl),
-        "--outdir", str(outdir),
-        "--json",
-    )
-    proc = _run_cli(module_file, args_missing_mu, env=None, timeout=90)
-    assert proc.returncode != 0, "CLI should fail when required --mu is missing."
-    msg = (proc.stderr + "\n" + proc.stdout).lower()
-    assert "mu" in msg, "Error message should mention missing 'mu'."
-
-    # Invalid --n-freq
-    mu = synthetic_inputs["mu_sine"]
-    args_bad_nfreq = (
-        "--mu", str(mu),
-        "--wavelengths", str(wl),
-        "--outdir", str(outdir),
-        "--json",
-        "--n-freq", "-4",
-    )
-    proc2 = _run_cli(module_file, args_bad_nfreq, env=None, timeout=90)
-    # Either fail informatively or sanitize; accept both, but require JSON if sanitized.
-    if proc2.returncode != 0:
-        m = (proc2.stderr + "\n" + proc2.stdout).lower()
-        assert ("n-freq" in m) or ("invalid" in m) or ("must be" in m), \
-            "Expected an informative error about invalid --n-freq."
-    else:
-        json_files = list(outdir.glob("*.json"))
-        assert json_files, "CLI sanitized invalid --n-freq but produced no JSON output."
-
-
-# =================================================================================================
-# Determinism at API level (optional)
-# =================================================================================================
-
-def test_api_determinism_with_seed(tool_mod, synthetic_inputs, tmp_workspace):
-    """
-    If the module exposes `set_seed/seed_all/fix_seed`, or artifact generator accepts seed,
-    ensure repeated API calls in the same process produce identical outputs.
-    """
-    seed_fn = None
-    for name in ("set_seed", "seed_all", "fix_seed"):
-        if _has_attr(tool_mod, name):
-            seed_fn = getattr(tool_mod, name)
-            break
-
-    # Prefer a deterministic API path via artifact generator
-    entry_candidates = [
-        "generate_fft_autocorr_artifacts",
-        "run_fft_autocorr_diagnostics",
-        "produce_fft_autocorr_outputs",
-    ]
-    entry = None
-    for name in entry_candidates:
-        if _has_attr(tool_mod, name):
-            entry = getattr(tool_mod, name)
-            break
-
-    if seed_fn is None and entry is None:
-        pytest.xfail("No seed setter and no artifact generator found for determinism test.")
-
-    mu = np.load(synthetic_inputs["mu_sine_noise"])
-    wl = np.load(synthetic_inputs["wavelengths"])
-
-    if seed_fn is not None:
-        seed_fn(77)
-
-    # Call artifact generator twice with the same seed and compare JSON content
-    if entry is None:
-        pytest.xfail("Artifact generator missing; cannot perform API-level determinism check.")
-
-    outdirA = tmp_workspace["root"] / "api_det_A"
-    outdirB = tmp_workspace["root"] / "api_det_B"
-    outdirA.mkdir(exist_ok=True)
-    outdirB.mkdir(exist_ok=True)
-
-    def _call(outdir: Path):
-        try:
-            entry(mu=mu, wavelengths=wl, outdir=str(outdir), json_out=True, csv_out=False, png_out=False, html_out=False, n_freq=128, seed=77)  # type: ignore
-        except TypeError:
-            entry(mu, wl, str(outdir), True, False, False, False, 128, 77)  # type: ignore
-
-    _call(outdirA)
-    _call(outdirB)
-
-    jA = sorted(outdirA.glob("*.json"))
-    jB = sorted(outdirB.glob("*.json"))
-    assert jA and jB, "Determinism check requires JSON artifacts from both runs."
-
-    def _load_norm(p: Path) -> Dict[str, Any]:
-        with open(p, "r", encoding="utf-8") as f:
-            jd = json.load(f)
-        # strip volatile keys
-        vol = re.compile(r"(time|date|timestamp|duration|path|cwd|hostname|uuid|version)", re.I)
-        def scrub(obj: Any) -> Any:
-            if isinstance(obj, dict):
-                for k in list(obj.keys()):
-                    if vol.search(k):
-                        obj.pop(k, None)
-                    else:
-                        obj[k] = scrub(obj[k])
-            elif isinstance(obj, list):
-                for i in range(len(obj)):
-                    obj[i] = scrub(obj[i])
-            return obj
-        return scrub(jd)
-
-    JA = _load_norm(jA[0])
-    JB = _load_norm(jB[0])
-    assert JA == JB, "API-level seeded runs should yield identical JSON after removing volatile metadata."
-
-
-# =================================================================================================
-# Housekeeping checks
-# =================================================================================================
-
-def test_artifact_min_sizes(tmp_workspace):
-    """
-    After prior tests, ensure that PNG/CSV/HTML in outputs/ are non-trivially sized.
-    """
-    outdir = tmp_workspace["outputs"]
-    png_files = list(outdir.glob("*.png"))
-    csv_files = list(outdir.glob("*.csv"))
-    html_files = list(outdir.glob("*.html"))
-    # Not all formats may exist if a prior test xfailed early; be lenient but check when present.
-    for p in png_files:
-        _assert_file(p, min_size=256)
-    for c in csv_files:
-        _assert_file(c, min_size=64)
-    for h in html_files:
-        _assert_file(h, min_size=128)
-
-
-def test_idempotent_rerun_behavior(tmp_workspace):
-    """
-    The tool should either overwrite consistently or produce versioned filenames.
-    We don't require a specific policy here; only that subsequent writes do not corrupt artifacts.
-    """
-    outdir = tmp_workspace["outputs"]
-    before = {p.name for p in outdir.glob("*")}
-    # Simulate pre-existing artifact to ensure tool does not crash due to existing files
-    marker = outdir / "preexisting_marker.txt"
-    marker.write_text("marker", encoding="utf-8")
-    after = {p.name for p in outdir.glob("*")}
-    assert before.issubset(after), "Artifacts disappeared unexpectedly between runs or overwrite simulation."
+    attrs_cpu = _gradient_shap_or_ig(model_cpu, x_cpu, base_cpu).cpu()
+    attrs_gpu = _gradient_shap_or_ig(model_gpu, x_gpu, base_gpu).cpu()
+    assert torch.allclose(attrs_cpu, attrs_gpu, atol=2e-3), "CPU/GPU attribution mismatch beyond tolerance."
