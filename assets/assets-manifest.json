@@ -1,0 +1,132 @@
+{
+  "$schema": "https://spectramind.dev/schemas/v50/assets-manifest.schema.json",
+  "meta": {
+    "project": "SpectraMind V50",
+    "component": "assets",
+    "version": "1.0.0",
+    "created": "2025-08-25T00:00:00Z",
+    "description": "Manifest of all static assets for GUI, logos, diagrams, guides, and dashboards."
+  },
+  "assets": {
+    "gui": {
+      "color_palette.json": {
+        "path": "gui/color_palette.json",
+        "type": "theme",
+        "hash": "sha256-PLACEHOLDER_HASH_COLOR",
+        "version": "1.0.0"
+      },
+      "widget_styles.css": {
+        "path": "gui/widget_styles.css",
+        "type": "style",
+        "hash": "sha256-PLACEHOLDER_HASH_CSS",
+        "version": "1.0.0"
+      },
+      "README.md": {
+        "path": "gui/README.md",
+        "type": "doc",
+        "hash": "sha256-PLACEHOLDER_HASH_GUI_README",
+        "version": "1.0.0"
+      },
+      "ARCHITECTURE.md": {
+        "path": "gui/ARCHITECTURE.md",
+        "type": "doc",
+        "hash": "sha256-PLACEHOLDER_HASH_GUI_ARCH",
+        "version": "1.0.0"
+      }
+    },
+    "logos": {
+      "logo.svg": {
+        "path": "logos/logo.svg",
+        "type": "image",
+        "hash": "sha256-PLACEHOLDER_HASH_LOGO_SVG",
+        "version": "1.0.0"
+      },
+      "logo.png": {
+        "path": "logos/logo.png",
+        "type": "image",
+        "hash": "sha256-PLACEHOLDER_HASH_LOGO_PNG",
+        "version": "1.0.0"
+      },
+      "favicon.ico": {
+        "path": "logos/favicon.ico",
+        "type": "image",
+        "hash": "sha256-PLACEHOLDER_HASH_FAVICON",
+        "version": "1.0.0"
+      }
+    },
+    "docs": {
+      "AI_Design_and_Modeling.md": {
+        "path": "AI_Design_and_Modeling.md",
+        "type": "doc",
+        "hash": "sha256-PLACEHOLDER_HASH_AI_DESIGN",
+        "version": "1.0.0"
+      },
+      "ARCHITECTURE.md": {
+        "path": "ARCHITECTURE.md",
+        "type": "doc",
+        "hash": "sha256-PLACEHOLDER_HASH_ARCHITECTURE",
+        "version": "1.0.0"
+      },
+      "COMPARISON_GUIDE.md": {
+        "path": "COMPARISON_GUIDE.md",
+        "type": "doc",
+        "hash": "sha256-PLACEHOLDER_HASH_COMPARISON",
+        "version": "1.0.0"
+      },
+      "CONTRIBUTING.md": {
+        "path": "CONTRIBUTING.md",
+        "type": "doc",
+        "hash": "sha256-PLACEHOLDER_HASH_CONTRIBUTING",
+        "version": "1.0.0"
+      },
+      "KAGGLE_GUIDE.md": {
+        "path": "KAGGLE_GUIDE.md",
+        "type": "doc",
+        "hash": "sha256-PLACEHOLDER_HASH_KAGGLE",
+        "version": "1.0.0"
+      },
+      "README.md": {
+        "path": "README.md",
+        "type": "doc",
+        "hash": "sha256-PLACEHOLDER_HASH_README",
+        "version": "1.0.0"
+      }
+    },
+    "diagrams": {
+      "architecture_stack.mmd": {
+        "path": "architecture_stack.mmd",
+        "type": "diagram",
+        "hash": "sha256-PLACEHOLDER_HASH_STACK",
+        "version": "1.0.0"
+      },
+      "comparison_overview.png": {
+        "path": "comparison_overview.png",
+        "type": "image",
+        "hash": "sha256-PLACEHOLDER_HASH_COMPARISON_PNG",
+        "version": "1.0.0"
+      }
+    },
+    "dashboards": {
+      "diagnostics_dashboard.html": {
+        "path": "diagnostics_dashboard.html",
+        "type": "html",
+        "hash": "sha256-PLACEHOLDER_HASH_DASHBOARD",
+        "version": "1.0.0"
+      },
+      "report.html": {
+        "path": "report.html",
+        "type": "html",
+        "hash": "sha256-PLACEHOLDER_HASH_REPORT",
+        "version": "1.0.0"
+      }
+    },
+    "notebooks": {
+      "kaggle_infer_template.ipynb": {
+        "path": "kaggle_infer_template.ipynb",
+        "type": "notebook",
+        "hash": "sha256-PLACEHOLDER_HASH_NOTEBOOK",
+        "version": "1.0.0"
+      }
+    }
+  }
+}
