@@ -1,8 +1,3 @@
----
-
-### 📄 `/tests/ARCHITECTURE.md`
-
-```markdown
 # 🏗️ SpectraMind V50 — Testing Architecture
 
 The `/tests` directory is designed to **mirror the SpectraMind V50 pipeline**, ensuring every subsystem has automated coverage.  
