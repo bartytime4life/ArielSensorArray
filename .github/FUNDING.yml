@@ -1,0 +1,31 @@
+# .github/FUNDING.yml
+# -----------------------------------------------------------------------------
+# Funding configuration for SpectraMind V50
+# This file enables sponsor buttons on the GitHub repo.
+# Contributors and users can support ongoing development, compute costs,
+# and reproducibility infrastructure for the NeurIPS 2025 Ariel Data Challenge.
+# -----------------------------------------------------------------------------
+
+# GitHub Sponsors (replace with your username or org)
+github: [ "YOUR_GITHUB_USERNAME_OR_ORG" ]
+
+# Open Collective (replace with your slug if you set one up)
+open_collective: spectramind-v50
+
+# Ko-fi username
+ko_fi: YOUR_KOFI_HANDLE
+
+# Patreon username
+patreon: YOUR_PATREON_HANDLE
+
+# Custom URLs (donation page, institutional sponsor, etc.)
+custom:
+  - "https://spectramind.dev/sponsor"
+  - "https://buymeacoffee.com/YOURHANDLE"
+
+# -----------------------------------------------------------------------------
+# Notes:
+# - You can leave any platform out if not applicable.
+# - GitHub Sponsors is the primary recommendation (tight integration).
+# - Custom links support multiple entries (will render as a dropdown).
+# -----------------------------------------------------------------------------
