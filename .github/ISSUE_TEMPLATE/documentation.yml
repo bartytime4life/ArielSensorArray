@@ -1,0 +1,92 @@
+name: "📚 Documentation Request"
+description: "Report missing, unclear, or outdated documentation in SpectraMind V50"
+labels: ["documentation", "triage"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## 📚 Documentation Request (SpectraMind V50)
+        Help us keep the documentation **accurate, reproducible, and CLI-first**.  
+        Please describe the missing, incorrect, or unclear documentation.
+
+  - type: input
+    id: summary
+    attributes:
+      label: "📝 Documentation Summary"
+      description: "Concise title/summary of the documentation issue."
+      placeholder: "Example: Missing usage section for `spectramind diagnose dashboard`"
+
+  - type: textarea
+    id: location
+    attributes:
+      label: "📂 Affected Location(s)"
+      description: |
+        Where is the documentation issue?  
+        List files, directories, or docs (e.g., README.md, configs/, CLI help, tools/, notebooks/).
+      placeholder: |
+        - /README.md  
+        - /docs/ARCHITECTURE.md  
+        - CLI `--help` output for `spectramind train`
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: "💡 Problem Description"
+      description: "What is missing, incorrect, or unclear?"
+      placeholder: "The CLI flags documented in README.md are out of sync with `spectramind calibrate`."
+
+  - type: textarea
+    id: proposed_solution
+    attributes:
+      label: "🛠️ Proposed Fix or Addition"
+      description: "Suggest how the documentation should be updated."
+      placeholder: |
+        - Add section in README.md showing Hydra overrides.  
+        - Update CLI help examples with current config group syntax.  
+        - Link to `configs/train_v50.yaml` for reproducibility.
+
+  - type: checkboxes
+    id: impact
+    attributes:
+      label: "📈 Impact Areas"
+      description: "Select all areas where documentation should improve."
+      options:
+        - label: "CLI usage (`spectramind ...` commands)"
+        - label: "Hydra configs & overrides"
+        - label: "Reproducibility (DVC, hashes, CI docs)"
+        - label: "Scientific/physics modeling references"
+        - label: "Symbolic logic modules"
+        - label: "Notebooks & quickstart examples"
+        - label: "Other (please specify below)"
+
+  - type: textarea
+    id: related
+    attributes:
+      label: "🔗 Related Issues / References"
+      description: "Link related issues, configs, or external docs/papers."
+      placeholder: "#456, arXiv:2505.xxxxx, Kaggle forum link..."
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: "⏱️ Priority"
+      description: "How urgent is this documentation update?"
+      options:
+        - "P1 — Critical (blocking usage or Kaggle submission)"
+        - "P2 — High (important for reproducibility/scientific clarity)"
+        - "P3 — Medium (useful clarification or missing reference)"
+        - "P4 — Low (style, formatting, or cosmetic update)"
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: "📂 Additional Context"
+      description: "Provide logs, screenshots, CLI output, or snippets to illustrate the problem."
+      placeholder: |
+        Example:
+        ```bash
+        spectramind diagnose --help
+        ```
+        shows `--no-tsne`, but README.md does not mention it.
