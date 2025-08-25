@@ -1,9 +1,53 @@
 {
-  "primary": "#1a237e",
-  "secondary": "#3949ab",
-  "accent": "#ff9800",
-  "success": "#4caf50",
-  "error": "#f44336",
-  "background": "#f5f5f5",
-  "text": "#212121"
+  "$schema": "https://spectramind.dev/schemas/v50/color_palette.schema.json",
+  "meta": {
+    "name": "SpectraMind V50 Default",
+    "version": "1.0.0",
+    "created": "2025-08-24T00:00:00Z"
+  },
+  "brand": {
+    "primary": "#2151FF",
+    "primary-contrast": "#FFFFFF",
+    "accent": "#55E6C1",
+    "warning": "#FFB020",
+    "error": "#FF5D5D",
+    "success": "#2ECC71"
+  },
+  "semantic": {
+    "surface": "#0B0F14",
+    "surface-contrast": "#E8EEF7",
+    "text": "#E8EEF7",
+    "text-muted": "#A7B2C5",
+    "border": "#1E2633",
+    "card": "#111827"
+  },
+  "data": {
+    "umap": [
+      "#2151FF",
+      "#55E6C1",
+      "#FFB020",
+      "#FF5D5D",
+      "#C886FF",
+      "#50B5FF",
+      "#F56B8D"
+    ],
+    "tsne": [
+      "#0D99FF",
+      "#00D5A0",
+      "#FFC857",
+      "#F25F5C",
+      "#A27BFF",
+      "#4DD0E1",
+      "#F78FB3"
+    ],
+    "heatmap-low": "#0B1020",
+    "heatmap-mid": "#3C6E71",
+    "heatmap-high": "#FFD166"
+  },
+  "badges": {
+    "info": "#2151FF",
+    "ok": "#2ECC71",
+    "warn": "#FFB020",
+    "fail": "#FF5D5D"
+  }
 }
