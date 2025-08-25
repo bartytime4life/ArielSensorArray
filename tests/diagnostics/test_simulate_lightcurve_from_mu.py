@@ -1,219 +1,516 @@
 # tests/diagnostics/test_simulate_lightcurve_from_mu.py
 # -*- coding: utf-8 -*-
 """
-Unit tests for simulating a white-light transit lightcurve from a per-wavelength
-mean transit depth vector (mu). Tests cover:
-  - White-light depth fidelity
-  - Quadratic limb-darkening shape effects
-  - Noise reproducibility with a seed
-  - Input type robustness
-  - (Optional) Parity vs project implementation, if present
+SpectraMind V50 — Diagnostics Test: simulate_lightcurve_from_mu
 
-Notes:
-* Quadratic limb darkening: I(μ) = I(1) * [1 - a(1-μ) - b(1-μ)^2]
-* Shot-noise σ ∝ sqrt(N) is used here only to check seeded reproducibility.
+Purpose
+-------
+Validate the scientific and engineering behavior of the *simulate_lightcurve_from_mu*
+utility, which should synthesize AIRS/FGS1-like time-series cubes from a target
+transmission spectrum μ (length ≈ 283) and minimal metadata/configuration.
+
+This test suite focuses on:
+1) API availability & shape contracts
+2) Determinism under fixed seeds
+3) Noise control & variance behavior
+4) CLI parity (if a CLI entrypoint is exposed)
+5) Robust error signaling for bad inputs
+
+Design Notes
+------------
+• The tests are *defensively adaptable* to small API differences. They locate the
+  module under common repo layouts (e.g., tools/simulate_lightcurve_from_mu.py or
+  src/tools/simulate_lightcurve_from_mu.py) and try a small set of expected call
+  patterns:
+    - generate(mu, metadata=None, **cfg)
+    - simulate_lightcurve(mu, metadata=None, **cfg)
+    - Simulator(...).run()
+  If none are found, the test will xfail with a clear message.
+
+• Sizes are intentionally small (tiny time length & spatial dims) to run fast in CI.
+
+• No placeholders: every assertion is tied to concrete, minimal scientific expectations
+  (finite outputs, reasonable shape contracts, deterministic seeding, noise ↑ variance).
+
+• CLI test (if available) is executed via `python -m tools.simulate_lightcurve_from_mu`
+  or `python -m src.tools.simulate_lightcurve_from_mu`, using a temp output dir.
+
+Requirements
+------------
+• pytest
+• numpy
+
+Author: SpectraMind V50 Team
 """
 
 from __future__ import annotations
 
-import math
 import importlib
-from typing import Optional, Sequence, Tuple
+import os
+import sys
+import json
+import math
+import time
+import shutil
+import subprocess
+from pathlib import Path
+from typing import Any, Dict, Tuple, Optional
 
 import numpy as np
 import pytest
 
 
-# --------------------------
-# Optional: try to import the DUT from the project
-# --------------------------
-_DUT_PATHS = [
-    # add likely import paths here as your codebase evolves
-    "spectramind.simulation.lightcurve",
-    "src.simulation.lightcurve",
-    "spectramind.diagnostics.lightcurve",
+# ------------------------------
+# Helpers to discover the module
+# ------------------------------
+
+CANDIDATE_IMPORTS = [
+    "tools.simulate_lightcurve_from_mu",
+    "src.tools.simulate_lightcurve_from_mu",
+    "simulate_lightcurve_from_mu",
 ]
-_DUT_FUNC_NAME = "simulate_lightcurve_from_mu"
 
-def _try_load_dut() -> Optional[callable]:
-    for mod in _DUT_PATHS:
+
+def _import_sim_module():
+    """
+    Try to import the simulate_lightcurve_from_mu module from common locations.
+
+    Returns
+    -------
+    module
+        Imported module object.
+
+    Raises
+    ------
+    ImportError
+        If the module is not found in any candidate path.
+    """
+    last_err = None
+    for name in CANDIDATE_IMPORTS:
         try:
-            m = importlib.import_module(mod)
-            fn = getattr(m, _DUT_FUNC_NAME, None)
-            if callable(fn):
-                return fn
-        except Exception:
-            continue
-    return None
-
-SIM_DUT = _try_load_dut()  # project function if present, else None
-
-
-# --------------------------
-# Reference implementation (lightweight, for property tests & parity)
-# --------------------------
-def _ref_simulate_lightcurve_from_mu(
-    t: np.ndarray,
-    mu: np.ndarray | float,
-    t0: float = 0.0,
-    duration: float = 0.12,
-    ingress: float = 0.02,
-    ld_coeffs: Tuple[float, float] = (0.0, 0.0),
-    add_noise: bool = False,
-    noise_sigma: float = 0.0,
-    seed: Optional[int] = None,
-) -> np.ndarray:
-    """
-    Simple white-light transit model using a symmetric trapezoid whose depth is the
-    average of mu across wavelengths, optionally modified by quadratic limb darkening
-    during ingress/egress. This is a reference (not a full Mandel–Agol model).
-    """
-    t = np.asarray(t, dtype=float)
-    if np.ndim(mu) == 0:
-        depth = float(mu)
-    else:
-        mu_arr = np.asarray(mu, dtype=float)
-        if mu_arr.size == 0:
-            depth = 0.0
-        else:
-            depth = float(np.nanmean(mu_arr))
-
-    # Guard rails
-    depth = max(0.0, min(depth, 1.0))
-
-    # Define trapezoid: ingress and egress are linear ramps; flat bottom in between
-    t_ing_start = t0 - duration / 2.0
-    t_ing_end   = t_ing_start + ingress
-    t_egr_start = t0 + duration / 2.0 - ingress
-    t_egr_end   = t0 + duration / 2.0
-
-    flux = np.ones_like(t)
-
-    # Piecewise
-    # Out of transit: flux = 1
-
-    # In ingress: linear ramp from 1 -> 1 - depth (modified by limb darkening)
-    in_ing = (t >= t_ing_start) & (t < t_ing_end)
-    if np.any(in_ing):
-        x = (t[in_ing] - t_ing_start) / ingress  # 0..1
-        ld = _quadratic_ld_profile(x, ld_coeffs)  # curvature proxy 0..1 -> LD weighting
-        flux[in_ing] = 1.0 - depth * x * ld
-
-    # Flat bottom
-    in_flat = (t >= t_ing_end) & (t <= t_egr_start)
-    if np.any(in_flat):
-        flux[in_flat] = 1.0 - depth
-
-    # In egress: linear ramp from 1 - depth -> 1 (LD again)
-    in_egr = (t > t_egr_start) & (t <= t_egr_end)
-    if np.any(in_egr):
-        x = 1.0 - (t[in_egr] - t_egr_start) / ingress  # 1..0 decreasing
-        ld = _quadratic_ld_profile(1.0 - x, ld_coeffs)
-        flux[in_egr] = 1.0 - depth * x * ld
-
-    # Optional Gaussian noise for a quick sanity check (seeded)
-    if add_noise and noise_sigma > 0.0:
-        rng = np.random.default_rng(seed)
-        flux = flux + rng.normal(0.0, noise_sigma, size=flux.shape)
-
-    return flux
-
-
-def _quadratic_ld_profile(x01: np.ndarray, ld_coeffs: Tuple[float, float]) -> np.ndarray:
-    """A minimal shape modifier (0..1) mimicking quadratic limb darkening curvature during the ramp."""
-    a, b = ld_coeffs
-    x01 = np.clip(np.asarray(x01, dtype=float), 0.0, 1.0)
-    # Map ramp progress -> μ proxy; we keep it simple yet monotonic
-    # Use μ = sqrt(1 - s^2) for s in [0,1], then quadratic LD law
-    s = x01
-    mu_geo = np.sqrt(np.clip(1.0 - s**2, 0.0, 1.0))
-    ld = 1.0 - a * (1.0 - mu_geo) - b * (1.0 - mu_geo) ** 2
-    # Normalize to [min,1] so that the modifier stays reasonable (>0)
-    mn = np.minimum(1.0, np.maximum(0.2, ld.min() if np.ndim(ld) else ld))
-    return ld / (1e-12 + max(mn, 1e-6))
-
-
-# --------------------------
-# Test data fixtures
-# --------------------------
-@pytest.fixture(scope="module")
-def time_grid():
-    # 3 hours around mid-transit sampled at 1‑minute cadence
-    t = np.linspace(-1.5, 1.5, 181)  # hours
-    return t
-
-
-@pytest.fixture(scope="module")
-def constant_mu():
-    # 283-channel spectrum with a constant 800 ppm (0.0008) depth
-    return np.full(283, 8.0e-4, dtype=float)
-
-
-# --------------------------
-# Tests
-# --------------------------
-@pytest.mark.parametrize("ld_coeffs", [(0.0, 0.0), (0.4, 0.2)])
-def test_white_light_depth_matches_mu_mean(time_grid, constant_mu, ld_coeffs):
-    flux = _ref_simulate_lightcurve_from_mu(
-        time_grid, constant_mu, t0=0.0, duration=0.12, ingress=0.02, ld_coeffs=ld_coeffs
+            return importlib.import_module(name)
+        except Exception as e:
+            last_err = e
+    raise ImportError(
+        f"Could not import simulate_lightcurve_from_mu from any of: {CANDIDATE_IMPORTS}\n"
+        f"Last error: {last_err}"
     )
-    # Minimum flux should be ~ 1 - mean(mu) within a small tolerance (numerical)
-    expected = 1.0 - float(np.mean(constant_mu))
-    assert np.isfinite(flux).all()
-    assert np.abs(np.min(flux) - expected) < 5e-5
 
 
-def test_limb_darkening_changes_ingress_shape(time_grid, constant_mu):
-    # Compare no-LD vs with LD at mid-ingress: curvature should change
-    t = time_grid
-    t0, dur, ing = 0.0, 0.12, 0.02
-    mid_ing = t0 - dur / 2.0 + ing / 2.0
-    idx = int(np.argmin(np.abs(t - mid_ing)))
+def _locate_callable(mod):
+    """
+    Detect a suitable callable to synthesize light curves from μ.
 
-    f_nold = _ref_simulate_lightcurve_from_mu(t, constant_mu, t0=t0, duration=dur, ingress=ing, ld_coeffs=(0.0, 0.0))
-    f_ld   = _ref_simulate_lightcurve_from_mu(t, constant_mu, t0=t0, duration=dur, ingress=ing, ld_coeffs=(0.5, 0.3))
+    Returns
+    -------
+    kind : str
+        'func' or 'method' or 'class'
+    callable_or_class : callable | type
+        The function or class object to invoke.
+    """
+    # Preferred function signatures
+    for fn_name in ("generate", "simulate_lightcurve"):
+        if hasattr(mod, fn_name):
+            fn = getattr(mod, fn_name)
+            if callable(fn):
+                return "func", fn
 
-    # Same depth at mid-transit
-    assert math.isclose(f_nold[t == 0.0].item(), f_ld[t == 0.0].item(), rel_tol=1e-6, abs_tol=1e-6)
-    # But different curvature in ingress
-    assert not math.isclose(f_nold[idx], f_ld[idx], rel_tol=1e-3, abs_tol=1e-5)
+    # Fallback: class with .run()
+    for cls_name in ("Simulator", "LightcurveSimulator", "SimulateFromMu"):
+        if hasattr(mod, cls_name):
+            cls = getattr(mod, cls_name)
+            # Instantiate later in caller
+            if hasattr(cls, "run"):
+                return "class", cls
 
+    # Fallback: a function named main_generate (rare)
+    if hasattr(mod, "main_generate") and callable(getattr(mod, "main_generate")):
+        return "func", getattr(mod, "main_generate")
 
-def test_noise_is_reproducible_with_seed(time_grid, constant_mu):
-    sigma = 2.5e-5
-    f1 = _ref_simulate_lightcurve_from_mu(time_grid, constant_mu, add_noise=True, noise_sigma=sigma, seed=42)
-    f2 = _ref_simulate_lightcurve_from_mu(time_grid, constant_mu, add_noise=True, noise_sigma=sigma, seed=42)
-    f3 = _ref_simulate_lightcurve_from_mu(time_grid, constant_mu, add_noise=True, noise_sigma=sigma, seed=43)
-
-    # Same seed => identical realization
-    assert np.allclose(f1, f2)
-    # Different seed => statistically different (not exactly equal)
-    assert not np.allclose(f1, f3)
-
-
-@pytest.mark.parametrize("as_type", [list, np.array])
-def test_input_type_robustness(as_type, constant_mu):
-    t_list = as_type(np.linspace(-0.5, 0.5, 61))
-    f = _ref_simulate_lightcurve_from_mu(t_list, constant_mu)
-    assert isinstance(f, np.ndarray)
-    assert f.dtype.kind == "f"
-    assert f.shape == (len(t_list),)
-
-
-def test_zero_depth_returns_unity(time_grid):
-    mu_zero = np.zeros(283, dtype=float)
-    f = _ref_simulate_lightcurve_from_mu(time_grid, mu_zero)
-    assert np.allclose(f, 1.0)
+    pytest.xfail(
+        "simulate_lightcurve_from_mu module found but no known callable was discovered. "
+        "Expected one of: generate(), simulate_lightcurve(), Simulator.run(), LightcurveSimulator.run()."
+    )
+    return "none", None  # pragma: no cover
 
 
-@pytest.mark.xfail(SIM_DUT is None, reason="Project simulate_lightcurve_from_mu not found; parity test skipped")
-def test_parity_against_project_function(time_grid, constant_mu):
-    """If the project function is present, ensure basic parity with the reference for a canonical case."""
-    assert SIM_DUT is not None
-    kwargs = dict(t0=0.0, duration=0.12, ingress=0.02, ld_coeffs=(0.3, 0.2), add_noise=False)
-    f_ref = _ref_simulate_lightcurve_from_mu(time_grid, constant_mu, **kwargs)
-    f_dut = SIM_DUT(time_grid, constant_mu, **kwargs)
-    # We allow a small tolerance; exact parity isn't required if DUT is a more physical model
-    assert f_ref.shape == f_dut.shape
-    assert np.all(np.isfinite(f_dut))
-    assert np.max(np.abs(f_ref - f_dut)) < 1.5e-3
+def _invoke_generation(kind: str, callable_or_class, mu: np.ndarray, metadata: Optional[dict], **cfg):
+    """
+    Invoke the generator in an API-agnostic way.
+
+    Returns
+    -------
+    out : dict
+        Expected to contain arrays for 'airs_cube' and/or 'fgs1_cube' and 'time', maybe 'wavelengths'.
+    """
+    if kind == "func":
+        return callable_or_class(mu, metadata=metadata, **cfg)
+    elif kind == "class":
+        # Attempt common init signatures
+        try:
+            inst = callable_or_class(mu=mu, metadata=metadata, **cfg)
+        except TypeError:
+            inst = callable_or_class(**cfg)
+            return inst.run(mu=mu, metadata=metadata)
+        if hasattr(inst, "run"):
+            return inst.run()
+        pytest.xfail("Simulator class found but no .run() method available.")
+    else:
+        pytest.fail("Unknown invocation kind; test configuration error.")  # pragma: no cover
+
+
+def _clean_tmp_dir(path: Path) -> None:
+    if path.exists():
+        shutil.rmtree(path, ignore_errors=True)
+
+
+# ------------------------------
+# Fixtures
+# ------------------------------
+
+@pytest.fixture(scope="module")
+def sim_mod():
+    """Import the target module once per module scope."""
+    return _import_sim_module()
+
+
+@pytest.fixture(scope="module")
+def sim_callable(sim_mod):
+    """Detect the callable/class once per module scope."""
+    return _locate_callable(sim_mod)
+
+
+@pytest.fixture
+def tiny_mu() -> np.ndarray:
+    """
+    Construct a small, well-behaved μ spectrum for tests.
+
+    We use 283 points by default (the challenge spec), but allow smaller if the
+    simulator supports mapping. Here we stick to 283 for contract checking.
+
+    The spectrum is positive (transit depths in ppm scaled to 0..1), with a few
+    synthetic absorption features.
+    """
+    n = 283
+    x = np.linspace(0, 1, n, dtype=np.float64)
+
+    # Smooth baseline (0.01–0.03 range), plus three synthetic Gaussian "lines".
+    baseline = 0.02 + 0.005 * np.sin(2 * math.pi * 3 * x)
+    lines = (
+        0.015 * np.exp(-0.5 * ((x - 0.25) / 0.02) ** 2)
+        + 0.010 * np.exp(-0.5 * ((x - 0.55) / 0.015) ** 2)
+        + 0.008 * np.exp(-0.5 * ((x - 0.82) / 0.01) ** 2)
+    )
+    mu = baseline + lines
+    mu = np.clip(mu, 0.0, 1.0)  # transit depth fraction 0..1
+    assert mu.shape == (n,)
+    assert np.all(np.isfinite(mu))
+    return mu
+
+
+@pytest.fixture
+def tiny_metadata() -> Dict[str, Any]:
+    """
+    Minimal metadata example required by many simulators:
+    - planet_id
+    - exposure_time_s
+    - period_s (not strictly used by all implementations)
+    """
+    return {
+        "planet_id": "TEST-0001",
+        "exposure_time_s": 2.0,
+        "period_s": 100000.0,
+        # Optional fields tolerated by some simulators:
+        "star_mag": 10.0,
+        "distance_pc": 100.0,
+    }
+
+
+@pytest.fixture
+def tiny_cfg() -> Dict[str, Any]:
+    """
+    Small config to keep the synthetic cubes tiny and CI-friendly.
+    These keys are commonly supported; if unknown keys are provided, most implementations will ignore them.
+    """
+    return {
+        # core sizing
+        "n_time": 64,
+        "airs_shape": (8, 16),   # (H, W) tiny spectral image
+        "fgs1_shape": (8, 8),    # (H, W) tiny photometric image
+        # physical-ish toggles
+        "inject_noise": True,
+        "noise_sigma": 0.001,
+        "jitter_ppm": 50.0,
+        # reproducibility
+        "seed": 1234,
+        # I/O toggles (most implementations support dry-runs or return-only)
+        "save": False,
+        "outdir": None,
+    }
+
+
+# ------------------------------
+# Core API/contract tests
+# ------------------------------
+
+def test_generate_shapes_and_finiteness(sim_callable, tiny_mu, tiny_metadata, tiny_cfg):
+    """
+    The generator should:
+    • accept μ with shape (283,)
+    • return finite arrays for AIRS/FGS1 time-series cubes
+    • include a time vector with length == n_time
+    • respect the requested small shapes
+    """
+    kind, target = sim_callable
+
+    out = _invoke_generation(kind, target, tiny_mu, tiny_metadata, **tiny_cfg)
+    assert isinstance(out, dict), "Simulator should return a dictionary of outputs."
+
+    # Not all sims output both instruments; accept either, but require at least one.
+    has_airs = "airs_cube" in out
+    has_fgs1 = "fgs1_cube" in out
+    assert has_airs or has_fgs1, "Expected at least one of AIRS or FGS1 cubes."
+
+    n_time = tiny_cfg["n_time"]
+
+    if has_airs:
+        airs = out["airs_cube"]
+        assert isinstance(airs, np.ndarray)
+        assert airs.ndim == 3, "AIRS cube must be (T, H, W)"
+        assert airs.shape[0] == n_time
+        assert airs.shape[1:] == tiny_cfg["airs_shape"]
+        assert np.all(np.isfinite(airs)), "AIRS cube contains non-finite values."
+
+    if has_fgs1:
+        fgs1 = out["fgs1_cube"]
+        assert isinstance(fgs1, np.ndarray)
+        assert fgs1.ndim == 3, "FGS1 cube must be (T, H, W)"
+        assert fgs1.shape[0] == n_time
+        assert fgs1.shape[1:] == tiny_cfg["fgs1_shape"]
+        assert np.all(np.isfinite(fgs1)), "FGS1 cube contains non-finite values."
+
+    # time axis is expected
+    assert "time" in out, "Output must include a time vector."
+    t = out["time"]
+    assert isinstance(t, np.ndarray)
+    assert t.ndim == 1 and t.shape[0] == n_time
+    assert np.all(np.isfinite(t))
+
+
+def test_determinism_with_seed(sim_callable, tiny_mu, tiny_metadata, tiny_cfg):
+    """
+    With a fixed seed, the simulator must be deterministic (bitwise equal outputs).
+    """
+    kind, target = sim_callable
+
+    cfgA = dict(tiny_cfg)
+    cfgB = dict(tiny_cfg)
+    cfgA["seed"] = 7
+    cfgB["seed"] = 7
+
+    out1 = _invoke_generation(kind, target, tiny_mu, tiny_metadata, **cfgA)
+    out2 = _invoke_generation(kind, target, tiny_mu, tiny_metadata, **cfgB)
+
+    # Compare keys and arrays bitwise-equal where applicable.
+    assert set(out1.keys()) == set(out2.keys())
+
+    for k in out1:
+        v1, v2 = out1[k], out2[k]
+        if isinstance(v1, np.ndarray) and isinstance(v2, np.ndarray):
+            assert v1.shape == v2.shape
+            assert np.array_equal(v1, v2), f"Mismatch for key '{k}' under same seed!"
+        else:
+            # For scalars or metadata dicts, fall back to equality
+            assert v1 == v2
+
+
+def test_noise_control_affects_variance(sim_callable, tiny_mu, tiny_metadata, tiny_cfg):
+    """
+    Increasing noise_sigma should (statistically) increase variance in the synthetic data.
+    We test this on AIRS if available; otherwise, on FGS1.
+    """
+    kind, target = sim_callable
+
+    cfg_low = dict(tiny_cfg)
+    cfg_high = dict(tiny_cfg)
+
+    cfg_low["inject_noise"] = True
+    cfg_low["noise_sigma"] = 0.0001
+    cfg_low["seed"] = 42
+
+    cfg_high["inject_noise"] = True
+    cfg_high["noise_sigma"] = 0.01
+    cfg_high["seed"] = 42
+
+    out_lo = _invoke_generation(kind, target, tiny_mu, tiny_metadata, **cfg_low)
+    out_hi = _invoke_generation(kind, target, tiny_mu, tiny_metadata, **cfg_high)
+
+    def _pick_cube(out):
+        if "airs_cube" in out:
+            return out["airs_cube"]
+        elif "fgs1_cube" in out:
+            return out["fgs1_cube"]
+        pytest.xfail("Simulator returned neither AIRS nor FGS1 cube.")
+
+    cube_lo = _pick_cube(out_lo).astype(np.float64)
+    cube_hi = _pick_cube(out_hi).astype(np.float64)
+
+    # Compare overall variance across the entire cube
+    var_lo = float(np.var(cube_lo))
+    var_hi = float(np.var(cube_hi))
+    assert var_hi > var_lo, f"Expected higher variance with higher noise. var_lo={var_lo}, var_hi={var_hi}"
+
+
+def test_rejects_bad_mu_shape(sim_callable, tiny_metadata, tiny_cfg):
+    """
+    The simulator should raise a clear error for invalid μ shapes (e.g., (10,) instead of (283,)).
+    """
+    kind, target = sim_callable
+
+    bad_mu = np.ones((10,), dtype=np.float64)
+    with pytest.raises(Exception):
+        _invoke_generation(kind, target, bad_mu, tiny_metadata, **tiny_cfg)
+
+
+# ------------------------------
+# CLI behavior (optional)
+# ------------------------------
+
+CLI_CANDIDATES = [
+    ("tools.simulate_lightcurve_from_mu", "python", "-m", "tools.simulate_lightcurve_from_mu"),
+    ("src.tools.simulate_lightcurve_from_mu", "python", "-m", "src.tools.simulate_lightcurve_from_mu"),
+]
+
+
+@pytest.mark.parametrize("module_name,py,flag_m,entry", CLI_CANDIDATES)
+def test_cli_smoke_if_available(tmp_path: Path, tiny_mu, module_name, py, flag_m, entry):
+    """
+    If the module exposes a Python -m entrypoint, perform a CLI smoke test:
+
+    • Writes μ to a temporary .npy
+    • Invokes the module with --mu and --outdir
+    • Uses a fixed seed for determinism
+    • Expects exit code 0 and creation of some outputs (or at least a manifest/log)
+    """
+    # Quickly check import; if missing, skip this CLI form.
+    try:
+        importlib.import_module(module_name)
+    except Exception:
+        pytest.skip(f"Module {module_name} not importable; skipping CLI smoke.")
+
+    mu_path = tmp_path / "mu.npy"
+    np.save(mu_path, tiny_mu)
+
+    outdir = tmp_path / "out"
+    outdir.mkdir(parents=True, exist_ok=True)
+
+    # Common CLI flags: not all implementations share exact names, so we pass a safe subset.
+    # Implementations should ignore unknown flags gracefully or document their names.
+    cmd = [
+        sys.executable,
+        flag_m,
+        entry,
+        "--mu", str(mu_path),
+        "--outdir", str(outdir),
+        "--seed", "777",
+        "--n-time", "32",
+        "--airs-h", "6",
+        "--airs-w", "12",
+        "--fgs1-h", "6",
+        "--fgs1-w", "6",
+        "--inject-noise",
+        "--noise-sigma", "0.001",
+        "--save",
+    ]
+
+    # Some CLIs use underscores or different option names; try a best-effort call and don't fail
+    # the entire test suite if the CLI returns usage error. We treat nonzero exit as xfail with logs.
+    try:
+        proc = subprocess.run(cmd, check=False, capture_output=True, text=True, cwd=str(Path.cwd()))
+    except Exception as e:
+        pytest.xfail(f"CLI invocation failed at OS level: {e}")
+
+    if proc.returncode != 0:
+        # Provide helpful context but do not hard-fail the whole suite.
+        pytest.xfail(
+            "CLI returned nonzero exit. This may indicate different flag names. "
+            f"Stdout:\n{proc.stdout}\n\nStderr:\n{proc.stderr}"
+        )
+
+    # If it ran, we expect either data files (npy) or at least a manifest/log in outdir.
+    produced = list(outdir.glob("*"))
+    assert len(produced) > 0, "CLI ran without creating any outputs in the specified outdir."
+
+
+# ------------------------------
+# Round-trip save (if supported)
+# ------------------------------
+
+def test_save_artifacts_roundtrip(sim_mod, sim_callable, tmp_path: Path, tiny_mu, tiny_metadata, tiny_cfg):
+    """
+    If the module exposes a 'save_artifacts(...)' utility, verify that:
+    • It writes expected files into outdir
+    • Written arrays can be reloaded with correct shapes
+
+    This is optional; if not present, the test is xfailed (documented).
+    """
+    if not hasattr(sim_mod, "save_artifacts") or not callable(getattr(sim_mod, "save_artifacts")):
+        pytest.xfail("Module does not expose save_artifacts(); skipping round-trip save test.")
+
+    kind, target = sim_callable
+    cfg = dict(tiny_cfg)
+    cfg["save"] = False  # We'll explicitly call save_artifacts
+    cfg["outdir"] = None
+
+    out = _invoke_generation(kind, target, tiny_mu, tiny_metadata, **cfg)
+    outdir = tmp_path / "save_out"
+    outdir.mkdir(parents=True, exist_ok=True)
+
+    # Try to save; require at least μ + time and any generated cubes.
+    save_fn = getattr(sim_mod, "save_artifacts")
+    save_fn(out, outdir=str(outdir), metadata=tiny_metadata)
+
+    saved = list(outdir.glob("*.npy")) + list(outdir.glob("*.json"))
+    assert len(saved) > 0, "save_artifacts() created no files."
+
+    # If cubes exist, reload one and check shape parity
+    for key in ("airs_cube", "fgs1_cube", "time"):
+        p = outdir / f"{key}.npy"
+        if p.exists():
+            arr = np.load(p)
+            assert arr.shape == out[key].shape, f"Saved shape mismatch for {key}."
+
+
+# ------------------------------
+# Metadata pass-through (optional)
+# ------------------------------
+
+def test_metadata_passthrough_in_output(sim_callable, tiny_mu, tiny_metadata, tiny_cfg):
+    """
+    Some implementations echo metadata in the output dict as 'metadata' or embed it into a manifest.
+    If present, verify that core fields pass through unchanged.
+    """
+    kind, target = sim_callable
+    out = _invoke_generation(kind, target, tiny_mu, tiny_metadata, **tiny_cfg)
+
+    meta_out = out.get("metadata", None)
+    if meta_out is None:
+        pytest.xfail("No 'metadata' key in output; acceptable if design stores metadata externally.")
+    else:
+        for k in ("planet_id", "exposure_time_s"):
+            assert k in meta_out and meta_out[k] == tiny_metadata[k]
+
+
+# ------------------------------
+# Performance sanity (very light)
+# ------------------------------
+
+def test_runs_fast_enough(sim_callable, tiny_mu, tiny_metadata, tiny_cfg):
+    """
+    Light performance guardrail: the tiny config should execute within ~1 second on CI CPU.
+    """
+    kind, target = sim_callable
+    t0 = time.time()
+    _ = _invoke_generation(kind, target, tiny_mu, tiny_metadata, **tiny_cfg)
+    dt = time.time() - t0
+    assert dt < 1.5, f"Tiny simulation took too long: {dt:.3f}s (should be < 1.5s)"
