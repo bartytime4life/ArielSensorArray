@@ -1,0 +1,293 @@
+# .github/workflows/submission.yml
+# ==============================================================================
+# SpectraMind V50 — Submission Pipeline (predict → validate → package → submit)
+# - Reproducible: Poetry, pinned Python, cached deps
+# - Safe-by-default: dry-run unless explicitly submitted via dispatch input
+# - Guardrails: only submits on main/default branch and when secrets are present
+# - Artifacts: submission.csv, manifest, logs, zipped bundle for archival
+# ==============================================================================
+
+name: Submission
+
+on:
+  workflow_dispatch:
+    inputs:
+      submit:
+        description: "Actually submit to Kaggle? (default: no)"
+        required: true
+        default: "no"
+        type: choice
+        options: ["no", "yes"]
+      competition:
+        description: "Kaggle competition slug"
+        required: true
+        default: "neurips-2025-ariel"
+        type: string
+      message:
+        description: "Submission message (appears on Kaggle)"
+        required: false
+        default: "CI submission from ${GITHUB_REPOSITORY}@${GITHUB_SHA}"
+        type: string
+      hydra_overrides:
+        description: "Optional Hydra overrides (e.g., +predict.batch=64 +seed=1337)"
+        required: false
+        default: ""
+        type: string
+  push:
+    branches: [ "main" ]
+    paths:
+      - "src/**"
+      - "configs/**"
+      - "pyproject.toml"
+      - "poetry.lock"
+      - ".github/workflows/submission.yml"
+
+# Prevent parallel submissions on same ref
+concurrency:
+  group: submission-${{ github.ref }}
+  cancel-in-progress: true
+
+# Minimal global permissions; steps elevate when needed
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: "1"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  PIP_NO_PYTHON_VERSION_WARNING: "1"
+  POETRY_VERSION: "1.8.3"
+  DEFAULT_PY: "3.12"
+  # Kaggle guardrails: default to dry-run unless submit=='yes'
+  DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.submit == 'yes' && github.ref == 'refs/heads/main' && github.event.pull_request == null && secrets.KAGGLE_USERNAME != '' && secrets.KAGGLE_KEY != '' && 'false' || 'true' }}
+  COMPETITION: ${{ github.event.inputs.competition || 'neurips-2025-ariel' }}
+  SUBMIT_MESSAGE: ${{ github.event.inputs.message || format('CI submission from {0}@{1}', github.repository, github.sha) }}
+
+jobs:
+  predict:
+    name: Build • Predict • Validate • Package
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    outputs:
+      submission_path: ${{ steps.paths.outputs.submission_path }}
+      bundle_path: ${{ steps.bundle.outputs.bundle_path }}
+
+    steps:
+      # ----- Checkout ----------------------------------------------------------
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ----- Python / Poetry ---------------------------------------------------
+      - name: Set up Python ${{ env.DEFAULT_PY }}
+        id: setup-python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.DEFAULT_PY }}
+          cache: "pip"
+
+      - name: Install Poetry
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "poetry==${POETRY_VERSION}"
+
+      - name: Configure Poetry (in-project venv)
+        run: |
+          poetry config virtualenvs.in-project true
+          poetry config installer.max-workers 10
+
+      - name: Cache deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            .venv
+            ~/.cache/pip
+            ~/.cache/pypoetry
+          key: poetry-${{ runner.os }}-py${{ env.DEFAULT_PY }}-${{ hashFiles('**/poetry.lock') }}
+          restore-keys: |
+            poetry-${{ runner.os }}-py${{ env.DEFAULT_PY }}-
+            poetry-${{ runner.os }}-
+
+      - name: Install project (no-root ok)
+        run: |
+          poetry install --no-ansi --no-interaction --no-root || poetry install --no-ansi --no-interaction
+
+      # ----- Optional DVC data (best-effort) -----------------------------------
+      - name: DVC pull (optional)
+        run: |
+          python -m pip install --upgrade "dvc[all]" || python -m pip install --upgrade dvc
+          dvc --version || true
+          dvc pull --run-cache --force || true
+
+      # ----- Selftest / sanity -------------------------------------------------
+      - name: Selftest (fast)
+        run: |
+          poetry run spectramind selftest --fast
+
+      # ----- Predict -----------------------------------------------------------
+      - name: Predict
+        run: |
+          mkdir -p outputs/predictions
+          if [ -n "${{ github.event.inputs.hydra_overrides }}" ]; then
+            poetry run spectramind predict --out-csv outputs/predictions/submission.csv ${{ github.event.inputs.hydra_overrides }}
+          else
+            poetry run spectramind predict --out-csv outputs/predictions/submission.csv
+          fi
+
+      - name: Locate submission / compute size
+        id: paths
+        run: |
+          set -euo pipefail
+          SUB="outputs/predictions/submission.csv"
+          [ -f "$SUB" ] || SUB="outputs/submission.csv"
+          if [ ! -f "$SUB" ]; then
+            echo "::error::No submission.csv produced."
+            exit 1
+          fi
+          echo "submission_path=$SUB" >> "$GITHUB_OUTPUT"
+          du -h "$SUB" | awk '{print "size_human="$1}' >> "$GITHUB_OUTPUT"
+          wc -l "$SUB" | awk '{print "rows="$1}' >> "$GITHUB_OUTPUT"
+          sha256sum "$SUB" | awk '{print "sha256="$1}' >> "$GITHUB_OUTPUT"
+
+      # ----- Validate submission (schema/shape/range/etc.) ---------------------
+      - name: Validate submission
+        run: |
+          # Prefer dedicated CLI validator if available, otherwise basic checks
+          (poetry run spectramind validate-submission --path '${{ steps.paths.outputs.submission_path }}') || \
+          python - <<'PY'
+import csv, sys, os
+p = os.environ["SUB"]
+rows = 0
+with open(p, newline="") as f:
+    r = csv.reader(f)
+    header = next(r)
+    assert header and len(header) >= 2, "Expected at least 2 columns"
+    for i, row in enumerate(r, 2):
+        if not row or any(c is None for c in row):
+            raise SystemExit(f"Empty/None cell at row {i}")
+        rows += 1
+print(f"Basic CSV checks passed • rows={rows}")
+PY
+        env:
+          SUB: ${{ steps.paths.outputs.submission_path }}
+
+      # ----- Manifest & bundle -------------------------------------------------
+      - name: Write manifest
+        run: |
+          mkdir -p artifacts
+          cat > artifacts/submission_manifest.json <<JSON
+          {
+            "repo": "${{ github.repository }}",
+            "sha": "${{ github.sha }}",
+            "run_id": "${{ github.run_id }}",
+            "branch": "${{ github.ref }}",
+            "competition": "${{ env.COMPETITION }}",
+            "submission_path": "${{ steps.paths.outputs.submission_path }}",
+            "submission_sha256": "${{ steps.paths.outputs.sha256 }}",
+            "submission_rows": "${{ steps.paths.outputs.rows }}",
+            "submission_size": "${{ steps.paths.outputs.size_human }}",
+            "created_at": "${{ github.run_started_at }}"
+          }
+          JSON
+          cat artifacts/submission_manifest.json
+
+      - name: Package bundle (zip)
+        id: bundle
+        run: |
+          BUNDLE="submission_bundle_${{ github.run_id }}.zip"
+          zip -r "$BUNDLE" \
+            "${{ steps.paths.outputs.submission_path }}" \
+            artifacts/submission_manifest.json \
+            configs || true
+          echo "bundle_path=$BUNDLE" >> "$GITHUB_OUTPUT"
+
+      # ----- Upload artifacts --------------------------------------------------
+      - name: Upload submission
+        uses: actions/upload-artifact@v4
+        with:
+          name: submission.csv
+          path: ${{ steps.paths.outputs.submission_path }}
+          if-no-files-found: error
+          retention-days: 21
+
+      - name: Upload manifest & bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: submission-artifacts
+          path: |
+            artifacts/submission_manifest.json
+            ${{ steps.bundle.outputs.bundle_path }}
+          if-no-files-found: error
+          retention-days: 21
+
+      # ----- Job summary -------------------------------------------------------
+      - name: Summary
+        run: |
+          {
+            echo "## Submission Package"
+            echo ""
+            echo "- **Competition:** \`${{ env.COMPETITION }}\`"
+            echo "- **File:** \`${{ steps.paths.outputs.submission_path }}\`"
+            echo "- **Rows:** \`${{ steps.paths.outputs.rows }}\`"
+            echo "- **Size:** \`${{ steps.paths.outputs.size_human }}\`"
+            echo "- **SHA256:** \`${{ steps.paths.outputs.sha256 }}\`"
+            echo "- **Bundle:** \`${{ steps.bundle.outputs.bundle_path }}\`"
+            echo ""
+            echo "> DRY_RUN = \`${{ env.DRY_RUN }}\` (false means we will attempt submission in the next job)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  submit:
+    name: Submit to Kaggle (guarded)
+    needs: predict
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    # Only attempt if DRY_RUN=false (see env logic) and on workflow_dispatch/main
+    if: ${{ env.DRY_RUN == 'false' }}
+
+    env:
+      KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+      KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+      COMPETITION: ${{ env.COMPETITION }}
+      SUBMIT_MESSAGE: ${{ env.SUBMIT_MESSAGE }}
+
+    steps:
+      - name: Checkout (for context only)
+        uses: actions/checkout@v4
+
+      - name: Fetch built submission artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: submission.csv
+          path: .
+
+      - name: Verify credentials & file
+        run: |
+          test -n "${KAGGLE_USERNAME}" || (echo "::error::KAGGLE_USERNAME secret not set"; exit 1)
+          test -n "${KAGGLE_KEY}" || (echo "::error::KAGGLE_KEY secret not set"; exit 1)
+          test -f "submission.csv" || (echo "::error::submission.csv artifact missing"; exit 1)
+          ls -lh submission.csv
+
+      - name: Install Kaggle CLI
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install kaggle
+          mkdir -p ~/.kaggle
+          printf '{"username":"%s","key":"%s"}' "$KAGGLE_USERNAME" "$KAGGLE_KEY" > ~/.kaggle/kaggle.json
+          chmod 600 ~/.kaggle/kaggle.json
+          kaggle --version
+
+      - name: Submit to Kaggle
+        run: |
+          echo "Submitting to competition: ${COMPETITION}"
+          kaggle competitions submit \
+            -c "${COMPETITION}" \
+            -f submission.csv \
+            -m "${SUBMIT_MESSAGE}"
+
+      - name: Post-submit note
+        run: |
+          echo "Submission attempted to ${COMPETITION}."
+          echo "Message: ${SUBMIT_MESSAGE}"
+          echo "Tip: Check Kaggle submissions page for final status/score."
