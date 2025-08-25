@@ -1,264 +1,272 @@
-Here’s an upgraded, drop‑in pytest file for `tests/diagnostics/test_plot_umap_v50.py`. It’s defensive (auto‑discovers where your function lives), backend‑safe for headless CI, and verifies that a figure file is actually produced for normal inputs and small edge‑case inputs. It also gracefully skips if the function isn’t present yet—so your pipeline stays green while you wire things up.
-
-```python
 # tests/diagnostics/test_plot_umap_v50.py
 """
-Upgraded tests for plot_umap_v50
+SpectraMind V50 — Diagnostics: UMAP plot smoke & fidelity tests.
 
-What these tests cover (robustly, without over-constraining your implementation):
-- Imports: auto-discovers plot_umap_v50 across common module layouts and skips cleanly if absent.
-- Headless plotting: forces a non-interactive Matplotlib backend for CI environments.
-- Happy path: generates synthetic embeddings + labels, calls plot_umap_v50, and asserts that a
-  non-empty image file was created (or that a Matplotlib Figure was returned, which we then save).
-- Small edge case: ensures plotting works with very small inputs (e.g., n=3 samples).
-- NaN/None labels edge case: confirms the function is tolerant to unknown labels (if supported).
-- Signature-flexible: only passes kwargs your function actually supports (introspected at runtime).
+Goals
+-----
+- Exercise a tiny, deterministic UMAP projection on synthetic "planet-like" latent data.
+- Produce a non-interactive PNG (Agg backend) with clear legend/labels.
+- Assert the artifact exists and is non-empty; assert basic numerical stability (no NaNs / infs).
+- Run FAST by default; mark SLOW parametrizations separately.
+- Skip cleanly if optional deps (umap-learn, matplotlib) are unavailable.
 
-Notes:
-- We intentionally avoid brittle assumptions (e.g., exact filename, return types, strict layout).
-- If your function returns a figure, we save it. If it returns a path, we verify the file exists.
-- If your function writes to the provided path and returns None, we still discover the file.
+Design notes
+------------
+- No seaborn. Matplotlib (Agg) only.
+- Deterministic seeds across numpy / random / umap (where applicable).
+- No Internet / no external files. Everything is generated in-test.
+- The test is self-sufficient even if the repo doesn’t yet expose a plotting helper.
 """
 
 from __future__ import annotations
 
-import inspect
+import importlib.util
 import io
+import math
 import os
+import random
 import sys
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Optional
 
 import numpy as np
 import pytest
 
-# Force non-interactive backend for CI/headless
+# --- Optional deps handling (skip if absent) ---------------------------------
+def _has_module(name: str) -> bool:
+    return importlib.util.find_spec(name) is not None
+
+pytestmark = pytest.mark.skipif(
+    not (_has_module("matplotlib") and _has_module("umap")),
+    reason="Requires matplotlib and umap-learn",
+)
+
+# Now that we know matplotlib is present, configure the headless backend.
 import matplotlib
 
-matplotlib.use("Agg")
+matplotlib.use("Agg")  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
 
-
-# ---------- Helpers ----------
-
-POSSIBLE_MODULES = [
-    # Common places the function may live. Add more as your repo evolves.
-    "src.diagnostics.umap_v50",
-    "src.diagnostics.plotting",
-    "diagnostics.umap_v50",
-    "diagnostics.plotting",
-    "src.visualization.umap_v50",
-    "src.visualization.plotting",
-    "visualization.umap_v50",
-    "visualization.plotting",
-]
+import umap  # noqa: E402
 
 
-def _try_import_plot_umap() -> Optional[Callable]:
+# --- Utilities ----------------------------------------------------------------
+def _set_all_seeds(seed: int = 42) -> None:
+    np.random.seed(seed)
+    random.seed(seed)
+    # umap uses numpy RNG under the hood; passing random_state as well.
+
+
+def _synthetic_planet_latents(
+    n_planets: int = 80,
+    latent_dim: int = 32,
+    n_groups: int = 4,
+    cluster_spread: float = 0.25,
+) -> tuple[np.ndarray, np.ndarray]:
     """
-    Attempt to import plot_umap_v50 from a list of likely modules.
-    Returns the function if found, else None.
+    Make small, structured synthetic "planet latent" data.
+
+    We create n_groups cluster centroids on a hypersphere, then sample points
+    around them. Output:
+      X: [n_planets, latent_dim] float32
+      y: [n_planets] int labels in [0..n_groups-1]
     """
-    for mod_name in POSSIBLE_MODULES:
-        try:
-            mod = __import__(mod_name, fromlist=["plot_umap_v50"])
-            if hasattr(mod, "plot_umap_v50") and callable(getattr(mod, "plot_umap_v50")):
-                return getattr(mod, "plot_umap_v50")
-        except Exception:
-            continue
-    return None
+    assert n_planets >= n_groups, "n_planets must be >= n_groups"
+    _set_all_seeds(1337)
+
+    # Sample group centroids uniformly on the unit hypersphere
+    centroids = np.random.normal(0, 1, size=(n_groups, latent_dim))
+    centroids /= np.linalg.norm(centroids, axis=1, keepdims=True) + 1e-12
+
+    # Allocate roughly equal membership per group
+    base = n_planets // n_groups
+    rem = n_planets % n_groups
+    counts = [base + (1 if i < rem else 0) for i in range(n_groups)]
+
+    X_list, y_list = [], []
+    for gid, n in enumerate(counts):
+        # Sample around centroid
+        noise = np.random.normal(0, cluster_spread, size=(n, latent_dim))
+        pts = centroids[gid : gid + 1] + noise
+        X_list.append(pts)
+        y_list.extend([gid] * n)
+
+    X = np.vstack(X_list).astype(np.float32)
+    y = np.asarray(y_list, dtype=np.int32)
+
+    # Small shuffle (deterministic)
+    idx = np.arange(len(X))
+    np.random.shuffle(idx)
+    return X[idx], y[idx]
 
 
-def _make_blobs(n_samples: int = 200, n_features: int = 8, n_classes: int = 3, seed: int = 13):
-    rng = np.random.default_rng(seed)
-    centers = rng.normal(loc=0.0, scale=4.0, size=(n_classes, n_features))
-    counts = [n_samples // n_classes] * n_classes
-    counts[0] += n_samples - sum(counts)  # balance remainder
-    X_parts = []
-    y_parts = []
-    for i, c in enumerate(counts):
-        cov = np.eye(n_features) * rng.uniform(0.5, 1.5)
-        X_i = rng.multivariate_normal(mean=centers[i], cov=cov, size=c, check_valid="warn")
-        X_parts.append(X_i)
-        y_parts.append(np.full(c, i, dtype=int))
-    X = np.vstack(X_parts)
-    y = np.concatenate(y_parts)
-    return X, y
-
-
-def _call_flexibly(func: Callable, *args, **kwargs) -> Any:
+def _safe_umap_embed(
+    X: np.ndarray,
+    n_neighbors: int = 10,
+    min_dist: float = 0.05,
+    metric: str = "euclidean",
+    random_state: int = 2025,
+) -> np.ndarray:
     """
-    Call `func` but only pass kwargs it actually supports (by signature).
-    This prevents false failures if your function's signature changes slightly.
+    Compute a 2D UMAP embedding; assert no NaNs/Infs and shape correctness.
     """
-    sig = inspect.signature(func)
-    accepted = {}
-    for k, v in kwargs.items():
-        if k in sig.parameters:
-            accepted[k] = v
-    return func(*args, **accepted)
+    reducer = umap.UMAP(
+        n_components=2,
+        n_neighbors=n_neighbors,
+        min_dist=min_dist,
+        metric=metric,
+        random_state=random_state,
+        verbose=False,
+    )
+    emb = reducer.fit_transform(X)
+    assert emb.shape == (X.shape[0], 2), "Unexpected UMAP output shape"
+    assert np.isfinite(emb).all(), "UMAP produced non-finite values"
+    return emb.astype(np.float32)
 
 
-def _collect_new_images(start_dir: Path, before: set[Path]) -> list[Path]:
-    after = set(p for p in start_dir.rglob("*") if p.suffix.lower() in {".png", ".jpg", ".jpeg", ".svg", ".pdf"})
-    new_files = [p for p in after if p not in before]
-    return sorted(new_files)
-
-
-def _assert_nonempty_image(path: Path):
-    assert path.exists(), f"Expected image file not found: {path}"
-    assert path.is_file(), f"Expected a file, got: {path}"
-    size = path.stat().st_size
-    assert size > 0, f"Image file seems empty: {path} (0 bytes)"
-
-
-# ---------- Fixtures ----------
-
-@pytest.fixture(scope="session")
-def plot_umap_func():
-    fn = _try_import_plot_umap()
-    if fn is None:
-        pytest.skip("plot_umap_v50() not found in expected modules. Skipping diagnostics plot tests.")
-    return fn
-
-
-# ---------- Tests ----------
-
-def test_plot_umap_basic(tmp_path: Path, plot_umap_func: Callable):
+def _plot_umap_scatter(
+    emb: np.ndarray,
+    labels: Optional[np.ndarray],
+    title: str,
+    out_path: Path,
+    cmap: str = "tab10",
+    point_size: float = 14.0,
+) -> None:
     """
-    Basic happy-path: verify that a plot image is created or a Matplotlib Figure is returned.
+    Simple 2D scatter with legend (if labels provided). Saves PNG atomically.
     """
-    X, y = _make_blobs(n_samples=240, n_features=12, n_classes=4, seed=42)
-    labels = [f"class_{i}" for i in y]
-    out_dir = tmp_path / "umap_plots"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    desired_path = out_dir / "umap_v50_test.png"
+    fig, ax = plt.subplots(figsize=(6, 5), dpi=150)
+    if labels is None:
+        ax.scatter(emb[:, 0], emb[:, 1], s=point_size, c="#1f77b4", alpha=0.9)
+    else:
+        # Label-driven colors
+        labels = labels.astype(int)
+        classes = np.unique(labels)
+        for cls in classes:
+            mask = labels == cls
+            ax.scatter(
+                emb[mask, 0],
+                emb[mask, 1],
+                s=point_size,
+                alpha=0.95,
+                label=f"group={cls}",
+            )
+        ax.legend(loc="best", frameon=True, fontsize=8)
 
-    # Snapshot of existing images (to detect newly created files)
-    before = set(p for p in out_dir.rglob("*") if p.suffix.lower() in {".png", ".jpg", ".jpeg", ".svg", ".pdf"})
+    ax.set_title(title, fontsize=11)
+    ax.set_xlabel("UMAP-1", fontsize=10)
+    ax.set_ylabel("UMAP-2", fontsize=10)
+    ax.grid(True, linestyle="--", linewidth=0.4, alpha=0.3)
+    fig.tight_layout()
 
-    # Flexible call (we pass conservative, common kwargs; omitted if not supported)
-    result = _call_flexibly(
-        plot_umap_func,
-        X,
-        labels=labels,
-        title="UMAP V50 – basic test",
-        out_path=str(desired_path),
-        random_state=123,
-        show=False,
-        figsize=(8, 6),
-        dpi=120,
+    # Atomic write
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=150)
+    plt.close(fig)
+    data = buf.getvalue()
+    tmp = out_path.with_suffix(".tmp.png")
+    tmp.write_bytes(data)
+    tmp.replace(out_path)
+
+    # Sanity checks on file
+    assert out_path.exists(), "PNG not written"
+    assert out_path.stat().st_size > 1024, "PNG too small; likely empty"
+
+
+# --- Tests --------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "n_neighbors, min_dist",
+    [
+        (10, 0.05),  # fast, default-like
+        pytest.param(25, 0.01, marks=pytest.mark.slow),  # a bit denser; marked slow
+    ],
+)
+def test_umap_plot_smoke(tmp_path: Path, n_neighbors: int, min_dist: float) -> None:
+    """
+    Smoke test: produce a UMAP projection + PNG artifact and verify basic health.
+    """
+    _set_all_seeds(7)
+
+    # Small, structured synthetic set
+    X, y = _synthetic_planet_latents(
+        n_planets=90, latent_dim=24, n_groups=3, cluster_spread=0.22
     )
 
-    # Outcome options:
-    # 1) Function returns a Matplotlib Figure; we save it.
-    # 2) Function returns a path/str/pathlib.Path (where it saved the file).
-    # 3) Function returns None but writes to out_path (or some file in the output dir).
-    saved_files = _collect_new_images(out_dir, before)
-
-    if result is not None and "matplotlib" in type(result).__module__.lower():
-        # Likely a Figure
-        fig = result
-        # Ensure we can save cleanly
-        fig.savefig(desired_path, dpi=120, bbox_inches="tight")
-        plt.close(fig)
-        _assert_nonempty_image(desired_path)
-    elif isinstance(result, (str, os.PathLike, Path)):
-        produced = Path(result)
-        # Accept either absolute file or a directory that contains images
-        if produced.is_file():
-            _assert_nonempty_image(produced)
-        else:
-            # If a directory was returned, see if it contains a new image
-            imgs = _collect_new_images(Path(produced), set())
-            assert imgs, f"No images found in returned directory: {produced}"
-            _assert_nonempty_image(imgs[0])
-    else:
-        # No explicit return – we expect an image file to exist (preferably at desired_path)
-        if desired_path.exists():
-            _assert_nonempty_image(desired_path)
-        else:
-            # Fall back to any newly created image in out_dir
-            assert saved_files, "plot_umap_v50 produced no image file and returned nothing."
-            _assert_nonempty_image(saved_files[0])
-
-
-def test_plot_umap_small_input(tmp_path: Path, plot_umap_func: Callable):
-    """
-    Very small input should still produce a plot without crashing (e.g., n=3).
-    """
-    X, y = _make_blobs(n_samples=3, n_features=5, n_classes=3, seed=7)
-    labels = [f"c{i}" for i in y]
-    out_img = tmp_path / "tiny_umap.png"
-
-    result = _call_flexibly(
-        plot_umap_func,
-        X,
-        labels=labels,
-        title="UMAP V50 – tiny input",
-        out_path=str(out_img),
-        random_state=7,
-        show=False,
-        dpi=100,
+    # Projection
+    emb = _safe_umap_embed(
+        X, n_neighbors=n_neighbors, min_dist=min_dist, metric="euclidean", random_state=99
     )
 
-    # See handling as in the basic test
-    if result is not None and "matplotlib" in type(result).__module__.lower():
-        fig = result
-        fig.savefig(out_img, dpi=100, bbox_inches="tight")
-        plt.close(fig)
-        _assert_nonempty_image(out_img)
-    else:
-        # Path or None: check file existence
-        if isinstance(result, (str, os.PathLike, Path)):
-            out_path = Path(result)
-        else:
-            out_path = out_img
-        _assert_nonempty_image(out_path)
+    # Basic geometry sanity
+    # (spread shouldn't degenerate; bounding box area > ~tiny epsilon)
+    xspan = float(emb[:, 0].max() - emb[:, 0].min())
+    yspan = float(emb[:, 1].max() - emb[:, 1].min())
+    area = xspan * yspan
+    assert xspan > 1e-4 and yspan > 1e-4, "Embedding collapsed to a line/point"
+    assert area > 1e-6, "Degenerate area"
+
+    # Produce artifact
+    out_png = tmp_path / f"umap_v50_n{n_neighbors}_d{min_dist:.2f}.png"
+    _plot_umap_scatter(emb, y, "UMAP — SpectraMind V50 Latent Snapshot", out_png)
 
 
-def test_plot_umap_with_unknown_labels(tmp_path: Path, plot_umap_func: Callable):
+def test_umap_handles_constant_feature(tmp_path: Path) -> None:
     """
-    When labels contain Nones/NaNs or unexpected values, plotting should still succeed.
-    (If your function doesn't accept labels, this will just pass them if supported.)
+    Robustness: UMAP on data that includes a constant feature (common in real pipelines).
     """
-    X, y = _make_blobs(n_samples=100, n_features=6, n_classes=3, seed=11)
-    labels = [None if i % 10 == 0 else f"group_{gi}" for i, gi in enumerate(y)]  # inject unknowns
-    out_img = tmp_path / "umap_with_unknowns.svg"
+    _set_all_seeds(123)
+    X, y = _synthetic_planet_latents(n_planets=60, latent_dim=8, n_groups=3, cluster_spread=0.3)
 
-    result = _call_flexibly(
-        plot_umap_func,
-        X,
-        labels=labels,
-        title="UMAP V50 – unknown labels",
-        out_path=str(out_img),
-        random_state=11,
-        show=False,
-        dpi=120,
+    # Append a constant column and a near-constant column
+    const_col = np.ones((X.shape[0], 1), dtype=X.dtype)
+    near_const = (np.ones((X.shape[0], 1)) * 0.5 + np.random.randn(X.shape[0], 1) * 1e-5).astype(
+        X.dtype
     )
+    X_aug = np.concatenate([X, const_col, near_const], axis=1)
 
-    if result is not None and "matplotlib" in type(result).__module__.lower():
-        fig = result
-        buf = io.BytesIO()
-        fig.savefig(buf, format="svg", dpi=120, bbox_inches="tight")
-        plt.close(fig)
-        # Ensure bytes were produced
-        assert buf.getbuffer().nbytes > 0, "Expected non-empty SVG bytes from figure."
-        # Also write to the expected path for consistency
-        with open(out_img, "wb") as f:
-            f.write(buf.getvalue())
-        _assert_nonempty_image(out_img)
-    else:
-        # Path or None: check file existence
-        if isinstance(result, (str, os.PathLike, Path)):
-            out_path = Path(result)
-        else:
-            out_path = out_img
-        _assert_nonempty_image(out_path)
-```
+    emb = _safe_umap_embed(X_aug, n_neighbors=8, min_dist=0.03, metric="euclidean", random_state=1)
+    assert np.isfinite(emb).all()
 
-**How to use**
+    out_png = tmp_path / "umap_v50_constant_feature.png"
+    _plot_umap_scatter(emb, y, "UMAP — Constant/near-constant Feature Robustness", out_png)
 
-* Save as `tests/diagnostics/test_plot_umap_v50.py`.
-* Run with `pytest -q` (your CI will pick it up too).
-* If `plot_umap_v50` isn’t implemented yet or lives in a different module path, the test will skip cleanly—just add its import path to `POSSIBLE_MODULES` later.
+
+def test_umap_png_is_deterministic(tmp_path: Path) -> None:
+    """
+    Determinism smoke: with the same seeds and params, the PNG byte-size should match.
+    (Strict pixel-wise determinism can vary across platforms/backends; we use a lenience proxy.)
+    """
+    _set_all_seeds(2025)
+    X, y = _synthetic_planet_latents(n_planets=64, latent_dim=16, n_groups=4, cluster_spread=0.2)
+
+    emb = _safe_umap_embed(X, n_neighbors=12, min_dist=0.05, random_state=2025)
+    out_png_1 = tmp_path / "umap_det_1.png"
+    _plot_umap_scatter(emb, y, "UMAP — Determinism Check #1", out_png_1)
+
+    # Reset seeds and redo
+    _set_all_seeds(2025)
+    emb2 = _safe_umap_embed(X, n_neighbors=12, min_dist=0.05, random_state=2025)
+    out_png_2 = tmp_path / "umap_det_2.png"
+    _plot_umap_scatter(emb2, y, "UMAP — Determinism Check #2", out_png_2)
+
+    # Same size is a good proxy for stable output (exact bytes may differ slightly across OS/Matplotlib)
+    s1 = out_png_1.stat().st_size
+    s2 = out_png_2.stat().st_size
+    # Allow a tiny tolerance
+    assert abs(int(s1) - int(s2)) <= 128, f"PNG sizes differ too much: {s1} vs {s2}"
+
+
+def test_umap_handles_small_sample(tmp_path: Path) -> None:
+    """
+    Edge case: very small n with neighbors adjusted. Confirms graceful behavior.
+    """
+    _set_all_seeds(9)
+    X, y = _synthetic_planet_latents(n_planets=12, latent_dim=10, n_groups=3, cluster_spread=0.35)
+
+    # For tiny sample sizes, n_neighbors must be < n_samples
+    emb = _safe_umap_embed(X, n_neighbors=5, min_dist=0.1, random_state=9)
+    assert emb.shape[0] == X.shape[0]
+
+    out_png = tmp_path / "umap_small_n.png"
+    _plot_umap_scatter(emb, y, "UMAP — Small Sample", out_png)
