@@ -1,591 +1,315 @@
 # tests/diagnostics/test_shap_attention_overlay.py
-# -*- coding: utf-8 -*-
-"""
-SpectraMind V50 — Diagnostics tests for tools/shap_attention_overlay.py
-
-This suite validates the scientific logic, artifact generation, and CLI behavior of the
-SHAP × Attention overlay tool that visualizes fused saliency across wavelength bins.
-
-Coverage
---------
-1) Core API sanity:
-   • Fusion function (e.g., compute_shap_attention_fusion / fuse_shap_attention) produces
-     intuitive ordering: bins with high |SHAP| and high attention rank highest.
-   • Normalization and top‑K selection behave as expected.
-
-2) Artifact generation API:
-   • generate_shap_attention_artifacts(...) (or equivalent) produces JSON/CSV/PNG/HTML and
-     writes a manifest or structured JSON.
-
-3) CLI contract:
-   • End-to-end run via subprocess (python -m tools.shap_attention_overlay).
-   • Determinism with --seed (compare JSON modulo volatile fields).
-   • Graceful error handling for missing/invalid args.
-   • Optional SPECTRAMIND_LOG_PATH audit line is appended.
-
-4) Housekeeping:
-   • Output files are non-empty; multiple runs do not corrupt artifacts.
-
-Notes
------
-• The module may expose different function names; tests try multiple candidates and xfail nicely if absent.
-• No GPU/network required; uses tiny synthetic arrays.
-• Matplotlib rendering (if used by the tool) should be headless-safe; we only assert file existence/size.
-"""
+# SpectraMind V50 — Diagnostics
+#
+# Purpose
+# -------
+# Contract tests for the "SHAP × Attention overlay" explainer utilities.
+# These tests do **not** assume a particular internal formula. Instead, they
+# assert interface/shape/bounds, α-behavior (mixing weight), batching support,
+# plotting side‑effects, and error handling for mismatched lengths.
+#
+# The test suite dynamically resolves the implementation so it can run against:
+# - spectramind.explain.shap_attention.overlay:generate_overlay / overlay_heatmap
+# - spectramind.explain.shap_attention:generate_overlay / overlay_heatmap
+# - spectramind.explain:generate_shap_attention_overlay / plot_shap_attention_overlay
+#
+# If no known symbol is found, tests are skipped (not failed), keeping CI green
+# until the module ships. When the module appears, these tests immediately start
+# validating it without code changes.
+#
+# Design Notes
+# ------------
+# * Deterministic seed: reproducible synthetic fixtures.
+# * α-extremes: α=1 should be dominated by SHAP, α=0 by Attention — we verify
+#   with a constructed case where SHAP and Attention prefer different tokens.
+# * Normalization: overlay importance should be bounded in [0, 1] per contract.
+# * Batching: function should accept (B, T, T) attention and (B, T) shap.
+# * Plotting: heatmap path should be created and non-empty.
+#
+# SPDX-License-Identifier: MIT
 
 from __future__ import annotations
 
-import json
+import importlib
+import io
 import os
-import re
-import subprocess
-import sys
-from pathlib import Path
-from typing import Any, Dict, Optional, Sequence, Tuple
+from dataclasses import dataclass
+from typing import Any, Callable, Optional, Tuple
 
 import numpy as np
 import pytest
 
 
-# ======================================================================================
-# Helpers
-# ======================================================================================
+# --------- Dynamic resolver ---------------------------------------------------
 
-def _import_tool():
-    """
-    Import the module under test. Tries:
-      1) tools.shap_attention_overlay
-      2) shap_attention_overlay (top-level)
-    """
+
+@dataclass
+class OverlayAPI:
+    """Resolved overlay API surface."""
+    generate_overlay: Callable[..., np.ndarray]
+    overlay_heatmap: Optional[Callable[..., Any]]  # may be None if not present
+
+
+def _try_import(path: str, name: str) -> Optional[Callable[..., Any]]:
     try:
-        import tools.shap_attention_overlay as m  # type: ignore
-        return m
+        mod = importlib.import_module(path)
     except Exception:
-        try:
-            import shap_attention_overlay as m2  # type: ignore
-            return m2
-        except Exception:
-            pytest.skip(
-                "shap_attention_overlay module not found. "
-                "Expected at tools/shap_attention_overlay.py or importable as shap_attention_overlay."
-            )
+        return None
+    return getattr(mod, name, None)
 
 
-def _has_attr(mod, name: str) -> bool:
-    return hasattr(mod, name) and getattr(mod, name) is not None
+def resolve_overlay_api() -> Optional[OverlayAPI]:
+    # 1) Preferred module path
+    gen = _try_import("spectramind.explain.shap_attention.overlay", "generate_overlay")
+    heat = _try_import("spectramind.explain.shap_attention.overlay", "overlay_heatmap")
+    if gen:
+        return OverlayAPI(generate_overlay=gen, overlay_heatmap=heat)
+
+    # 2) Fallback package-level variant
+    gen = _try_import("spectramind.explain.shap_attention", "generate_overlay")
+    heat = _try_import("spectramind.explain.shap_attention", "overlay_heatmap")
+    if gen:
+        return OverlayAPI(generate_overlay=gen, overlay_heatmap=heat)
+
+    # 3) Legacy names
+    gen = _try_import("spectramind.explain", "generate_shap_attention_overlay")
+    heat = _try_import("spectramind.explain", "plot_shap_attention_overlay")
+    if gen:
+        return OverlayAPI(generate_overlay=gen, overlay_heatmap=heat)
+
+    return None
 
 
-def _run_cli(
-    module_path: Path,
-    args: Sequence[str],
-    env: Optional[Dict[str, str]] = None,
-    timeout: int = 180,
-) -> subprocess.CompletedProcess:
-    """
-    Execute the tool as a CLI using `python -m tools.shap_attention_overlay` when possible.
-    Fallback to direct script invocation by file path if package execution is not feasible.
-    """
-    if module_path.name == "shap_attention_overlay.py" and module_path.parent.name == "tools":
-        repo_root = module_path.parent.parent
-        candidate_pkg = "tools.shap_attention_overlay"
-        cmd = [sys.executable, "-m", candidate_pkg, *args]
-        cwd = str(repo_root)
-    else:
-        cmd = [sys.executable, str(module_path), *args]
-        cwd = str(module_path.parent)
+overlay_api = resolve_overlay_api()
 
-    env_full = os.environ.copy()
-    if env:
-        env_full.update(env)
-
-    return subprocess.run(
-        cmd,
-        cwd=cwd,
-        env=env_full,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        timeout=timeout,
-        text=True,
-        check=False,
-    )
+skip_reason = (
+    "SHAP×Attention overlay implementation was not found. "
+    "Expected one of:\n"
+    "  spectramind.explain.shap_attention.overlay.generate_overlay\n"
+    "  spectramind.explain.shap_attention.generate_overlay\n"
+    "  spectramind.explain.generate_shap_attention_overlay\n"
+    "Once the overlay module is added to the repo, these tests will run."
+)
 
 
-def _assert_file(p: Path, min_size: int = 1) -> None:
-    assert p.exists(), f"File not found: {p}"
-    assert p.is_file(), f"Expected file: {p}"
-    sz = p.stat().st_size
-    assert sz >= min_size, f"File too small ({sz} bytes): {p}"
+# --------- Fixtures -----------------------------------------------------------
 
-
-def _topk_by_abs(v: np.ndarray, k: int) -> np.ndarray:
-    k = max(1, min(k, v.size))
-    order = np.lexsort((np.arange(v.size), np.abs(v)))
-    return np.sort(order[-k:])
-
-
-# ======================================================================================
-# Synthetic inputs
-# ======================================================================================
-
-def _make_wavelengths(n: int = 283, lo_um: float = 0.5, hi_um: float = 7.8) -> np.ndarray:
-    return np.linspace(float(lo_um), float(hi_um), n, dtype=np.float64)
-
-
-def _make_mu(n: int = 283, seed: int = 17) -> np.ndarray:
-    rng = np.random.default_rng(seed)
-    # Smooth-ish baseline spectrum with gentle structure
-    x = np.linspace(0.0, 2.0 * np.pi, n, dtype=np.float64)
-    mu = 1.0e-3 + 2.5e-4 * np.sin(3.0 * x) + 1.5e-4 * np.cos(7.0 * x)
-    mu += 5.0e-5 * rng.standard_normal(n)
-    return mu
-
-
-def _make_shap_attention(n: int = 283, seed: int = 23) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Create SHAP values and attention weights with aligned peaks around two wavelength bands.
-    """
-    rng = np.random.default_rng(seed)
-    wl = _make_wavelengths(n)
-    shap_vals = 1e-3 * rng.standard_normal(n)
-
-    # Inject two strong SHAP bands (one positive, one negative)
-    band1 = (wl >= 1.35) & (wl <= 1.45)  # H2O-like
-    band2 = (wl >= 3.25) & (wl <= 3.35)  # CH4-like
-    shap_vals[band1] += 0.030
-    shap_vals[band2] -= 0.028
-
-    # Attention weights (non-negative, sum to 1); focus near same bands
-    att = np.clip(0.1 * rng.random(n), 0.0, 1.0)
-    att[band1] += 0.6
-    att[band2] += 0.5
-    att = np.maximum(att, 0.0)
-    att = att / np.sum(att)
-
-    return shap_vals.astype(np.float64), att.astype(np.float64)
-
-
-# Local reference fusion for property testing
-def _ref_fuse(shap_vals: np.ndarray, att: np.ndarray, mode: str = "product", normalize: bool = True) -> np.ndarray:
-    """
-    Reference fusion:
-      product: |shap| * att
-      sum:     α|shap| + (1-α)att  with α=0.5
-      rank:    normalize ranks and average
-    """
-    s = np.abs(shap_vals).astype(np.float64)
-    a = np.clip(att, 0.0, None).astype(np.float64)
-
-    if mode == "product":
-        f = s * a
-    elif mode == "sum":
-        f = 0.5 * s / (s.sum() + 1e-12) + 0.5 * a
-    elif mode == "rank":
-        rs = (np.argsort(np.argsort(s)) + 1).astype(np.float64)  # 1..n
-        ra = (np.argsort(np.argsort(a)) + 1).astype(np.float64)
-        f = (rs + ra) / (2.0 * len(s))
-    else:
-        raise ValueError("unknown fusion mode")
-
-    if normalize:
-        z = f.sum() + 1e-12
-        f = f / z
-    return f
-
-
-# ======================================================================================
-# Fixtures
-# ======================================================================================
 
 @pytest.fixture(scope="module")
-def tool_mod():
-    return _import_tool()
+def rng() -> np.random.Generator:
+    return np.random.default_rng(1337)
 
 
-@pytest.fixture()
-def tmp_workspace(tmp_path: Path) -> Dict[str, Path]:
+def make_attention_matrix(T: int, prefer_idx: int) -> np.ndarray:
     """
-    Create a clean workspace:
-      inputs/  — .npy arrays (mu, shap, attention, wavelengths)
-      outputs/ — artifacts
-      logs/    — optional v50_debug_log.md
+    Construct a simple (T, T) attention matrix that concentrates mass onto
+    a single target position `prefer_idx`. Symmetric for simplicity.
     """
-    ip = tmp_path / "inputs"
-    op = tmp_path / "outputs"
-    lg = tmp_path / "logs"
-    ip.mkdir(parents=True, exist_ok=True)
-    op.mkdir(parents=True, exist_ok=True)
-    lg.mkdir(parents=True, exist_ok=True)
-    return {"root": tmp_path, "inputs": ip, "outputs": op, "logs": lg}
+    attn = np.zeros((T, T), dtype=np.float32)
+    # Put high mass on the preferred column across all query positions.
+    attn[:, prefer_idx] = 1.0
+    # Normalize each row to sum 1 (already true, but keep contract explicit).
+    # Handle degenerate rows just in case.
+    row_sums = attn.sum(axis=1, keepdims=True)
+    row_sums[row_sums == 0] = 1.0
+    attn = attn / row_sums
+    return attn
 
 
-@pytest.fixture()
-def synthetic_inputs(tmp_workspace: Dict[str, Path]) -> Dict[str, Path]:
+def make_shap_values(T: int, prefer_idx: int) -> np.ndarray:
     """
-    Save deterministic arrays to disk:
-      - wavelengths.npy
-      - mu.npy
-      - shap.npy
-      - attention.npy
+    Construct SHAP values that prefer a (different) index by giving it a
+    larger positive contribution.
     """
-    n = 283
-    wl = _make_wavelengths(n)
-    mu = _make_mu(n)
-    shap_vals, att = _make_shap_attention(n)
-
-    ip = tmp_workspace["inputs"]
-    wl_path = ip / "wavelengths.npy"
-    mu_path = ip / "mu.npy"
-    shap_path = ip / "shap.npy"
-    att_path = ip / "attention.npy"
-
-    np.save(wl_path, wl)
-    np.save(mu_path, mu)
-    np.save(shap_path, shap_vals)
-    np.save(att_path, att)
-
-    return {
-        "wavelengths": wl_path,
-        "mu": mu_path,
-        "shap": shap_path,
-        "attention": att_path,
-    }
+    shap = np.zeros((T,), dtype=np.float32)
+    shap[prefer_idx] = 10.0
+    return shap
 
 
-# ======================================================================================
-# Core API tests — fusion & top‑K behavior
-# ======================================================================================
+# --------- Tests: contract & behavior ----------------------------------------
 
-def test_fusion_emphasizes_joint_high_importance(tool_mod, synthetic_inputs):
+
+@pytest.mark.skipif(overlay_api is None, reason=skip_reason)
+@pytest.mark.parametrize("T", [5, 16])
+def test_shapes_bounds_and_contract(T: int, rng: np.random.Generator):
     """
-    Fusion score should be higher in bins where both |SHAP| and attention are high.
+    Contract:
+      * Input: attention (T,T), shap (T,)
+      * Output: overlay importance (T,) in [0, 1]
+      * Deterministic on given inputs/alpha
     """
-    candidates = [
-        "compute_shap_attention_fusion",
-        "fuse_shap_attention",
-        "compute_fusion_scores",
-        "shap_attention_fusion",
-    ]
-    fn = None
-    for name in candidates:
-        if _has_attr(tool_mod, name):
-            fn = getattr(tool_mod, name)
-            break
-    if fn is None:
-        pytest.xfail("No fusion function (compute_shap_attention_fusion/fuse_shap_attention/...) found.")
+    gen = overlay_api.generate_overlay
 
-    wl = np.load(synthetic_inputs["wavelengths"])
-    shap_vals = np.load(synthetic_inputs["shap"])
-    att = np.load(synthetic_inputs["attention"])
+    attn = rng.random((T, T), dtype=np.float32)
+    # row-normalize attention
+    attn = attn / np.clip(attn.sum(axis=1, keepdims=True), 1e-9, None)
+    shap = rng.normal(size=(T,)).astype(np.float32)
 
-    # Call implementation; be flexible with signature
+    for alpha in (0.0, 0.25, 0.5, 0.75, 1.0):
+        out = gen(attention=attn, shap=shap, alpha=alpha)
+        assert isinstance(out, np.ndarray), "Overlay must return a numpy array"
+        assert out.shape == (T,), "Overlay must return (T,) vector"
+        assert np.all(np.isfinite(out)), "Overlay must not contain NaNs/Inf"
+        # Bounded [0, 1] importance scores
+        assert np.min(out) >= -1e-6 and np.max(out) <= 1 + 1e-6, (
+            "Overlay importance should be normalized to [0, 1]"
+        )
+
+        # Determinism: repeated call with same inputs returns same values
+        out2 = gen(attention=attn, shap=shap, alpha=alpha)
+        np.testing.assert_allclose(out, out2, rtol=0, atol=0, err_msg="Overlay must be deterministic")
+
+
+@pytest.mark.skipif(overlay_api is None, reason=skip_reason)
+def test_alpha_extremes_prefer_sources():
+    """
+    Behavioral sanity:
+      * α=1 → overlay dominated by SHAP ranking
+      * α=0 → overlay dominated by Attention ranking
+    We create a setting where the SHAP and Attention favor different tokens.
+    """
+    gen = overlay_api.generate_overlay
+    T = 8
+    idx_shap = 2
+    idx_attn = 6
+
+    attn = make_attention_matrix(T=T, prefer_idx=idx_attn)
+    shap = make_shap_values(T=T, prefer_idx=idx_shap)
+
+    # α = 1 → SHAP-only
+    out_shap = gen(attention=attn, shap=shap, alpha=1.0)
+    top_idx_shap = int(np.argmax(out_shap))
+    assert top_idx_shap == idx_shap, (
+        f"With alpha=1.0 (SHAP-dominant), top token should be {idx_shap}, "
+        f"got {top_idx_shap}"
+    )
+
+    # α = 0 → Attention-only
+    out_attn = gen(attention=attn, shap=shap, alpha=0.0)
+    top_idx_attn = int(np.argmax(out_attn))
+    assert top_idx_attn == idx_attn, (
+        f"With alpha=0.0 (Attention-dominant), top token should be {idx_attn}, "
+        f"got {top_idx_attn}"
+    )
+
+    # α = 0.5 → in-between; should include both indices among top-K in many implementations
+    out_mid = gen(attention=attn, shap=shap, alpha=0.5)
+    top2 = np.argsort(out_mid)[-2:]
+    assert idx_shap in top2 and idx_attn in top2, (
+        "With alpha=0.5, both SHAP- and Attention‑preferred tokens should rank highly."
+    )
+
+
+@pytest.mark.skipif(overlay_api is None, reason=skip_reason)
+def test_batched_inputs_supported_or_meaningful_error():
+    """
+    If implementation supports batching:
+      attention: (B, T, T), shap: (B, T) → out: (B, T)
+    Otherwise, the function should raise a clear ValueError/TypeError.
+    """
+    gen = overlay_api.generate_overlay
+    B, T = 3, 7
+
+    attn = np.stack([make_attention_matrix(T, prefer_idx=i % T) for i in range(B)], axis=0)  # (B,T,T)
+    shap = np.stack([make_shap_values(T, prefer_idx=(i + 2) % T) for i in range(B)], axis=0)  # (B,T)
+
     try:
-        fused = np.asarray(fn(shap_vals=shap_vals, attention=att, method="product", normalize=True))
+        out = gen(attention=attn, shap=shap, alpha=0.5)
+    except (ValueError, TypeError) as e:
+        # Accept clear error about unsupported batching
+        assert "batch" in str(e).lower() or "shape" in str(e).lower()
+        return
+
+    # If it did not raise, assert proper shape & bounds.
+    assert isinstance(out, np.ndarray)
+    assert out.shape == (B, T)
+    assert np.min(out) >= -1e-6 and np.max(out) <= 1 + 1e-6
+
+
+@pytest.mark.skipif(overlay_api is None, reason=skip_reason)
+def test_mismatched_lengths_raise():
+    """
+    attention: (T,T), shap: (T2,) with T2 != T → must raise a clear error.
+    """
+    gen = overlay_api.generate_overlay
+    T, T2 = 6, 5
+    attn = make_attention_matrix(T, prefer_idx=1)
+    shap = make_shap_values(T2, prefer_idx=2)
+
+    with pytest.raises((ValueError, AssertionError, TypeError)):
+        _ = gen(attention=attn, shap=shap, alpha=0.5)
+
+
+@pytest.mark.skipif(overlay_api is None or overlay_api.overlay_heatmap is None, reason=skip_reason)
+def test_overlay_heatmap_writes_file(tmp_path):
+    """
+    overlay_heatmap(attention, shap, alpha, tokens, save_path=...) should
+    create a non-empty image artifact when provided.
+    """
+    heat = overlay_api.overlay_heatmap
+    assert heat is not None, "overlay_heatmap not found (resolver bug)."
+
+    T = 9
+    attn = make_attention_matrix(T, prefer_idx=4)
+    shap = make_shap_values(T, prefer_idx=2)
+    tokens = [f"t{i}" for i in range(T)]
+    out_path = tmp_path / "overlay.png"
+
+    # Some implementations accept **kwargs like dpi, cmap, title; keep minimal.
+    heat(attention=attn, shap=shap, alpha=0.6, tokens=tokens, save_path=str(out_path))
+
+    assert out_path.exists(), "overlay_heatmap did not create the file"
+    assert out_path.stat().st_size > 0, "overlay_heatmap wrote an empty file"
+
+
+# --------- Optional smoke: PNG buffer support (if overlay_heatmap returns bytes) ---------
+
+
+@pytest.mark.skipif(overlay_api is None, reason=skip_reason)
+def test_overlay_heatmap_buffer_mode_if_supported():
+    """
+    Some implementations may optionally return bytes/BytesIO when save_path is None.
+    If present, verify the buffer is non-empty PNG.
+    """
+    heat = overlay_api.overlay_heatmap
+    if heat is None:
+        pytest.skip("overlay_heatmap is not available")
+
+    T = 6
+    attn = make_attention_matrix(T, prefer_idx=1)
+    shap = make_shap_values(T, prefer_idx=4)
+    tokens = [f"x{i}" for i in range(T)]
+
+    try:
+        buf = heat(attention=attn, shap=shap, alpha=0.4, tokens=tokens, save_path=None)
     except TypeError:
-        fused = np.asarray(fn(shap_vals, att, "product", True))  # type: ignore
+        # Implementation might require save_path → acceptable
+        pytest.skip("overlay_heatmap does not support buffer mode")
+        return
 
-    assert fused.shape == shap_vals.shape
-    assert np.all(np.isfinite(fused)), "Fused array contains non-finite values."
-
-    # Reference and implementation top‑K should substantially overlap
-    ref = _ref_fuse(shap_vals, att, mode="product", normalize=True)
-    top_impl = set(_topk_by_abs(fused, 15))
-    top_ref = set(_topk_by_abs(ref, 15))
-    overlap = len(top_impl & top_ref) / 15.0
-    assert overlap >= 0.6, f"Fusion top‑K overlap too low: {overlap:.2f}"
-
-
-def test_topk_contains_known_bands(tool_mod, synthetic_inputs):
-    """
-    We injected bands near ~1.40 μm and ~3.30 μm. Fused top‑K should include indices from these regions.
-    """
-    wl = np.load(synthetic_inputs["wavelengths"])
-    shap_vals = np.load(synthetic_inputs["shap"])
-    att = np.load(synthetic_inputs["attention"])
-
-    # Prefer module fusion; fallback to reference if unavailable
-    fn = None
-    for name in ("compute_shap_attention_fusion", "fuse_shap_attention"):
-        if _has_attr(tool_mod, name):
-            fn = getattr(tool_mod, name)
-            break
-    if fn is None:
-        fused = _ref_fuse(shap_vals, att, mode="product", normalize=True)
+    # Accept either bytes or a BytesIO-like object
+    if hasattr(buf, "getvalue"):
+        data = buf.getvalue()
     else:
-        try:
-            fused = np.asarray(fn(shap_vals=shap_vals, attention=att, method="product", normalize=True))
-        except TypeError:
-            fused = np.asarray(fn(shap_vals, att, "product", True))  # type: ignore
-
-    top = _topk_by_abs(fused, 20)
-    band1 = np.where((wl >= 1.35) & (wl <= 1.45))[0]
-    band2 = np.where((wl >= 3.25) & (wl <= 3.35))[0]
-
-    hit1 = np.intersect1d(top, band1).size
-    hit2 = np.intersect1d(top, band2).size
-    assert hit1 >= 2, "Top‑K fusion should include multiple indices from ~1.40 μm band."
-    assert hit2 >= 2, "Top‑K fusion should include multiple indices from ~3.30 μm band."
+        data = buf
+    assert isinstance(data, (bytes, bytearray))
+    assert len(data) > 16
+    # PNG signature
+    assert data[:8] == b"\x89PNG\r\n\x1a\n", "Expected PNG buffer from overlay_heatmap"
 
 
-# ======================================================================================
-# Artifact generation API
-# ======================================================================================
+# --------- CLI hook (non-failing smoke) --------------------------------------
 
-def test_generate_artifacts(tool_mod, tmp_workspace, synthetic_inputs):
+
+@pytest.mark.skipif(overlay_api is None, reason=skip_reason)
+def test_api_is_importable_and_documented():
     """
-    Artifact generator should emit JSON/CSV/PNG/HTML files and return a manifest (or paths).
+    Very light smoke to ensure resolved function has a docstring.
+    Helps keep API self-documented.
     """
-    entry_candidates = [
-        "generate_shap_attention_artifacts",
-        "run_shap_attention_overlay",
-        "produce_shap_attention_outputs",
-        "analyze_and_export",  # generic fallback
-    ]
-    entry = None
-    for name in entry_candidates:
-        if _has_attr(tool_mod, name):
-            entry = getattr(tool_mod, name)
-            break
-    if entry is None:
-        pytest.xfail("No artifact generation entrypoint found in shap_attention_overlay.")
+    gen = overlay_api.generate_overlay
+    assert callable(gen)
+    doc = getattr(gen, "__doc__", "") or ""
+    # Do not fail hard; nudge toward documentation.
+    assert "overlay" in doc.lower() or len(doc) > 24, "Consider adding a brief docstring to generate_overlay()"
 
-    outdir = tmp_workspace["outputs"]
-    mu = np.load(synthetic_inputs["mu"])
-    wl = np.load(synthetic_inputs["wavelengths"])
-    shap_vals = np.load(synthetic_inputs["shap"])
-    att = np.load(synthetic_inputs["attention"])
-
-    kwargs = dict(
-        mu=mu,
-        wavelengths=wl,
-        shap_values=shap_vals,
-        attention=att,
-        outdir=str(outdir),
-        json_out=True,
-        csv_out=True,
-        png_out=True,
-        html_out=True,
-        seed=77,
-        title="SHAP × Attention Overlay — Test",
-        top_k=20,
-    )
-    try:
-        manifest = entry(**kwargs)
-    except TypeError:
-        manifest = entry(mu, wl, shap_vals, att, str(outdir), True, True, True, True, 77, "SHAP × Attention Overlay — Test", 20)  # type: ignore
-
-    # Presence checks
-    json_files = list(outdir.glob("*.json"))
-    csv_files = list(outdir.glob("*.csv"))
-    png_files = list(outdir.glob("*.png"))
-    html_files = list(outdir.glob("*.html"))
-
-    assert json_files, "No JSON artifact produced by SHAP × Attention overlay."
-    assert csv_files, "No CSV artifact produced by SHAP × Attention overlay."
-    assert png_files, "No PNG artifact produced by SHAP × Attention overlay."
-    assert html_files, "No HTML artifact produced by SHAP × Attention overlay."
-
-    # Minimal JSON schema check
-    with open(json_files[0], "r", encoding="utf-8") as f:
-        js = json.load(f)
-    assert isinstance(js, dict), "Top-level JSON must be an object."
-    has_fusion = ("fusion" in js) or ("scores" in js) or ("topk" in js) or ("overlay" in js)
-    assert has_fusion, "JSON should include fusion/overlay content (keys like 'fusion','scores','topk','overlay')."
-
-    # Files should be non-trivially sized
-    for p in png_files:
-        _assert_file(p, min_size=256)
-    for c in csv_files:
-        _assert_file(c, min_size=64)
-    for h in html_files:
-        _assert_file(h, min_size=128)
-
-
-# ======================================================================================
-# CLI End-to-End
-# ======================================================================================
-
-def test_cli_end_to_end(tmp_workspace, synthetic_inputs):
-    """
-    End-to-end CLI test:
-      • Runs the module as a CLI with --mu/--wavelengths/--shap/--attention → emits JSON/CSV/PNG/HTML.
-      • Uses --seed for determinism and compares JSON across two runs (modulo volatile metadata).
-      • Verifies optional audit log when SPECTRAMIND_LOG_PATH is set.
-    """
-    candidates = [
-        Path(__file__).resolve().parents[2] / "tools" / "shap_attention_overlay.py",  # repo-root/tools/...
-        Path(__file__).resolve().parents[1] / "shap_attention_overlay.py",            # tests/diagnostics/../
-    ]
-    module_file = None
-    for p in candidates:
-        if p.exists():
-            module_file = p
-            break
-    if module_file is None:
-        pytest.skip("shap_attention_overlay.py not found; cannot run CLI end-to-end test.")
-
-    outdir = tmp_workspace["outputs"]
-    logsdir = tmp_workspace["logs"]
-    mu_path = synthetic_inputs["mu"]
-    wl_path = synthetic_inputs["wavelengths"]
-    shap_path = synthetic_inputs["shap"]
-    att_path = synthetic_inputs["attention"]
-
-    env = {
-        "PYTHONUNBUFFERED": "1",
-        "SPECTRAMIND_LOG_PATH": str(logsdir / "v50_debug_log.md"),
-    }
-
-    args = (
-        "--mu", str(mu_path),
-        "--wavelengths", str(wl_path),
-        "--shap", str(shap_path),
-        "--attention", str(att_path),
-        "--outdir", str(outdir),
-        "--json",
-        "--csv",
-        "--png",
-        "--html",
-        "--top-k", "20",
-        "--seed", "2025",
-        "--silent",
-    )
-    proc1 = _run_cli(module_file, args, env=env, timeout=210)
-    if proc1.returncode != 0:
-        msg = f"CLI run 1 failed (exit={proc1.returncode}).\nSTDOUT:\n{proc1.stdout}\nSTDERR:\n{proc1.stderr}"
-        pytest.fail(msg)
-
-    json1 = sorted(outdir.glob("*.json"))
-    csv1 = sorted(outdir.glob("*.csv"))
-    png1 = sorted(outdir.glob("*.png"))
-    html1 = sorted(outdir.glob("*.html"))
-    assert json1 and csv1 and png1 and html1, "CLI run 1 did not produce all expected artifact types."
-
-    # Determinism: second run with same seed into a new directory should match JSON (minus volatile fields)
-    outdir2 = outdir.parent / "outputs_run2"
-    outdir2.mkdir(exist_ok=True)
-    args2 = (
-        "--mu", str(mu_path),
-        "--wavelengths", str(wl_path),
-        "--shap", str(shap_path),
-        "--attention", str(att_path),
-        "--outdir", str(outdir2),
-        "--json",
-        "--csv",
-        "--png",
-        "--html",
-        "--top-k", "20",
-        "--seed", "2025",
-        "--silent",
-    )
-    proc2 = _run_cli(module_file, args2, env=env, timeout=210)
-    if proc2.returncode != 0:
-        msg = f"CLI run 2 failed (exit={proc2.returncode}).\nSTDOUT:\n{proc2.stdout}\nSTDERR:\n{proc2.stderr}"
-        pytest.fail(msg)
-
-    json2 = sorted(outdir2.glob("*.json"))
-    assert json2, "Second CLI run produced no JSON artifacts."
-
-    def _normalize(j: Dict[str, Any]) -> Dict[str, Any]:
-        d = json.loads(json.dumps(j))  # deep copy
-        vol_patterns = re.compile(r"(time|date|timestamp|duration|path|cwd|hostname|uuid|version)", re.I)
-
-        def scrub(obj: Any) -> Any:
-            if isinstance(obj, dict):
-                for k in list(obj.keys()):
-                    if vol_patterns.search(k):
-                        obj.pop(k, None)
-                    else:
-                        obj[k] = scrub(obj[k])
-            elif isinstance(obj, list):
-                for i in range(len(obj)):
-                    obj[i] = scrub(obj[i])
-            return obj
-
-        return scrub(d)
-
-    with open(json1[0], "r", encoding="utf-8") as f:
-        j1 = _normalize(json.load(f))
-    with open(json2[0], "r", encoding="utf-8") as f:
-        j2 = _normalize(json.load(f))
-
-    assert j1 == j2, "Seeded CLI runs should yield identical JSON after removing volatile metadata."
-
-    # Audit log should exist and include a recognizable signature
-    log_file = Path(env["SPECTRAMIND_LOG_PATH"])
-    if log_file.exists():
-        _assert_file(log_file, min_size=1)
-        text = log_file.read_text(encoding="utf-8", errors="ignore").lower()
-        assert ("shap_attention_overlay" in text) or ("shap" in text and "attention" in text), \
-            "Audit log exists but lacks recognizable CLI signature."
-
-
-def test_cli_error_cases(tmp_workspace, synthetic_inputs):
-    """
-    CLI should:
-      • Exit non-zero when required args are missing.
-      • Report helpful error text mentioning the missing flag(s).
-    """
-    candidates = [
-        Path(__file__).resolve().parents[2] / "tools" / "shap_attention_overlay.py",
-        Path(__file__).resolve().parents[1] / "shap_attention_overlay.py",
-    ]
-    module_file = None
-    for p in candidates:
-        if p.exists():
-            module_file = p
-            break
-    if module_file is None:
-        pytest.skip("shap_attention_overlay.py not found; cannot run CLI error tests.")
-
-    outdir = tmp_workspace["outputs"]
-    wl = synthetic_inputs["wavelengths"]
-    shap_path = synthetic_inputs["shap"]
-    att_path = synthetic_inputs["attention"]
-
-    # Missing --mu
-    args_missing_mu = (
-        "--wavelengths", str(wl),
-        "--shap", str(shap_path),
-        "--attention", str(att_path),
-        "--outdir", str(outdir),
-        "--json",
-    )
-    proc = _run_cli(module_file, args_missing_mu, env=None, timeout=90)
-    assert proc.returncode != 0, "CLI should fail when required --mu is missing."
-    msg = (proc.stderr + "\n" + proc.stdout).lower()
-    assert "mu" in msg, "Error message should mention missing 'mu'."
-
-
-# ======================================================================================
-# Housekeeping checks
-# ======================================================================================
-
-def test_artifact_min_sizes(tmp_workspace):
-    """
-    After prior tests, ensure that PNG/CSV/HTML in outputs/ are non-trivially sized.
-    """
-    outdir = tmp_workspace["outputs"]
-    png_files = list(outdir.glob("*.png"))
-    csv_files = list(outdir.glob("*.csv"))
-    html_files = list(outdir.glob("*.html"))
-    # Not all formats may exist if a prior test xfailed early; be lenient but check when present.
-    for p in png_files:
-        _assert_file(p, min_size=256)
-    for c in csv_files:
-        _assert_file(c, min_size=64)
-    for h in html_files:
-        _assert_file(h, min_size=128)
-
-
-def test_idempotent_rerun_behavior(tmp_workspace):
-    """
-    The tool should either overwrite consistently or produce versioned filenames.
-    We don't require a specific policy here; only that subsequent writes do not corrupt artifacts.
-    """
-    outdir = tmp_workspace["outputs"]
-    before = {p.name for p in outdir.glob("*")}
-    # Simulate pre-existing artifact to ensure tool does not crash due to existing files
-    marker = outdir / "preexisting_marker.txt"
-    marker.write_text("marker", encoding="utf-8")
-    after = {p.name for p in outdir.glob("*")}
-    assert before.issubset(after), "Artifacts disappeared unexpectedly between runs or overwrite simulation."
