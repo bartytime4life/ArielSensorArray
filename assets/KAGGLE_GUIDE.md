@@ -1,143 +1,122 @@
-Awesome — here’s the complete assets/KAGGLE_GUIDE.md, ready to paste.
+# 📘 Kaggle Guide — SpectraMind V50 /assets
 
-# SpectraMind V50 — Kaggle Integration Guide
-
-**Purpose.** This document is the practical bridge between our architecture and a reproducible, leaderboard-safe Kaggle workflow. It explains how Kaggle works, how to run SpectraMind V50 within Kaggle’s constraints, and how to submit competitively while preserving scientific rigor.
-
----
-
-## 1) Kaggle Platform — What matters for SpectraMind V50
-
-### Core components
-- **Competitions/Leaderboards.** You submit predictions that are scored on hidden test data. The **public leaderboard** uses a *subset* of test data for real‑time feedback; the **private leaderboard** uses the rest and determines final ranks (“shake‑up” often happens if models overfit the public split) [oai_citation:0‡Kaggle Platform: Comprehensive Technical Guide.pdf](file-service://file-CrgG895i84phyLsyW9FQgf).  
-- **Datasets.** Share versioned datasets privately or publicly; attach them to notebooks as inputs. Dataset versions allow exact reproducibility [oai_citation:1‡Kaggle Platform: Comprehensive Technical Guide.pdf](file-service://file-CrgG895i84phyLsyW9FQgf).  
-- **Notebooks.** Hosted Jupyter environments with CPU/GPU/TPU. Containers are standardized; internet is typically off for submissions; attach inputs via the right‑hand **Data** panel [oai_citation:2‡Kaggle Platform: Comprehensive Technical Guide.pdf](file-service://file-CrgG895i84phyLsyW9FQgf).  
-- **Community.** Discussion forums and shared notebooks help with debugging and strategy; contributions also count toward user progression tiers [oai_citation:3‡Kaggle Platform: Comprehensive Technical Guide.pdf](file-service://file-CrgG895i84phyLsyW9FQgf).
-
-### Runtime constraints (typical free tier)
-- **GPU:** Tesla P100 class (~13 GB VRAM), limited concurrent sessions.  
-- **Session length:** ~12 hours per run; weekly GPU quotas (~30 hours) [oai_citation:4‡Kaggle Platform: Comprehensive Technical Guide.pdf](file-service://file-CrgG895i84phyLsyW9FQgf).  
-- **Internet:** **Off** by default for reliability; prepare all resources via attached datasets/models.  
-- **Datasets:** Size and file‑count limits; use versions to freeze exact inputs [oai_citation:5‡Kaggle Platform: Comprehensive Technical Guide.pdf](file-service://file-CrgG895i84phyLsyW9FQgf).
-
-**Implication for V50.** We must:
-1) Package code + configs + models as attached datasets,  
-2) Fit within GPU VRAM (batching, mixed precision),  
-3) Keep wall‑time < 12 h (full pipeline over ~1,100 planets was designed for strict budget) [oai_citation:6‡SpectraMind V50 Technical Plan for the NeurIPS 2025 Ariel Data Challenge.pdf](file-service://file-6PdU5f5knreHjmSdSauj3w),  
-4) Avoid public‑LB overfitting (robust CV and uncertainty handling).
+> **Purpose:**  
+> This guide serves as a **reference for using Kaggle** within the SpectraMind V50 project.  
+> It consolidates competition workflows, dataset practices, notebook setup, leaderboard mechanics, and integration points for the **NeurIPS 2025 Ariel Data Challenge**.
 
 ---
 
-## 2) Leaderboard Strategy — Avoid the “shake‑up”
+## 🌍 Kaggle Platform Overview
 
-- **Public vs Private.** Optimize for *generalization*, not only the public split; expect re‑ranking at reveal [oai_citation:7‡Kaggle Platform: Comprehensive Technical Guide.pdf](file-service://file-CrgG895i84phyLsyW9FQgf).  
-- **Submission caps.** Use daily limits wisely; track experiment metadata tightly (config hash, commit, seed).  
-- **Reproducible CV.** Deterministic splits & seeds; capture config snapshots (Hydra) and data hashes (DVC) [oai_citation:8‡SpectraMind V50 Technical Plan for the NeurIPS 2025 Ariel Data Challenge.pdf](file-service://file-6PdU5f5knreHjmSdSauj3w) [oai_citation:9‡SpectraMind V50 Project Analysis (NeurIPS 2025 Ariel Data Challenge).pdf](file-service://file-QRDy8Xn69XgxEjZgtZZ8FK).  
-- **Uncertainty sanity.** Penalized metrics (like Gaussian log‑likelihood) reward calibrated σ. Use temperature scaling and COREL‑style relational calibration to reduce overconfidence on OOD cases [oai_citation:10‡SpectraMind V50 Technical Plan for the NeurIPS 2025 Ariel Data Challenge.pdf](file-service://file-6PdU5f5knreHjmSdSauj3w).
+Kaggle is a Google-owned platform for **data science competitions, datasets, and collaborative coding**.  
+It combines four key pillars [oai_citation:0‡Kaggle Platform: Comprehensive Technical Guide.pdf](file-service://file-CrgG895i84phyLsyW9FQgf):
 
----
-
-## 3) Lessons from public baselines (and how V50 improves)
-
-**Compared Kaggle models** (publicly shared; details summarized):  
-- **Thang Do Duc “0.329 LB” baseline.** Residual MLP; simple preprocessing; robust reference; no explicit uncertainty; ~0.329 public LB [oai_citation:11‡Comparison of Kaggle Models from NeurIPS 2025 Ariel Data Challenge.pdf](file-service://file-CG661XRZ48CnBj69Lf5vTy).  
-- **V1ctorious3010 “80bl‑128hd‑impact”.** Very deep residual MLP (~80 blocks); improved feature capacity; risk of variance/overfit; batchnorm+dropout [oai_citation:12‡Comparison of Kaggle Models from NeurIPS 2025 Ariel Data Challenge.pdf](file-service://file-CG661XRZ48CnBj69Lf5vTy).  
-- **Fawad Awan “Spectrum Regressor”.** Multi‑output spectrum regressor; stable and interpretable; slightly lower public LB than deep model [oai_citation:13‡Comparison of Kaggle Models from NeurIPS 2025 Ariel Data Challenge.pdf](file-service://file-CG661XRZ48CnBj69Lf5vTy).
-
-**SpectraMind V50 upgrades (why it generalizes better):**  
-- **Encoders:** FGS1 → **Mamba SSM** for ultra‑long sequences; AIRS → **Graph NN** with λ‑adjacency & molecular/region edges (prior‑aware message passing) [oai_citation:14‡SpectraMind V50 Technical Plan for the NeurIPS 2025 Ariel Data Challenge.pdf](file-service://file-6PdU5f5knreHjmSdSauj3w).  
-- **Symbolic constraints:** Smoothness, non‑negativity, FFT coherence, molecular alignment — as regularizers and diagnostics overlays [oai_citation:15‡SpectraMind V50 Technical Plan for the NeurIPS 2025 Ariel Data Challenge.pdf](file-service://file-6PdU5f5knreHjmSdSauj3w).  
-- **Uncertainty:** **Temperature scaling + COREL GNN** for binwise coverage and relational calibration [oai_citation:16‡SpectraMind V50 Technical Plan for the NeurIPS 2025 Ariel Data Challenge.pdf](file-service://file-6PdU5f5knreHjmSdSauj3w).  
-- **Reproducibility:** Typer CLI + **Hydra configs** + **DVC** + CI self‑test; config hash & run logs ensure exact recovery of leaderboard submissions [oai_citation:17‡SpectraMind V50 Technical Plan for the NeurIPS 2025 Ariel Data Challenge.pdf](file-service://file-6PdU5f5knreHjmSdSauj3w) [oai_citation:18‡SpectraMind V50 Project Analysis (NeurIPS 2025 Ariel Data Challenge).pdf](file-service://file-QRDy8Xn69XgxEjZgtZZ8FK).
+1. **Competitions & Leaderboards** — Iterative model development, real-time scoring, private vs. public test sets.
+2. **Datasets Repository** — 50k+ community datasets, version-controlled, attachable to notebooks [oai_citation:1‡Kaggle Platform: Comprehensive Technical Guide.pdf](file-service://file-CrgG895i84phyLsyW9FQgf).
+3. **Notebooks (Kernels)** — Free, cloud-based Jupyter-style environments with GPU/TPU access [oai_citation:2‡Kaggle Platform: Comprehensive Technical Guide.pdf](file-service://file-CrgG895i84phyLsyW9FQgf).
+4. **Community** — Discussion forums, solution write-ups, Q&A, and tiered progression (Novice → Expert → Master → Grandmaster).
 
 ---
 
-## 4) Running V50 on Kaggle — Step‑by‑step
+## 🏆 Competitions
 
-> Goal: Execute **predict → calibrate‑σ → validate → package → submit**, all without internet, inside Kaggle.
+- Competitions provide a **defined problem, dataset, and evaluation metric**.  
+- Submissions are scored automatically; only the **best daily submission counts**.  
+- Leaderboards:  
+  - **Public leaderboard** (~30–50% of test data) — live feedback during the contest.  
+  - **Private leaderboard** (~50–70% hidden) — final results after deadline (“Kaggle shake-up”) [oai_citation:3‡Kaggle Platform: Comprehensive Technical Guide.pdf](file-service://file-CrgG895i84phyLsyW9FQgf).
 
-### A. Prepare inputs as Kaggle Datasets (done locally, then upload)
-1. **Code bundle**: repository subset needed for inference/packaging (e.g., `src/`, `spectramind.py`, `configs/`, minimal `pyproject.toml`/wheel).  
-2. **Weights & artifacts**: trained checkpoints, COREL calibration artifacts, tokenizer/graph meta.  
-3. **Runtime configs**: Hydra `configs/` with production defaults; freeze versions.  
-4. **Diagnostic HTML template** (optional): `assets/report.html` + `assets/diagnostics_dashboard.html`.
+⚠️ **Risk:** Overfitting to the public leaderboard leads to score drops on the private board.  
+✔️ **Best Practice:** Use cross-validation, physics-informed features, and avoid leaderboard chasing.
 
-> Version each dataset after any change; reference them by **version** in notebooks for immutability [oai_citation:19‡Kaggle Platform: Comprehensive Technical Guide.pdf](file-service://file-CrgG895i84phyLsyW9FQgf).
+---
 
-### B. Create the Kaggle Notebook
-- **Hardware**: Select **GPU** (P100 class).  
-- **Data**: Attach the above datasets in the right sidebar (`Add data`).  
-- **Internet**: Keep **off**; rely only on attached data.  
-- **Environment**: Use pinned image; avoid surprise upgrades (pin option) [oai_citation:20‡Kaggle Platform: Comprehensive Technical Guide.pdf](file-service://file-CrgG895i84phyLsyW9FQgf).
+## 📂 Datasets
 
-### C. Notebook inference commands (example skeleton)
-```bash
-# 1) Self‑test (fast) – verify env, paths, shapes
-!python -m spectramind test --mode=fast
+- Found in the **[Kaggle Datasets repository](https://www.kaggle.com/datasets)**.  
+- Features:  
+  - Public or private visibility  
+  - Versioning for reproducibility  
+  - Integration with notebooks via one-click attach [oai_citation:4‡Kaggle Platform: Comprehensive Technical Guide.pdf](file-service://file-CrgG895i84phyLsyW9FQgf)  
+- Limits: ~20 GB total dataset size, 1000 files max per dataset [oai_citation:5‡Kaggle Platform: Comprehensive Technical Guide.pdf](file-service://file-CrgG895i84phyLsyW9FQgf).  
+- In the **Ariel Data Challenge**, official telescope simulation data is distributed as Kaggle datasets [oai_citation:6‡Comparison of Kaggle Models from NeurIPS 2025 Ariel Data Challenge.pdf](file-service://file-CG661XRZ48CnBj69Lf5vTy).
 
-# 2) Predict μ, σ_raw
-!python -m spectramind predict \
-  +data.split=test +runtime.kaggle=true \
-  +paths.input=/kaggle/input/ADC2025 \
-  +paths.out=/kaggle/working/output \
-  +model.ckpt=/kaggle/input/v50-weights/model.ckpt
+---
 
-# 3) Calibrate σ (temperature + COREL)
-!python -m spectramind calibrate-temp \
-  +calib.corel=true +paths.out=/kaggle/working/output
+## 💻 Kaggle Notebooks
 
-# 4) Validate & package (CSV/ZIP per rules)
-!python -m spectramind submit \
-  +submit.bundle=/kaggle/working/submission.zip \
-  +report.html=true
+Kaggle Notebooks (formerly “kernels”) are browser-based Jupyter-style notebooks [oai_citation:7‡Kaggle Platform: Comprehensive Technical Guide.pdf](file-service://file-CrgG895i84phyLsyW9FQgf):
 
-Notes
-	•	All CLI commands capture and save the composed Hydra config and run logs; DVC hashes are printed when applicable ￼.
-	•	Keep memory within the P100 envelope (batch size, AMP).
-	•	Ensure wall‑time < 12 h by using our optimized loaders and vectorized computations ￼.
+- **Languages:** Python (default), R  
+- **Accelerators:** CPU / free NVIDIA Tesla GPU (P100, ~13 GB) / TPU v3-8 [oai_citation:8‡Kaggle Platform: Comprehensive Technical Guide.pdf](file-service://file-CrgG895i84phyLsyW9FQgf)  
+- **Limits:**  
+  - ~12h max runtime per session  
+  - ~30h GPU quota per week  
+  - Idle >20min → auto-shutdown [oai_citation:9‡Kaggle Platform: Comprehensive Technical Guide.pdf](file-service://file-CrgG895i84phyLsyW9FQgf)  
+- **Persistence:** Option to save `/kaggle/working` between sessions.  
+- **Internet:** Disabled by default (esp. for competitions).  
 
-⸻
+✔️ **Best Practice:** Pin environments for reproducibility.  
+✔️ **Tip:** Use the `Data` and `Models` tabs to quickly attach datasets and pretrained models [oai_citation:10‡Kaggle Platform: Comprehensive Technical Guide.pdf](file-service://file-CrgG895i84phyLsyW9FQgf).
 
-5) Submission packaging and checks
-	•	Validator enforces shape/bins/coverage; fails fast with actionable messages (console + HTML) ￼.
-	•	Bundle includes: predictions CSV, config snapshot, optional HTML report, minimal manifest for audit.
-	•	Kaggle submit from the right panel or programmatically in the notebook (if enabled).
+---
 
-⸻
+## 👥 Community & Ranks
 
-6) Reproducibility & governance
-	•	Hydra: store outputs/*/hydra/*.yaml with final overrides.
-	•	Run hash & logs: persist logs/v50_debug_log.md & JSONL events for audit trails ￼.
-	•	DVC: point to exact dataset/model versions; pull is offline via attached datasets on Kaggle ￼.
-	•	CI mirror: our GitHub Actions smoke‑test runs a small E2E to ensure the notebook steps won’t regress ￼.
+- Kaggle has a **tier system** based on contributions:  
+  - **Competitions** (model performance)  
+  - **Datasets** (quality + usage)  
+  - **Notebooks** (shared code/tutorials)  
+  - **Discussions** (forum contributions) [oai_citation:11‡Kaggle Platform: Comprehensive Technical Guide.pdf](file-service://file-CrgG895i84phyLsyW9FQgf)  
+- Ranks: **Novice → Contributor → Expert → Master → Grandmaster**.  
+- SpectraMind V50 contributions (diagnostics notebooks, symbolic explainers, leaderboard tools) can also be **shared publicly** for community credit.
 
-⸻
+---
 
-7) Troubleshooting (Kaggle‑specific)
-	•	Out of memory (OOM): lower batch size; enable AMP; shard inference.
-	•	Runtime limit: cache intermediates; pre‑export graph features; avoid heavy plots; use our fast I/O.
-	•	Missing internet: every dependency must be vendored or in attached datasets.
-	•	Submission rejects: re‑run validator; check column order/headers and exact bin count.
+## 🚀 Integration with SpectraMind V50
 
-⸻
+SpectraMind V50 aligns with Kaggle’s infrastructure:
 
-8) Quick FAQ
+- **CLI → Kaggle:** All experiments (train, diagnose, submit) produce reproducible artifacts tracked with Hydra configs, DVC hashes, and logs [oai_citation:12‡SpectraMind V50 Project Analysis (NeurIPS 2025 Ariel Data Challenge).pdf](file-service://file-QRDy8Xn69XgxEjZgtZZ8FK).  
+- **Submissions:** `spectramind submit` produces the `submission.csv` for Kaggle upload [oai_citation:13‡SpectraMind V50 Project Analysis (NeurIPS 2025 Ariel Data Challenge).pdf](file-service://file-QRDy8Xn69XgxEjZgtZZ8FK).  
+- **Reproducibility:** Config + commit hash ensures results can be re-run exactly.  
+- **Notebooks:** We maintain “orchestration-only” notebooks (see `/notebooks`) that **wrap CLI commands** and are designed to run within Kaggle’s notebook environment.  
+- **Comparison of Models:** Existing public baselines for Ariel 2025 include:
+  - Thang Do Duc’s “0.329 LB” baseline (residual MLP) [oai_citation:14‡Comparison of Kaggle Models from NeurIPS 2025 Ariel Data Challenge.pdf](file-service://file-CG661XRZ48CnBj69Lf5vTy)  
+  - V1ctorious3010’s “80bl-128hd-impact” (deep residual MLP) [oai_citation:15‡Comparison of Kaggle Models from NeurIPS 2025 Ariel Data Challenge.pdf](file-service://file-CG661XRZ48CnBj69Lf5vTy)  
+  - Fawad Awan’s “Spectrum Regressor” (multi-output regression) [oai_citation:16‡Comparison of Kaggle Models from NeurIPS 2025 Ariel Data Challenge.pdf](file-service://file-CG661XRZ48CnBj69Lf5vTy)  
 
-Q: Why not train on Kaggle?
-A: Free tier quotas/time may be tight for full V50 training. We train elsewhere; Kaggle focuses on inference + calibration + packaging with versioned artifacts.
+SpectraMind V50 extends beyond these with **Mamba + GNN + symbolic loss integration**.
 
-Q: How do we avoid public‑LB overfit?
-A: Strong CV, calibrated σ, and conservative model selection; never cherry‑pick purely on public LB.
+---
 
-Q: Can I fork and reproduce locally?
-A: Yes — the same Typer CLI + Hydra configs + DVC workflow works locally and on CI; Kaggle is a sandbox with locked inputs.
+## 📜 Best Practices for Kaggle Workflows
 
-⸻
+1. **Version Everything** — Pin configs, Docker images, and dataset versions [oai_citation:17‡SpectraMind V50 Project Analysis (NeurIPS 2025 Ariel Data Challenge).pdf](file-service://file-QRDy8Xn69XgxEjZgtZZ8FK).  
+2. **Cross-Validation** — Avoid public leaderboard overfitting; use CV folds to estimate private score stability.  
+3. **Physics-Informed Features** — Incorporate astrophysical priors (spectral smoothness, asymmetry penalties, molecular bands).  
+4. **Automated Diagnostics** — Run CLI tools (`spectramind diagnose …`) before every submission.  
+5. **Reproducibility** — Use Hydra configs and commit hashes in logs; enable persistence in notebooks.  
+6. **Community Sharing** — Publish sanitized diagnostics notebooks to Kaggle for reputation and collaborative feedback.
 
-9) References
-	•	Kaggle: platform, datasets, notebooks, leaderboards ￼.
-	•	Public model comparisons for the Ariel Data Challenge 2025 ￼.
-	•	SpectraMind V50 technical plan: CLI, Hydra/DVC, uncertainty calibration, CI self‑test ￼.
-	•	Project analysis & reproducibility patterns ￼.
+---
 
-⸻
+## 📎 Resources
+
+- [Kaggle Homepage](https://www.kaggle.com)  
+- [Kaggle API Docs](https://github.com/Kaggle/kaggle-api)  
+- [Ariel Data Challenge 2025 on Kaggle](https://www.kaggle.com/competitions/ariel-data-challenge-2025) [oai_citation:18‡Comparison of Kaggle Models from NeurIPS 2025 Ariel Data Challenge.pdf](file-service://file-CG661XRZ48CnBj69Lf5vTy)
+
+---
+
+## ✅ Summary
+
+Kaggle is both the **execution environment** and the **evaluation gate** for SpectraMind V50.  
+By coupling Hydra configs, CLI-driven reproducibility, and Kaggle’s dataset/notebook ecosystem, we achieve:
+
+- **Scientific rigor** (NASA-grade calibration + symbolic constraints)  
+- **Reproducibility** (config + commit hash + DVC)  
+- **Leaderboarding discipline** (robust CV, not overfitting)  
+- **Community engagement** (public diagnostics + discussions)  
+
+This guide ensures the `/assets` directory remains Kaggle-ready for both development and competition deployment.
