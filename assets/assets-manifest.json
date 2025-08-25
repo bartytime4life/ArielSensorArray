@@ -3,9 +3,9 @@
   "meta": {
     "project": "SpectraMind V50",
     "component": "assets",
-    "version": "1.0.1",
+    "version": "1.1.0",
     "created": "2025-08-25T00:00:00Z",
-    "description": "Manifest of all static assets (GUI, styles, docs, dashboards, and logos)."
+    "description": "Manifest of all static assets (GUI, styles, docs, dashboards, notebooks, and logos). Includes structured brand logo map with spectrum/black/white × mark/full variants and a compatibility shim."
   },
   "assets": {
     "gui": {
@@ -40,86 +40,111 @@
         "version": "1.0.0"
       }
     },
+
     "logos": {
-      "logo.svg": {
-        "path": "logos/logo.svg",
-        "type": "image",
-        "hash": "sha256-PLACEHOLDER_HASH_LOGO_SVG",
-        "version": "1.0.0"
+      "_readme": "Structured brand logos. spectrum=brand gradient. black=for light backgrounds/print. white=for dark backgrounds. 'mark' is symbol-only. 'full' includes wordmark.",
+      
+      "mark": {
+        "spectrum": {
+          "svg": { "path": "logos/spectrum/mark/spectramind_mark.svg", "type": "image", "hash": "sha256-PLACEHOLDER_HASH_MARK_SVG_SPEC", "version": "1.0.0" },
+          "png": {
+            "16":   { "path": "logos/spectrum/mark/spectramind_mark_16.png",   "type": "image", "hash": "sha256-PLACEHOLDER_HASH_M16_SPEC",   "version": "1.0.0" },
+            "32":   { "path": "logos/spectrum/mark/spectramind_mark_32.png",   "type": "image", "hash": "sha256-PLACEHOLDER_HASH_M32_SPEC",   "version": "1.0.0" },
+            "128":  { "path": "logos/spectrum/mark/spectramind_mark_128.png",  "type": "image", "hash": "sha256-PLACEHOLDER_HASH_M128_SPEC",  "version": "1.0.0" },
+            "512":  { "path": "logos/spectrum/mark/spectramind_mark_512.png",  "type": "image", "hash": "sha256-PLACEHOLDER_HASH_M512_SPEC",  "version": "1.0.0" },
+            "1024": { "path": "logos/spectrum/mark/spectramind_mark_1024.png", "type": "image", "hash": "sha256-PLACEHOLDER_HASH_M1024_SPEC", "version": "1.0.0" }
+          },
+          "ico": { "path": "logos/favicon/spectramind_mark_spectrum.ico", "type": "image", "hash": "sha256-PLACEHOLDER_HASH_FAVICON_SPEC", "version": "1.0.0" }
+        },
+        "black": {
+          "svg": { "path": "logos/black/mark/spectramind_mark_black.svg", "type": "image", "hash": "sha256-PLACEHOLDER_HASH_MARK_SVG_BLACK", "version": "1.0.0" },
+          "png": {
+            "16":   { "path": "logos/black/mark/spectramind_mark_black_16.png",   "type": "image", "hash": "sha256-PLACEHOLDER_HASH_M16_BLACK",   "version": "1.0.0" },
+            "32":   { "path": "logos/black/mark/spectramind_mark_black_32.png",   "type": "image", "hash": "sha256-PLACEHOLDER_HASH_M32_BLACK",   "version": "1.0.0" },
+            "128":  { "path": "logos/black/mark/spectramind_mark_black_128.png",  "type": "image", "hash": "sha256-PLACEHOLDER_HASH_M128_BLACK",  "version": "1.0.0" },
+            "512":  { "path": "logos/black/mark/spectramind_mark_black_512.png",  "type": "image", "hash": "sha256-PLACEHOLDER_HASH_M512_BLACK",  "version": "1.0.0" },
+            "1024": { "path": "logos/black/mark/spectramind_mark_black_1024.png", "type": "image", "hash": "sha256-PLACEHOLDER_HASH_M1024_BLACK", "version": "1.0.0" }
+          },
+          "ico": { "path": "logos/favicon/spectramind_mark_black.ico", "type": "image", "hash": "sha256-PLACEHOLDER_HASH_FAVICON_BLACK", "version": "1.0.0" }
+        },
+        "white": {
+          "svg": { "path": "logos/white/mark/spectramind_mark_white.svg", "type": "image", "hash": "sha256-PLACEHOLDER_HASH_MARK_SVG_WHITE", "version": "1.0.0" },
+          "png": {
+            "16":   { "path": "logos/white/mark/spectramind_mark_white_16.png",   "type": "image", "hash": "sha256-PLACEHOLDER_HASH_M16_WHITE",   "version": "1.0.0" },
+            "32":   { "path": "logos/white/mark/spectramind_mark_white_32.png",   "type": "image", "hash": "sha256-PLACEHOLDER_HASH_M32_WHITE",   "version": "1.0.0" },
+            "128":  { "path": "logos/white/mark/spectramind_mark_white_128.png",  "type": "image", "hash": "sha256-PLACEHOLDER_HASH_M128_WHITE",  "version": "1.0.0" },
+            "512":  { "path": "logos/white/mark/spectramind_mark_white_512.png",  "type": "image", "hash": "sha256-PLACEHOLDER_HASH_M512_WHITE",  "version": "1.0.0" },
+            "1024": { "path": "logos/white/mark/spectramind_mark_white_1024.png", "type": "image", "hash": "sha256-PLACEHOLDER_HASH_M1024_WHITE", "version": "1.0.0" }
+          },
+          "ico": { "path": "logos/favicon/spectramind_mark_white.ico", "type": "image", "hash": "sha256-PLACEHOLDER_HASH_FAVICON_WHITE", "version": "1.0.0" }
+        }
       },
-      "logo.png": {
-        "path": "logos/logo.png",
-        "type": "image",
-        "hash": "sha256-PLACEHOLDER_HASH_LOGO_PNG",
-        "version": "1.0.0"
+
+      "full": {
+        "spectrum": {
+          "svg": { "path": "logos/spectrum/full/spectramind_full.svg", "type": "image", "hash": "sha256-PLACEHOLDER_HASH_FULL_SVG_SPEC", "version": "1.0.0" },
+          "png": {
+            "16":   { "path": "logos/spectrum/full/spectramind_full_16.png",   "type": "image", "hash": "sha256-PLACEHOLDER_HASH_F16_SPEC",   "version": "1.0.0" },
+            "32":   { "path": "logos/spectrum/full/spectramind_full_32.png",   "type": "image", "hash": "sha256-PLACEHOLDER_HASH_F32_SPEC",   "version": "1.0.0" },
+            "128":  { "path": "logos/spectrum/full/spectramind_full_128.png",  "type": "image", "hash": "sha256-PLACEHOLDER_HASH_F128_SPEC",  "version": "1.0.0" },
+            "512":  { "path": "logos/spectrum/full/spectramind_full_512.png",  "type": "image", "hash": "sha256-PLACEHOLDER_HASH_F512_SPEC",  "version": "1.0.0" },
+            "1024": { "path": "logos/spectrum/full/spectramind_full_1024.png", "type": "image", "hash": "sha256-PLACEHOLDER_HASH_F1024_SPEC", "version": "1.0.0" }
+          }
+        },
+        "black": {
+          "blacktext": {
+            "svg": { "path": "logos/black/full/spectramind_full_black_blacktext.svg", "type": "image", "hash": "sha256-PLACEHOLDER_HASH_FULL_SVG_BLACK_BT", "version": "1.0.0" },
+            "png": {
+              "16":   { "path": "logos/black/full/spectramind_full_blacktext_16.png",   "type": "image", "hash": "sha256-PLACEHOLDER_HASH_FB16",   "version": "1.0.0" },
+              "32":   { "path": "logos/black/full/spectramind_full_blacktext_32.png",   "type": "image", "hash": "sha256-PLACEHOLDER_HASH_FB32",   "version": "1.0.0" },
+              "128":  { "path": "logos/black/full/spectramind_full_blacktext_128.png",  "type": "image", "hash": "sha256-PLACEHOLDER_HASH_FB128",  "version": "1.0.0" },
+              "512":  { "path": "logos/black/full/spectramind_full_blacktext_512.png",  "type": "image", "hash": "sha256-PLACEHOLDER_HASH_FB512",  "version": "1.0.0" },
+              "1024": { "path": "logos/black/full/spectramind_full_blacktext_1024.png", "type": "image", "hash": "sha256-PLACEHOLDER_HASH_FB1024", "version": "1.0.0" }
+            }
+          },
+          "whitetext": {
+            "svg": { "path": "logos/black/full/spectramind_full_black_whitetext.svg", "type": "image", "hash": "sha256-PLACEHOLDER_HASH_FULL_SVG_BLACK_WT", "version": "1.0.0" },
+            "png": {
+              "16":   { "path": "logos/black/full/spectramind_full_whitetext_16.png",   "type": "image", "hash": "sha256-PLACEHOLDER_HASH_FW16",   "version": "1.0.0" },
+              "32":   { "path": "logos/black/full/spectramind_full_whitetext_32.png",   "type": "image", "hash": "sha256-PLACEHOLDER_HASH_FW32",   "version": "1.0.0" },
+              "128":  { "path": "logos/black/full/spectramind_full_whitetext_128.png",  "type": "image", "hash": "sha256-PLACEHOLDER_HASH_FW128",  "version": "1.0.0" },
+              "512":  { "path": "logos/black/full/spectramind_full_whitetext_512.png",  "type": "image", "hash": "sha256-PLACEHOLDER_HASH_FW512",  "version": "1.0.0" },
+              "1024": { "path": "logos/black/full/spectramind_full_whitetext_1024.png", "type": "image", "hash": "sha256-PLACEHOLDER_HASH_FW1024", "version": "1.0.0" }
+            }
+          }
+        },
+        "white": {
+          "svg": { "path": "logos/white/full/spectramind_full_white.svg", "type": "image", "hash": "sha256-PLACEHOLDER_HASH_FULL_SVG_WHITE", "version": "1.0.0" },
+          "png": {
+            "16":   { "path": "logos/white/full/spectramind_full_white_16.png",   "type": "image", "hash": "sha256-PLACEHOLDER_HASH_FW16W",   "version": "1.0.0" },
+            "32":   { "path": "logos/white/full/spectramind_full_white_32.png",   "type": "image", "hash": "sha256-PLACEHOLDER_HASH_FW32W",   "version": "1.0.0" },
+            "128":  { "path": "logos/white/full/spectramind_full_white_128.png",  "type": "image", "hash": "sha256-PLACEHOLDER_HASH_FW128W",  "version": "1.0.0" },
+            "512":  { "path": "logos/white/full/spectramind_full_white_512.png",  "type": "image", "hash": "sha256-PLACEHOLDER_HASH_FW512W",  "version": "1.0.0" },
+            "1024": { "path": "logos/white/full/spectramind_full_white_1024.png", "type": "image", "hash": "sha256-PLACEHOLDER_HASH_FW1024W", "version": "1.0.0" }
+          }
+        }
       },
-      "favicon.ico": {
-        "path": "logos/favicon.ico",
-        "type": "image",
-        "hash": "sha256-PLACEHOLDER_HASH_FAVICON",
-        "version": "1.0.0"
+
+      "symbols": {
+        "_readme": "Non-brand UI symbols retained for compatibility.",
+        "status-ok.svg":     { "path": "logos/status-ok.svg",     "type": "image", "hash": "sha256-PLACEHOLDER_HASH_STATUS_OK",     "version": "1.0.0" },
+        "status-warn.svg":   { "path": "logos/status-warn.svg",   "type": "image", "hash": "sha256-PLACEHOLDER_HASH_STATUS_WARN",   "version": "1.0.0" },
+        "status-error.svg":  { "path": "logos/status-error.svg",  "type": "image", "hash": "sha256-PLACEHOLDER_HASH_STATUS_ERROR",  "version": "1.0.0" },
+        "symbolic-rule.svg": { "path": "logos/symbolic-rule.svg", "type": "image", "hash": "sha256-PLACEHOLDER_HASH_SYMBOLIC_RULE", "version": "1.0.0" },
+        "fft-spectrum.svg":  { "path": "logos/fft-spectrum.svg",  "type": "image", "hash": "sha256-PLACEHOLDER_HASH_FFT_SPECTRUM",  "version": "1.0.0" },
+        "umap-cluster.svg":  { "path": "logos/umap-cluster.svg",  "type": "image", "hash": "sha256-PLACEHOLDER_HASH_UMAP_CLUSTER",  "version": "1.0.0" }
       },
-      "icon-192.png": {
-        "path": "logos/icon-192.png",
-        "type": "image",
-        "hash": "sha256-PLACEHOLDER_HASH_ICON_192",
-        "version": "1.0.0"
-      },
-      "icon-512.png": {
-        "path": "logos/icon-512.png",
-        "type": "image",
-        "hash": "sha256-PLACEHOLDER_HASH_ICON_512",
-        "version": "1.0.0"
-      },
-      "logo-dark.svg": {
-        "path": "logos/logo-dark.svg",
-        "type": "image",
-        "hash": "sha256-PLACEHOLDER_HASH_LOGO_DARK",
-        "version": "1.0.0"
-      },
-      "logo-light.svg": {
-        "path": "logos/logo-light.svg",
-        "type": "image",
-        "hash": "sha256-PLACEHOLDER_HASH_LOGO_LIGHT",
-        "version": "1.0.0"
-      },
-      "status-ok.svg": {
-        "path": "logos/status-ok.svg",
-        "type": "image",
-        "hash": "sha256-PLACEHOLDER_HASH_STATUS_OK",
-        "version": "1.0.0"
-      },
-      "status-warn.svg": {
-        "path": "logos/status-warn.svg",
-        "type": "image",
-        "hash": "sha256-PLACEHOLDER_HASH_STATUS_WARN",
-        "version": "1.0.0"
-      },
-      "status-error.svg": {
-        "path": "logos/status-error.svg",
-        "type": "image",
-        "hash": "sha256-PLACEHOLDER_HASH_STATUS_ERROR",
-        "version": "1.0.0"
-      },
-      "symbolic-rule.svg": {
-        "path": "logos/symbolic-rule.svg",
-        "type": "image",
-        "hash": "sha256-PLACEHOLDER_HASH_SYMBOLIC_RULE",
-        "version": "1.0.0"
-      },
-      "fft-spectrum.svg": {
-        "path": "logos/fft-spectrum.svg",
-        "type": "image",
-        "hash": "sha256-PLACEHOLDER_HASH_FFT_SPECTRUM",
-        "version": "1.0.0"
-      },
-      "umap-cluster.svg": {
-        "path": "logos/umap-cluster.svg",
-        "type": "image",
-        "hash": "sha256-PLACEHOLDER_HASH_UMAP_CLUSTER",
-        "version": "1.0.0"
+
+      "compat": {
+        "_readme": "Back-compat aliases so older code using flat keys continues to work.",
+        "logo.svg":   { "path": "logos/spectrum/full/spectramind_full.svg",    "type": "image", "hash": "sha256-PLACEHOLDER_HASH_COMPAT_LOGO_SVG", "version": "1.0.0" },
+        "logo.png":   { "path": "logos/spectrum/full/spectramind_full_512.png","type": "image", "hash": "sha256-PLACEHOLDER_HASH_COMPAT_LOGO_PNG", "version": "1.0.0" },
+        "favicon.ico":{ "path": "logos/favicon/spectramind_mark_spectrum.ico", "type": "image", "hash": "sha256-PLACEHOLDER_HASH_COMPAT_FAVICON",  "version": "1.0.0" },
+        "icon-192.png": { "path": "logos/spectrum/mark/spectramind_mark_128.png", "type": "image", "hash": "sha256-PLACEHOLDER_HASH_COMPAT_ICON_192", "version": "1.0.0" },
+        "icon-512.png": { "path": "logos/spectrum/mark/spectramind_mark_512.png", "type": "image", "hash": "sha256-PLACEHOLDER_HASH_COMPAT_ICON_512", "version": "1.0.0" }
       }
     },
+
     "docs": {
       "AI_Design_and_Modeling.md": {
         "path": "AI_Design_and_Modeling.md",
@@ -158,6 +183,7 @@
         "version": "1.0.0"
       }
     },
+
     "diagrams": {
       "architecture_stack.mmd": {
         "path": "architecture_stack.mmd",
@@ -172,6 +198,7 @@
         "version": "1.0.0"
       }
     },
+
     "dashboards": {
       "diagnostics_dashboard.html": {
         "path": "diagnostics_dashboard.html",
@@ -186,6 +213,7 @@
         "version": "1.0.0"
       }
     },
+
     "notebooks": {
       "kaggle_infer_template.ipynb": {
         "path": "kaggle_infer_template.ipynb",
