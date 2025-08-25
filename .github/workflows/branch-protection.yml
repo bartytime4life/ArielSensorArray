@@ -1,19 +1,74 @@
-name: "Apply Branch Protection & Enable Auto-merge"
+name: "Apply Branch Protection & Enable Auto-merge (Upgraded)"
 
 on:
   workflow_dispatch:
     inputs:
       default_branch:
-        description: "Branch to protect (e.g., main)"
+        description: "Primary branch to protect (e.g., main)"
         required: true
         default: "main"
-      required_checks_csv:
-        description: "Comma-separated list of required check names (exact contexts)"
+
+      required_checks_csv_main:
+        description: "Comma-separated required checks for DEFAULT branch (exact contexts)"
         required: true
         default: "Lint & Static Analysis,Security Scan,Submission Validation,Dependabot Auto-Merge"
 
+      approvals_main:
+        description: "Required PR approvals for DEFAULT branch"
+        required: true
+        default: "1"
+
+      release_branch_glob:
+        description: "Protect all matching release branches (glob), leave blank to skip (e.g., release/*)"
+        required: false
+        default: "release/*"
+
+      required_checks_csv_release:
+        description: "Comma-separated required checks for release branches (exact contexts)"
+        required: false
+        default: "Lint & Static Analysis,Security Scan,Submission Validation"
+
+      approvals_release:
+        description: "Required PR approvals for release branches"
+        required: false
+        default: "2"
+
+      require_code_owner_reviews:
+        description: "Require CODEOWNERS approval (true/false)"
+        required: true
+        default: "false"
+
+      enforce_admins:
+        description: "Enforce rules for admins (true/false)"
+        required: true
+        default: "true"
+
+      allow_deletions:
+        description: "Allow branch deletion (true/false)"
+        required: true
+        default: "false"
+
+      allow_force_pushes:
+        description: "Allow force pushes (true/false)"
+        required: true
+        default: "false"
+
+      require_linear_history:
+        description: "Require linear history (true/false)"
+        required: true
+        default: "true"
+
+      lock_release_branches:
+        description: "Lock release branches (prevent direct pushes) (true/false)"
+        required: true
+        default: "true"
+
 permissions:
   contents: read
+
+concurrency:
+  group: branch-protection-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   protect:
@@ -22,13 +77,11 @@ jobs:
       GH_TOKEN: ${{ secrets.BRANCH_PROTECT_PAT }}
       OWNER: ${{ github.repository_owner }}
       REPO: ${{ github.event.repository.name }}
-      DEFAULT_BRANCH: ${{ github.event.inputs.default_branch }}
-      REQUIRED_CHECKS_CSV: ${{ github.event.inputs.required_checks_csv }}
     steps:
-      - name: Check gh auth
+      - name: Check GitHub CLI auth
         run: gh auth status
 
-      - name: Enable repository auto-merge
+      - name: Enable repository-level Auto-merge
         run: |
           gh api \
             --method PATCH \
@@ -36,47 +89,162 @@ jobs:
             /repos/${OWNER}/${REPO} \
             -f allow_auto_merge=true
 
-      - name: Build protection payload
-        id: build
+      - name: Normalize boolean inputs
+        id: bools
         shell: bash
         run: |
-          # Convert CSV -> JSON array
-          IFS=',' read -ra ARR <<< "$REQUIRED_CHECKS_CSV"
-          JSON_ARRAY=$(printf '"%s",' "${ARR[@]}")
-          JSON_ARRAY="[${JSON_ARRAY%,}]"
+          to_bool() { [[ "${1,,}" == "true" ]]; }
+          for k in require_code_owner_reviews enforce_admins allow_deletions allow_force_pushes require_linear_history lock_release_branches; do
+            v="${{ github.event.inputs[$k] }}"
+            if to_bool "$v"; then echo "$k=true"  >> $GITHUB_OUTPUT; else echo "$k=false" >> $GITHUB_OUTPUT; fi
+          done
 
+      - name: Build JSON helpers
+        id: helpers
+        shell: bash
+        run: |
+          csv_to_json_array () {
+            local CSV="$1"
+            IFS=',' read -ra ARR <<< "$CSV"
+            # trim spaces
+            for i in "${!ARR[@]}"; do ARR[$i]="\"$(echo "${ARR[$i]}" | sed 's/^ *//;s/ *$//')\""; done
+            local joined
+            joined=$(IFS=,; echo "${ARR[*]}")
+            echo "[$joined]"
+          }
+
+          JSON_MAIN=$(csv_to_json_array "${{ github.event.inputs.required_checks_csv_main }}")
+          JSON_REL=$(csv_to_json_array "${{ github.event.inputs.required_checks_csv_release }}")
+
+          echo "json_main=$JSON_MAIN" >> $GITHUB_OUTPUT
+          echo "json_rel=$JSON_REL"   >> $GITHUB_OUTPUT
+
+      - name: Apply protection to DEFAULT branch
+        env:
+          DEFAULT_BRANCH: ${{ github.event.inputs.default_branch }}
+          REQUIRED_CHECKS_JSON: ${{ steps.helpers.outputs.json_main }}
+          APPROVALS: ${{ github.event.inputs.approvals_main }}
+          ENFORCE_ADMINS: ${{ steps.bools.outputs.enforce_admins }}
+          REQUIRE_LINEAR: ${{ steps.bools.outputs.require_linear_history }}
+          ALLOW_FORCE: ${{ steps.bools.outputs.allow_force_pushes }}
+          ALLOW_DELETE: ${{ steps.bools.outputs.allow_deletions }}
+          REQUIRE_CODEOWNERS: ${{ steps.bools.outputs.require_code_owner_reviews }}
+        shell: bash
+        run: |
           cat > body.json <<JSON
           {
             "required_status_checks": {
               "strict": true,
-              "contexts": ${JSON_ARRAY}
+              "contexts": ${REQUIRED_CHECKS_JSON}
             },
-            "enforce_admins": true,
+            "enforce_admins": ${ENFORCE_ADMINS},
             "required_pull_request_reviews": {
-              "required_approving_review_count": 1,
+              "required_approving_review_count": ${APPROVALS},
               "dismiss_stale_reviews": true,
-              "require_last_push_approval": false
+              "require_last_push_approval": false,
+              "require_code_owner_reviews": ${REQUIRE_CODEOWNERS}
             },
             "restrictions": null,
-            "allow_force_pushes": false,
-            "allow_deletions": false,
+            "allow_force_pushes": ${ALLOW_FORCE},
+            "allow_deletions": ${ALLOW_DELETE},
             "block_creations": false,
             "required_conversation_resolution": true,
-            "required_linear_history": false,
+            "required_linear_history": ${REQUIRE_LINEAR},
             "lock_branch": false
           }
           JSON
 
-      - name: Apply protection
-        run: |
           gh api \
             --method PUT \
             -H "Accept: application/vnd.github+json" \
             /repos/${OWNER}/${REPO}/branches/${DEFAULT_BRANCH}/protection \
             --input body.json
 
-      - name: Summary
+      - name: Discover release branches (if any)
+        id: rels
+        env:
+          GLOB: ${{ github.event.inputs.release_branch_glob }}
+        shell: bash
         run: |
-          echo "✅ Auto-merge enabled for ${OWNER}/${REPO}"
-          echo "✅ Branch protection applied to ${DEFAULT_BRANCH}"
-          echo "✅ Required checks: ${REQUIRED_CHECKS_CSV}"
+          if [[ -z "$GLOB" || "$GLOB" == "" ]]; then
+            echo "branches=" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Fetch first 200 branches (adjust if you have more)
+          branches=$(gh api -H "Accept: application/vnd.github+json" \
+                     /repos/${OWNER}/${REPO}/branches?per_page=100 | jq -r '.[].name')
+          # basic glob filter via egrep (translate glob to regex)
+          regex=$(printf '%s\n' "$GLOB" | sed 's/\./\\./g; s/\*/.*/g; s/\?/./g')
+          matches=$(printf '%s\n' "$branches" | egrep -E "^${regex}$" || true)
+
+          if [[ -z "$matches" ]]; then
+            echo "branches=" >> $GITHUB_OUTPUT
+          else
+            # output as space-separated list
+            list=$(echo "$matches" | tr '\n' ' ' | sed 's/  */ /g;s/ $//')
+            echo "branches=$list" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Apply protection to release branches
+        if: ${{ steps.rels.outputs.branches != '' }}
+        env:
+          BRANCHES: ${{ steps.rels.outputs.branches }}
+          REQUIRED_CHECKS_JSON: ${{ steps.helpers.outputs.json_rel }}
+          APPROVALS: ${{ github.event.inputs.approvals_release }}
+          ENFORCE_ADMINS: ${{ steps.bools.outputs.enforce_admins }}
+          REQUIRE_LINEAR: ${{ steps.bools.outputs.require_linear_history }}
+          ALLOW_FORCE: ${{ steps.bools.outputs.allow_force_pushes }}
+          ALLOW_DELETE: ${{ steps.bools.outputs.allow_deletions }}
+          LOCK_REL: ${{ steps.bools.outputs.lock_release_branches }}
+          REQUIRE_CODEOWNERS: ${{ steps.bools.outputs.require_code_owner_reviews }}
+        shell: bash
+        run: |
+          for BR in $BRANCHES; do
+            echo "Applying protection to $BR"
+            cat > body.json <<JSON
+            {
+              "required_status_checks": {
+                "strict": true,
+                "contexts": ${REQUIRED_CHECKS_JSON}
+              },
+              "enforce_admins": ${ENFORCE_ADMINS},
+              "required_pull_request_reviews": {
+                "required_approving_review_count": ${APPROVALS},
+                "dismiss_stale_reviews": true,
+                "require_last_push_approval": true,
+                "require_code_owner_reviews": ${REQUIRE_CODEOWNERS}
+              },
+              "restrictions": null,
+              "allow_force_pushes": ${ALLOW_FORCE},
+              "allow_deletions": ${ALLOW_DELETE},
+              "block_creations": false,
+              "required_conversation_resolution": true,
+              "required_linear_history": ${REQUIRE_LINEAR},
+              "lock_branch": ${LOCK_REL}
+            }
+            JSON
+
+            gh api \
+              --method PUT \
+              -H "Accept: application/vnd.github+json" \
+              /repos/${OWNER}/${REPO}/branches/${BR}/protection \
+              --input body.json
+          done
+
+      - name: Summary
+        env:
+          DEFAULT_BRANCH: ${{ github.event.inputs.default_branch }}
+          REQS_MAIN: ${{ github.event.inputs.required_checks_csv_main }}
+          REQS_REL: ${{ github.event.inputs.required_checks_csv_release }}
+          RELS: ${{ steps.rels.outputs.branches }}
+        run: |
+          echo "✅ Repo-level Auto-merge enabled."
+          echo "✅ Protection applied to: ${DEFAULT_BRANCH}"
+          echo "   • Required checks: ${REQS_MAIN}"
+          if [[ -n "${RELS}" ]]; then
+            echo "✅ Protection applied to release branches:"
+            for b in ${RELS}; do echo "   • ${b}  (checks: ${REQS_REL})"; done
+          else
+            echo "ℹ️  No release branches matched pattern or pattern not provided."
+          fi
