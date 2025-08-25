@@ -1,18 +1,88 @@
-body {
-  font-family: 'Roboto', sans-serif;
-  background-color: #f5f5f5;
-  color: #212121;
+/* SpectraMind V50 Default Widget Styles
+   Hydrates variables from color_palette.json at runtime
+*/
+
+:root {
+  /* Brand colors */
+  --sm-color-primary: #2151FF;
+  --sm-color-primary-contrast: #FFFFFF;
+  --sm-color-accent: #55E6C1;
+  --sm-color-warning: #FFB020;
+  --sm-color-error: #FF5D5D;
+  --sm-color-success: #2ECC71;
+
+  /* Semantic surfaces */
+  --sm-surface: #0B0F14;
+  --sm-surface-contrast: #E8EEF7;
+  --sm-text: #E8EEF7;
+  --sm-text-muted: #A7B2C5;
+  --sm-border: #1E2633;
+  --sm-card-bg: #111827;
+
+  /* Data visualization ramps */
+  --sm-categorical-0: #2151FF;
+  --sm-categorical-1: #55E6C1;
+  --sm-categorical-2: #FFB020;
+  --sm-categorical-3: #FF5D5D;
+  --sm-categorical-4: #C886FF;
+  --sm-categorical-5: #50B5FF;
+  --sm-categorical-6: #F56B8D;
+
+  --sm-heat-low: #0B1020;
+  --sm-heat-mid: #3C6E71;
+  --sm-heat-high: #FFD166;
+
+  /* Motion + radius */
+  --sm-radius-md: 14px;
+  --sm-shadow-card: 0 6px 24px rgba(0,0,0,0.35);
+  --sm-transition: 160ms cubic-bezier(.2,.8,.2,1);
 }
+
+/* Card styling */
 .card {
-  border-radius: 12px;
-  padding: 16px;
-  box-shadow: 0 4px 10px rgba(0,0,0,0.15);
-  background: #fff;
+  background-color: var(--sm-card-bg);
+  color: var(--sm-text);
+  border: 1px solid var(--sm-border);
+  border-radius: var(--sm-radius-md);
+  box-shadow: var(--sm-shadow-card);
+  padding: 1rem;
+  margin: 1rem 0;
+  transition: box-shadow var(--sm-transition);
 }
-.button-primary {
-  background-color: #1a237e;
-  color: white;
-  padding: 8px 16px;
-  border-radius: 6px;
-  border: none;
+
+.card:hover {
+  box-shadow: 0 10px 28px rgba(0,0,0,0.45);
+}
+
+/* Badge styling */
+.badge {
+  display: inline-block;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #fff;
+}
+
+.badge.info { background-color: var(--sm-color-primary); }
+.badge.ok { background-color: var(--sm-color-success); }
+.badge.warn { background-color: var(--sm-color-warning); }
+.badge.fail { background-color: var(--sm-color-error); }
+
+/* Table styling */
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  background-color: var(--sm-surface);
+  color: var(--sm-text);
+}
+
+.table th, .table td {
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--sm-border);
+}
+
+.table th {
+  background-color: var(--sm-card-bg);
+  text-align: left;
 }
