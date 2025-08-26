@@ -1,6 +1,18 @@
+# .github/ISSUE_TEMPLATE/config_update.yml
+# ==============================================================================
+# SpectraMind V50 — Config Update Request (GitHub Issue Form)
+# Purpose: capture new configs, schema updates, overrides, or deprecations with
+# Hydra/DVC rigor, CI reproducibility, and migration/rollback safety.
+# ==============================================================================
+
 name: "🧩 Config Update Request"
 description: "Propose, modify, or deprecate Hydra/DVC/CI configuration for SpectraMind V50"
-labels: ["config", "enhancement", "triage"]
+title: "[config] <short summary>"
+labels:
+  - config
+  - enhancement
+  - needs-triage
+projects: []
 assignees: []
 
 body:
@@ -8,9 +20,14 @@ body:
     attributes:
       value: |
         ## 🧩 Config Update — SpectraMind V50
-        Use this template to request **new configs**, **schema changes**, **defaults/overrides**, or **deprecations**.
-        Aim for **reproducibility** (Hydra snapshots, run hash), **compatibility**, and **minimal operator friction**.
 
+        Use this template for **new config groups**, **schema changes**, **defaults/overrides**, or **deprecations**.  
+        Aim for:
+        - **Reproducibility** (Hydra snapshots, run hash logging, CI alignment)  
+        - **Compatibility** (backward safe, clear migration)  
+        - **Minimal operator friction** (CLI-first, defaults sane)
+
+  # --- Title & rationale -------------------------------------------------------
   - type: input
     id: title
     attributes:
@@ -24,98 +41,101 @@ body:
     id: rationale
     attributes:
       label: "🎯 Rationale"
-      description: "Why do we need this change? Link to issue(s), incident(s), or benchmarks."
+      description: "Why is this needed? Link to issues, benchmarks, incidents."
       placeholder: |
         - Problem/goal
-        - Links: #1234, dashboard, benchmark
-        - Expected benefits (perf, stability, UX, compliance)
+        - Links: #1234, CI run 98765, dashboard
+        - Benefits: +8% throughput, smoother reproducibility, Hydra cleanup
     validations:
       required: true
 
+  # --- Change type -------------------------------------------------------------
   - type: checkboxes
     id: change_type
     attributes:
       label: "Change Type (check all that apply)"
       options:
         - label: "New config group/file(s) (e.g., configs/model/new_model.yaml)"
-        - label: "Update existing defaults list (switching presets)"
-        - label: "Parameter changes (keys/values in existing schema)"
-        - label: "Schema change (add/rename/remove keys)"
+        - label: "Update defaults list (switch presets)"
+        - label: "Parameter changes (keys/values in schema)"
+        - label: "Schema evolution (add/rename/remove keys)"
         - label: "Deprecation/removal (with migration path)"
-        - label: "CI/Workflow inputs or required checks changed"
+        - label: "CI/Workflow inputs or required checks updated"
         - label: "DVC stages/params changed"
-        - label: "Secret/credentialized path introduced (needs review)"
-        - label: "Docs/README required update"
+        - label: "Secret/credential path introduced (needs review)"
+        - label: "Docs/README update required"
         - label: "Other (describe below)"
 
+  # --- Scope & diffs -----------------------------------------------------------
   - type: textarea
     id: scope
     attributes:
       label: "📁 Scope of Change"
-      description: "List **exact** paths, groups, and keys affected."
+      description: "List **exact** paths, groups, and keys impacted."
       placeholder: |
         - files:
           - configs/model/v50_gnn_mamba.yaml (new)
-          - configs/train_v50.yaml (defaults: add model=v50_gnn_mamba)
+          - configs/train_v50.yaml (defaults updated)
         - keys:
           - training.batch_size (64 → 80)
-          - trainer.accelerator ("ddp" → "fsdp")
+          - trainer.strategy ("ddp" → "fsdp")
         - CI:
           - .github/workflows/submission.yml input `config_path`
         - DVC:
-          - dvc.yaml stage `train`: params file changed to params/train_v50.yaml
+          - dvc.yaml stage `train`: params → params/train_v50.yaml
     validations:
       required: true
 
   - type: textarea
     id: hydra_blocks
     attributes:
-      label: "🧱 Hydra Blocks"
-      description: "Provide the new/updated YAML blocks (minimal diff)."
+      label: "🧱 Hydra Blocks / YAML Snippet"
+      description: "Paste the updated/new YAML section(s)."
+      render: yaml
       placeholder: |
         # configs/train_v50.yaml
         defaults:
           - model: v50_gnn_mamba
-          - data: ariel_v50
           - optimizer: adamw
+          - data: ariel_v50
           - _self_
+        training:
+          batch_size: 80
+          epochs: 30
         trainer:
           devices: 8
           precision: bf16
           strategy: fsdp
-        training:
-          batch_size: 80
-          epochs: 30
-      render: yaml
 
+  # --- Compatibility & migration -----------------------------------------------
   - type: textarea
     id: compat
     attributes:
       label: "🔄 Backward Compatibility & Migration"
-      description: "Does this break existing runs or scripts? Provide fallback logic and migration steps."
+      description: "Does this break old runs? Provide migration/fallback steps."
       placeholder: |
-        - Non-breaking: old model alias kept as `v50_gnn_legacy`
-        - Deprecations: `training.grad_clip` → `training.grad_clip_norm` (fallback default=1.0)
-        - Migration script: tools/migrate_configs.py --from v49 --to v50
-        - Runtime fallback: if missing `trainer.strategy`, default to "ddp"
+        - Non-breaking: old alias kept as `v50_gnn_legacy`
+        - Deprecation: `training.grad_clip` → `training.grad_clip_norm` (fallback=1.0)
+        - Migration: tools/migrate_configs.py --from v49 --to v50
+        - Runtime fallback: default `trainer.strategy=ddp` if absent
     validations:
       required: true
 
+  # --- Validation & impact -----------------------------------------------------
   - type: textarea
     id: validation
     attributes:
       label: "🧪 Validation Plan"
-      description: "How will we verify the change? Include CLI commands, seeds, and acceptance thresholds."
+      description: "How will this be tested? CLI, seeds, thresholds."
       placeholder: |
         - CLI:
-          spectramind train model=v50_gnn_mamba data=ariel_v50 training.epochs=1 \
-            training.batch_size=80 hydra.run.dir=outputs/smoke_v50_mamba
+          spectramind train model=v50_gnn_mamba data=ariel_v50 training.epochs=1
         - Seeds: 1337, 1338
         - Acceptance:
-          - Reproducible run hash logged
-          - No CI failures
-          - Throughput ≥ 1,100 it/s on A100 80GB
-          - GLL unchanged ±0.5% vs baseline on 50-planet validation subset
+          - Run hash logged in v50_debug_log.md
+          - No CI/test failures
+          - Throughput ≥1,100 it/s on A100 80GB
+          - GLL ±0.5% vs baseline
     validations:
       required: true
 
@@ -123,12 +143,12 @@ body:
     id: impact
     attributes:
       label: "📊 Impact Assessment"
-      description: "Perf, memory, storage, and CI runtime deltas."
+      description: "Perf, memory, storage, and CI deltas."
       placeholder: |
         - Perf: +8% it/s (bf16+FSDP)
-        - Max VRAM: +1.5 GB (283-channel attention)
-        - Disk: +250 MB (new checkpoints)
-        - CI: +6 min on `submission.yml` matrix
+        - Max VRAM: +1.5 GB
+        - Disk: +250 MB (checkpoints)
+        - CI: +6 min on `submission.yml`
     validations:
       required: true
 
@@ -136,55 +156,57 @@ body:
     id: risks
     attributes:
       label: "⚠️ Risks & Mitigations"
-      description: "List risks and the mitigation/checks (feature flags, canary, rollback)."
+      description: "Identify risks and mitigation (flags, canary, rollback)."
       placeholder: |
-        - Risk: FSDP OOMs on 40GB GPUs → Mitigation: auto-reduce batch_size by 20% if oom
-        - Risk: schema mismatch in old notebooks → Mitigation: deprecation warning + migration script
-        - Risk: slower dataloader on HDD → Mitigation: optional `prefetch_factor=4` flag
+        - Risk: OOM on 40GB GPUs → Mitigation: auto-batch-reduce
+        - Risk: schema mismatch → Mitigation: deprecation warning + migration tool
+        - Risk: slower HDD dataloader → Mitigation: `prefetch_factor=4` toggle
     validations:
       required: true
 
+  # --- Run hash & docs ---------------------------------------------------------
   - type: input
     id: runhash
     attributes:
       label: "🔒 Run/Config Hash"
-      description: "Paste the run hash from logs (v50_debug_log.md) or MLflow ID."
+      description: "Paste run hash from v50_debug_log.md or MLflow ID."
       placeholder: "run_hash_summary_v50: 7f31a2..."
 
   - type: textarea
     id: docs
     attributes:
       label: "📚 Docs & Release Notes"
-      description: "List docs to update and proposed changelog entry."
+      description: "List docs/changelog updates."
       placeholder: |
-        - docs/configs.md (new model block & overrides)
-        - README quickstart (defaults changed)
-        - CHANGELOG: Added v50_gnn_mamba; switched trainer.strategy=fsdp (non-breaking); deprecated training.grad_clip
+        - docs/configs.md (new group)
+        - README quickstart (defaults updated)
+        - CHANGELOG: Added v50_gnn_mamba, switched to FSDP, deprecated grad_clip
     validations:
       required: true
 
+  # --- Checklist & links -------------------------------------------------------
   - type: checkboxes
     id: checklist
     attributes:
       label: "Pre-submit Checklist"
       options:
-        - label: "Hydra config composes without error (OmegaConf)"
+        - label: "Hydra composes cleanly (OmegaConf)"
         - label: "Self-test: `spectramind test --deep` passes"
-        - label: "CI updated for any new required checks/inputs"
+        - label: "CI updated for new required inputs"
         - label: "DVC stages/params updated & `dvc repro` green"
-        - label: "Back-compat fallback or migration documented"
-        - label: "Benchmarks captured with reproducible seeds"
-        - label: "Docs/CHANGELOG drafted"
-    validations:
-      required: true
+        - label: "Back-compat/migration documented"
+        - label: "Benchmarks with fixed seeds captured"
+        - label: "Docs & changelog drafted"
+      validations:
+        required: true
 
   - type: textarea
     id: links
     attributes:
       label: "🔗 Related Links"
-      description: "PRs, issues, CI runs, dashboards."
+      description: "Link PRs, CI runs, MLflow, issues."
       placeholder: |
         - PR: #4567
         - CI: actions/runs/123456789
         - MLflow: run/abcd-efgh
-        - Issue: #4521 (perf regression root cause)
+        - Issue: #4521
