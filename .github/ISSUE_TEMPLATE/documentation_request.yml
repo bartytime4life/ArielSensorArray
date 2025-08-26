@@ -1,0 +1,193 @@
+# .github/ISSUE_TEMPLATE/documentation_request.yml
+# ==============================================================================
+# SpectraMind V50 — Documentation Request (GitHub Issue Form)
+# Purpose: request updates/additions to docs with CLI-first, Hydra-safe rigor
+# ==============================================================================
+
+name: "📚 Documentation request"
+description: "Request updates to README/guides/config comments/CLI --help"
+title: "[docs] <short summary>"
+labels:
+  - type:docs
+  - needs-triage
+projects: []
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Help us keep **SpectraMind V50** documentation **accurate, CLI-first, and reproducible**.
+        Use this form to request edits to READMEs, guides, config comments, CLI `--help`, and dashboard docs.
+        Please include **exact locations, diffs/snippets, CLI + Hydra examples**, and any **artifacts/links**.
+
+  # --- WHERE / SCOPE -----------------------------------------------------------
+  - type: textarea
+    id: where
+    attributes:
+      label: "📍 Location(s) to update"
+      description: "List the file(s) and specific section(s) or anchors to update. Include line refs if known."
+      placeholder: |
+        - README.md → Quickstart / CLI section (update `spectramind diagnose dashboard` flags)
+        - /docs/GUI_GUIDE.md → Embedding symbolic heatmap section
+        - /configs/diagnostics/* comments → add field docs for `top_k`, `palette`
+        - CLI `--help` output for `spectramind diagnose symbolic-heatmap` (Regenerate examples)
+    validations:
+      required: true
+
+  # --- WHAT / ISSUE ------------------------------------------------------------
+  - type: textarea
+    id: problem
+    attributes:
+      label: "❗ Missing / Inaccurate / Outdated"
+      description: "Describe the exact doc gap, mismatch, or stale content. Quote current text if helpful."
+      placeholder: |
+        - README still shows `--no-tsne` flag removed in v50.8
+        - GUI guide lacks instructions to embed the new symbolic heatmap section
+        - Config comments for `diagnostics.symbolic.top_k` missing default + range
+    validations:
+      required: true
+
+  # --- PROPOSED UPDATE ---------------------------------------------------------
+  - type: textarea
+    id: proposal
+    attributes:
+      label: "🛠️ Proposed doc changes (snippets/diffs)"
+      description: "Provide the suggested text, code blocks, diffs, or tables we can paste. Prefer exact, final wording."
+      render: markdown
+      placeholder: |
+        **README.md → Quickstart:**
+        ```bash
+        spectramind diagnose symbolic-heatmap \
+          diagnostics.symbolic.input_json=outputs/diagnostics/constraint_violation_log.json \
+          diagnostics.symbolic.top_k=10 output.dir=outputs/diagnostics/symbolic
+        ```
+        **configs/diagnostics/symbolic_heatmap.yaml (comment header):**
+        ```yaml
+        # Generates heatmap from per-rule violations.
+        # - input_json: path to constraint_violation_log.json
+        # - top_k: integer > 0 (default: 10)
+        # - palette: matplotlib cmap name (default: magma)
+        ```
+    validations:
+      required: true
+
+  # --- CLI / HYDRA EXAMPLES ----------------------------------------------------
+  - type: textarea
+    id: cli_examples
+    attributes:
+      label: "💻 CLI & Hydra examples to include"
+      description: "Add copy-pasteable commands and config overrides to publish in docs."
+      render: bash
+      placeholder: |
+        spectramind diagnose symbolic-heatmap \
+          diagnostics.symbolic.input_json=${paths.diagnostics}/constraint_violation_log.json \
+          diagnostics.symbolic.top_k=10 output.dir=${paths.diagnostics}/symbolic
+    validations:
+      required: true
+
+  # --- ARTIFACTS & OUTPUTS -----------------------------------------------------
+  - type: textarea
+    id: artifacts
+    attributes:
+      label: "📦 Artifacts / screenshots / diagrams to reference"
+      description: "List images/plots/HTML/JSON files to link in docs. Provide relative paths or URLs."
+      placeholder: |
+        - outputs/diagnostics/symbolic/symbolic_heatmap.png
+        - outputs/diagnostics/symbolic/symbolic_heatmap.html
+        - outputs/diagnostics/constraint_violation_log.json
+        - docs/img/dashboard-symbolic-heatmap.png
+    validations:
+      required: false
+
+  # --- CROSS-REFS --------------------------------------------------------------
+  - type: textarea
+    id: references
+    attributes:
+      label: "🔗 Related issues/PRs/commits/specs"
+      description: "Link prior tickets, PRs, design docs, Kaggle threads, or arXiv refs that justify this update."
+      placeholder: |
+        - #482 (feature: symbolic-heatmap)
+        - PR #519 (dashboard injection)
+        - arXiv:2505.xxxxx (symbolic diagnostics)
+    validations:
+      required: false
+
+  # --- PRIORITY / SCOPE --------------------------------------------------------
+  - type: dropdown
+    id: priority
+    attributes:
+      label: "⏱️ Priority"
+      options:
+        - "P1 — Critical (docs block usage or mislead users)"
+        - "P2 — High (commonly used workflow docs missing)"
+        - "P3 — Medium (quality-of-life improvements)"
+        - "P4 — Low (polish/formatting)"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: "📐 Estimated scope"
+      options:
+        - "Small (1–2 edits, < 1h)"
+        - "Medium (multi-file, 1–3h)"
+        - "Large (guide rewrite, half-day+)"
+    validations:
+      required: false
+
+  # --- REPRO CHECKLIST ---------------------------------------------------------
+  - type: checkboxes
+    id: repro_check
+    attributes:
+      label: "🧪 Reproducibility & consistency checklist"
+      options:
+        - label: "CLI `--help` examples match current behavior and flags."
+          required: true
+        - label: "Hydra config paths, groups, and defaults are correct and composable."
+          required: true
+        - label: "Examples are runnable copy-paste (no placeholders that break)."
+          required: true
+        - label: "Artifact paths are valid; images/HTML/JSON exist or will be added."
+          required: true
+        - label: "If behavior changed, CHANGELOG and version badge updated."
+        - label: "DVC-tracked docs assets (if large) are linked or added to pipeline."
+        - label: "Dashboard docs reflect latest sections and anchors."
+    validations:
+      required: false
+
+  # --- DOCS SURFACES TO TOUCH --------------------------------------------------
+  - type: checkboxes
+    id: surfaces
+    attributes:
+      label: "🗂️ Surfaces to update (select all that apply)"
+      options:
+        - label: "Top-level README.md (Quickstart/CLI)"
+        - label: "/docs/* guides (GUI_GUIDE.md, KAGGLE_GUIDE.md, COMPARISON_GUIDE.md)"
+        - label: "assets/ guides (STYLES_GUIDE.md, GUI docs, assets-manifest.json)"
+        - label: "configs/* comments (Hydra groups, defaults, interpolation notes)"
+        - label: "CLI `--help` autogen examples in README/help sections"
+        - label: "Dashboard documentation (HTML sections, anchors, screenshots)"
+
+  # --- ATTACHMENTS -------------------------------------------------------------
+  - type: textarea
+    id: diffs
+    attributes:
+      label: "📝 Optional: inline diffs or patch"
+      description: "Paste a unified diff or patch chunk that we can apply directly."
+      render: markdown
+      placeholder: |
+        ```diff
+        - --no-tsne
+        + --skip-tsne
+        ```
+
+  # --- CONFIRMATION ------------------------------------------------------------
+  - type: checkboxes
+    id: confirmation
+    attributes:
+      label: "✅ Confirmation"
+      options:
+        - label: "I confirm this request aligns with CLI-first, Hydra-safe, and reproducibility principles."
+          required: true
