@@ -1,92 +1,211 @@
-name: "🚀 Feature Request"
-description: "Propose a new idea, enhancement, or scientific/engineering capability for SpectraMind V50"
-labels: ["feature", "enhancement", "triage"]
+# .github/ISSUE_TEMPLATE/feature_request.yml
+# ==============================================================================
+# SpectraMind V50 — Feature Request (GitHub Issue Form)
+# Purpose: structure proposals so they are CLI-first, Hydra-safe, and reproducible
+# ==============================================================================
+
+name: "🚀 Feature request"
+description: "Propose a new capability for SpectraMind V50 with CLI + Hydra details"
+title: "[feat] <short summary>"
+labels:
+  - feature
+  - enhancement
+  - needs-triage
+projects: []
 assignees: []
 
 body:
   - type: markdown
     attributes:
       value: |
-        ## 🚀 Feature Request (SpectraMind V50)
-        Thanks for taking the time to suggest an improvement.  
-        Please fill out the details below so we can evaluate your request in line with our **NASA-grade reproducibility** and **CLI-first design**.
+        Thanks for proposing an improvement to **SpectraMind V50**.
+        This form emphasizes **CLI-first**, **Hydra-safe configs**, and **NASA-grade reproducibility**.
+        Please provide concrete details (commands, configs, artifacts) so we can implement and review efficiently.
 
+  # --- High-level summary ------------------------------------------------------
   - type: input
     id: summary
     attributes:
       label: "📝 Feature Summary"
-      description: "Provide a concise title/summary of the feature you are requesting."
-      placeholder: "Example: Add COREL calibration heatmap overlay in CLI diagnostics"
+      description: "A concise one-liner (what this adds, in user terms)."
+      placeholder: "Add symbolic violation heatmap overlay in the HTML diagnostics dashboard"
+    validations:
+      required: true
 
+  # --- Motivation / problem ----------------------------------------------------
   - type: textarea
     id: motivation
     attributes:
       label: "💡 Motivation / Problem"
-      description: |
-        Why is this feature needed?  
-        Describe the scientific, usability, or reproducibility gap this addresses.
-      placeholder: "This would improve uncertainty calibration diagnostics and make symbolic overlays visible in HTML dashboards."
+      description: "Why is this needed? Focus on reproducibility/scientific gaps and expected user impact."
+      placeholder: |
+        Our current dashboard does not surface symbolic rule violations, which limits scientific triage.
+        Adding a violation heatmap will close the loop with SHAP overlays and improve model debugging speed.
+    validations:
+      required: true
 
+  # --- Proposed solution (overview) -------------------------------------------
   - type: textarea
     id: proposed_solution
     attributes:
-      label: "🛠️ Proposed Solution"
-      description: |
-        Describe your proposed implementation.  
-        Include references to CLI commands, configs, symbolic modules, or pipelines.
+      label: "🛠️ Proposed Solution (overview)"
+      description: "Describe what should be built. Summarize the CLI, config, modules, and artifacts."
       placeholder: |
-        - Add new subcommand: `spectramind diagnose calibration-heatmap`
-        - Integrate with Hydra configs under `configs/diagnostics/`
-        - Log results in `v50_debug_log.md` and export to HTML dashboard
+        - New CLI: `spectramind diagnose symbolic-heatmap`
+        - Config group: `configs/diagnostics/symbolic_heatmap.yaml`
+        - Logs & artifacts: write `constraint_violation_log.json`, export `symbolic_heatmap.png/html`
+        - Dashboard: auto-embed in `generate_html_report.py` as a new section
+    validations:
+      required: true
 
+  # --- Concrete CLI mapping ----------------------------------------------------
   - type: textarea
-    id: alternatives
+    id: cli_cmd
     attributes:
-      label: "🔄 Alternatives Considered"
-      description: "If you considered other options, describe them here."
-      placeholder: "Alternatively, this could be implemented as a notebook-only utility, but that breaks reproducibility policy."
+      label: "💻 Exact CLI command(s)"
+      description: "Copy-pasteable command(s) that implement the feature. Include flags and example overrides."
+      render: bash
+      placeholder: |
+        spectramind diagnose symbolic-heatmap \
+          diagnostics.symbolic.input_json=outputs/diagnostics/constraint_violation_log.json \
+          diagnostics.symbolic.top_k=10 \
+          output.dir=outputs/diagnostics/symbolic
+    validations:
+      required: true
 
+  # --- Hydra config integration -----------------------------------------------
+  - type: textarea
+    id: config_changes
+    attributes:
+      label: "🧩 Hydra config(s) to add/modify"
+      description: "Specify new/updated YAML files, groups, and example fields or interpolations."
+      render: yaml
+      placeholder: |
+        # configs/diagnostics/symbolic_heatmap.yaml
+        _target_: spectramind.diagnostics.symbolic.SymbolicHeatmap
+        input_json: ${paths.diagnostics}/constraint_violation_log.json
+        top_k: 10
+        palette: "magma"
+        output:
+          dir: ${paths.diagnostics}/symbolic
+          save_png: true
+          save_html: true
+    validations:
+      required: true
+
+  # --- Artifacts, logging, and dashboards -------------------------------------
+  - type: textarea
+    id: artifacts
+    attributes:
+      label: "📦 Artifacts, logs, and dashboard outputs"
+      description: "List all files produced or updated. Include logging expectations."
+      placeholder: |
+        - Artifacts: `outputs/diagnostics/symbolic/symbolic_heatmap.png`, `symbolic_heatmap.html`
+        - Logs: append run summary to `logs/v50_debug_log.md` (CLI version, config hash, artifact paths)
+        - JSON: `outputs/diagnostics/constraint_violation_log.json` (input)
+        - Dashboard: inject a new section with the heatmap in `diagnostic_report_vN.html`
+    validations:
+      required: true
+
+  # --- Impact areas ------------------------------------------------------------
   - type: checkboxes
     id: impact
     attributes:
-      label: "📈 Impact Areas"
-      description: "Select all that apply."
+      label: "📈 Impact areas (select all that apply)"
       options:
         - label: "CLI functionality (`spectramind ...`)"
         - label: "Hydra configs / reproducibility"
         - label: "Scientific modeling / physics realism"
         - label: "Symbolic reasoning & logic engine"
         - label: "Diagnostics & visualization (HTML, plots, dashboards)"
-        - label: "Pipeline integration (training, inference, calibration)"
-        - label: "Other (please describe below)"
+        - label: "Pipeline integration (calibrate/train/predict/submit)"
+        - label: "Data & DVC tracking (artifacts, stages)"
+        - label: "CI workflows / selftest / pipeline consistency checker"
 
+  # --- Alternatives considered -------------------------------------------------
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: "🔄 Alternatives considered"
+      description: "Document trade-offs and why the chosen approach is preferred."
+      placeholder: |
+        - Notebook-only prototype — rejected: violates CLI-first & reproducibility.
+        - Embedding in SHAP overlay plot — rejected: conflates distinct diagnostics.
+    validations:
+      required: false
+
+  # --- References & related ----------------------------------------------------
   - type: textarea
     id: related
     attributes:
-      label: "🔗 Related Issues / References"
-      description: "Link related issues, papers, or challenge rules here."
-      placeholder: "#123, arXiv:2505.xxxxx, Kaggle forum link..."
+      label: "🔗 Related issues / references"
+      description: "Link prior issues, PRs, Kaggle threads, arXiv papers, or design docs."
+      placeholder: |
+        - #123 (dashboard export refactor)
+        - arXiv:2505.xxxxx (symbolic diagnostics)
+        - Kaggle forum: discussion on violation patterns
 
+  # --- Priority & scope --------------------------------------------------------
   - type: dropdown
     id: priority
     attributes:
       label: "⏱️ Priority"
-      description: "How urgent or impactful is this feature?"
+      description: "How urgent/impactful is this feature?"
       options:
-        - "P1 — Critical (needed for Kaggle submission / core science)"
-        - "P2 — High (important for diagnostics / dashboards)"
-        - "P3 — Medium (quality-of-life improvement)"
+        - "P1 — Critical (Kaggle submission blocker / core science)"
+        - "P2 — High (major diagnostics or reproducibility improvement)"
+        - "P3 — Medium (quality-of-life, helpful enhancement)"
         - "P4 — Low (nice to have)"
+    validations:
+      required: true
 
-  - type: textarea
-    id: additional
+  - type: dropdown
+    id: scope
     attributes:
-      label: "📂 Additional Context"
-      description: |
-        Provide any extra notes, sketches, or configuration examples.  
-        Attach configs, logs, or pseudocode if useful.
-      placeholder: |
-        Example Hydra override:
-        ```bash
-        spectramind diagnose calibration-heatmap diagnostics.plot=true
-        ```
+      label: "📐 Estimated scope"
+      description: "Size/complexity to guide planning (non-binding)."
+      options:
+        - "Small (1–2 days)"
+        - "Medium (3–5 days)"
+        - "Large (1–2 weeks)"
+        - "Epic (>2 weeks)"
+    validations:
+      required: false
+
+  # --- Reproducibility & compliance checks ------------------------------------
+  - type: checkboxes
+    id: reproducibility
+    attributes:
+      label: "🧪 Reproducibility & compliance checklist"
+      options:
+        - label: "Feature is **CLI-first** and fully runnable without notebooks."
+          required: true
+        - label: "Hydra configs defined or updated (groups, defaults) with example overrides."
+          required: true
+        - label: "Run metadata (CLI version, config hash, artifact paths) appended to `logs/v50_debug_log.md`."
+          required: true
+        - label: "Artifacts tracked in DVC or documented for DVC stage updates."
+          required: false
+        - label: "CI coverage planned (selftest or pipeline consistency checker updated if needed)."
+          required: false
+        - label: "Docs/README/config comments will be updated accordingly."
+          required: true
+
+  # --- Competition/data safety (if applicable) ---------------------------------
+  - type: checkboxes
+    id: competition_safety
+    attributes:
+      label: "🛡️ Competition/data safety (Ariel challenge rules)"
+      options:
+        - label: "No disallowed external data or internet dependencies introduced."
+        - label: "Kaggle submission flow unaffected or improved."
+        - label: "Large artifacts kept within quotas; offline operation supported."
+
+  # --- Final confirmation ------------------------------------------------------
+  - type: checkboxes
+    id: confirmation
+    attributes:
+      label: "✅ Confirmation"
+      options:
+        - label: "I confirm the above details are accurate and align with the CLI-first, Hydra-safe, reproducible principles."
+          required: true
