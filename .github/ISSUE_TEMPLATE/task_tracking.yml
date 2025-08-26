@@ -1,12 +1,12 @@
 # .github/ISSUE_TEMPLATE/task_tracking.yml
 # ==============================================================================
 # SpectraMind V50 — Task Tracking (GitHub Issue Form)
-# Purpose: plan/track a small shippable unit of work with CLI-first reproducibility,
-# Hydra/DVC/CI integration, and clear acceptance criteria.
+# Purpose: Plan and track a small, shippable unit of work with CLI-first reproducibility,
+# Hydra/DVC/CI integration, physics-informed rigor, and clear acceptance criteria.
 # ==============================================================================
 
 name: "📌 Task Tracking"
-description: "Plan and track a unit of work for SpectraMind V50 (CLI-first, reproducible, testable)"
+description: "Plan and track a unit of work for SpectraMind V50 (CLI-first, reproducible, testable, physics-aware)"
 title: "[task] <short summary>"
 labels:
   - task
@@ -19,12 +19,13 @@ body:
     attributes:
       value: |
         ## 📌 Task — SpectraMind V50
-        Use this template to plan a **small, shippable task** with clear **acceptance criteria** and reproducibility.
+        Use this template to plan a **small, shippable task** with clear **acceptance criteria**.
         Every task must remain:
         - **CLI-first** (`spectramind` entrypoint, no notebooks-only features)  
         - **Hydra-configured** (YAML overrides, no hard-coded params)  
         - **DVC-versioned** (data/artifacts tracked, hashes recorded)  
-        - **CI-verified** (unit/smoke tests, workflows green)
+        - **CI-verified** (unit/smoke tests, workflows green)  
+        - **Physics- & Symbolic-informed** (aligns with V50 scientific constraints, FFT/SHAP/symbolic overlays)  
 
   # --- Metadata ----------------------------------------------------------------
   - type: input
@@ -49,6 +50,7 @@ body:
         - "Data/DVC"
         - "Security Hardening"
         - "Ops/Infra"
+        - "Diagnostics/Explainability"
         - "Other"
       default: 0
 
@@ -79,7 +81,7 @@ body:
       placeholder: |
         - Context/problem
         - Outcome expected
-        - Constraints (runtime, GPU, Kaggle 9h limit)
+        - Constraints (runtime, GPU, Kaggle 9h limit, symbolic integrity)
 
   - type: textarea
     id: acceptance_criteria
@@ -91,6 +93,7 @@ body:
         - CI green on {ubuntu-latest, cuda-12.1}
         - Run hash logged in v50_debug_log.md
         - Throughput ≥ X it/s on A100 80GB
+        - Symbolic/physics checks pass (smoothness, uncertainty calibration)
         - Docs updated (README/configs.md)
     validations:
       required: true
@@ -105,6 +108,7 @@ body:
         - [ ] Add CLI flag(s) + help
         - [ ] Wire CI job and cache
         - [ ] Add unit/smoke tests
+        - [ ] Physics/symbolic validation hooks
         - [ ] Update docs + changelog
 
   # --- Dependencies & repro ----------------------------------------------------
@@ -170,7 +174,8 @@ body:
       description: "Known risks and rollback plan."
       placeholder: |
         - Risk: OOM on 40GB GPUs → Mitigation: auto batch_size scale
-        - Risk: schema mismatch → Mitigation: deprecation warning + migration script
+        - Risk: symbolic violation → Mitigation: log + rollback flag
+        - Risk: schema mismatch → Mitigation: migration script
 
   # --- Ownership & planning ----------------------------------------------------
   - type: input
@@ -239,6 +244,7 @@ body:
         - label: "CI green on required checks"
         - label: "Run hash logged in v50_debug_log.md"
         - label: "Docs/changelog updated"
+        - label: "Physics/symbolic validation passed"
         - label: "No regressions in smoke tests"
 
   # --- Related links -----------------------------------------------------------
