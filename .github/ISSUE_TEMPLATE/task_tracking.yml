@@ -1,0 +1,230 @@
+name: "📌 Task Tracking"
+description: "Plan and track a unit of work for SpectraMind V50 (CLI-first, reproducible, testable)"
+labels: ["task", "triage"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## 📌 Task — SpectraMind V50
+        Create a **small, shippable piece** of work with clear **acceptance criteria** and **repro steps**.
+        Favour **CLI-first**, **Hydra-configured**, **DVC-versioned**, and **CI-verified** changes.
+
+  - type: input
+    id: title
+    attributes:
+      label: "📝 Short Title"
+      description: "Concise, action-oriented title"
+      placeholder: "Example: Add FSDP config preset + smoke test"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: task_type
+    attributes:
+      label: "Task Type"
+      options:
+        - "Feature"
+        - "Bugfix"
+        - "Refactor"
+        - "Docs"
+        - "CI/Automation"
+        - "Data/DVC"
+        - "Security Hardening"
+        - "Ops/Infra"
+        - "Other"
+      default: 0
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: "Priority"
+      options:
+        - "P0 — Critical (blocks submissions/CI)"
+        - "P1 — High (time-sensitive)"
+        - "P2 — Normal"
+        - "P3 — Low/Nice-to-have"
+      default: 2
+
+  - type: input
+    id: epic
+    attributes:
+      label: "🔗 Epic / Parent"
+      description: "Link to epic/parent issue or milestone"
+      placeholder: "#1234 or v50.4 milestone"
+
+  - type: textarea
+    id: description
+    attributes:
+      label: "📄 Description"
+      description: "What will be delivered? Keep it outcome-focused."
+      placeholder: |
+        - Context/problem
+        - What success looks like
+        - Any constraints (runtime, GPU, Kaggle)
+
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: "✅ Acceptance Criteria"
+      description: "Observable, testable criteria that define 'done'."
+      placeholder: |
+        - CLI command succeeds: `spectramind ...` (see Repro below)
+        - CI green on matrix {ubuntu-latest, cuda-12.1}
+        - Run hash logged in v50_debug_log.md
+        - Throughput ≥ X it/s on A100 80GB (smoke)
+        - Docs updated (README/configs.md)
+    validations:
+      required: true
+
+  - type: textarea
+    id: subtasks
+    attributes:
+      label: "☑️ Subtasks (task list)"
+      description: "Break down into small, parallelizable steps."
+      placeholder: |
+        - [ ] Draft Hydra config block
+        - [ ] Add CLI flag(s) + help
+        - [ ] Wire CI job and cache
+        - [ ] Add unit/smoke tests
+        - [ ] Update docs + changelog
+
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: "🔗 Dependencies / Blockers"
+      description: "PRs, issues, data, secrets, or approvals needed."
+      placeholder: |
+        - Blocks on: #5678 (dataset update)
+        - Requires: BRANCH_PROTECT_PAT in repo secrets
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: "♻️ Repro / Verification (exact CLI + overrides)"
+      description: "Exact command(s) to verify task completion. Prefer `spectramind` + Hydra overrides."
+      placeholder: |
+        spectramind train \
+          model=v50_gnn_mamba data=ariel_v50 \
+          trainer.strategy=fsdp trainer.devices=8 \
+          training.epochs=1 training.batch_size=80 \
+          hydra.run.dir=outputs/task_fsdp_smoke
+      render: shell
+
+  - type: textarea
+    id: config_changes
+    attributes:
+      label: "🧱 Hydra/DVC/CI Changes"
+      description: "Add or paste new/updated YAML blocks, DVC stage changes, or CI job diffs."
+      placeholder: |
+        # configs/train_v50.yaml
+        defaults:
+          - model: v50_gnn_mamba
+          - _self_
+        trainer:
+          strategy: fsdp
+          precision: bf16
+        ---
+        # dvc.yaml
+        stages:
+          train:
+            params:
+              - params/train_v50.yaml
+      render: yaml
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: "📊 Impact & Metrics"
+      description: "Perf/memory/storage deltas, CI runtime, user impact."
+      placeholder: |
+        - Perf: +6% it/s
+        - VRAM: +1.2 GB peak
+        - Disk: +200 MB checkpoints
+        - CI: +4 min on submission.yml
+
+  - type: textarea
+    id: risk
+    attributes:
+      label: "⚠️ Risks & Mitigations"
+      description: "Known risks and how to mitigate/rollback."
+      placeholder: |
+        - Risk: OOM on 40GB GPUs → Mitigation: auto scale batch_size -20%
+        - Risk: schema mismatch → Mitigation: deprecation warning + migration script
+
+  - type: input
+    id: owner
+    attributes:
+      label: "👤 Owner"
+      description: "Primary DRIs/GitHub handles (comma-separated)"
+      placeholder: "@owner1, @owner2"
+    validations:
+      required: true
+
+  - type: input
+    id: due
+    attributes:
+      label: "📆 Target Due Date"
+      description: "YYYY-MM-DD (for sprint planning)"
+      placeholder: "2025-09-05"
+
+  - type: textarea
+    id: artifacts
+    attributes:
+      label: "🗂️ Artifacts / Evidence"
+      description: "Logs, links, screenshots, run hashes, MLflow/DVC/CI runs."
+      placeholder: |
+        - MLflow run: abcd-efgh
+        - Run hash: 7f31a2...
+        - Actions: actions/runs/123456789
+
+  - type: checkboxes
+    id: docs
+    attributes:
+      label: "📚 Docs & Changelog"
+      options:
+        - label: "Updated README / quickstart"
+        - label: "Updated configs.md / CLI help"
+        - label: "Added/updated CHANGELOG entry"
+        - label: "No docs needed"
+
+  - type: input
+    id: estimate
+    attributes:
+      label: "⏱️ Estimate"
+      description: "Story points or hours"
+      placeholder: "3 pts or ~6h"
+
+  - type: checkboxes
+    id: dor
+    attributes:
+      label: "Definition of Ready (DoR)"
+      options:
+        - label: "Clear acceptance criteria"
+        - label: "Dependencies identified"
+        - label: "Repro/verification commands defined"
+        - label: "Owner + due date set"
+
+  - type: checkboxes
+    id: dod
+    attributes:
+      label: "Definition of Done (DoD)"
+      options:
+        - label: "All subtasks checked"
+        - label: "CLI works with documented overrides"
+        - label: "CI green on required checks"
+        - label: "Run hash recorded in logs"
+        - label: "Docs/changelog updated"
+        - label: "No regressions in smoke tests"
+
+  - type: textarea
+    id: links
+    attributes:
+      label: "🔗 Related Links"
+      description: "PRs/issues, benchmark dashboards, CI runs, Kaggle submissions."
+      placeholder: |
+        - PR: #7890
+        - Issue: #4567
+        - CI: actions/runs/234567890
+        - Kaggle: submission 2025-08-25
