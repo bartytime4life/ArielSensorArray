@@ -1,0 +1,190 @@
+name: "🧩 Config Update Request"
+description: "Propose, modify, or deprecate Hydra/DVC/CI configuration for SpectraMind V50"
+labels: ["config", "enhancement", "triage"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## 🧩 Config Update — SpectraMind V50
+        Use this template to request **new configs**, **schema changes**, **defaults/overrides**, or **deprecations**.
+        Aim for **reproducibility** (Hydra snapshots, run hash), **compatibility**, and **minimal operator friction**.
+
+  - type: input
+    id: title
+    attributes:
+      label: "📝 Short Title"
+      description: "Concise summary of the config change."
+      placeholder: "Example: Add v50_gnn_mamba model group + defaults"
+    validations:
+      required: true
+
+  - type: textarea
+    id: rationale
+    attributes:
+      label: "🎯 Rationale"
+      description: "Why do we need this change? Link to issue(s), incident(s), or benchmarks."
+      placeholder: |
+        - Problem/goal
+        - Links: #1234, dashboard, benchmark
+        - Expected benefits (perf, stability, UX, compliance)
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: change_type
+    attributes:
+      label: "Change Type (check all that apply)"
+      options:
+        - label: "New config group/file(s) (e.g., configs/model/new_model.yaml)"
+        - label: "Update existing defaults list (switching presets)"
+        - label: "Parameter changes (keys/values in existing schema)"
+        - label: "Schema change (add/rename/remove keys)"
+        - label: "Deprecation/removal (with migration path)"
+        - label: "CI/Workflow inputs or required checks changed"
+        - label: "DVC stages/params changed"
+        - label: "Secret/credentialized path introduced (needs review)"
+        - label: "Docs/README required update"
+        - label: "Other (describe below)"
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: "📁 Scope of Change"
+      description: "List **exact** paths, groups, and keys affected."
+      placeholder: |
+        - files:
+          - configs/model/v50_gnn_mamba.yaml (new)
+          - configs/train_v50.yaml (defaults: add model=v50_gnn_mamba)
+        - keys:
+          - training.batch_size (64 → 80)
+          - trainer.accelerator ("ddp" → "fsdp")
+        - CI:
+          - .github/workflows/submission.yml input `config_path`
+        - DVC:
+          - dvc.yaml stage `train`: params file changed to params/train_v50.yaml
+    validations:
+      required: true
+
+  - type: textarea
+    id: hydra_blocks
+    attributes:
+      label: "🧱 Hydra Blocks"
+      description: "Provide the new/updated YAML blocks (minimal diff)."
+      placeholder: |
+        # configs/train_v50.yaml
+        defaults:
+          - model: v50_gnn_mamba
+          - data: ariel_v50
+          - optimizer: adamw
+          - _self_
+        trainer:
+          devices: 8
+          precision: bf16
+          strategy: fsdp
+        training:
+          batch_size: 80
+          epochs: 30
+      render: yaml
+
+  - type: textarea
+    id: compat
+    attributes:
+      label: "🔄 Backward Compatibility & Migration"
+      description: "Does this break existing runs or scripts? Provide fallback logic and migration steps."
+      placeholder: |
+        - Non-breaking: old model alias kept as `v50_gnn_legacy`
+        - Deprecations: `training.grad_clip` → `training.grad_clip_norm` (fallback default=1.0)
+        - Migration script: tools/migrate_configs.py --from v49 --to v50
+        - Runtime fallback: if missing `trainer.strategy`, default to "ddp"
+    validations:
+      required: true
+
+  - type: textarea
+    id: validation
+    attributes:
+      label: "🧪 Validation Plan"
+      description: "How will we verify the change? Include CLI commands, seeds, and acceptance thresholds."
+      placeholder: |
+        - CLI:
+          spectramind train model=v50_gnn_mamba data=ariel_v50 training.epochs=1 \
+            training.batch_size=80 hydra.run.dir=outputs/smoke_v50_mamba
+        - Seeds: 1337, 1338
+        - Acceptance:
+          - Reproducible run hash logged
+          - No CI failures
+          - Throughput ≥ 1,100 it/s on A100 80GB
+          - GLL unchanged ±0.5% vs baseline on 50-planet validation subset
+    validations:
+      required: true
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: "📊 Impact Assessment"
+      description: "Perf, memory, storage, and CI runtime deltas."
+      placeholder: |
+        - Perf: +8% it/s (bf16+FSDP)
+        - Max VRAM: +1.5 GB (283-channel attention)
+        - Disk: +250 MB (new checkpoints)
+        - CI: +6 min on `submission.yml` matrix
+    validations:
+      required: true
+
+  - type: textarea
+    id: risks
+    attributes:
+      label: "⚠️ Risks & Mitigations"
+      description: "List risks and the mitigation/checks (feature flags, canary, rollback)."
+      placeholder: |
+        - Risk: FSDP OOMs on 40GB GPUs → Mitigation: auto-reduce batch_size by 20% if oom
+        - Risk: schema mismatch in old notebooks → Mitigation: deprecation warning + migration script
+        - Risk: slower dataloader on HDD → Mitigation: optional `prefetch_factor=4` flag
+    validations:
+      required: true
+
+  - type: input
+    id: runhash
+    attributes:
+      label: "🔒 Run/Config Hash"
+      description: "Paste the run hash from logs (v50_debug_log.md) or MLflow ID."
+      placeholder: "run_hash_summary_v50: 7f31a2..."
+
+  - type: textarea
+    id: docs
+    attributes:
+      label: "📚 Docs & Release Notes"
+      description: "List docs to update and proposed changelog entry."
+      placeholder: |
+        - docs/configs.md (new model block & overrides)
+        - README quickstart (defaults changed)
+        - CHANGELOG: Added v50_gnn_mamba; switched trainer.strategy=fsdp (non-breaking); deprecated training.grad_clip
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: "Pre-submit Checklist"
+      options:
+        - label: "Hydra config composes without error (OmegaConf)"
+        - label: "Self-test: `spectramind test --deep` passes"
+        - label: "CI updated for any new required checks/inputs"
+        - label: "DVC stages/params updated & `dvc repro` green"
+        - label: "Back-compat fallback or migration documented"
+        - label: "Benchmarks captured with reproducible seeds"
+        - label: "Docs/CHANGELOG drafted"
+    validations:
+      required: true
+
+  - type: textarea
+    id: links
+    attributes:
+      label: "🔗 Related Links"
+      description: "PRs, issues, CI runs, dashboards."
+      placeholder: |
+        - PR: #4567
+        - CI: actions/runs/123456789
+        - MLflow: run/abcd-efgh
+        - Issue: #4521 (perf regression root cause)
