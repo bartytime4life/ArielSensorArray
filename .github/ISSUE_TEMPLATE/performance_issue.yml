@@ -1,0 +1,254 @@
+name: "⚡ Performance Issue"
+description: "Report slowdowns, regressions, high variance, or excessive resource use in SpectraMind V50"
+labels: ["performance", "triage"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## ⚡ Performance Issue — SpectraMind V50
+        Help us diagnose and fix performance problems **quickly and reproducibly**.
+        Please provide **exact CLI commands**, **config hashes**, and **metrics** so we can replicate.
+
+  - type: input
+    id: summary
+    attributes:
+      label: "📝 Summary"
+      description: "One-line description of the performance problem."
+      placeholder: "Example: Training throughput halved on main after #1234"
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: "🎯 Impact & Severity"
+      description: "Who/what is affected? Is this blocking CI, releases, or submissions?"
+      placeholder: "Describe user impact, deadlines, and scope (e.g., all GPUs, only A100s, only inference)."
+    validations:
+      required: true
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: "SEV Level"
+      options:
+        - "SEV-1 — Blocking submissions/mission-critical"
+        - "SEV-2 — Major degradation, no workaround"
+        - "SEV-3 — Moderate, workaround exists"
+        - "SEV-4 — Minor/observational"
+      default: 1
+
+  - type: checkboxes
+    id: symptoms
+    attributes:
+      label: "Observed Symptoms"
+      options:
+        - label: "Throughput drop (samples/sec, batches/sec)"
+        - label: "Latency spike (per-step, per-epoch, inference)"
+        - label: "OOM / memory growth / fragmentation"
+        - label: "CPU/GPU underutilization"
+        - label: "I/O bottleneck (dataset, DVC remote)"
+        - label: "High variance / nondeterminism"
+        - label: "Numerical instability with AMP/bfloat16"
+        - label: "Scheduler or dataloader stall"
+        - label: "Other (explain below)"
+
+  - type: textarea
+    id: expected_actual
+    attributes:
+      label: "📊 Expected vs Actual"
+      description: "Provide concrete numbers and units. Include baseline if known."
+      placeholder: |
+        Expected: ~1,200 it/s on A100 80GB (bs=64, AMP, DDP=8)
+        Actual: ~580 it/s on same hardware
+        Delta: -52%
+
+  - type: textarea
+    id: metrics_table
+    attributes:
+      label: "📈 Metrics Snapshot"
+      description: "Paste a small table or bullet list of key metrics (utilization, memory, latency, throughput)."
+      placeholder: |
+        - GPU util: 46–58% (was 92–97%)
+        - GPU mem: 42 GB peak (was ~39 GB)
+        - Step time: 11.2 ms → 21.7 ms
+        - Dataloader wait: ~38% step time
+        - Disk/Net: 220 MB/s read; DVC cache hits 88%
+
+  - type: checkboxes
+    id: regression
+    attributes:
+      label: "Regression?"
+      description: "Is this worse than before?"
+      options:
+        - label: "Yes — performance used to be better"
+        - label: "No — first time observed"
+        - label: "Unsure"
+
+  - type: input
+    id: since_when
+    attributes:
+      label: "If regression: Since when?"
+      description: "Commit SHA(s) / PR(s) / workflow run IDs / date."
+      placeholder: "e.g., since 9a7b2f4 (#2345), CI run build-2025-08-20T11:24"
+
+  - type: input
+    id: code_version
+    attributes:
+      label: "🔒 Code Version"
+      description: "Git commit SHA (short/long) or tag."
+      placeholder: "e.g., 9a7b2f4 or v50.3.1"
+    validations:
+      required: true
+
+  - type: input
+    id: config_hash
+    attributes:
+      label: "🧭 Config Hash / Run Hash"
+      description: "Hydra/DVC/MLflow run hash or the reported config hash in logs."
+      placeholder: "e.g., run_hash_summary_v50: 7f31a2..."
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: "🖥️ Environment Details"
+      description: "Exact hardware + software stack."
+      placeholder: |
+        OS: Ubuntu 22.04.4
+        CUDA: 12.1, Driver: 550.xx
+        Python: 3.10.x, PyTorch: 2.3.x, DDP: yes, AMP: yes
+        GPU: 8×A100 80GB (NVLink), CPU: 2×AMD EPYC 7xx
+        Storage: NVMe local cache + DVC remote (S3)
+        Network: 100GbE
+        Docker/Poetry: image tag or poetry.lock hash
+    validations:
+      required: true
+
+  - type: textarea
+    id: workload
+    attributes:
+      label: "🧪 Workload Definition"
+      description: "Be specific: dataset version, batch size, sequence length, model variant, training/inference mode."
+      placeholder: |
+        Dataset: ariel_v50_train@dvc:4c8e... (DVC rev)
+        Config: configs/train_v50.yaml + overrides (below)
+        Model: v50_gnn_mamba, params ~128M
+        Batch size: 64 (global), seq len: 135k (FGS1), 283 bins (AIRS)
+        Mixed precision: fp16 (GradScaler=True)
+        DDP: 8 GPUs, gradient accumulation: 2
+        Inference: single-GPU, bs=256
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: "♻️ Repro Steps (Exact CLI + Hydra overrides)"
+      description: "List **exact** commands used. Prefer `spectramind` CLI with full overrides."
+      placeholder: |
+        spectramind train \
+          +experiment_name=perf_regression_2025_08_25 \
+          model=v50_gnn_mamba data=ariel_v50 \
+          training.epochs=1 training.fast_dev_run=false \
+          trainer.ddp=true trainer.devices=8 \
+          training.batch_size=64 \
+          hydra.run.dir=outputs/exp_perf_regression
+        # Include any env vars (e.g., CUDA_VISIBLE_DEVICES), and note first failure or slowdown.
+
+    validations:
+      required: true
+
+  - type: textarea
+    id: artifacts
+    attributes:
+      label: "🗂️ Artifacts & Evidence"
+      description: "Attach or link logs/reports to speed triage."
+      placeholder: |
+        - v50_debug_log.md excerpt (lines)
+        - profiler traces (nsys, torch.profiler, py-spy, perf) + flamegraphs
+        - nvidia-smi dmon timeline, DCGM metrics
+        - MLflow run links (metrics/time/params)
+        - DVC metrics/plots
+        - CI run URLs & job logs
+        - Hydra full composed config (OmegaConf YAML)
+        - dmesg/syslog (OOM killer?), kernel logs
+
+  - type: textarea
+    id: changes
+    attributes:
+      label: "🔀 Recent Changes"
+      description: "List code/config/dependency changes around the time it started."
+      placeholder: |
+        - Switched dataloader num_workers 4 → 16
+        - Enabled AMP autocast everywhere
+        - Upgraded PyTorch 2.2 → 2.3
+        - New augmentations enabled by default
+        - Rewritten collate_fn to pad sequences
+
+  - type: checkboxes
+    id: areas
+    attributes:
+      label: "Suspected Areas"
+      options:
+        - label: "Data loader / I/O / DVC"
+        - label: "Distributed (DDP/FSDP) or NCCL"
+        - label: "Autocast/AMP or precision"
+        - label: "Kernel-level (CUDA kernels / CuDNN / TensorRT)"
+        - label: "Graph compilation / torch.compile"
+        - label: "Scheduler / Optimizer configuration"
+        - label: "Model architecture (attention/SSM/GNN)"
+        - label: "Checkpointing / logging overhead"
+        - label: "HTML/plot generation in training loop"
+        - label: "Other (describe below)"
+
+  - type: textarea
+    id: variance
+    attributes:
+      label: "🎲 Variance / Determinism"
+      description: "Is the slowdown consistent? Provide multiple trial results or variance stats."
+      placeholder: |
+        5 trials per commit:
+        - main@9a7b2f4: 1180 ± 22 it/s
+        - main@c31de2a: 590 ± 19 it/s
+        Seeds: 1337, 1338, 1339; torch.backends.cudnn.deterministic=true
+
+  - type: checkboxes
+    id: repro_scope
+    attributes:
+      label: "Where does it reproduce?"
+      options:
+        - label: "Locally (bare metal)"
+        - label: "Docker (project image)"
+        - label: "CI (GitHub Actions)"
+        - label: "Kaggle"
+        - label: "Only specific host(s) / GPU model(s)"
+        - label: "Only fresh clone (no cache)"
+        - label: "Only with internet disabled"
+
+  - type: textarea
+    id: hypothesis
+    attributes:
+      label: "🧠 Hypothesis / Notes"
+      description: "Optional: suspected root cause, quick experiments tried."
+      placeholder: "e.g., Dataloader pinned_memory+non_blocking may cause regressions on kernel 6.8.x with driver 550.xx."
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: "✅ Acceptance Criteria"
+      description: "Define ‘done’: specific metrics and thresholds."
+      placeholder: |
+        - Restore ≥1,150 it/s on A100 80GB (bs=64) with variance ≤ ±3%
+        - GPU util ≥90% averaged over 1,000 steps
+        - Dataloader wait ≤10% of step time
+        - No OOM at seq len 135k, 8 GPUs, AMP=true
+
+  - type: checkboxes
+    id: attachments
+    attributes:
+      label: "Pre-submit Checklist"
+      options:
+        - label: "Included exact CLI and Hydra overrides"
+        - label: "Provided Git SHA and config/run hash"
+        - label: "Attached profiler traces or logs"
+        - label: "Specified hardware, drivers, and CUDA versions"
+        - label: "Provided expected vs actual numbers with units"
+        - label: "Linked to CI/MLflow/DVC artifacts if applicable"
