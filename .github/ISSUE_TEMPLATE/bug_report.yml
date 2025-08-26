@@ -1,8 +1,8 @@
 # .github/ISSUE_TEMPLATE/bug_report.yml
 # ==============================================================================
 # SpectraMind V50 — Bug Report (GitHub Issue Form)
-# This template gathers all signals needed to reproduce, diagnose, and fix issues
-# in a reproducible, NASA-grade way (CLI-first, Hydra-safe, DVC/lakeFS aware).
+# Purpose: capture every signal needed to reproduce, diagnose, and fix issues in a
+# reproducible, NASA-grade way (CLI-first, Hydra-safe, DVC/lakeFS aware).
 # ==============================================================================
 
 name: "🐞 Bug report"
@@ -19,15 +19,15 @@ body:
     attributes:
       value: >
         Thanks for taking the time to report a bug. Please **fill out all required fields**.
-        If you can, attach artifacts (logs, JSON manifests, HTML dashboards, small data) that
-        make the issue reproducible. ✨
+        If possible, attach or link artifacts (logs, JSON manifests, HTML dashboards, small data)
+        that make the issue reproducible. ✨
 
   # --- Impact & scope ----------------------------------------------------------
   - type: dropdown
     id: area
     attributes:
       label: Affected area
-      description: Where does this bug occur?
+      description: Where does this bug occur? (select all that apply)
       options:
         - CLI / Typer entrypoints
         - Training pipeline (train_v50.py / train_mae_v50.py / contrastive)
@@ -44,23 +44,55 @@ body:
     validations:
       required: true
 
+  - type: dropdown
+    id: where
+    attributes:
+      label: Execution environment
+      description: Where did this happen?
+      options:
+        - Local (workstation/server)
+        - GitHub Actions (CI)
+        - Kaggle (GPU)
+        - Kaggle (TPU)
+        - Docker image
+        - Other / Not sure
+    validations:
+      required: true
+
   - type: input
     id: version
     attributes:
       label: SpectraMind V50 version / commit
-      description: >
-        Tag or commit hash (e.g., v50.3.2 or 9f1c2ab). If you used CI artifacts, paste the build Run ID / link too.
-      placeholder: e.g., v50.4.0 (commit 9f1c2ab) • CI run 123456789
+      description: Tag or commit SHA. If CI artifacts were used, include the run link/ID.
+      placeholder: v50.4.0 (commit 9f1c2ab) • CI run https://github.com/<org>/<repo>/actions/runs/<id>
     validations:
       required: true
+
+  - type: checkboxes
+    id: regression
+    attributes:
+      label: Regression?
+      options:
+        - label: This worked in a previous version and recently broke.
+        - label: I can point to the last known-good commit / tag.
+    validations:
+      required: false
+
+  - type: input
+    id: last_good
+    attributes:
+      label: Last known-good version (if regression)
+      description: Tag/commit where this still worked.
+      placeholder: v50.3.2 (commit a1b2c3d)
+    validations:
+      required: false
 
   - type: input
     id: config_hash
     attributes:
       label: Config hash / run hash
-      description: >
-        The config hash printed by the CLI (e.g., from `v50_debug_log.md` or run manifest). If unknown, say "unknown".
-      placeholder: e.g., run_hash=ab12cd34 / config_hash=fe98dc76
+      description: From `v50_debug_log.md` / `run_hash_summary_v50.json` (if available).
+      placeholder: run_hash=ab12cd34 / config_hash=fe98dc76
     validations:
       required: false
 
@@ -69,13 +101,23 @@ body:
     id: steps
     attributes:
       label: Steps to reproduce
-      description: CLI-first, minimal steps to trigger the bug. Include Hydra overrides (copy-paste ready).
+      description: Minimal, copy-paste ready steps (CLI-first). Include Hydra overrides.
       placeholder: |
-        1. poetry run spectramind selftest --fast
-        2. poetry run spectramind train --config configs/v50/train.yaml +training.seed=1337
-        3. poetry run spectramind diagnose dashboard --outdir outputs/diag
-        4. Observe error...
-      render: bash
+        1) poetry run spectramind selftest --fast
+        2) poetry run spectramind train --config configs/v50/train.yaml +training.seed=1337
+        3) poetry run spectramind diagnose dashboard --outdir outputs/diag
+        4) Observe error...
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: cli_cmd
+    attributes:
+      label: Exact CLI command(s) used
+      description: Paste the exact command(s) (with Hydra overrides) that triggered the bug.
+      placeholder: poetry run spectramind predict --config configs/v50/predict.yaml +predict.batch=16
+      render: shell
     validations:
       required: true
 
@@ -83,8 +125,8 @@ body:
     id: expected
     attributes:
       label: Expected behavior
-      description: What should have happened?
-      placeholder: The command should complete without error and produce <artifact> with <property>.
+      description: What should have happened (scientific/physical expectation if relevant)?
+      placeholder: The command should complete and produce <artifact> with <property>.
     validations:
       required: true
 
@@ -92,11 +134,11 @@ body:
     id: actual
     attributes:
       label: Actual behavior / error message
-      description: Paste the full error (stack trace), last ~200 lines of logs, or a concise summary.
+      description: Paste the full error (stack trace) or concise summary (last ~200 log lines).
       placeholder: |
         Traceback (most recent call last):
           ...
-      render: text
+      render: shell
     validations:
       required: true
 
@@ -105,16 +147,16 @@ body:
     id: env
     attributes:
       label: Environment
-      description: Fill in your runtime details (copy from CLI banner or `spectramind --version` where possible).
+      description: Paste runtime details (from CLI banner / `spectramind --version` when possible).
       placeholder: |
         OS: Ubuntu 24.04 / macOS 14 / Windows 11 WSL2
         Python: 3.12.x  • Poetry: 1.8.x
         CUDA: 12.1 / 12.4  • Driver: 550.xx / 555.xx
-        GPU(s): RTX 5080 (24GB) • VRAM free at start: ~22GB
+        GPU(s): RTX 5080 (24 GB) • VRAM free at start: ~22 GB
         PyTorch: 2.3.x+cu121 • Transformers: 4.xx
         DVC: 3.x  • lakeFS: (optional)
-        Docker: (if applicable; tag used)
-        Kaggle: CLI version (if submission-related)
+        Docker: ghcr.io/<org>/spectramind:<tag> (if applicable)
+        Kaggle: (include environment and settings, if applicable)
     validations:
       required: true
 
@@ -122,33 +164,20 @@ body:
     id: env_checks
     attributes:
       label: Environment checks
-      description: Quick sanity checks before filing the issue.
+      description: Quick sanity checks before filing.
       options:
         - label: I ran `poetry install` successfully with the current `poetry.lock`.
           required: true
-        - label: I can run `poetry run spectramind selftest` (fast or deep) and attached/posted the result.
-          required: false
+        - label: I ran `poetry run spectramind selftest` (fast or deep) and attached/posted the result.
         - label: If using DVC/lakeFS, I ran `dvc status -c` and verified the cache is coherent.
-          required: false
-        - label: I confirmed large/binary files are tracked by Git LFS (where applicable).
-          required: false
+        - label: Large/binary files are tracked by Git LFS where applicable.
 
   # --- Inputs & artifacts ------------------------------------------------------
-  - type: textarea
-    id: cli_cmd
-    attributes:
-      label: Exact CLI command(s) used
-      description: Paste the exact command(s) (with Hydra overrides) that triggered the bug.
-      placeholder: poetry run spectramind predict --config configs/v50/predict.yaml +predict.batch=16
-      render: bash
-    validations:
-      required: true
-
   - type: textarea
     id: configs
     attributes:
       label: Relevant config snippet(s)
-      description: Paste the minimal YAML or overrides. Mask secrets.
+      description: Paste minimal YAML or overrides (mask secrets).
       placeholder: |
         training:
           epochs: 1
@@ -171,7 +200,6 @@ body:
         - constraint_violation_log.json
         - run_hash_summary_v50.json
         - selftest_report.md / selftest_report.json
-      render: text
     validations:
       required: false
 
@@ -190,20 +218,18 @@ body:
     attributes:
       label: Reproducibility
       options:
-        - label: Issue reproduces from a clean clone with only documented steps (no local hacks).
+        - label: Reproduces from a clean clone with only documented steps (no local hacks).
           required: true
-        - label: Issue reproduces on `main` (latest).
-          required: false
-        - label: Issue reproduces inside Docker image (if provided).
-          required: false
+        - label: Reproduces on `main` (latest).
+        - label: Reproduces inside the published Docker image (if provided).
 
   # --- Security / data handling ------------------------------------------------
   - type: textarea
     id: security
     attributes:
       label: Security / data handling considerations
-      description: If the bug could involve secrets, PII, or sensitive data leakage, describe here (do **not** paste secrets).
-      placeholder: e.g., stack trace logs token value; model weights path leaked in public logs; etc.
+      description: If secrets, PII, or sensitive data could be involved, describe here (do **not** paste secrets).
+      placeholder: e.g., stack trace logs token value; model weights path leaked; etc.
     validations:
       required: false
 
@@ -235,8 +261,6 @@ body:
         - label: area:configs
         - label: area:submission
         - label: needs-investigation
-    validations:
-      required: false
 
   # --- Final confirmation ------------------------------------------------------
   - type: checkboxes
