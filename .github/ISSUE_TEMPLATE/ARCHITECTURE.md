@@ -1,127 +1,109 @@
 # 🏗️ Architecture — Issue Templates for SpectraMind V50
 
-This document describes the **architecture, intent, and flow** of the issue templates in  
-`.github/issue_template/` for the **SpectraMind V50** repository.  
-These templates enforce **structured, reproducible reporting** and align with our pipeline’s **NASA-grade rigor**.
+This document defines the **architecture, design intent, and operational flow** of the issue templates under  
+`.github/issue_template/` for the **SpectraMind V50** repository. These templates enforce **structured, reproducible, and NASA-grade reporting** across all project activities.
 
 ---
 
 ## 1. System Goals
 
-- **Consistency** — All issues follow the same structured format.  
-- **Reproducibility** — Every bug/feature request includes configs, logs, and hashes.  
-- **Scientific Traceability** — Issues capture expected vs. actual scientific/physical behavior.  
-- **Fast Triage** — Maintainers get all context up front (CLI calls, config hashes, workflow run links).  
+- **Consistency** — All issues follow structured formats, ensuring uniform triage.  
+- **Reproducibility** — Reports must capture CLI commands, Hydra configs, and run hashes [oai_citation:0‡SpectraMind V50 Technical Plan for the NeurIPS 2025 Ariel Data Challenge.pdf](file-service://file-6PdU5f5knreHjmSdSauj3w).  
+- **Scientific Traceability** — Issues encode expected vs. actual **scientific/physical system behavior** [oai_citation:1‡Cosmic Fingerprints .txt](file-service://file-HNCWW2WZZ9FkKvKZAfqMdw).  
+- **Fast Triage** — Maintainers get logs, workflow run links, and config context up front [oai_citation:2‡SpectraMind V50 Technical Plan for the NeurIPS 2025 Ariel Data Challenge.pdf](file-service://file-6PdU5f5knreHjmSdSauj3w).  
+- **Security & Reliability** — Sensitive reports route through a minimal, controlled channel with coordinated disclosure [oai_citation:3‡Radiation: A Comprehensive Technical Reference.pdf](file-service://file-Ta3DQ7U5AXfZBw4jAecJfL).  
 
 ---
 
 ## 2. Template Topology
 
-```
-
+```plaintext
 .github/
-└── issue\_template/
-├── bug\_report.yml
-├── feature\_request.yml
-├── documentation\_request.yml
-├── performance\_issue.yml
-├── security\_report.yml
-├── config\_update.yml
-├── task\_tracking.yml
-└── README.md
+└── issue_template/
+    ├── bug_report.yml
+    ├── feature_request.yml
+    ├── documentation_request.yml
+    ├── performance_issue.yml
+    ├── security_report.yml
+    ├── config_update.yml
+    ├── task_tracking.yml
+    └── README.md
 
-```
+Each .yml file is a GitHub Issue Form with required fields, dropdowns, and checkboxes, ensuring completeness, reproducibility, and uniformity.
 
-Each YAML file defines a **GitHub Issue Form**, using required fields, dropdowns, and checkboxes.  
-This ensures completeness while keeping inputs consistent across contributors.
+⸻
 
----
+3. Workflow Integration
 
-## 3. Workflow Integration
+Trigger Path
 
-### Trigger Path
+Contributor → New Issue → Select Template → Fill Required Fields
+→ Template captures CLI + config hash → Maintainers triage
+→ CI/workflows cross-link issue → Fix merged → Resolution documented
 
-```
+Cross-links & Dependencies
+	•	Bug Reports require:
+	•	CLI call (spectramind …) ￼
+	•	Config hash (run_hash_summary_v50.json) ￼
+	•	Logs (logs/v50_debug_log.md) ￼
+	•	Feature Requests link directly to Hydra configs and CLI feasibility ￼.
+	•	Performance Issues must attach metrics (utilization, latency, VRAM) ￼.
+	•	Security Reports are routed to maintainers under .github/SECURITY.md with dry-run repro steps ￼.
+	•	Config Updates enforce Hydra-safe, DVC-tracked, and CI-integrated config diffs ￼.
+	•	Task Tracking ensures DoR/DoD, subtasks, reproducible CLI repro, and artifact evidence ￼.
 
-Contributor → New Issue → Select Template → Fill Required Fields →
-Template captures CLI logs + config hash → Maintainers triage →
-Workflows link back to issue (CI, Kaggle runs) → Resolution documented
+⸻
 
-````
+4. Template Roles
 
-### Cross-links
+Template	Purpose	Critical Fields
+bug_report.yml	Capture pipeline/CLI defects.	Steps to reproduce, CLI, config hash, logs.
+feature_request.yml	Propose new features (scientific, symbolic, or CLI).	Motivation, proposed CLI/config solution, impact areas.
+documentation_request.yml	Request updates to READMEs, guides, or manifests.	File/section, missing details, proposed update.
+performance_issue.yml	Diagnose bottlenecks/regressions (e.g., Kaggle 9h limit) ￼.	Hardware/env, metrics snapshot, expected vs. actual.
+security_report.yml	Disclose vulnerabilities safely.	Report type, environment, evidence, mitigation, disclosure plan.
+config_update.yml	Manage Hydra/DVC/CI configs ￼.	Paths, Hydra blocks, compatibility plan, validation tests.
+task_tracking.yml	Plan and track shippable units of work.	Acceptance criteria, subtasks, repro CLI, DoR/DoD.
 
-- `bug_report.yml` requires attaching:
-  - CLI command (`spectramind …`)
-  - `run_hash_summary_v50.json` entry
-  - Logs (`logs/v50_debug_log.md`)
-- `feature_request.yml` links to **Hydra configs** and **workflows** for feasibility.
-- `security_report.yml` routes to maintainers under `.github/SECURITY.md`.
-- All templates recommend attaching **workflow run links** from `.github/workflows/`.
 
----
+⸻
 
-## 4. Template Roles
+5. Alignment with SpectraMind V50 Principles
+	•	CLI-First — Every issue references spectramind commands ￼.
+	•	Hydra-Safe Configs — No hidden params; YAML-only reproducibility ￼.
+	•	Integrated Logging — Required excerpts from v50_debug_log.md ￼.
+	•	Scientific Rigor — Reports explicitly compare expected vs actual physics-informed outputs ￼ ￼.
+	•	Reproducibility Guardrails — All issues can be rerun from config + hash ￼.
 
-| Template                   | Purpose                                                                 | Critical Fields                                                      |
-| -------------------------- | ----------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| `bug_report.yml`           | Capture CLI or pipeline bugs.                                           | Steps to reproduce, CLI call, config hash, log excerpt.              |
-| `feature_request.yml`      | Propose new scientific/CLI features.                                    | Motivation, expected outcome, reproducibility impact.                |
-| `documentation_request.yml`| Request doc updates (README, guides, manifests).                       | File/section, missing detail, suggested addition.                    |
-| `performance_issue.yml`    | Report bottlenecks or runtime failures (e.g., Kaggle 9h limit).         | Hardware, runtime duration, profiling logs, expected vs. actual time. |
-| `security_report.yml`      | Private vulnerability disclosure.                                       | Environment, dependency version, vulnerability details.               |
-| `config_update.yml`        | Suggest Hydra/DVC config changes.                                       | Config file path, before/after snippet, reason.                       |
-| `task_tracking.yml`        | Track infrastructure/maintenance chores.                               | Task type, description, expected deliverable.                         |
+⸻
 
----
+6. Maintenance Strategy
+	•	Quarterly review to sync with CLI commands and Hydra configs.
+	•	Version pinning to track template evolution across pipeline releases.
+	•	Security hardening to enforce disclosure rules in security_report.yml.
+	•	Expansion for domain-specific templates (e.g. symbolic overlays, dashboard regressions).
 
-## 5. Alignment with V50 Principles
+⸻
 
-- **CLI-First** — Issues always reference `spectramind` commands.  
-- **Hydra-Safe Configs** — Configs attached to issues ensure repeatable runs.  
-- **Integrated Logging** — Required `v50_debug_log.md` excerpt connects issues to runtime.  
-- **Scientific Integrity** — Bug reports & feature requests document physical/scientific expectations.  
-- **Reproducibility Guardrails** — Every issue can be replayed via configs + hashes.  
+7. Example Bug Report Flow
+	1.	User runs:
 
----
+spectramind train --config configs/model/v50.yaml
 
-## 6. Maintenance Strategy
 
-- **Quarterly review** — Ensure templates match current CLI subcommands and Hydra configs.  
-- **Versioning** — When new CLI or pipeline features are added, update relevant templates.  
-- **Security** — Keep `security_report.yml` minimal but mandatory for vulnerabilities.  
-- **Expansion** — Add templates for new domains (e.g. symbolic logic, dashboard tasks) as the repo evolves.  
+	2.	Training fails. User files Bug Report:
+	•	Includes CLI call, config hash, v50_debug_log.md excerpt.
+	•	Attaches GitHub Actions run link.
+	3.	Maintainer triages:
+	•	Confirms reproducibility with config hash ￼.
+	•	Re-runs via CI pipeline ￼.
+	•	Fix linked to issue and merged after CI passes.
 
----
+⸻
 
-## 7. Example Flow (Bug Report)
+8. Summary
 
-1. User runs:
+The .github/issue_template/ architecture is the frontline reproducibility and security guard for SpectraMind V50.
+It transforms free-form GitHub issues into structured, reproducible, science-grade tickets.
+Each issue becomes a scientific record—CLI, config, logs, metrics—ensuring V50 evolves with traceability, rigor, and mission-grade discipline ￼ ￼.
 
-   ```bash
-   spectramind train --config configs/model/v50.yaml
-````
-
-2. Training fails. User opens a **Bug Report**:
-
-   * Fills in **CLI call**, **config hash**, and **excerpt from v50\_debug\_log.md**.
-   * Attaches workflow run link from GitHub Actions.
-
-3. Maintainer triages:
-
-   * Confirms config hash reproducibility.
-   * Re-runs via CI workflow.
-   * Links fix commit back to the issue.
-
----
-
-## 8. Summary
-
-The **issue template architecture** is a **frontline reproducibility guard**:
-it transforms ad-hoc reports into **structured, reproducible tickets**.
-Every issue carries its own scientific record (CLI command, config, logs),
-ensuring SpectraMind V50 evolves with **traceability, rigor, and speed**.
-
----
-
-```
