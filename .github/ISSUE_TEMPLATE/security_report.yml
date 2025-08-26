@@ -1,6 +1,17 @@
+# .github/ISSUE_TEMPLATE/security_report.yml
+# ==============================================================================
+# SpectraMind V50 — Security Report (GitHub Issue Form)
+# Purpose: capture vulnerabilities, supply-chain risks, or suspicious activity
+# in a structured, coordinated disclosure–ready format.
+# ==============================================================================
+
 name: "🛡️ Security Report"
 description: "Report a security vulnerability or suspicious activity affecting SpectraMind V50"
-labels: ["security", "triage"]
+title: "[sec] <short summary>"
+labels:
+  - security
+  - needs-triage
+projects: []
 assignees: []
 
 body:
@@ -10,8 +21,10 @@ body:
         ## 🛡️ Security Report — SpectraMind V50
 
         Thanks for helping keep the project and community safe.  
-        **Do not** include secrets or exploit PoCs that could harm others. If this report contains sensitive details, please also email the security maintainers (add your team email here) for coordinated disclosure.
+        **Do not** include secrets or active exploit payloads in this issue.  
+        If sensitive details are required, please also contact the maintainers via **security@your-org.tld** for coordinated disclosure.
 
+  # --- Report classification ---------------------------------------------------
   - type: dropdown
     id: report_type
     attributes:
@@ -42,7 +55,7 @@ body:
     id: description
     attributes:
       label: "📄 Description"
-      description: "What did you find? Why is it a problem? Include links to files/lines if possible."
+      description: "What did you find? Why is it a problem? Include file/line links if possible."
       placeholder: |
         - Affected component(s): CLI, CI workflow, Dockerfile, configs/*
         - Vulnerable behavior: …
@@ -51,6 +64,7 @@ body:
     validations:
       required: true
 
+  # --- Severity and impact -----------------------------------------------------
   - type: dropdown
     id: severity
     attributes:
@@ -65,7 +79,7 @@ body:
   - type: checkboxes
     id: impact
     attributes:
-      label: "Potential Impact (check all that apply)"
+      label: "Potential Impact (select all)"
       options:
         - label: "Secrets exposure (tokens, keys, passwords)"
         - label: "Unauthorized code execution"
@@ -75,18 +89,19 @@ body:
         - label: "Supply-chain compromise (deps, actions, containers)"
         - label: "Service disruption (CI, DVC remotes, storage)"
         - label: "Privacy / PII exposure"
-        - label: "Other (describe in details)"
+        - label: "Other (describe below)"
 
+  # --- Reproducibility ---------------------------------------------------------
   - type: textarea
     id: repro
     attributes:
-      label: "♻️ Reproduction Steps (minimal & safe)"
-      description: "Exact steps/commands to reproduce without causing harm. Prefer dry-run or redacted examples."
+      label: "♻️ Reproduction Steps (safe / minimal)"
+      description: "Exact steps to reproduce without causing harm. Prefer dry-run or redacted examples."
+      render: bash
       placeholder: |
         1) git checkout <sha>
         2) spectramind <cmd> --dry-run …
         3) Observe: …
-      render: shell
 
   - type: textarea
     id: scope
@@ -105,28 +120,30 @@ body:
       label: "🖥️ Environment"
       description: "Where observed (local, CI, Kaggle), OS/Kernel, container image digest, tool versions."
       placeholder: |
-        - Repro: CI (GitHub Actions ubuntu-latest)
+        - CI: GitHub Actions ubuntu-latest
         - Docker: ghcr.io/org/spectramind:v50@sha256:…
-        - Python 3.10, PyTorch 2.3, CUDA 12.1
+        - Python 3.12, PyTorch 2.3, CUDA 12.1
+        - Hydra/DVC versions
         - Actions runner: 2025-08-20 build
 
   - type: input
     id: commit
     attributes:
       label: "🔒 Code Reference"
-      description: "Commit SHA(s) / tag(s) / PR(s) where the issue exists."
+      description: "Commit SHA(s), tag(s), or PR(s) where the issue exists."
       placeholder: "e.g., 9a7b2f4, #2345"
 
   - type: textarea
     id: evidence
     attributes:
       label: "🧾 Evidence (redacted)"
-      description: "Logs, screenshots, or snippets that prove the issue. **Redact secrets**."
+      description: "Logs, screenshots, or scanner findings proving the issue. **Redact secrets.**"
       placeholder: |
-        - npx trufflehog findings (redacted)
+        - trufflehog results (redacted)
+        - grype / docker scout report
         - gh secret list vs workflow usage
-        - docker scout / grype results
 
+  # --- Exploitation state ------------------------------------------------------
   - type: checkboxes
     id: exploitation
     attributes:
@@ -141,44 +158,45 @@ body:
     id: indicators
     attributes:
       label: "🔎 Indicators of Compromise (IoCs)"
-      description: "Hashes, IPs, domains, actor behavior, timestamps, anomalous runs."
+      description: "Hashes, IPs, domains, anomalous runs, or timestamps observed."
       placeholder: |
-        - Unexpected workflow triggers from fork at 2025-08-24T11:20Z
-        - New PAT usage from unknown IP (ASN …)
+        - Unexpected workflow triggers at 2025-08-24T11:20Z
+        - New PAT usage from unknown IP
         - Modified artifacts without matching CI run
 
+  # --- Mitigation and disclosure -----------------------------------------------
   - type: textarea
     id: mitigation
     attributes:
       label: "🛠️ Proposed Mitigation / Containment"
-      description: "Short-term containment and long-term fix ideas (least-privilege, rotation, pinning, validation)."
+      description: "Short-term containment + long-term fix ideas (least-privilege, rotation, pinning)."
       placeholder: |
-        - Revoke/rotate BRANCH_PROTECT_PAT
-        - Restrict gh-token permissions (contents:read, pull-requests:write only)
-        - Pin GitHub Actions with SHA
+        - Rotate compromised PAT
+        - Restrict GH token permissions
+        - Pin GitHub Actions to SHA
         - Add CODEOWNERS + required reviews
-        - Add secret scanning (trufflehog, Gitleaks) to PRs
-        - Harden Dockerfile (USER non-root, read-only FS)
+        - Add trufflehog/Gitleaks scans in CI
+        - Harden Dockerfile (USER non-root)
 
   - type: textarea
     id: disclosure
     attributes:
       label: "🤝 Disclosure & Coordination"
-      description: "Has anyone else been notified? Any embargo or coordinated disclosure timeline?"
+      description: "Has anyone else been notified? Any embargo or disclosure window?"
       placeholder: |
-        - Report sent to security@your-org.tld with PoC details
-        - Request 90-day disclosure window
+        - Report sent to security@your-org.tld
+        - Request 90-day coordinated disclosure window
 
   - type: textarea
     id: acceptance
     attributes:
       label: "✅ Acceptance Criteria"
-      description: "Define ‘fixed’ (tests, scanners, policy changes, regression checks)."
+      description: "Define ‘fixed’: scanner passes, configs hardened, reproducibility intact."
       placeholder: |
-        - Secrets rotated and verified unused
-        - New CI job: secret scan + SBOM + vulnerability gate
-        - Branch protection enforces required checks
-        - Repro steps no longer succeed
+        - Secrets rotated & verified unused
+        - CI jobs enforce secret scans & SBOM checks
+        - Branch protection rules enforced
+        - Dry-run repro no longer succeeds
 
   - type: checkboxes
     id: checklist
@@ -186,7 +204,9 @@ body:
       label: "Pre-submit Checklist"
       options:
         - label: "No secrets or harmful payloads included"
+          required: true
         - label: "Repro steps are safe/dry-run"
+          required: true
         - label: "Provided commit/PR references"
         - label: "Included redacted evidence"
-        - label: "Defined proposed mitigation and acceptance criteria"
+        - label: "Defined mitigation and acceptance criteria"
