@@ -1,0 +1,60 @@
+stages:
+  calibrate:
+    cmd: >
+      poetry run spectramind calibrate
+      data/raw
+      --out data/processed
+      --config configs/data/calibration.yaml
+    deps:
+      - data/raw
+      - src/pipeline/calibration_pipeline.py
+      - configs/data/calibration.yaml
+    outs:
+      - data/processed
+
+  train:
+    cmd: >
+      poetry run spectramind train
+      --config configs/training/config_v50.yaml
+    deps:
+      - data/processed
+      - src/train_v50.py
+      - configs/training/config_v50.yaml
+    outs:
+      - outputs/models/model_v50.pth
+
+  predict:
+    cmd: >
+      poetry run spectramind predict
+      --config configs/inference/predict_v50.yaml
+    deps:
+      - data/processed
+      - outputs/models/model_v50.pth
+      - src/predict_v50.py
+      - configs/inference/predict_v50.yaml
+    outs:
+      - outputs/predictions/preds_v50.csv
+
+  diagnose:
+    cmd: >
+      poetry run spectramind diagnose dashboard
+      --config configs/diagnostics/diagnose_v50.yaml
+    deps:
+      - outputs/predictions/preds_v50.csv
+      - src/tools/generate_html_report.py
+      - configs/diagnostics/diagnose_v50.yaml
+    outs:
+      - outputs/diagnostics/report_v50.html
+      - outputs/diagnostics/diagnostic_summary.json
+
+  submit:
+    cmd: >
+      poetry run spectramind submit
+      --config configs/submission/submit_v50.yaml
+    deps:
+      - outputs/predictions/preds_v50.csv
+      - outputs/diagnostics/report_v50.html
+      - src/cli_submit.py
+      - configs/submission/submit_v50.yaml
+    outs:
+      - outputs/submissions/submission_v50.zip
