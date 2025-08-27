@@ -1,0 +1,21 @@
+# ================================
+# DVC internal controls
+# ================================
+
+# Ignore local cache (large binary blobs, never commit)
+.dvc/cache/
+
+# Ignore tmp staging area (ephemeral, regenerated)
+.dvc/tmp/
+
+# Ignore local developer overrides (may contain secrets)
+.dvc/config.local
+
+# ================================
+# SAFE to commit (keep in Git):
+#   - .dvc/config
+#   - .dvcignore
+#   - dvc.yaml
+#   - *.dvc pointer files
+#   - .dvc/plots/*
+# ================================
