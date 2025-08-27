@@ -1,0 +1,42 @@
+3. Please include:
+- A clear description of the vulnerability.
+- Steps to reproduce (CLI commands, configs, Hydra overrides, PoC if safe).
+- Potential impact on pipeline integrity or data.
+- Suggested mitigations, if any.
+
+**Response commitments:**
+- Acknowledge within **72 hours**.  
+- Provide a triage result and fix timeline.  
+- Publish an advisory via [SECURITY_ADVISORY_TEMPLATE.md](./SECURITY_ADVISORY_TEMPLATE.md).  
+
+---
+
+## 🔍 Scope
+
+We are most concerned with vulnerabilities that threaten **pipeline integrity, reproducibility, or system safety**:
+
+- **Pipeline integrity**  
+(malicious Hydra overrides, DVC/lakeFS tampering, reproducibility hash bypass).
+
+- **CLI / Config execution**  
+(unsafe Typer parameters, injection attacks, unvalidated inputs).
+
+- **Docker & environment hardening**  
+(container escapes, CUDA driver exploits, unsafe base images).
+
+- **Dependency vulnerabilities**  
+(Python, Poetry, CUDA, Docker, GitHub Actions).
+
+- **Data security & privacy**  
+(sensitive log leaks, unsafe artifact packaging, metadata exposure).
+
+---
+
+## 🧰 Security Best Practices for Contributors
+
+- ✅ Run `pre-commit run --all-files` before committing (includes `bandit`, `ruff`, `mypy`, YAML lint).  
+- ✅ Keep dependencies up-to-date (`poetry update` or use Dependabot PRs).  
+- ❌ Never commit secrets, tokens, or datasets. Use `.env`, DVC, or GitHub Secrets instead.  
+- ✅ Verify reproducibility & integrity with:
+```bash
+spectramind selftest --deep
