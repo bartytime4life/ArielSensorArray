@@ -1,372 +1,132 @@
-# ============================================================================
-# configs/ablation/ablation_v50.yaml  (v2)
-# SpectraMind V50 — Neuro‑Symbolic Ablation Config (Hydra-safe)
-# ============================================================================
+# .github/workflows/ablation.yml
+# ==============================================================================
+# SpectraMind V50 — Ablation Runner (Hydra-safe)
+# - Uses ablation_v50.yaml presets
+# - PR: fast_eval only (≤ ~5–10 min)
+# - Manual / nightly: run selected presets matrix, upload bundles
+# ==============================================================================
 
-# -------------------------
-# Compose from project groups
-# -------------------------
-defaults:
-  - model: v50                      # configs/model/v50.yaml (SSM + GNN)
-  - data: nominal                   # configs/data/nominal.yaml
-  - training: default               # configs/training/default.yaml
-  - optimizer: adamw                # configs/optimizer/adamw.yaml
-  - logger: default                 # configs/logging/default.yaml
-  - override hydra/job_logging: colorlog
-  - override hydra/hydra_logging: colorlog
-  - _self_
+name: Ablations
 
-# -------------------------
-# Reproducibility & Env
-# -------------------------
-repro:
-  seed: 1337
-  deterministic: true
-  cudnn_benchmark: false
-  num_workers: 4
-  numpy_seed_offset: 100
-  torch_seed_offset: 200
-  git_commit: ${env:GITHUB_SHA,${env:CI_COMMIT_SHA,unknown}}
-  git_branch: ${env:GITHUB_REF_NAME,unknown}
-  build_ts: ${now:%Y-%m-%d_%H-%M-%S}
-  run_host: ${env:RUNNER_NAME,${env:HOSTNAME,local}}
-  cache_enabled: true
-  dvc_pull_inputs: false
-  dvc_push_outputs: false
-
-# -------------------------
-# Curriculum & Masking
-# -------------------------
-curriculum:
-  mae_pretrain: true                # Masked Autoencoder pretraining
-  contrastive: true                 # Contrastive fine-tune
-  gll_finetune: true                # Gaussian log-likelihood phase
-  symbolic_finetune: true           # Symbolic rule integration
+on:
+  pull_request:
+    branches: ["**"]
+    paths:
+      - "configs/ablation/**"
+      - "configs/**"
+      - "src/**"
+      - "pyproject.toml"
+      - "poetry.lock"
   schedule:
-    mae_epochs: 2
-    contrastive_epochs: 1
-    gll_epochs: 2
-    symbolic_epochs: 1
+    - cron: "45 2 * * 2,5"   # Tue/Fri ~02:45 UTC
+  workflow_dispatch:
+    inputs:
+      presets:
+        description: "Comma-separated presets to run (default,light,strict_symbolic,fast_eval,gnn_ssm_ablate)"
+        required: false
+        default: "default,light"
+      multirun:
+        description: "Enable grid multirun (+grid.enable=true)"
+        required: false
+        default: "false"
 
-masking:
-  random: true
-  block: false
-  molecule_aware: true
-  snr_aware: true
-  ratio: 0.30
-  block_size_bins: 12
-  dual_view: true
-  temporal_dropout_p: 0.10
+permissions:
+  contents: read
 
-# -------------------------
-# Losses (task + symbolic)
-# -------------------------
-loss:
-  gll: 1.0                          # Core Gaussian log-likelihood
-  fft_smoothness: 0.20              # Spectral smoothness (frequency-domain)
-  asymmetry: 0.10                   # Penalize unphysical line asymmetry
-  nonnegativity: 0.10               # Clamp/penalize negative flux/τ
-  photonic_alignment: 0.30          # Physical priors alignment term
-  symbolic: 0.50                    # Aggregate symbolic penalty
-  entropy_reg: 0.10                 # Mild entropy for calibrated σ
-  clip_grad_norm: 1.0
-  label_smoothing: 0.0
+concurrency:
+  group: ablations-${{ github.ref }}
+  cancel-in-progress: true
 
-# -------------------------
-# Uncertainty Calibration
-# -------------------------
-uncertainty:
-  temperature_scaling: true
-  corel: true                       # Conformal relational (graph-aware) calibration
-  quantile: false
-  conformal_prediction: true
-  per_bin_eval: true
-  corel_cfg:
-    enable_edge_features: true
-    use_positional_encoding: true
-    coverage_target: 0.90
-    max_epochs: 3
-  temperature_cfg:
-    shared_T: true
-    per_bin_T: false
-  conformal_cfg:
-    method: jackknife_plus
-    alpha: 0.10
-    group_by_molecule: true
+env:
+  PY: "3.12"
+  POETRY_VERSION: "1.8.3"
+  HYDRA_CFG: "configs/ablation/ablation_v50.yaml"
+  OUTDIR: "outputs/ablations"
 
-# -------------------------
-# Symbolic Rule Layer
-# -------------------------
-symbolic:
-  nonnegativity: true
-  fft_smoothness: true
-  asymmetry: true
-  photonic_alignment: true
-  violation_weight: 1.0
-  normalize_losses: true
-  trace_outputs: true
-  profile: default
-  profiles:
-    default:
-      weights:
-        nonnegativity: 1.0
-        fft_smoothness: 0.5
-        asymmetry: 0.4
-        photonic_alignment: 0.8
-    strict:
-      weights:
-        nonnegativity: 1.2
-        fft_smoothness: 0.8
-        asymmetry: 0.6
-        photonic_alignment: 1.0
-    relaxed:
-      weights:
-        nonnegativity: 0.6
-        fft_smoothness: 0.3
-        asymmetry: 0.2
-        photonic_alignment: 0.5
+jobs:
+  ablate:
+    name: Run Ablation Presets
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
 
-# -------------------------
-# Model knobs (SSM + GNN)
-# -------------------------
-model_v50:
-  ssm:
-    type: mamba
-    d_model: 256
-    d_state: 16
-    n_layers: 4
-    dropout: 0.05
-  gnn:
-    type: gat
-    n_layers: 3
-    hidden_dim: 192
-    heads: 4
-    dropout: 0.10
-    edges:
-      wavelength_adjacency: true
-      molecular_priors: true
-      detector_region: true
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: ${{ fromJSON('["default","light","strict_symbolic","fast_eval","gnn_ssm_ablate"]') }}
 
-# -------------------------
-# Runtime & Training
-# -------------------------
-runtime:
-  device: auto                     # cpu | cuda | mps | auto
-  epochs: 3
-  batch_size: 16
-  mixed_precision: true
-  grad_accum_steps: 1
-  checkpoint_interval: 1
-  log_interval: 50
-  max_runtime_hours: 9             # Kaggle time budget
-  save_best_only: true
-  early_stop:
-    enabled: true
-    metric: valid/gll
-    mode: min
-    patience: 3
-  ckpt:
-    dir: outputs/checkpoints
-    keep_last: 3
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-# -------------------------
-# Diagnostics & Reports
-# -------------------------
-diagnostics:
-  enable_umap: true
-  enable_tsne: true
-  enable_shap: true
-  enable_symbolic: true
-  enable_fft: true
-  gll_heatmap: true
-  zscore_hist: true
-  export_json: true
-  export_png: true
-  include_cli_map: true
-  include_run_manifest: true
-  include_config_dump: true
+      - name: Set up Python ${{ env.PY }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PY }}
 
-# -------------------------
-# Export / Leaderboard Bundle
-# -------------------------
-export:
-  html: true
-  markdown: true
-  zip: true
-  leaderboard_top_n: 5
-  open_browser: false
-  outdir: outputs/ablations
-  manifest: true
-  include_logs: true
-  include_config_yaml: true
-  include_html_dashboard: true
-  kaggle_bundle:
-    enabled: true
-    compress_level: 6
+      - name: Install Poetry
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "poetry==${POETRY_VERSION}"
 
-# -------------------------
-# Named Presets (Profiles)
-# -------------------------
-ablation:
-  name: default
-  presets:
-    default:
-      curriculum:
-        mae_pretrain: true
-        contrastive: true
-        gll_finetune: true
-        symbolic_finetune: true
-      loss:
-        fft_smoothness: 0.20
-        photonic_alignment: 0.30
-        symbolic: 0.50
-      uncertainty:
-        temperature_scaling: true
-        corel: true
-        conformal_prediction: true
-      runtime:
-        epochs: 3
-        batch_size: 16
+      - name: Cache Poetry & pip
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.cache/pypoetry
+          key: ablate-${{ runner.os }}-py${{ env.PY }}-${{ hashFiles('**/poetry.lock') }}
+          restore-keys: |
+            ablate-${{ runner.os }}-py${{ env.PY }}-
 
-    light:
-      curriculum:
-        mae_pretrain: false
-        contrastive: true
-        gll_finetune: true
-        symbolic_finetune: false
-      loss:
-        fft_smoothness: 0.10
-        photonic_alignment: 0.20
-        symbolic: 0.20
-      uncertainty:
-        temperature_scaling: true
-        corel: false
-        conformal_prediction: false
-      runtime:
-        epochs: 2
-        batch_size: 32
+      - name: Install project (main deps)
+        run: |
+          poetry install --no-interaction --no-ansi --without dev
 
-    strict_symbolic:
-      curriculum:
-        mae_pretrain: true
-        contrastive: true
-        gll_finetune: true
-        symbolic_finetune: true
-      loss:
-        fft_smoothness: 0.60
-        photonic_alignment: 0.80
-        symbolic: 0.90
-      uncertainty:
-        temperature_scaling: true
-        corel: true
-        conformal_prediction: true
-      runtime:
-        epochs: 4
-        batch_size: 12
-      symbolic:
-        violation_weight: 1.2
-        normalize_losses: true
-        trace_outputs: true
-        profile: strict
+      - name: Select presets for this event
+        id: select
+        run: |
+          PRESETS="${{ github.event.inputs.presets }}"
+          if [ -z "$PRESETS" ]; then
+            # PRs: only fast_eval to keep CI under budget
+            if [ "${{ github.event_name }}" = "pull_request" ]; then
+              echo "presets=fast_eval" >> $GITHUB_OUTPUT
+            else
+              echo "presets=default,light" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "presets=$PRESETS" >> $GITHUB_OUTPUT
+          fi
+          echo "multirun=${{ github.event.inputs.multirun || 'false' }}" >> $GITHUB_OUTPUT
 
-    fast_eval:                # CI/Kaggle smoke: <~5–10 min
-      runtime:
-        epochs: 1
-        batch_size: 64
-        max_runtime_hours: 0.25
-      diagnostics:
-        enable_umap: false
-        enable_tsne: false
-        enable_shap: false
+      - name: Skip unrelated presets on PR
+        if: ${{ github.event_name == 'pull_request' && matrix.preset != 'fast_eval' }}
+        run: |
+          echo "Skipping preset ${{ matrix.preset }} on PR to keep CI fast."
+          echo "skipped" > skip.txt
 
-    gnn_ssm_ablate:
-      model_v50:
-        ssm:
-          d_state: 8
-          n_layers: 3
-        gnn:
-          n_layers: 2
-          hidden_dim: 160
-          heads: 2
-      uncertainty:
-        corel: true
-      loss:
-        fft_smoothness: 0.25
-        symbolic: 0.40
+      - name: Run ablation preset
+        if: ${{ !(github.event_name == 'pull_request' && matrix.preset != 'fast_eval') }}
+        run: |
+          mkdir -p "${OUTDIR}"
+          EXTRA=""
+          if [ "${{ steps.select.outputs.multirun }}" = "true" ]; then
+            EXTRA="+grid.enable=true -m"
+          fi
+          # Respect your guardrails/timebox; use the ablation preset hook
+          poetry run spectramind ablate \
+            ablation=${{ matrix.preset }} \
+            --config-path configs/ablation \
+            --config-name ablation_v50 \
+            export.outdir="${OUTDIR}/${{ matrix.preset }}" \
+            ${EXTRA} 2>&1 | tee "ablate_${{ matrix.preset }}.log"
 
-# -------------------------
-# Multirun Grid (Basic) & Optuna
-# -------------------------
-grid:
-  enable: false
-  axes:
-    model_v50.ssm.d_state: [8, 16, 32]
-    model_v50.ssm.n_layers: [2, 4]
-    model_v50.gnn.n_layers: [2, 3, 4]
-    model_v50.gnn.hidden_dim: [160, 192, 224]
-    loss.fft_smoothness: [0.10, 0.20, 0.40]
-    loss.photonic_alignment: [0.20, 0.30, 0.60]
-    symbolic.profile: [default, strict, relaxed]
-    uncertainty.temperature_scaling: [true, false]
-    uncertainty.corel: [true, false]
-    runtime.batch_size: [12, 16, 24]
-
-optuna:
-  enable: false
-  n_trials: 24
-  direction: minimize
-  metric: valid/gll
-  suggest:
-    model_v50.ssm.d_state: {low: 8, high: 64, step: 8}
-    model_v50.gnn.hidden_dim: {low: 128, high: 256, step: 32}
-    loss.fft_smoothness: {low: 0.05, high: 0.6}
-    loss.photonic_alignment: {low: 0.1, high: 1.0}
-    runtime.batch_size: {choices: [12, 16, 24, 32]}
-
-# -------------------------
-# Guardrails / Runtime Safety
-# -------------------------
-guards:
-  enforce_kaggle_timebox: true
-  kill_on_oom: true
-  min_vram_gb_for_cuda: 6
-  fail_if_no_cuda_when_requested: true
-  assert_bins: 283
-  assert_runtime_lt_hours: ${runtime.max_runtime_hours}
-
-# -------------------------
-# Paths & Manifests
-# -------------------------
-paths:
-  outputs_root: outputs
-  diagnostics_dir: ${export.outdir}/diagnostics
-  html_report: ${export.outdir}/report.html
-  run_manifest: ${export.outdir}/run_manifest.json
-  config_dump: ${export.outdir}/config_v50_dump.yaml
-  cli_map_json: ${export.outdir}/cli_map.json
-
-# -------------------------
-# Hydra Overrides (sweeps, logging dirs)
-# -------------------------
-hydra:
-  run:
-    dir: outputs/singlerun/${now:%Y-%m-%d_%H-%M-%S}
-  sweep:
-    dir: outputs/multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
-    subdir: ${hydra.job.num}
-  sweeper:
-    # basic grid: enable via +grid.enable=true
-    params: |
-      ${oc.select: grid.enable,false}==true
-      ${oc.dict.keys: grid.axes}
-  job:
-    chdir: true
-
-# -------------------------
-# Notes for CLI helpers
-# -------------------------
-__notes__:
-  - "Select preset: `spectramind ablate ablation=light` or `... ablation=strict_symbolic`"
-  - "Enable grid sweep: `spectramind ablate ablation=default --multirun +grid.enable=true`"
-  - "Enable Optuna: `spectramind ablate -m ablate.sweeper=optuna +optuna.enable=true`"
-  - "Fast CI smoke: `spectramind ablate ablation=fast_eval`"
+      - name: Collect artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ablation-${{ matrix.preset }}
+          path: |
+            ablate_${{ matrix.preset }}.log
+            outputs/ablations/${{ matrix.preset }}/**
+          if-no-files-found: ignore
+          retention-days: 7
