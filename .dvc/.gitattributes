@@ -1,0 +1,61 @@
+# =========================================
+# Core defaults: normalize line endings, treat text as text
+# =========================================
+* text=auto eol=lf
+
+# Common texty things (always stay in Git as text)
+*.md      text
+*.txt     text
+*.csv     text
+*.tsv     text
+*.json    text
+*.yaml    text
+*.yml     text
+*.toml    text
+*.ini     text
+*.py      text
+*.sh      text
+*.ipynb   text
+
+# DVC pipeline metadata always as text
+dvc.yaml  text
+*.dvc     text
+.dvcignore text
+
+# =========================================
+# DVC-managed paths: explicitly NOT handled by Git LFS
+# (data, artifacts, models, diagnostics are versioned via DVC)
+# =========================================
+data/**              -filter -diff -merge
+outputs/**           -filter -diff -merge
+models/**            -filter -diff -merge
+artifacts/**         -filter -diff -merge
+logs/**              -filter -diff -merge
+.dvc/**              -filter -diff -merge
+
+# =========================================
+# OPTIONAL: Git LFS for documentation/media assets ONLY
+# (Keep pipeline data in DVC; use LFS for things like screenshots, PDFs in docs/)
+# Enable LFS first:  git lfs install
+# =========================================
+docs/**/*.{png,jpg,jpeg,gif,webp,svg} filter=lfs diff=lfs merge=lfs -text
+docs/**/*.{pdf,mp4,mov,avi}           filter=lfs diff=lfs merge=lfs -text
+
+# Optional: large images embedded in README or site/
+site/**/*.{png,jpg,jpeg,gif,webp,svg} filter=lfs diff=lfs merge=lfs -text
+
+# =========================================
+# Safety rails: never let LFS grab DVC pointers or config
+# =========================================
+*.dvc                 -filter -diff -merge
+dvc.yaml              -filter -diff -merge
+.dvc/config           -filter -diff -merge
+
+Notes
+	•	Place this file at the repo root named exactly .gitattributes.
+	•	If you decide to use the optional LFS section for docs/ or site/, run:
+
+git lfs install
+
+
+	•	Keep all pipeline data and artifacts under DVC (data/, outputs/, models/, etc.). The rules above explicitly prevent Git LFS from intercepting those paths.
