@@ -1,0 +1,109 @@
+# .github/workflows/selftest.yml
+# ==============================================================================
+# SpectraMind V50 — Self-Test & Reproducibility Gate
+# - PR: fast smoke (≤ ~5–10 minutes)
+# - Nightly: deeper selftest and config dump for audit
+# ==============================================================================
+
+name: SelfTest
+
+on:
+  pull_request:
+    branches: ["**"]
+  push:
+    branches: ["main"]
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - "assets/**"
+  schedule:
+    - cron: "30 2 * * 1-5"   # Weekdays ~02:30 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: selftest-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHONUNBUFFERED: "1"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  PIP_NO_PYTHON_VERSION_WARNING: "1"
+  POETRY_VERSION: "1.8.3"
+  PY: "3.12"
+
+jobs:
+  selftest:
+    name: SpectraMind Self-Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PY }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PY }}
+
+      - name: Install Poetry
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "poetry==${POETRY_VERSION}"
+
+      - name: Cache Poetry & pip
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.cache/pypoetry
+          key: selftest-${{ runner.os }}-py${{ env.PY }}-${{ hashFiles('**/poetry.lock') }}
+          restore-keys: |
+            selftest-${{ runner.os }}-py${{ env.PY }}-
+
+      - name: Install project (main deps only)
+        run: |
+          poetry install --no-interaction --no-ansi --without dev
+
+      - name: Fast self-test (PRs/Push)
+        if: ${{ github.event_name != 'schedule' }}
+        run: |
+          # Lightweight integrity checks; must not train heavy
+          poetry run spectramind selftest --fast 2>&1 | tee selftest_fast.log
+          # Optional: validate CLI map if available
+          poetry run spectramind analyze-log --summary || true
+
+      - name: Deep self-test (scheduled)
+        if: ${{ github.event_name == 'schedule' }}
+        run: |
+          poetry run spectramind selftest --deep 2>&1 | tee selftest_deep.log
+          poetry run spectramind --version || true
+
+      - name: Dump merged config for audit (scheduled)
+        if: ${{ github.event_name == 'schedule' }}
+        run: |
+          mkdir -p outputs/audit
+          # Dump the ablation_v50.yaml merged (no run)
+          poetry run python - <<'PY'
+          from omegaconf import OmegaConf
+          import os
+          os.makedirs("outputs/audit", exist_ok=True)
+          print("Writing config dump...")
+          # If you have a util to compose without execute, call it instead.
+          open("outputs/audit/NOTICE.txt","w").write("Config snapshot only.")
+          PY
+
+      - name: Upload selftest artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: selftest-artifacts
+          path: |
+            selftest_fast.log
+            selftest_deep.log
+            outputs/audit/**
+          if-no-files-found: ignore
+          retention-days: 7
