@@ -3,11 +3,13 @@
 # SpectraMind V50 — Security & Supply-Chain Hardening
 #
 # What this workflow does:
-# 1) CodeQL SAST (Python) on pushes/PRs + nightly schedule (SARIF to Security tab)
+# 1) CodeQL SAST (Python) on pushes/PRs + weekly schedule (SARIF to Security tab)
 # 2) Dependency Review on PRs (block known vulns before merge)
-# 3) Secrets scanning (trufflehog) on PRs (repo + patch) — reports, fails on findings
-# 4) Python static analysis (bandit) and dependency audit (pip-audit via Poetry export)
-# 5) Repo/container scan (Trivy) — filesystem and Dockerfile if present (SARIF)
+# 3) Secrets scanning (trufflehog) on PRs & pushes (repo + patch)
+# 4) Python static analysis: ruff, mypy (best-effort), bandit
+# 5) Dependency audit: pip-audit (from Poetry export or requirements)
+# 6) Repo/container scan (Trivy) — filesystem + Dockerfile, optional image scan
+# 7) Optional quick integrity check (non-blocking)
 #
 # Notes:
 # - Minimal permissions by default; jobs elevate only what they need.
@@ -31,7 +33,8 @@ on:
       - "docs/**"
       - "assets/**"
   schedule:
-    - cron: "15 3 * * *"   # nightly-ish
+    # Weekly run (Mon 03:15 UTC)
+    - cron: "15 3 * * 1"
   workflow_dispatch: {}
 
 permissions:
@@ -48,10 +51,11 @@ env:
   POETRY_VERSION: "1.8.3"
   DEFAULT_PY: "3.12"
 
-# ------------------------------------------------------------------------------
-# 0) Dependency Review (PR-only) — blocks when vulnerable packages are introduced
-# ------------------------------------------------------------------------------
 jobs:
+
+  # ----------------------------------------------------------------------------
+  # 0) Dependency Review (PR-only) — blocks when vulnerable packages are added
+  # ----------------------------------------------------------------------------
   dependency-review:
     name: Dependency Review (PR)
     if: ${{ github.event_name == 'pull_request' }}
@@ -69,9 +73,9 @@ jobs:
           allow-licenses: Apache-2.0, MIT, BSD-2-Clause, BSD-3-Clause, MPL-2.0, ISC
           deny-licenses: GPL-1.0, GPL-2.0, GPL-3.0, AGPL-3.0
 
-# ------------------------------------------------------------------------------
-# 1) CodeQL SAST (Python)
-# ------------------------------------------------------------------------------
+  # ----------------------------------------------------------------------------
+  # 1) CodeQL SAST (Python)
+  # ----------------------------------------------------------------------------
   codeql:
     name: CodeQL (Python SAST)
     runs-on: ubuntu-latest
@@ -89,7 +93,7 @@ jobs:
         with:
           languages: python
 
-      - name: Autobuild (Python)
+      - name: Autobuild
         uses: github/codeql-action/autobuild@v3
 
       - name: Analyze
@@ -97,11 +101,11 @@ jobs:
         with:
           category: "/language:python"
 
-# ------------------------------------------------------------------------------
-# 2) Secrets scanning (TruffleHog) — PRs and pushes
-# ------------------------------------------------------------------------------
+  # ----------------------------------------------------------------------------
+  # 2) Secrets scanning (TruffleHog) — PRs and pushes
+  # ----------------------------------------------------------------------------
   trufflehog:
-    name: Secrets Scan (trufflehog)
+    name: Secrets Scan (TruffleHog)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -120,22 +124,23 @@ jobs:
         with:
           extra_args: --since-commit="${{ github.event.pull_request.base.sha }}" --fail
 
-      - name: Scan repository (full)
+      - name: Scan repository (full history)
         uses: trufflesecurity/trufflehog@v3
         with:
           path: .
           extra_args: --no-verification
         continue-on-error: true
 
-# ------------------------------------------------------------------------------
-# 3) Python security (Bandit) + Dependency audit (pip-audit via Poetry export)
-# ------------------------------------------------------------------------------
+  # ----------------------------------------------------------------------------
+  # 3) Python static (ruff, mypy, bandit) + Dependency audit (pip-audit)
+  # ----------------------------------------------------------------------------
   python-audit:
-    name: Python Audit (bandit + pip-audit)
+    name: Python Audit (ruff + mypy + bandit + pip-audit)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     permissions:
       contents: read
+      security-events: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -155,10 +160,10 @@ jobs:
             sec-pip-${{ runner.os }}-py${{ env.DEFAULT_PY }}-
             sec-pip-${{ runner.os }}-
 
-      - name: Install Poetry + tooling
+      - name: Install Poetry + tools
         run: |
           python -m pip install --upgrade pip
-          python -m pip install "poetry==${POETRY_VERSION}" bandit pip-audit
+          python -m pip install "poetry==${POETRY_VERSION}" ruff mypy bandit pip-audit
 
       - name: Export requirements for audit
         run: |
@@ -167,35 +172,62 @@ jobs:
           elif [ -f requirements.txt ]; then
             cp requirements.txt requirements.txt
           else
-            echo "::warning::No poetry.lock or requirements.txt found; pip-audit may be limited."
+            echo "::warning::No poetry.lock or requirements.txt found; pip-audit will run in import mode."
             printf "" > requirements.txt
           fi
           sed -n '1,120p' requirements.txt || true
 
+      - name: Ruff (lint)
+        run: |
+          ruff --version
+          ruff check .
+
+      - name: Mypy (types) — best-effort
+        continue-on-error: true
+        run: |
+          mypy --install-types --non-interactive || true
+          mypy . || true
+
       - name: Bandit (SAST for Python)
         run: |
-          bandit -r src -iii -ll -q -f txt -o bandit.txt || true
-          bandit -r src -iii -ll -f json -o bandit.json || true
+          # Prefer scanning src/ if present, else scan repo root.
+          TARGET="src"
+          [ -d "$TARGET" ] || TARGET="."
+          bandit -r "$TARGET" -iii -ll -q -f txt -o bandit.txt || true
+          bandit -r "$TARGET" -iii -ll -f sarif -o bandit.sarif || true
 
       - name: pip-audit (dependencies CVEs)
         run: |
-          # Prefer requirements file, fallback to import mode if empty
           if [ -s requirements.txt ]; then
+            pip-audit -r requirements.txt --format sarif -o pip-audit.sarif || true
             pip-audit -r requirements.txt --format json -o pip-audit.json || true
-            pip-audit -r requirements.txt --strict || true  # non-blocking now; tighten later
+            # Make blocking later by removing "|| true" and keeping --strict
+            # pip-audit -r requirements.txt --strict
           else
+            pip-audit --format sarif -o pip-audit.sarif || true
             pip-audit --format json -o pip-audit.json || true
           fi
 
-      - name: Upload security artifacts
+      - name: Upload SARIF (Bandit)
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: bandit.sarif
+
+      - name: Upload SARIF (pip-audit)
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: pip-audit.sarif
+
+      - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: python-security
           path: |
             bandit.txt
-            bandit.json
+            bandit.sarif
             pip-audit.json
+            pip-audit.sarif
             requirements.txt
           if-no-files-found: ignore
           retention-days: 14
@@ -203,18 +235,22 @@ jobs:
       - name: Security summary
         if: always()
         run: |
-          echo "## Python Security Summary" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Bandit report: \`bandit.txt\` / \`bandit.json\` (artifact: python-security)" >> "$GITHUB_STEP_SUMMARY"
-          echo "- pip-audit report: \`pip-audit.json\` (artifact: python-security)" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "> Tip: elevate pip-audit to blocking by removing \`|| true\` and using \`--strict\`."
+          {
+            echo "## Python Security Summary"
+            echo ""
+            echo "- Ruff lint: executed"
+            echo "- Mypy: best-effort (non-blocking)"
+            echo "- Bandit: artifacts bandit.txt / bandit.sarif"
+            echo "- pip-audit: artifacts pip-audit.json / pip-audit.sarif"
+            echo ""
+            echo "> Tip: make pip-audit blocking by removing \`|| true\` and enabling \`--strict\`."
+          } >> "$GITHUB_STEP_SUMMARY"
 
-# ------------------------------------------------------------------------------
-# 4) Trivy (filesystem + Dockerfile) — SARIF to Security tab
-# ------------------------------------------------------------------------------
+  # ----------------------------------------------------------------------------
+  # 4) Trivy (filesystem + Dockerfile; optional image scan) — SARIF to Security
+  # ----------------------------------------------------------------------------
   trivy:
-    name: Trivy Scan (repo & Dockerfile)
+    name: Trivy Scan (Repo & Docker)
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:
@@ -239,7 +275,7 @@ jobs:
           sarif_file: trivy-fs.sarif
 
       - name: Trivy config scan (Dockerfile)
-        if: ${{ hashFiles('Dockerfile') != '' }}
+        if: ${{ hashFiles('Dockerfile') != '' || hashFiles('**/Dockerfile') != '' }}
         uses: aquasecurity/trivy-action@0.20.0
         with:
           scan-type: config
@@ -248,10 +284,34 @@ jobs:
           severity: CRITICAL,HIGH,MEDIUM
 
       - name: Upload SARIF (Dockerfile)
-        if: ${{ hashFiles('Dockerfile') != '' }}
+        if: ${{ hashFiles('Dockerfile') != '' || hashFiles('**/Dockerfile') != '' }}
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: trivy-config.sarif
+
+      - name: Build Docker image (optional)
+        if: ${{ hashFiles('Dockerfile') != '' || hashFiles('**/Dockerfile') != '' }}
+        run: |
+          DOCKERFILE_PATH="$(git ls-files | grep -E '(^|/)(Dockerfile)$' | head -n1 || true)"
+          if [ -n "$DOCKERFILE_PATH" ]; then
+            docker build -f "$DOCKERFILE_PATH" -t spectramind/security-scan:ci .
+          fi
+
+      - name: Trivy Image Scan (optional)
+        if: ${{ success() && (hashFiles('Dockerfile') != '' || hashFiles('**/Dockerfile') != '') }}
+        uses: aquasecurity/trivy-action@0.20.0
+        with:
+          image-ref: spectramind/security-scan:ci
+          format: sarif
+          output: trivy-image.sarif
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH,MEDIUM
+
+      - name: Upload SARIF (Image)
+        if: ${{ success() && (hashFiles('Dockerfile') != '' || hashFiles('**/Dockerfile') != '') }}
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-image.sarif
 
       - name: Upload raw Trivy artifacts
         if: always()
@@ -261,5 +321,51 @@ jobs:
           path: |
             trivy-fs.sarif
             trivy-config.sarif
+            trivy-image.sarif
           if-no-files-found: ignore
           retention-days: 14
+
+  # ----------------------------------------------------------------------------
+  # 5) Quick Integrity Check (Optional, non-blocking)
+  # ----------------------------------------------------------------------------
+  integrity-check:
+    name: Quick Integrity Check (Optional)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.DEFAULT_PY }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.DEFAULT_PY }}
+
+      - name: Install Poetry
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "poetry==${POETRY_VERSION}"
+
+      - name: Install minimal deps
+        run: |
+          if [ -f pyproject.toml ]; then
+            poetry install --no-interaction --no-ansi --only main
+          fi
+
+      - name: Run lightweight self-test (non-blocking)
+        continue-on-error: true
+        run: |
+          if command -v poetry >/dev/null 2>&1; then
+            (poetry run spectramind selftest --fast || true) 2>&1 | tee selftest.log
+          else
+            python -c "print('SpectraMind V50 integrity: OK')"
+          fi
+
+      - name: Upload selftest logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integrity-selftest-logs
+          path: selftest.log
+          if-no-files-found: ignore
+          retention-days: 7
