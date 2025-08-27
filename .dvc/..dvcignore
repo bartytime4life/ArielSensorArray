@@ -1,0 +1,24 @@
+# Ignore temporary and cache artifacts for DVC
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.swp
+**/.ipynb_checkpoints/
+
+# Ignore logs and large outputs not meant for DVC
+logs/**
+wandb/**
+mlruns/**
+
+# Ignore environment and build files
+.venv/**
+.env
+poetry.lock
+pyproject.toml
+*.egg-info/
+dist/
+build/
+
+# Ignore Kaggle-specific temporary files
+kaggle_work/**
+kaggle_notebooks/**
