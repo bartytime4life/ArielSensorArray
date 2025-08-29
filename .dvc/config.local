@@ -1,51 +1,80 @@
 # ==============================================================================
 # SpectraMind V50 — DVC Local Config Override
+# ------------------------------------------------------------------------------
 # Purpose:
-#   • Provides a safe offline/local override for DVC storage
-#   • Keeps sensitive keys (AWS/GCP) out of local dev by pointing to a file:// path
-#   • Allows switching between S3 and local seamlessly (remote "storage" vs "local")
-#   • Ensures group-shared cache for collaboration
+#   • Safe offline/local defaults (no cloud creds required)
+#   • Shared group cache for collaborative speed-ups
+#   • Seamless switching between file:// and cloud remotes (S3/GCS/Azure)
+#   • CI- and Kaggle-friendly; avoids leaking secrets into Git
 # ==============================================================================
 
-['core']
-    # Default remote for data pulls/pushes
-    remote = storage
-    autostage = true
-    jobs = 4
-    no_scm = false
+[core]
+# Default remote for pulls/pushes (use `dvc remote default <name>` to switch)
+remote = storage
+autostage = true          ; auto add/commit .dvc/.gitignore changes
+jobs = 4                  ; parallel threads for fetch/push
+no_scm = false            ; we use Git for reproducibility
 
-['cache']
-    type = "reflink,copy"
-    shared = group
-    dir = .dvc/cache
+[cache]
+# Prefer reflink when supported; fall back to copy where not available
+type = reflink,copy
+shared = group
+dir = .dvc/cache
+protected = true          ; avoid accidental workspace edits of cached files
 
-['remote "storage"']
-    # Local override for offline work — maps to a host-mounted volume
-    url = file:///mnt/data/spectramind-v50-dvc
-    verify = true
-    slow_link_warning = true
-    # NOTE: This shadows the S3 config in config file; use `dvc remote default` to switch
+[state]
+# Reduce lock contention on shared filesystems
+row_limit = 10000
+update_lock = true
 
-['remote "local"']
-    # Pure local directory option (useful for disconnected development)
-    url = ../.dvc-storage
-    type = local
-    verify = true
+[experiments]
+auto_push = false                 ; keep local by default
+temp_dir = .dvc/tmp/experiments
+run_cache = true
 
-['experiments']
-    auto_push = false         # Disable auto-push for local testing
-    temp_dir = .dvc/tmp/experiments
-    run_cache = true
+[plots]
+template_dir = .dvc/plots/templates
 
-['plots']
-    template_dir = .dvc/plots/templates
+# ───────────────────────── Local/File remotes (offline-first) ──────────────────
+[remote "storage"]
+# Host-mounted/shared volume — ideal for a lab NAS or local SSD RAID
+url = file:///mnt/data/spectramind-v50-dvc
+verify = true
+slow_link_warning = true
 
-['state']
-    # Reduce SQLite lock contention in multi-user environments
-    row_limit = 10000
-    update_lock = true
+[remote "local"]
+# Pure local directory (useful for fully disconnected laptops)
+type = local
+url = ../.dvc-storage
+verify = true
 
-['feature "push"']
-    # Allow retrying pushes to avoid local race conditions
-    retries = 3
-    jobs = 2
+# ───────────────────────── Optional Cloud remotes (opt-in) ─────────────────────
+# NOTE: These are disabled by default. To use one, set creds via environment
+#       (never commit secrets), then:
+#         dvc remote default s3   # or gcs/azure
+#
+# S3 (MinIO/AWS). Provide creds/endpoint via env vars or the AWS profile.
+[remote "s3"]
+type = s3
+url = s3://spectramind-v50-dvc
+profile = default
+# endpointurl = https://minio.your.domain      ; uncomment for MinIO
+# region = us-east-1
+# Use env vars: AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN
+
+# Google Cloud Storage. Auth via ADC (gcloud) or env-based key file.
+[remote "gcs"]
+type = gcs
+url = gs://spectramind-v50-dvc
+# gcloud ADC recommended; otherwise set GOOGLE_APPLICATION_CREDENTIALS
+
+# Azure Blob Storage (ABFS). Auth via env or az login.
+[remote "azure"]
+type = azure
+url = azure://spectramindv50/container
+# AZURE_STORAGE_CONNECTION_STRING / AZURE_STORAGE_ACCOUNT / AZURE_STORAGE_KEY
+
+# ───────────────────────── Push behavior hardening ─────────────────────────────
+[feature "push"]
+retries = 3
+jobs = 2
