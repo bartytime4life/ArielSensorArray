@@ -1,0 +1,157 @@
+# configs/data/nominal.yaml
+# ==============================================================================
+# 🛰️ SpectraMind V50 — Nominal Data Configuration
+# NeurIPS 2025 Ariel Data Challenge (ESA Ariel telescope simulation)
+#
+# Purpose:
+#   Define the nominal dataset and calibration setup used in standard runs.
+#   Covers:
+#     • Input data (FGS1 photometer, AIRS spectrometer)
+#     • Preprocessing + calibration steps
+#     • Augmentations (jitter, dropout, masking)
+#     • Symbolic/physics-aware data treatments
+#     • DVC integration (paths are DVC-tracked)
+#
+# This file is Hydra-composable and intended as the default "data" config.
+# ==============================================================================
+
+# ----------------------------------------------------------------------
+# Dataset metadata
+# ----------------------------------------------------------------------
+dataset:
+  name: "nominal_v50"
+  description: "Default ESA Ariel Challenge dataset (FGS1 + AIRS) with calibration."
+  version: "1.0"
+  source: "neurips-2025-ariel"     # Kaggle competition slug
+  dvc_stage: "data/nominal"        # DVC stage name for tracking
+  cache: "data/cache"              # Local cache directory (DVC-managed)
+
+# ----------------------------------------------------------------------
+# File paths (DVC-tracked)
+# ----------------------------------------------------------------------
+paths:
+  raw_dir: "data/raw"
+  processed_dir: "data/processed/nominal"
+  fgs1_file: "${paths.raw_dir}/fgs1_train.npy"   # (135k, 32, 32)
+  airs_file: "${paths.raw_dir}/airs_train.npy"   # (11k, 32, 356)
+  labels_file: "${paths.raw_dir}/labels.csv"     # planet metadata + targets
+  test_fgs1: "${paths.raw_dir}/fgs1_test.npy"
+  test_airs: "${paths.raw_dir}/airs_test.npy"
+
+# ----------------------------------------------------------------------
+# Calibration pipeline (kill chain)
+# ----------------------------------------------------------------------
+calibration:
+  enabled: true
+  steps:
+    - "adc_correction"       # Analog-to-digital correction
+    - "nonlinearity_correction"
+    - "dark_subtraction"
+    - "flat_fielding"
+    - "correlated_double_sampling"
+    - "photometric_extraction"
+    - "trace_normalization"
+    - "phase_alignment"
+  save_intermediate: true    # Save intermediate cubes for diagnostics
+  output_dir: "${paths.processed_dir}/calibrated"
+
+# ----------------------------------------------------------------------
+# Preprocessing & normalization
+# ----------------------------------------------------------------------
+preprocessing:
+  normalize_flux: true
+  standardize_time: true
+  clip_outliers: true
+  outlier_sigma: 6.0
+  detrend:
+    enabled: true
+    method: "polyfit"
+    degree: 2
+  smoothing:
+    enabled: true
+    window: 5
+    method: "median"
+
+# ----------------------------------------------------------------------
+# Augmentation (for training robustness)
+# ----------------------------------------------------------------------
+augmentation:
+  jitter:
+    enabled: true
+    amplitude_ppm: 100           # spacecraft jitter injection
+  dropout:
+    enabled: true
+    prob: 0.01
+  mask:
+    enabled: true
+    scheme: "block"              # block masking for MAE pretraining
+    fraction: 0.15
+  snr_dropout:
+    enabled: true
+    snr_threshold: 5.0
+
+# ----------------------------------------------------------------------
+# Symbolic & physics-aware constraints
+# ----------------------------------------------------------------------
+symbolic:
+  enforce_nonnegativity: true
+  smoothness_penalty: 0.01
+  asymmetry_penalty: 0.001
+  molecular_masking:
+    enabled: true
+    molecules: ["H2O", "CO2", "CH4"]
+    apply_in_preprocessing: true
+  temporal_dropout:
+    enabled: true
+    fraction: 0.1
+  region_masking:
+    enabled: true
+    regions:
+      - name: "AIRS_short_IR"
+        start: 0
+        end: 100
+      - name: "AIRS_long_IR"
+        start: 200
+        end: 356
+
+# ----------------------------------------------------------------------
+# Splits
+# ----------------------------------------------------------------------
+splits:
+  train_fraction: 0.8
+  val_fraction: 0.1
+  test_fraction: 0.1
+  stratify: true
+  seed: 42
+
+# ----------------------------------------------------------------------
+# Loader parameters
+# ----------------------------------------------------------------------
+loader:
+  batch_size: 32
+  num_workers: 4
+  pin_memory: true
+  prefetch_factor: 2
+  persistent_workers: true
+
+# ----------------------------------------------------------------------
+# Diagnostics
+# ----------------------------------------------------------------------
+diagnostics:
+  save_plots: true
+  fft_analysis: true
+  zscore_analysis: true
+  symbolic_overlay: true
+  shap_overlay: false
+  output_dir: "outputs/diagnostics/data_nominal"
+
+# ----------------------------------------------------------------------
+# Runtime notes
+# ----------------------------------------------------------------------
+notes: |
+  • This config defines the *nominal data pipeline* for SpectraMind V50.
+  • All paths must be DVC-tracked to ensure reproducibility.
+  • Preprocessing includes flux normalization, outlier clipping, and polynomial detrending.
+  • Symbolic constraints ensure smoothness, non-negativity, and molecular-region masking.
+  • Augmentations simulate spacecraft/system noise (jitter, dropout, SNR masking).
+  • Diagnostics output FFT and symbolic overlays for audit.
