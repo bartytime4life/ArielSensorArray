@@ -1,0 +1,15 @@
+# bin/.gitkeep
+# -----------------------------------------------------------------------------
+# Purpose:
+#   This empty file ensures that the `bin/` directory is versioned in Git,
+#   even if no executable scripts are present yet.
+#
+# Usage:
+#   - Do not delete unless the directory is guaranteed to contain other files.
+#   - Keeps repository structure intact across clones/checkouts.
+#   - Signals that CLI scripts and utilities for SpectraMind V50 will live here.
+#
+# Notes:
+#   - Replace this placeholder once you add actual scripts (e.g. .sh, .py).
+#   - Conforms with repo-wide reproducibility + directory integrity standards.
+# -----------------------------------------------------------------------------
