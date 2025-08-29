@@ -1,0 +1,63 @@
+# ==============================================================================
+# params.yaml — DVC params for SpectraMind V50 (ArielSensorArray)
+# ------------------------------------------------------------------------------
+# Use `dvc repro -S data.mode=kaggle` or `-S data.mode=debug` to switch modes.
+# All values here are safe defaults; override per-run via `-S key=value`.
+# ==============================================================================
+
+# -----------------------------
+# Data & runtime selection
+# -----------------------------
+data:
+  mode: nominal           # nominal | kaggle | debug
+  # DVC- or env-specific paths (nominal/local defaults below; Kaggle config
+  # will remap these internally via Hydra to /kaggle/input and /kaggle/working)
+  fgs1_path: data/raw/fgs1
+  airs_path: data/raw/airs
+  calibration_path: data/calibrated
+  bins: 283               # AIRS spectral bins (challenge fixed)
+
+# -----------------------------
+# Calibration toggles (per-step)
+# -----------------------------
+calibration:
+  adc_correction: true
+  dark_subtraction: true
+  flat_field: true
+  cds_correction: true
+  nonlinearity: true
+  phase_normalization: true
+
+# -----------------------------
+# Training
+# -----------------------------
+training:
+  epochs: 20
+  batch_size: 64
+  lr: 3.0e-4
+  seed: 42
+
+# -----------------------------
+# Model (encoders/decoder)
+# -----------------------------
+model:
+  encoder: fgs1_mamba_v50       # options: fgs1_mamba_v50, ...
+  gnn: airs_gnn_gat_v50         # options: airs_gnn_gat_v50, airs_gnn_rgcn_v50, ...
+  decoder: multi_scale_decoder  # options: multi_scale_decoder, quantile_decoder, ...
+
+# -----------------------------
+# Diagnostics
+# -----------------------------
+diagnostics:
+  save_html: true
+  run_fft: true
+  run_umap: true
+  run_tsne: false
+  run_symbolic: true
+
+# -----------------------------
+# Submission
+# -----------------------------
+submission:
+  kaggle_format: true
+  validate_before_zip: true
