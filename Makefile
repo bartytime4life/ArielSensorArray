@@ -1,6 +1,7 @@
 # ==============================================================================
-# SpectraMind V50 — Master Makefile (Upgraded: reproducibility, CI, Kaggle, Docker)
-# Neuro‑Symbolic, Physics‑Informed AI Pipeline
+# SpectraMind V50 — Master Makefile (Ultimate, Upgraded)
+# Neuro-Symbolic, Physics-Informed AI Pipeline
+# Reproducibility • CLI-first • Hydra-safe • DVC • CI • Kaggle • Docker
 # ==============================================================================
 
 # ========= Shell & Make hygiene =========
@@ -67,6 +68,7 @@ REQ_FREEZE   ?= requirements.freeze.txt
 DIAGRAMS_SRC_DIR  ?= diagrams
 DIAGRAMS_OUT_DIR  ?= outputs/diagrams
 MMD_MAIN          ?= $(DIAGRAMS_SRC_DIR)/main.mmd
+MMDC_BIN          ?= mmdc
 
 # Hydra overrides / passthrough
 OVERRIDES    ?=
@@ -93,14 +95,13 @@ RST  := \033[0m
         fmt lint mypy test pre-commit \
         selftest selftest-deep validate-env \
         calibrate calibrate-temp corel-train train predict predict-e2e diagnose open-report \
-        submit \
+        submit submission-bin repair \
         ablate ablate-light ablate-heavy ablate-grid ablate-optuna \
         analyze-log analyze-log-short check-cli-map \
         dvc-pull dvc-push dvc-status dvc-check dvc-repro \
         bench-selftest benchmark benchmark-cpu benchmark-gpu benchmark-run benchmark-report benchmark-clean \
         kaggle-verify kaggle-run kaggle-submit kaggle-dataset-create kaggle-dataset-push \
-        node-info mmd-version diagrams diagrams-png diagrams-watch diagrams-lint diagrams-format diagrams-clean \
-        node-ci node-diagrams \
+        node-info node-ci mmd-version diagrams diagrams-png diagrams-svg diagrams-watch diagrams-lint diagrams-format diagrams-clean \
         ci ci-docs quickstart clean realclean distclean cache-clean \
         export-reqs export-reqs-dev export-kaggle-reqs export-freeze \
         install-core install-extras install-dev install-kaggle \
@@ -109,7 +110,8 @@ RST  := \033[0m
         pip-audit audit docs docs-html docs-pdf docs-open docs-clean docs-serve docs-build \
         pyg-install kaggle-pyg-index \
         docker-print docker-build docker-buildx docker-run docker-shell docker-test docker-clean \
-        repro-start repro-snapshot repro-verify repro-manifest
+        repro-start repro-snapshot repro-verify repro-manifest \
+        ensure-exec
 
 # ========= Default Goal =========
 .DEFAULT_GOAL := help
@@ -126,11 +128,14 @@ help:
 	@echo "  $(CYN)predict-e2e$(RST)         : smoke test asserting submission exists"
 	@echo "  $(CYN)diagnose$(RST)            : build diagnostics (smoothness + dashboard)"
 	@echo "  $(CYN)submit$(RST)              : package submission ZIP ($(SUBMIT_ZIP))"
+	@echo "  $(CYN)submission-bin$(RST)      : run ./bin/make-submission.sh (dry-run unless ARGS overrides)"
+	@echo "  $(CYN)repair$(RST)              : run ./bin/repair_and_push.sh MSG=\"...\""
 	@echo "  $(CYN)ablate*$(RST)             : ablation sweeps (light/heavy/grid/optuna)"
 	@echo "  $(CYN)analyze-log$(RST)         : parse logs → $(OUT_DIR)/log_table.{md,csv}"
 	@echo "  $(CYN)repro-*(RST)              : run snapshot & manifest (config/data hashing)"
 	@echo "  $(CYN)dvc-*(RST)                : DVC pull/push/status/repro & sanity checks"
 	@echo "  $(CYN)kaggle-*(RST)             : Kaggle run/submit/dataset publish"
+	@echo "  $(CYN)diagrams*(RST)            : render Mermaid diagrams with mmdc"
 	@echo "  $(CYN)docker-build/run/shell$(RST) : Dockerized workflow (GPU autodetect)"
 	@echo ""
 
@@ -162,9 +167,13 @@ doctor:
 	command -v $(NPM)    >/dev/null 2>&1 || { echo "$(YLW)npm not found (needed for mermaid-cli)$(RST)"; }; \
 	{ $(CLI) --version >/dev/null 2>&1 && echo "$(GRN)CLI OK$(RST)"; } || { echo "$(YLW)CLI not yet installed or venv not active$(RST)"; }; \
 	$(PYTHON) - <<'PY' || ok=0
-import sys, torch
-print("torch:", getattr(torch, "__version__", "n/a"))
-print("cuda :", torch.version.cuda if hasattr(torch, "version") else "n/a")
+import sys
+try:
+  import torch
+  print("torch:", getattr(torch, "__version__", "n/a"))
+  print("cuda :", getattr(getattr(torch, "version", None), "cuda", "n/a"))
+except Exception as e:
+  print("torch: (missing)")
 PY
 	test $$ok -eq 1
 
@@ -250,6 +259,22 @@ submit: guards init
 	mkdir -p "$(SUBMIT_DIR)"
 	$(CLI) submit --zip-out "$(SUBMIT_ZIP)" $(EXTRA_ARGS)
 
+# ========= bin/ wrappers =========
+ensure-exec:
+	@mkdir -p "$(LOGS_DIR)"
+	@find bin -maxdepth 1 -type f -name "*.sh" -print0 2>/dev/null | xargs -0 chmod +x 2>/dev/null || true
+
+# Use with: make submission-bin ARGS="--tag v50.0.1 --open"
+submission-bin: ensure-exec
+	@echo "[bin] ./bin/make-submission.sh $(ARGS)"
+	@./bin/make-submission.sh $(ARGS)
+
+# Use with: make repair MSG="Fix hashes"
+repair: ensure-exec
+	@if [ -z "$(MSG)" ]; then echo "Usage: make repair MSG=\"Commit message\""; exit 2; fi
+	@echo "[bin] ./bin/repair_and_push.sh \"$(MSG)\""
+	@./bin/repair_and_push.sh "$(MSG)"
+
 # ========= Ablation =========
 ablate: guards init
 	$(CLI) ablate $(OVERRIDES) $(EXTRA_ARGS)
@@ -289,12 +314,16 @@ check-cli-map: guards
 # ========= DVC =========
 dvc-pull:
 	$(DVC) pull || true
+
 dvc-push:
 	$(DVC) push || true
+
 dvc-status:
 	$(DVC) status || true
+
 dvc-repro:
 	$(DVC) repro || true
+
 dvc-check:
 	@echo ">>> DVC sanity"
 	@$(DVC) status -c || true
@@ -369,7 +398,7 @@ kaggle-submit: kaggle-verify kaggle-run
 
 # (Optional) publish artifacts as Kaggle dataset
 kaggle-dataset-create:
-	@echo ">>> Creating Kaggle dataset placeholder (id: $(USER)/spectramind-v50-$(RUN_TS))"
+	@echo ">>> Creating Kaggle dataset placeholder (id: $$USER/spectramind-v50-$(RUN_TS))"
 	@$(KAGGLE) datasets create -p "$(OUT_DIR)" -u || true
 
 kaggle-dataset-push:
@@ -435,14 +464,15 @@ deps-lock:
 verify-deps:
 	@echo ">>> Key package versions"
 	@$(PYTHON) - << 'PY'
-import importlib,sys
-def v(name):
+import importlib
+pkgs = ["torch","torchvision","torchaudio","numpy","scipy","pandas","sklearn","matplotlib","umap","shap","typer","hydra","omegaconf"]
+for name in pkgs:
+    mod = "sklearn" if name=="sklearn" else name
     try:
-        m=importlib.import_module(name); print(f"{name:>14}: {getattr(m,'__version__','n/a')}")
-    except Exception as e:
+        m=importlib.import_module(mod)
+        print(f"{name:>14}: {getattr(m,'__version__','n/a')}")
+    except Exception:
         print(f"{name:>14}: (missing)")
-for pkg in ["torch","torchvision","torchaudio","numpy","scipy","pandas","sklearn","matplotlib","umap","shap","typer","hydra","omegaconf"]:
-    v(pkg if pkg!="sklearn" else "sklearn")
 PY
 
 # ========= CLI utilities (reproducibility) =========
@@ -467,7 +497,7 @@ pip-audit:
 
 audit: pip-audit
 
-docs: docs-html docs-pdf ## Build HTML and PDF from $(DOC_MD)
+docs: docs-html docs-pdf
 docs-html:
 	@command -v pandoc >/dev/null || { echo "pandoc not found. Install pandoc (and TeX for PDF)."; exit 1; }
 	@test -f "$(DOC_MD)" || { echo "Missing $(DOC_MD)."; exit 1; }
@@ -573,6 +603,52 @@ docker-test: init
 docker-clean:
 	-$(DOCKER) image rm $(DOCKER_FULL) 2>/dev/null || true
 
+# ========= Mermaid / Diagrams =========
+node-info:
+	@echo "node : $$($(NODE) --version 2>/dev/null || echo 'missing')"
+	@echo "npm  : $$($(NPM) --version 2>/dev/null || echo 'missing')"
+	@echo "mmdc : $$($(MMDC_BIN) -V 2>/dev/null || echo 'missing')"
+
+mmd-version:
+	@$(MMDC_BIN) -V 2>/dev/null || echo "::warning::mmdc not installed"
+
+node-ci:
+	@command -v $(NPM) >/dev/null 2>&1 || { echo "$(YLW)npm missing — skip mmdc install$(RST)"; exit 0; }
+	@command -v $(MMDC_BIN) >/dev/null 2>&1 || { echo ">>> Installing @mermaid-js/mermaid-cli globally"; $(NPM) i -g @mermaid-js/mermaid-cli; }
+
+diagrams: diagrams-png
+
+diagrams-png:
+	@mkdir -p "$(DIAGRAMS_OUT_DIR)"
+	@if [ -f "$(MMD_MAIN)" ]; then \
+	  echo ">>> Rendering PNG from $(MMD_MAIN)"; \
+	  $(MMDC_BIN) -i "$(MMD_MAIN)" -o "$(DIAGRAMS_OUT_DIR)/main.png" -b light || true; \
+	else echo "::warning::No $(MMD_MAIN) found"; fi
+
+diagrams-svg:
+	@mkdir -p "$(DIAGRAMS_OUT_DIR)"
+	@if [ -f "$(MMD_MAIN)" ]; then \
+	  echo ">>> Rendering SVG from $(MMD_MAIN)"; \
+	  $(MMDC_BIN) -i "$(MMD_MAIN)" -o "$(DIAGRAMS_OUT_DIR)/main.svg" -b light || true; \
+	else echo "::warning::No $(MMD_MAIN) found"; fi
+
+diagrams-watch:
+	@command -v entr >/dev/null 2>&1 || { echo "::warning::entr not installed; watch disabled"; exit 0; }
+	@ls $(DIAGRAMS_SRC_DIR)/*.mmd | entr -r make diagrams
+
+diagrams-lint:
+	@echo ">>> (Placeholder) lint diagrams — ensure .mmd files compile"
+	@for f in $(DIAGRAMS_SRC_DIR)/*.mmd; do \
+	  [ -f "$$f" ] || continue; \
+	  $(MMDC_BIN) -i "$$f" -o /dev/null >/dev/null 2>&1 || echo "::warning::Failed to render $$f"; \
+	done
+
+diagrams-format:
+	@echo ">>> (Optional) apply prettier to Mermaid if configured"
+
+diagrams-clean:
+	rm -rf "$(DIAGRAMS_OUT_DIR)"
+
 # ========= Reproducibility snapshots (config+data hashing, manifest) =========
 repro-start: init
 	@echo ">>> Starting reproducible run $(RUN_ID)"
@@ -591,22 +667,24 @@ run_id = os.environ.get("RUN_ID","unknown")
 outdir = os.environ.get("MANIFEST_DIR","outputs/manifests")
 pathlib.Path(outdir).mkdir(parents=True, exist_ok=True)
 def sh(cmd):
-    return subprocess.check_output(cmd, shell=True, text=True).strip()
+    try:
+        return subprocess.check_output(cmd, shell=True, text=True).strip()
+    except Exception:
+        return ""
 manifest = {
   "run_id": run_id,
   "ts_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-  "git": {
-     "commit": sh("git rev-parse --short HEAD 2>/dev/null || echo 'nogit'"),
-     "status": sh("git status --porcelain || true"),
-  },
-  "hydra_config_hash": sh("$(CLI) hash-config 2>/dev/null || echo ''"),
+  "git": {"commit": sh("git rev-parse --short HEAD 2>/dev/null || echo 'nogit'"),
+          "status": sh("git status --porcelain || true")},
+  "hydra_config_hash": sh("spectramind hash-config 2>/dev/null || echo ''"),
   "device": os.environ.get("DEVICE",""),
   "epochs": os.environ.get("EPOCHS",""),
   "seed": os.environ.get("SEED",""),
 }
-with open(os.path.join(outdir, f"run_manifest_{run_id}.json"), "w") as f:
+fp = os.path.join(outdir, f"run_manifest_{run_id}.json")
+with open(fp, "w") as f:
     json.dump(manifest, f, indent=2)
-print("Wrote manifest:", os.path.join(outdir, f"run_manifest_{run_id}.json"))
+print("Wrote manifest:", fp)
 PY
 
 repro-verify:
@@ -619,7 +697,7 @@ repro-manifest: repro-start repro-snapshot
 
 # ========= Cleanup =========
 clean:
-	rm -rf "$(OUT_DIR)" "$(DIAG_DIR)" "$(PRED_DIR)" "$(SUBMIT_DIR)"
+	rm -rf "$(DIAG_DIR)" "$(PRED_DIR)" "$(SUBMIT_DIR)"
 
 cache-clean:
 	@echo ">>> Cleaning caches and logs"
@@ -628,6 +706,7 @@ cache-clean:
 	find $(LOGS_DIR) -type f -name "*.log" -delete 2>/dev/null || true
 
 realclean: clean cache-clean
+	rm -rf "$(OUT_DIR)"
 	rm -rf .dvc/cache
 
 distclean: realclean
