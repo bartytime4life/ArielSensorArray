@@ -1,17 +1,152 @@
-# =====================================================================
-# SpectraMind V50 — Top-level App Config (Hydra)
-# =====================================================================
+# FILE: configs/config.yaml
+# ==============================================================================
+# SpectraMind V50 — Hydra Master Config
+# ------------------------------------------------------------------------------
+# Compose all component configs via groups; override any field on the CLI, e.g.:
+#   spectramind train training.epochs=10 model.latent_dim=384 data.curriculum=false
+# ==============================================================================
 
 defaults:
-  - train: default        # training recipe (can be fast/full/ablation/…)
-  - logging: default      # console by default
-  - _self_
+  - training: default
+  - model: v50
+  - data: default
+  - calibration: corel
+  - diagnostics: default
+  - submission: default
+  - ci: default
 
-# Global runtime switches (can be overridden at CLI)
-device: ${train.device}
-seed: ${train.seed}
+# Optional: global experiment name; auto-annotated by CLI as well.
+experiment_name: "v50_main"
 
-# Where common artifacts should go if not overridden by submodules
-paths:
-  outputs: outputs
-  logs: logs
+# Hydra runtime settings (output dirs are typically set by the CLI)
+hydra:
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  job_logging:
+    disable_existing_loggers: false
+
+
+# FILE: configs/training/default.yaml
+# ==============================================================================
+# Training configuration
+# ==============================================================================
+
+epochs: 100
+batch_size: 48
+grad_accum_steps: 2
+lr: 0.00025
+lr_scheduler: cosine
+warmup_epochs: 5
+optimizer: adamw
+weight_decay: 0.01
+early_stop_patience: 15
+checkpoint_interval: 5
+log_interval: 50
+amp: true
+device: cuda
+seed: 1337
+
+
+# FILE: configs/model/v50.yaml
+# ==============================================================================
+# Model configuration (FGS1 Mamba + AIRS GNN + multi-scale decoder + σ head)
+# ==============================================================================
+
+encoder: fgs1_mamba
+gnn: airs_gnn
+decoder: multi_scale_decoder
+latent_dim: 256
+dropout: 0.1
+residual: true
+attention_fusion: true
+sigma_head: flow_uncertainty
+symbolic_loss: true
+symbolic_weight: 0.2
+spectral_smoothness: true
+asymmetry_loss: true
+
+
+# FILE: configs/data/default.yaml
+# ==============================================================================
+# Data configuration
+# ==============================================================================
+
+fgs1_path: data/raw/fgs1/
+airs_path: data/raw/airs/
+calibration_path: data/processed/calibration/
+bins: 283
+split_seed: 2025
+
+# Curriculum & masking knobs
+snr_masking: true
+molecule_masking: true
+curriculum: true
+jitter_augmentation: true
+
+
+# FILE: configs/calibration/corel.yaml
+# ==============================================================================
+# Uncertainty calibration (COREL + temperature scaling)
+# ==============================================================================
+
+enable: true
+method: corel
+temperature_scaling: true
+coverage_target: 0.9
+per_bin: true
+plots: true
+save_csv: outputs/calibration/per_bin.csv
+
+
+# FILE: configs/diagnostics/default.yaml
+# ==============================================================================
+# Diagnostics & reporting configuration
+# ==============================================================================
+
+shap: true
+shap_topk: 20
+
+umap: true
+umap_dim: 2
+
+tsne: true
+tsne_dim: 2
+
+fft: true
+fft_autocorr: true
+
+symbolic: true
+symbolic_profiles: configs/symbolic/profiles.yaml
+conformal: true
+
+gll_heatmap: true
+smoothness_map: true
+violation_overlay: true
+
+html_report: outputs/diagnostics/report.html
+summary_json: outputs/diagnostics/diagnostic_summary.json
+
+
+# FILE: configs/submission/default.yaml
+# ==============================================================================
+# Submission packaging configuration
+# ==============================================================================
+
+bundle_dir: outputs/submission
+bundle_zip: outputs/submission/bundle.zip
+kaggle_format: true
+include_diagnostics: true
+validate_before_zip: true
+versioned: true
+
+
+# FILE: configs/ci/default.yaml
+# ==============================================================================
+# CI guardrails
+# ==============================================================================
+
+selftest: deep
+max_runtime: 9h
+cache_datasets: true
+fail_on_violation: true
+log_jsonl: logs/ci_events.jsonl
