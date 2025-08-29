@@ -1,24 +1,65 @@
-# Ignore temporary and cache artifacts for DVC
+# ==============================================================================
+# SpectraMind V50 — DVC Ignore Rules
+# ------------------------------------------------------------------------------
+# Purpose:
+#   • Prevents DVC from accidentally tracking ephemeral or environment files
+#   • Keeps the DVC DAG clean, reproducible, and Kaggle/CI-safe
+#   • Complements .gitignore — this applies only to DVC tracking scope
+# ==============================================================================
+
+# ───────────────────────── Python Build Artifacts ─────────────────────────
 **/__pycache__/
 **/*.pyc
 **/*.pyo
-**/*.swp
-**/.ipynb_checkpoints/
-
-# Ignore logs and large outputs not meant for DVC
-logs/**
-wandb/**
-mlruns/**
-
-# Ignore environment and build files
-.venv/**
-.env
-poetry.lock
-pyproject.toml
-*.egg-info/
+**/*.pyd
+**/*.so
+**/*.dll
+**/*.dylib
+**/*.egg-info/
+*.egg
 dist/
 build/
 
-# Ignore Kaggle-specific temporary files
+# ───────────────────────── Notebook / Editor Junk ─────────────────────────
+**/.ipynb_checkpoints/
+**/*.swp
+**/*.swo
+**/*.tmp
+**/*.bak
+
+# ───────────────────────── Logs & Run Artifacts ─────────────────────────
+logs/**
+wandb/**             # Weights & Biases run logs
+mlruns/**            # MLflow tracking runs
+tensorboard/**       # Local tensorboard event files
+.dvc/tmp/**          # DVC’s own temp dirs (don’t recurse into cache)
+.dvc/exp/**          # Experiment scratch space
+
+# ───────────────────────── Environment / Dependency Files ─────────────────
+.venv/**
+.env
+.env.*
+.conda_env/
+Pipfile
+Pipfile.lock
+poetry.lock
+pyproject.toml
+requirements*.txt
+
+# ───────────────────────── Kaggle / Competition Artifacts ─────────────────
 kaggle_work/**
 kaggle_notebooks/**
+kaggle_submissions/**
+kaggle_cache/**
+
+# ───────────────────────── OS / IDE Noise ─────────────────────────
+.DS_Store
+Thumbs.db
+.idea/**
+.vscode/**
+*.log
+
+# ───────────────────────── Safety Notes ─────────────────────────
+# DVC will ignore these patterns; Git may still see them unless in .gitignore.
+# Ensure pipeline data (data/, outputs/, models/, artifacts/) are tracked ONLY via DVC.
+# ==============================================================================
