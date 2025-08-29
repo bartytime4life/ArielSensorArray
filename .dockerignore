@@ -1,3 +1,4 @@
+```gitignore
 # ==============================================================================
 # .dockerignore — SpectraMind V50 (NeurIPS 2025 Ariel Data Challenge)
 # ------------------------------------------------------------------------------
@@ -73,6 +74,7 @@ outputs/sandbox/
 *.onnx
 *.h5
 *.tar.gz
+*.mlmodel
 
 # ----------------------------------------------------------------------
 # Kaggle / competition specifics
@@ -131,6 +133,7 @@ diagnostic_summary.json
 run_hash_summary_v50.json
 version_manifest.json
 pipeline_consistency_report.json
+config_snapshot.yaml
 
 # ----------------------------------------------------------------------
 # Local GUI/UX assets (reproducible — avoid shipping large diagrams/images)
@@ -145,13 +148,29 @@ assets/**.jpeg
 assets/**.gif
 
 # ----------------------------------------------------------------------
-# Hugging Face / MLflow / W&B caches
+# Hugging Face / MLflow / W&B / Lightning / tuning caches
 .huggingface/
+transformers_cache/
+datasets/
+models/
 wandb/
 mlruns/
-*.mlmodel
-hf_cache/
+tensorboard/
+tb_logs/
+lightning_logs/
+ray_results/
+optuna_study/
+optuna/
+ray_tune/
 cache/
+
+# ----------------------------------------------------------------------
+# Frontend / GUI build artifacts
+gui/.cache/
+gui/dist/
+gui/build/
+gui/node_modules/
+node_modules/
 
 # ----------------------------------------------------------------------
 # Build system artifacts
@@ -165,6 +184,7 @@ pytest_cache/
 .mypy_cache/
 .tox/
 .nox/
+htmlcov/
 
 # ----------------------------------------------------------------------
 # Git internals
@@ -182,6 +202,16 @@ pytest_cache/
 .gcloud/
 .azure/
 secrets.yaml
+secrets.json
+credentials.json
+token.json
+hf_token.txt
+
+# ----------------------------------------------------------------------
+# Data folders (kept on host/DVC, not baked into images)
+data/
+datasets/
+models/  # model zoo / HF mirrors; real runtime models pulled at run-time
 
 # ----------------------------------------------------------------------
 # Misc (CI/CD, local-only overrides)
@@ -189,3 +219,10 @@ Dockerfile.local
 Dockerfile.dev
 docker-compose*.yml
 Makefile.local
+
+# ----------------------------------------------------------------------
+# SBOMs / compliance outputs
+*.sbom.json
+*.cyclonedx.json
+*.spdx
+```
