@@ -5,12 +5,13 @@
 # What it does
 #   • Exports Poetry lock to pip-compatible requirement files
 #   • Generates variants:
-#       - requirements.txt           (runtime, no hashes)
+#       - requirements.txt           (runtime, no hashes by default)
 #       - requirements-dev.txt       (runtime + dev groups)
 #       - requirements-min.txt       (minimal portable subset)
 #       - requirements-kaggle.txt    (Kaggle-safe: removes torch* & heavy MLOps)
 #       - requirements.freeze.txt    (pip freeze of the CURRENT env, optional)
 #   • Lets you pick extra groups, toggle hashes, change output paths, and dry-run
+#   • (NEW) Optional JSON summary for CI
 #
 # Usage
 #   bin/export-reqs.sh [options]
@@ -35,6 +36,7 @@
 #   --groups <csv>       Poetry groups to include with --with (e.g. viz,hf,lightning)
 #   --hashes             Include hashes in Poetry export          (default: no hashes)
 #   --no-poetry          Do not use Poetry; minimal fallbacks only (freeze/min from env)
+#   --json               Emit JSON summary to stdout
 #   -n, --dry-run        Show what would happen; no files written
 #   -q, --quiet          Less verbose
 #   -h, --help           Show help
@@ -67,9 +69,10 @@ WITH_HASHES=0
 GROUPS=""
 DRY=0
 QUIET=0
+JSON=0
 
 # ---------- args ----------
-usage() { sed -n '1,120p' "$0" | sed 's/^# \{0,1\}//' | sed 's/^bin\/export-reqs\.sh/export-reqs.sh/'; }
+usage() { sed -n '1,160p' "$0" | sed 's/^# \{0,1\}//' | sed 's/^bin\/export-reqs\.sh/export-reqs.sh/'; }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -83,6 +86,7 @@ while [[ $# -gt 0 ]]; do
     --groups) GROUPS="${2:?}"; shift ;;
     --hashes) WITH_HASHES=1 ;;
     --no-poetry) USE_POETRY=0 ;;
+    --json) JSON=1 ;;
     -n|--dry-run) DRY=1 ;;
     -q|--quiet) QUIET=1 ;;
     -h|--help) usage; exit 0 ;;
@@ -144,8 +148,7 @@ pip_freeze_to() {
     say "[dry-run] pip freeze > $outfile"
   else
     python - <<'PY' >"$outfile"
-import sys, pkgutil, subprocess
-# Use plain 'pip freeze' to capture current env
+import sys, subprocess
 subprocess.run([sys.executable, "-m", "pip", "freeze"], check=True)
 PY
   fi
@@ -158,9 +161,7 @@ filter_kaggle() {
   # - dvc*, mlflow, wandb, torch-geometric, astropy, jax, ray
   # - big GUI/docs extras that aren’t needed
   awk '
-    BEGIN{
-      IGNORECASE=1
-    }
+    BEGIN{ IGNORECASE=1 }
     /^[[:space:]]*#/ {next}
     /^[[:space:]]*$/ {next}
     tolower($0) ~ /^torch([-=].*|$)/ {next}
@@ -185,7 +186,7 @@ filter_min() {
     tolower($0) ~ /^(mkdocs|sphinx|jupyter|notebook|ipykernel|ipywidgets|black|ruff|flake8|mypy|pytest|pytest-.*|coverage|pre-commit)([-=].*|$)/ {next}
     # strip heavy ops
     tolower($0) ~ /^(mlflow|wandb|dvc|ray|spark)([-=].*|$)/ {next}
-    # keep most of scientific python; leave torch in (portable); user can remove later if needed
+    # keep most of scientific python
     {print}
   '
 }
@@ -291,6 +292,21 @@ if [[ $DO_FREEZE -eq 1 ]]; then
   OUT="$OUTDIR/requirements.freeze.txt"
   say "Freezing current environment → $OUT"
   pip_freeze_to "$OUT"
+fi
+
+# ---------- JSON summary ----------
+if [[ $JSON -eq 1 ]]; then
+  printf '{'
+  printf '"outdir": "%s", ' "$OUTDIR"
+  printf '"main": %s, '   "$([[ $DO_MAIN -eq 1 ]] && echo true || echo false)"
+  printf '"dev": %s, '    "$([[ $DO_DEV -eq 1 ]] && echo true || echo false)"
+  printf '"min": %s, '    "$([[ $DO_MIN -eq 1 ]] && echo true || echo false)"
+  printf '"kaggle": %s, ' "$([[ $DO_KAGGLE -eq 1 ]] && echo true || echo false)"
+  printf '"freeze": %s, ' "$([[ $DO_FREEZE -eq 1 ]] && echo true || echo false)"
+  printf '"groups": "%s", ' "$GROUPS"
+  printf '"hashes": %s, ' "$([[ $WITH_HASHES -eq 1 ]] && echo true || echo false)"
+  printf '"use_poetry": %s' "$([[ $USE_POETRY -eq 1 ]] && echo true || echo false)"
+  printf '}\n'
 fi
 
 # ---------- epilog ----------
