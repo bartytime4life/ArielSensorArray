@@ -10,58 +10,71 @@ Neuro-symbolic, physics-informed pipeline for the NeurIPS 2025 Ariel Data Challe
 
 📌 Purpose of .dvc/
 
-The .dvc/ directory is the internal control center for DVC, the system we use to track large datasets, calibration outputs, and model artifacts.
-	•	Git controls code + configs (reproducible logic).
-	•	DVC controls data + models (large, evolving artifacts).
+The .dvc/ directory is the control center for data and model versioning.
+	•	Git controls code + configs → logic reproducibility
+	•	DVC controls data + models → artifact reproducibility
 
-This ensures every run of the SpectraMind pipeline is tied to an immutable commit AND the exact input/output data used.
+Every run of the SpectraMind V50 pipeline is thus tied to:
+	1.	A Git commit hash (immutable code + config)
+	2.	A DVC snapshot (datasets, calibration, model artifacts)
+
+🔗 Cross-link: See docs/architecture.md for the full pipeline design.
+This .dvc/ subsystem corresponds to the Data Layer described there.
 
 ⸻
 
 📂 Directory Layout
 
 .dvc/
-├── cache/          # Local cache of binary blobs (never commit to Git)
-├── tmp/            # Ephemeral staging area (safe to delete)
-├── config          # Versioned global DVC config (committed)
-├── config.local    # Local-only overrides (ignored by Git)
-├── plots/          # Plot templates for DVC (loss curves, metrics)
-└── lock/           # Auto-generated locks for stages (commit-safe)
+├── cache/          # Local cache of binary blobs (never commit)
+├── tmp/            # Ephemeral staging (safe to delete)
+├── config          # Global DVC config (committed)
+├── config.local    # Local overrides (ignored by Git)
+├── plots/          # Plot templates (loss curves, calibration metrics)
+└── lock/           # Auto-generated locks (commit-safe)
 
-🔒 Git Policy
-	•	Commit: .dvc/config, .dvcignore, dvc.yaml, *.dvc pointer files, .dvc/plots/*
-	•	Ignore: .dvc/cache/, .dvc/tmp/, .dvc/config.local
+🔒 Commit Policy
+	•	✅ Commit: .dvc/config, .dvcignore, dvc.yaml, *.dvc pointer files, .dvc/plots/*
+	•	❌ Ignore: .dvc/cache/, .dvc/tmp/, .dvc/config.local
 
-See the root .gitignore for enforced rules.
+See also:
+	•	.dvc/.dvcignore.readme.md
+	•	.dvc/.gitattributes.readme.md
 
 ⸻
 
 ⚙️ Integration with SpectraMind V50
-	1.	Hydra Configs → CLI → DVC
-	•	When you run spectramind calibrate or spectramind train, Hydra loads configs, and outputs are tracked with DVC.
-	•	Each dataset/model snapshot is pinned via a .dvc pointer file.
+	1.	Hydra Configs → Typer CLI → DVC
+	•	Commands like spectramind calibrate or spectramind train:
+	•	Hydra composes configs
+	•	CLI executes stages
+	•	DVC snapshots outputs into .dvc pointers
 	2.	Reproducibility Loop
-	•	git checkout <commit> + dvc checkout restores the exact dataset + model used.
-	•	Every diagnostic run is reproducible at the byte level.
+
+git checkout <commit>
+dvc checkout
+
+Restores the exact datasets, models, and diagnostics.
+
 	3.	CI/CD Enforcement
-	•	GitHub Actions (.github/workflows/) verifies DVC integrity on every PR.
-	•	Broken or missing .dvc pointers fail pre-flight checks.
+	•	GitHub Actions checks dvc status on every PR.
+	•	Missing or broken .dvc pointers → merge blocked.
+	•	Matches the “pre-flight safety check” model in root architecture docs.
 
 ⸻
 
 📊 Plots & Metrics
+	•	dvc plots renders loss curves, calibration reliability, FFT, symbolic metrics
+	•	.dvc/plots/ holds JSON/YAML templates → reused across runs
+	•	Outputs are embedded into the diagnostics dashboard (report.html)
 
-DVC integrates with SpectraMind diagnostics:
-	•	dvc plots renders loss curves, calibration error, and symbolic violation metrics.
-	•	Results sync with outputs/ and can be included in the HTML diagnostics dashboard.
-
-Plots under .dvc/plots/ define reusable JSON templates for standard metrics.
+🔗 Cross-link: see docs/architecture.md → Diagnostics Layer
 
 ⸻
 
 🚀 Typical Workflows
 
-Add a dataset
+Track a dataset
 
 dvc add data/raw/fgs1_lightcurves.fits
 git add data/raw/fgs1_lightcurves.fits.dvc .gitignore
@@ -83,20 +96,31 @@ dvc pull -r s3-ariel
 ⸻
 
 🌌 Best Practices
-	•	Always run via CLI: spectramind ... (never bypass with ad-hoc python ...).
-	•	Use Hydra overrides to select datasets/models; never edit code for paths.
-	•	Run dvc push after every successful run to sync with the remote.
-	•	CI checks enforce dvc status clean before merging.
-	•	Never commit blobs in cache/ or tmp/.
+	•	Always run via CLI (spectramind ...), never raw Python scripts
+	•	Use Hydra overrides for dataset/model paths, never hardcode
+	•	Run dvc push after success to sync remotes
+	•	CI requires clean status before merging
+	•	Never commit blobs in cache/ or tmp/
 
 ⸻
 
 ✅ Acceptance Criteria
 
-The .dvc/ subsystem is considered mission-grade when:
-	•	Every dataset/model is reproducible via git checkout && dvc checkout.
-	•	All pipeline stages (calibrate → train → diagnose → submit) are defined in dvc.yaml.
-	•	CI passes DVC consistency checks.
-	•	Remote storage is continuously synchronized.
+The .dvc/ subsystem is mission-grade when:
+	•	git checkout && dvc checkout fully restores any run
+	•	All stages (calibrate → train → predict → diagnose → submit) exist in dvc.yaml
+	•	CI enforces dvc status clean before merges
+	•	S3/GCS/Azure remotes continuously synced
+	•	Kaggle artifacts identical to local runs
+
+⸻
+
+🛡️ Alignment with Root Architecture
+	•	Glass-box reproducibility ￼
+	•	CLI-first workflows ￼
+	•	Config-as-code with Hydra + DVC ￼
+	•	CI/CD enforced data integrity
+
+This subsystem ensures that the Data & Artifact layer described in docs/architecture.md is fully reproducible, transparent, and mission-ready.
 
 ⸻
