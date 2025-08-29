@@ -1,90 +1,118 @@
 # configs/ablate.yaml
 # ==============================================================================
-# SpectraMind V50 — Ablation Configuration
+# SpectraMind V50 — Ablation Sweep Configuration
 # ------------------------------------------------------------------------------
-# Purpose:
-#   Defines ablation study parameters for systematic evaluation of model
-#   components, symbolic constraints, uncertainty calibration, and training
-#   curricula. Works with auto_ablate_v50.py and CLI `spectramind ablate`.
+# Purpose
+#   Defines parameter grids and sweep strategies for systematic ablation studies.
+#   Supports symbolic-aware perturbations, loss weight sweeps, optimizer variants,
+#   and diagnostic toggles. This file is consumed by `auto_ablate_v50.py` and
+#   orchestrated via Hydra multirun.
 #
-# Usage:
-#   spectramind ablate --config-name ablate
-#   spectramind ablate hydra/launcher=submitit_slurm ablate.top_n=5
+# Usage Examples
+#   # Run GLL vs Smoothness ablation (2x2 grid)
+#   spectramind ablate -m loss=gll,smoothness optimizer=adam,adamw
 #
-# Notes:
-#   - Hydra groups organize config parts for modularity.
-#   - Overrides can disable modules (e.g. symbolic_loss=off).
-#   - Top-N leaderboard export controlled here.
-#   - CI-safe: reproducible across DVC + Hydra + Kaggle.
+#   # Top-N leaderboard with diagnostics
+#   spectramind ablate -m +ablate.yaml --top_n 5 --md outputs/ablate.md
+#
+# Notes
+#   • All values defined as lists → Hydra multirun sweeps.
+#   • Interpolations (${...}) link values across groups.
+#   • Safe for Kaggle/CI (no internet, 9h runtime guardrails).
 # ==============================================================================
 
 defaults:
-  - data: nominal         # Base dataset config
-  - model: v50            # Default model architecture (Mamba+GNN)
-  - optimizer: adamw      # Optimizer baseline
-  - trainer: default      # Training loop defaults
-  - logger: tensorboard   # Logging backend
-  - symbolic: full        # Full symbolic constraints (can override to off/partial)
-  - uncertainty: corel    # COREL binwise calibration (can override)
-  - hydra/job_logging: default
-  - hydra/hydra_logging: default
+  - data: nominal
+  - model: v50
+  - optimizer: adam
+  - loss: gll
+  - trainer: default
+  - logger: tensorboard
 
-experiment_name: "ablation_v50"
-
-# ------------------------------------------------------------------------------
-# Ablation parameters
-# ------------------------------------------------------------------------------
-
+# ----------------------------------------------------------------------
+# Sweep Parameters
+# ----------------------------------------------------------------------
 ablate:
-  # Run control
-  num_trials: 20          # Number of ablation runs per config mutation
-  parallel: true          # Allow parallel execution via Hydra launcher
-  retries: 1              # Retry failed configs once
-  seed: 42                # Base RNG seed for reproducibility
+  experiment_name: "ablation_sweep"
+  output_dir: "outputs/ablation"
+  seed: [42, 1337]             # reproducibility seeds
+  repetitions: 2               # number of repeats per config (stability check)
 
-  # Mutation space (modules to toggle or vary)
-  toggles:
-    - symbolic_loss       # [on/off]
-    - smoothness_loss     # [on/off]
-    - asymmetry_loss      # [on/off]
-    - fft_loss            # [on/off]
-    - uncertainty_corel   # [on/off]
-    - attention_fusion    # [on/off]
-    - shap_overlay        # [on/off]
+# ----------------------------------------------------------------------
+# Optimizers to sweep
+# ----------------------------------------------------------------------
+optimizer:
+  - adam
+  - adamw
+  - sgd
 
-  # Continuous parameters to sweep (ranges interpolated by Hydra multirun)
-  sweep:
-    optimizer.lr: [1e-3, 5e-4, 1e-4]
-    trainer.batch_size: [32, 64]
-    trainer.gradient_clip_val: [0.5, 1.0]
+# ----------------------------------------------------------------------
+# Trainer variants
+# ----------------------------------------------------------------------
+trainer:
+  - default
+  - gpu
+  - kaggle_safe
 
-  # Evaluation metrics
-  metrics:
-    - gll                 # Gaussian Log-Likelihood
-    - rmse                # Root Mean Square Error
-    - entropy             # Predictive entropy
-    - violation_norm      # Symbolic violation norm
-    - l2_smoothness       # Spectral smoothness L2
+# ----------------------------------------------------------------------
+# Symbolic/Physics Loss Weights
+# ----------------------------------------------------------------------
+loss:
+  gll:
+    weight: [1.0]              # fixed baseline
+  smoothness:
+    weight: [0.0, 0.1, 0.5]    # toggle & ramp
+  symbolic:
+    weight: [0.0, 0.25, 0.5]   # symbolic rules (smoothness, non-negativity, FFT)
 
-  # Leaderboard export
-  leaderboard:
-    top_n: 5              # Keep top-N configs by GLL
-    export_md: true       # Write Markdown leaderboard
-    export_html: true     # Generate interactive HTML leaderboard
-    export_zip: true      # Save configs + artifacts to ablate_topN.zip
-    open_browser: false   # Auto-open HTML after run (set true locally)
+# ----------------------------------------------------------------------
+# Model toggles
+# ----------------------------------------------------------------------
+model:
+  v50:
+    fgs1_mamba_dropout: [0.0, 0.1]
+    airs_gnn_type: ["gat", "rgcn"]   # edge-feature aware GNN backends:contentReference[oaicite:3]{index=3}
+    decoder_type: ["multi_scale", "quantile"]
 
-# ------------------------------------------------------------------------------
-# Runtime integration
-# ------------------------------------------------------------------------------
+# ----------------------------------------------------------------------
+# Diagnostics toggles
+# ----------------------------------------------------------------------
+diagnostics:
+  shap_overlay: [true, false]
+  symbolic_overlay: [true, false]
+  fft_analysis: [true, false]
+  uncertainty_calibration: [true, false]
 
+# ----------------------------------------------------------------------
+# Hydra sweep settings
+# ----------------------------------------------------------------------
 hydra:
-  run:
-    dir: outputs/ablations/${now:%Y-%m-%d}/${now:%H-%M-%S}
   sweep:
-    dir: outputs/ablations/multirun
+    dir: ${ablate.output_dir}/${now:%Y-%m-%d_%H-%M-%S}
     subdir: ${hydra.job.num}
   launcher:
-    n_jobs: 4   # Parallel jobs if launcher is enabled
-  job:
-    chdir: true
+    # Local multirun, CI/Kaggle safe
+    class: hydra._internal.core_plugins.basic_launcher.BasicLauncher
+  sweeper:
+    class: hydra._internal.core_plugins.basic_sweeper.BasicSweeper
+    params:
+      optimizer: ${optimizer}
+      trainer: ${trainer}
+      loss.gll.weight: ${loss.gll.weight}
+      loss.smoothness.weight: ${loss.smoothness.weight}
+      loss.symbolic.weight: ${loss.symbolic.weight}
+      model.v50.fgs1_mamba_dropout: ${model.v50.fgs1_mamba_dropout}
+      model.v50.airs_gnn_type: ${model.v50.airs_gnn_type}
+      model.v50.decoder_type: ${model.v50.decoder_type}
+      diagnostics.shap_overlay: ${diagnostics.shap_overlay}
+      diagnostics.symbolic_overlay: ${diagnostics.symbolic_overlay}
+      diagnostics.fft_analysis: ${diagnostics.fft_analysis}
+      diagnostics.uncertainty_calibration: ${diagnostics.uncertainty_calibration}
+      ablate.seed: ${ablate.seed}
+
+# ----------------------------------------------------------------------
+# CI / Kaggle Guardrails
+# ----------------------------------------------------------------------
+runtime:
+  max_hours: 9
+  safe_mode: true
