@@ -18,7 +18,7 @@
 #   --log <path>         Primary input log path                (default: logs/v50_debug_log.md)
 #   --since <date>       ISO8601 lower bound (e.g., 2025-08-01 or 2025-08-01T00:00:00Z)
 #   --tail <N>           Only keep last N entries after filtering
-#   --clean              De-duplicate by run_hash else (time,cmd)
+#   --clean              De-duplicate by (cmd,git,cfg_hash,tag,pred,bundle)
 #   --group-by <key>     Group summary by: cmd|git_sha|cfg|day
 #   --open               Open generated Markdown (non-Kaggle/CI only)
 #   --no-poetry          Do not use Poetry to invoke spectramind
@@ -35,12 +35,13 @@
 #   • Additional LOGPATH args (files) can be provided; they will be concatenated.
 # ==============================================================================
 
-set -euo pipefail
+set -Eeuo pipefail
+IFS=$'\n\t'
 
 # ---------- Pretty ----------
-BOLD=$'\033[1m'; DIM=$'\033[2m'; RED=$'\033[31m'; GRN=$'\033[32m'; CYN=$'\033[36m'; RST=$'\033[0m'
+BOLD=$'\033[1m'; DIM=$'\033[2m'; RED=$'\033[31m'; GRN=$'\033[32m'; CYN=$'\033[36m'; YLW=$'\033[33m'; RST=$'\033[0m'
 say()  { [[ "${QUIET:-0}" -eq 1 ]] && return 0; printf '%s[ANALYZE]%s %s\n' "${CYN}" "${RST}" "$*"; }
-warn() { printf '%s[ANALYZE]%s %s\n' "${DIM}" "${RST}" "$*" >&2; }
+warn() { printf '%s[ANALYZE]%s %s\n' "${YLW}" "${RST}" "$*" >&2; }
 fail() { printf '%s[ANALYZE]%s %s\n' "${RED}" "${RST}" "$*" >&2; }
 
 # ---------- Defaults ----------
@@ -60,9 +61,9 @@ STEP_TIMEOUT="${ANALYZE_TIMEOUT:-120}"
 DRY=0
 EXTRA_INPUTS=()
 
-# ---------- Args ----------
 usage() { sed -n '1,200p' "$0" | sed 's/^# \{0,1\}//'; }
 
+# ---------- Args ----------
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --md)           MD_OUT="${2:?}"; shift 2 ;;
@@ -85,17 +86,14 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# ---------- Move to repo root ----------
-if git_root=$(command -v git >/dev/null 2>&1 && git rev-parse --show-toplevel 2>/dev/null); then
-  cd "$git_root"
-else
-  SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-  cd "$SCRIPT_DIR/.." || { fail "Cannot locate repo root"; exit 1; }
+# ---------- Repo root ----------
+if command -v git >/dev/null 2>&1; then
+  if ROOT=$(git rev-parse --show-toplevel 2>/dev/null); then cd "$ROOT"; fi
 fi
 
 mkdir -p "$(dirname "$MD_OUT")" "$(dirname "$CSV_OUT")"
 
-# ---------- Detect env ----------
+# ---------- Env detect ----------
 IS_KAGGLE=0
 [[ -n "${KAGGLE_URL_BASE:-}" || -n "${KAGGLE_KERNEL_RUN_TYPE:-}" || -d "/kaggle" ]] && IS_KAGGLE=1
 IS_CI=0
@@ -110,116 +108,150 @@ with_timeout() {
     "$@"
   fi
 }
+iso_to_epoch() { date -d "$1" +%s 2>/dev/null || echo 0; }
 
 # ---------- Pick CLI ----------
 CLI_BIN=""
-if [[ "$USE_POETRY" -eq 1 ]] && command -v poetry >/dev/null 2>&1; then
+if [[ "$USE_POETRY" -eq 1 ]] && have poetry; then
   CLI_BIN="poetry run spectramind"
-elif command -v spectramind >/dev/null 2>&1; then
+elif have spectramind; then
   CLI_BIN="spectramind"
+elif have python3; then
+  CLI_BIN="python3 -m spectramind"
 else
-  if command -v python3 >/dev/null 2>&1; then PY=python3; else PY=python; fi
-  CLI_BIN="$PY -m spectramind"
+  CLI_BIN=""
 fi
 
-# ---------- Refresh via CLI (optional) ----------
-if [[ "$REFRESH" -eq 1 && $DRY -eq 0 ]]; then
-  say "Refreshing log CSV/MD via CLI (if available)…"
+# ---------- Optional refresh via CLI ----------
+if [[ "$REFRESH" -eq 1 && "$DRY" -eq 0 && -n "$CLI_BIN" ]]; then
+  say "Refreshing via CLI: \`$CLI_BIN analyze-log\` (if supported)…"
   if with_timeout bash -lc "$CLI_BIN analyze-log --md '$MD_OUT' --csv '$CSV_OUT'"; then
     say "spectramind analyze-log completed."
   else
-    warn "CLI refresh not available; will parse '$LOG_IN' directly."
+    warn "CLI refresh unavailable or failed; falling back to native parser."
   fi
 fi
 
-# ---------- Collect inputs ----------
-TMP_COMBINED="$(mktemp -t sm_analyze_combined_XXXX).md"
+# ---------- Combine inputs ----------
+TMP_COMBINED="$(mktemp -t sm_anlz_all_XXXX).log"
 trap 'rm -f "$TMP_COMBINED" "$TMP_CSV" "$TMP2" 2>/dev/null || true' EXIT
 
-append_if_exists() {
-  local p="$1"
-  [[ -f "$p" ]] && cat "$p" >> "$TMP_COMBINED"
-}
-# Primary log
+append_if_exists() { [[ -f "$1" ]] && cat "$1" >> "$TMP_COMBINED"; }
+
 append_if_exists "$LOG_IN"
-# Extra logs (if any)
 for L in "${EXTRA_INPUTS[@]}"; do append_if_exists "$L"; done
 
 if [[ ! -s "$TMP_COMBINED" ]]; then
   if [[ -f "$CSV_OUT" ]]; then
-    say "No Markdown log found, but existing CSV present; will transform CSV."
-    PARSE_MODE="csv"
+    say "No raw logs found; existing CSV present. Using CSV as source."
+    USE_EXISTING_CSV=1
   else
-    fail "No input logs found and no CSV present. Aborting."
+    fail "No input logs found and no existing CSV present."
+    exit 1
   fi
 else
-  PARSE_MODE="md"
+  USE_EXISTING_CSV=0
 fi
 
-# ---------- Parse Markdown to CSV (fallback path) ----------
-TMP_CSV="$(mktemp -t sm_analyze_csv_XXXX).csv"
-if [[ "$PARSE_MODE" == "md" ]]; then
-  say "Parsing Markdown logs → CSV (temporary)…"
-  awk -v since="$SINCE" '
-    function iso_ge(a,b){ if(b==""){return 1} return (a>=b)?1:0 }
-    BEGIN{
-      FS="\n"; RS="⸻"; OFS=","
-      print "time,cmd,git_sha,cfg,run_hash"
-    }
-    {
-      block=$0
-      gsub(/\r/,"",block)
-      # Extract time and cmd from header "YYYY...Z — cmd"
-      if (match(block, /([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)[[:space:]]+—[[:space:]]+([^\n]*)/, H)) {
-        t=H[1]; c=H[2]
-        if (!iso_ge(t, since)) next
-        git=""; cfg=""; rh=""
-        # Scan bullets; tolerate variations
-        while (match(block, /\n[•*-][^\n]*/, L)) {
-          line=L[0]; block=substr(block, RSTART+RLENGTH)
-          gsub(/^[\n•*\-[:space:]]+/,"",line)
-          if (match(line, /Git SHA:[[:space:]]*([0-9A-Za-z]+)/, M)) git=M[1]
-          if (match(line, /(cfg|config|snapshot)/i, _)) cfg=(cfg==""?"snapshot":"snapshot")
-          if (match(line, /Run hash:[[:space:]]*([0-9A-Za-z]+)/, R)) rh=R[1]
-        }
-        gsub(/"/,"\"\"",c)
-        printf "%s,\"%s\",%s,%s,%s\n", t, c, (git==""?"":git), (cfg==""?"none":cfg), (rh==""?"":rh)
-      }
-    }
-  ' "$TMP_COMBINED" > "$TMP_CSV"
-else
-  say "Copying existing CSV for transforms…"
+# ---------- Convert logs → CSV (direct parser for single-line schema) ----------
+TMP_CSV="$(mktemp -t sm_anlz_csv_XXXX).csv"
+if [[ "$USE_EXISTING_CSV" -eq 1 ]]; then
   cp "$CSV_OUT" "$TMP_CSV"
+else
+  # Schema produced by our submission/repair scripts:
+  # [ISO8601] cmd=<script> git=<sha> cfg_hash=<hash> tag=<tag_or_-> pred=<path_or_-> bundle=<path_or_-> notes="...".
+  # We parse tolerant of missing keys and extra spaces.
+  say "Parsing structured log lines → CSV…"
+  {
+    echo "ts,cmd,git_sha,cfg_hash,tag,pred,bundle,notes"
+    awk -v since="$SINCE" '
+      function trim(s){sub(/^[ \t\r\n]+/,"",s);sub(/[ \t\r\n]+$/,"",s);return s}
+      function val(k, s,   r,x) {
+        # find k=VALUE (VALUE up to next space, unless quoted notes="...")
+        r = "[[:space:]]" k "=[^ \n]*";
+        if (k=="notes") {
+          r = "notes=\"[^\"]*\"";
+          if (match(s, r, x)) { gsub(/^notes="/,"",x[0]); gsub(/"$/,"",x[0]); return x[0] }
+          return ""
+        } else {
+          if (match(s, r, x)) { split(x[0],a,"="); return a[2] }
+          return ""
+        }
+      }
+      function iso_ge(a,b,  A,B){ if(b=="") return 1; A=a; B=b; return (A>=B)?1:0 }
+      /^[[]/ {
+        line=$0
+        # timestamp: [ISO]
+        if (match(line, /^\[([^\]]+)\]/, T)) {
+          ts = T[1]
+          if (!iso_ge(ts,since)) next
+          # Extract fields
+          cmd = trim(val("cmd", line))
+          git = trim(val("git", line))
+          cfg = trim(val("cfg_hash", line))
+          tag = trim(val("tag", line))
+          pred = trim(val("pred", line))
+          bundle = trim(val("bundle", line))
+          notes = val("notes", line)
+          # CSV-escape fields
+          gsub(/"/,"\"\"",cmd); gsub(/"/,"\"\"",notes)
+          print ts ",\"" cmd "\"," git "," cfg "," tag "," pred "," bundle ",\"" notes "\""
+        }
+      }
+    ' "$TMP_COMBINED"
+  } > "$TMP_CSV"
 fi
 
-# ---------- Filter: tail N ----------
+# ---------- Filter by --since ----------
+if [[ -n "$SINCE" ]]; then
+  say "Filtering rows since ${SINCE}…"
+  TMP2="$(mktemp -t sm_anlz_since_XXXX).csv"
+  # Keep header + rows where ts >= SINCE (string compare works for ISO8601)
+  awk -F, -v since="$SINCE" 'NR==1{print;next} { if($1>=since) print }' "$TMP_CSV" > "$TMP2"
+  mv "$TMP2" "$TMP_CSV"
+fi
+
+# ---------- Tail N ----------
 if [[ -n "${TAIL_N:-}" ]]; then
   say "Keeping last $TAIL_N rows…"
-  TMP2="$(mktemp -t sm_analyze_tail_XXXX).csv"
+  TMP2="$(mktemp -t sm_anlz_tail_XXXX).csv"
   (head -n1 "$TMP_CSV" && tail -n +2 "$TMP_CSV" | tail -n "$TAIL_N") > "$TMP2"
   mv "$TMP2" "$TMP_CSV"
 fi
 
-# ---------- Clean / de-duplicate ----------
+# ---------- De-dup ----------
 if [[ "$CLEAN" -eq 1 ]]; then
-  say "De-duplicating rows (prefer most recent by run_hash else time|cmd)…"
-  TMP2="$(mktemp -t sm_analyze_dedup_XXXX).csv"
+  say "De-duplicating rows by (cmd,git,cfg_hash,tag,pred,bundle)…"
+  TMP2="$(mktemp -t sm_anlz_dedup_XXXX).csv"
   awk -F, '
-    NR==1 { header=$0; next }
-    { rows[NR-1]=$0 }
+    NR==1 { print; next }
+    {
+      key=$2 FS $3 FS $4 FS $5 FS $6 FS $7
+      rows[NR]=$0
+      keys[NR]=key
+    }
     END{
-      print header
-      for(i=NR-1;i>=1;i--){
-        split(rows[i],a,FS)
-        key=a[5]; if (key=="") key=a[1]"|"a[2]
-        if(!(seen[key]++)) print rows[i]
+      # iterate backwards to prefer most recent
+      for(i=NR;i>=2;i--){
+        if(!seen[keys[i]]++){
+          stack[++n]=i
+        }
+      }
+      print $0 > "/dev/stderr" # ensure NR available for END (no-op)
+      # print header already printed
+      for(j=n;j>=1;j--){
+        print rows[ stack[j] ]
       }
     }
-  ' "$TMP_CSV" > "$TMP2"
+  ' "$TMP_CSV" 2>/dev/null | (read -r _; printf "%s\n" "$(head -n1 "$TMP_CSV")"; cat) > "$TMP2" || true
+  # If the awk trick fails, fall back to a simple uniq (preserves order)
+  if [[ ! -s "$TMP2" ]]; then
+    (head -n1 "$TMP_CSV"; tail -n +2 "$TMP_CSV" | awk '!seen[$0]++') > "$TMP2"
+  fi
   mv "$TMP2" "$TMP_CSV"
 fi
 
-# ---------- Write final CSV_OUT ----------
+# ---------- Write CSV ----------
 if [[ $DRY -eq 1 ]]; then
   say "[dry-run] Would write CSV → $CSV_OUT"
 else
@@ -227,7 +259,7 @@ else
   cp "$TMP_CSV" "$CSV_OUT"
 fi
 
-# ---------- Build Markdown table & optional group summary ----------
+# ---------- Markdown table ----------
 if [[ $DRY -eq 1 ]]; then
   say "[dry-run] Would write Markdown → $MD_OUT"
 else
@@ -238,16 +270,17 @@ else
     NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     echo "_Generated: ${NOW}_"
     echo
-    echo "| time | cmd | git_sha | cfg | run_hash |"
-    echo "|---|---|---|---|---|"
+    echo "| time | cmd | git_sha | cfg_hash | tag | pred | bundle | notes |"
+    echo "|---|---|---|---|---|---|---|---|"
     tail -n +2 "$CSV_OUT" | awk -F, '
       {
-        t=$1; c=$2; g=$3; cf=$4; rh=$5
-        gsub(/^"/,"",c); gsub(/"$/,"",c); gsub(/\|/,"/",c)
-        if (g=="") g=""; if (cf=="") cf=""; if (rh=="") rh=""
-        printf "| %s | %s | %s | %s | %s |\n", t, c, g, cf, rh
+        t=$1; c=$2; g=$3; cf=$4; tg=$5; pr=$6; bu=$7; no=$8
+        gsub(/^"/,"",c); gsub(/"$/,"",c);
+        gsub(/\|/,"/",c); gsub(/\|/,"/",no); gsub(/\|/,"/",pr); gsub(/\|/,"/",bu);
+        printf "| %s | %s | %s | %s | %s | %s | %s | %s |\n", t, c, g, cf, tg, pr, bu, no
       }
     '
+    # Optional summary
     if [[ -n "${GROUP_BY}" ]]; then
       echo
       echo "## Summary by \`${GROUP_BY}\`"
@@ -256,21 +289,20 @@ else
       echo "|---|---:|"
       case "$GROUP_BY" in
         cmd)
-          tail -n +2 "$CSV_OUT" | awk -F, '
-            { c=$2; gsub(/^"/,"",c); gsub(/"$/,"",c); cnt[c]++ }
-            END{ for(k in cnt){ gsub(/\|/,"/",k); printf("| %s | %d |\n", k, cnt[k]) } }
-          ' | sort -t\| -k3,3nr
+          tail -n +2 "$CSV_OUT" | awk -F, '{ c=$2; gsub(/^"/,"",c); gsub(/"$/,"",c); cnt[c]++ } END{ for(k in cnt) printf("| %s | %d |\n", k, cnt[k]) }' \
+            | sort -t\| -k3,3nr
           ;;
         git_sha)
-          tail -n +2 "$CSV_OUT" | awk -F, '{ k=$3; if(k=="") k="(none)"; cnt[k]++ } END{ for(k in cnt) printf("| %s | %d |\n", k, cnt[k]) }' | sort -t\| -k3,3nr
+          tail -n +2 "$CSV_OUT" | awk -F, '{ k=$3; if(k=="") k="(none)"; cnt[k]++ } END{ for(k in cnt) printf("| %s | %d |\n", k, cnt[k]) }' \
+            | sort -t\| -k3,3nr
           ;;
         cfg)
-          tail -n +2 "$CSV_OUT" | awk -F, '{ k=$4; if(k=="") k="(none)"; cnt[k]++ } END{ for(k in cnt) printf("| %s | %d |\n", k, cnt[k]) }' | sort -t\| -k3,3nr
+          tail -n +2 "$CSV_OUT" | awk -F, '{ k=$4; if(k=="") k="(none)"; cnt[k]++ } END{ for(k in cnt) printf("| %s | %d |\n", k, cnt[k]) }' \
+            | sort -t\| -k3,3nr
           ;;
         day)
-          tail -n +2 "$CSV_OUT" | awk -F, '
-            { d=substr($1,1,10); cnt[d]++ } END{ for(k in cnt) printf("| %s | %d |\n", k, cnt[k]) }
-          ' | sort -t\| -k3,3nr
+          tail -n +2 "$CSV_OUT" | awk -F, '{ d=substr($1,1,10); cnt[d]++ } END{ for(k in cnt) printf("| %s | %d |\n", k, cnt[k]) }' \
+            | sort -t\| -k3,3nr
           ;;
         *)
           echo "| (unsupported key) | 0 |"
@@ -280,17 +312,15 @@ else
   } > "$MD_OUT"
 fi
 
-# ---------- Open (optional) ----------
+# ---------- Open ----------
 if [[ "$OPEN_AFTER" -eq 1 ]]; then
   if [[ "$IS_KAGGLE" -eq 1 || "$IS_CI" -eq 1 ]]; then
     warn "Skipping --open on Kaggle/CI."
   else
-    if command -v xdg-open >/dev/null 2>&1; then
-      say "Opening $MD_OUT with xdg-open…"
-      xdg-open "$MD_OUT" >/dev/null 2>&1 || warn "Failed to open with xdg-open"
-    elif command -v open >/dev/null 2>&1; then
-      say "Opening $MD_OUT with open…"
-      open "$MD_OUT" >/dev/null 2>&1 || warn "Failed to open with open"
+    if have xdg-open; then
+      say "Opening $MD_OUT…"; xdg-open "$MD_OUT" >/dev/null 2>&1 || warn "Failed to open with xdg-open"
+    elif have open; then
+      say "Opening $MD_OUT…"; open "$MD_OUT"     >/dev/null 2>&1 || warn "Failed to open with open"
     else
       warn "No opener (xdg-open/open) found; skipping viewer."
     fi
@@ -299,16 +329,17 @@ fi
 
 # ---------- JSON summary ----------
 if [[ $JSON_OUT -eq 1 ]]; then
-  ROWS="$(wc -l < "$TMP_CSV" 2>/dev/null || echo 0)"
-  [[ "$ROWS" -gt 0 ]] && ROWS=$((ROWS-1)) || ROWS=0  # minus header
+  ROWS=$(( $(wc -l < "$TMP_CSV" 2>/dev/null || echo 0) - 1 ))
+  (( ROWS < 0 )) && ROWS=0
+  # basic stats
+  CMDS=$(tail -n +2 "$TMP_CSV" | awk -F, '{ c=$2; gsub(/^"/,"",c); gsub(/"$/,"",c); if(c!="") cc[c]++ } END{ n=0; for(k in cc)n++; print n }')
+  GITS=$(tail -n +2 "$TMP_CSV" | awk -F, '{ if($3!="") gg[$3]++ } END{ n=0; for(k in gg)n++; print n }')
+  CFGS=$(tail -n +2 "$TMP_CSV" | awk -F, '{ if($4!="") cf[$4]++ } END{ n=0; for(k in cf)n++; print n }')
   printf '{'
-  printf '"ok": true, '
-  printf '"csv": "%s", "md": "%s", ' "$CSV_OUT" "$MD_OUT"
-  printf '"rows": %s, ' "$ROWS"
-  printf '"since": "%s", ' "${SINCE:-}"
-  printf '"tail": "%s", ' "${TAIL_N:-}"
-  printf '"clean": %s, ' "$([[ $CLEAN -eq 1 ]] && echo true || echo false)"
-  printf '"group_by": "%s"' "${GROUP_BY:-}"
+  printf '"ok":true,"csv":"%s","md":"%s","rows":%d,' "$CSV_OUT" "$MD_OUT" "$ROWS"
+  printf '"since":"%s","tail":"%s","clean":%s,' "${SINCE:-}" "${TAIL_N:-}" "$([[ $CLEAN -eq 1 ]] && echo true || echo false)"
+  printf '"group_by":"%s",' "${GROUP_BY:-}"
+  printf '"distinct":{"cmd":%s,"git_sha":%s,"cfg":%s}' "${CMDS:-0}" "${GITS:-0}" "${CFGS:-0}"
   printf '}\n'
 fi
 
