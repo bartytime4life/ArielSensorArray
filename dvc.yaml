@@ -1,10 +1,10 @@
 # ==============================================================================
 # dvc.yaml — SpectraMind V50 (ArielSensorArray)
 # ------------------------------------------------------------------------------
-# Declarative, CI‑safe pipeline:
+# Declarative, CI-safe pipeline:
 #   • raw → calibrated → train → predict → diagnostics → submit
 #   • Hydra-driven configs, DVC params/plots, Kaggle-ready bundle
-#   • Physics-informed (FGS1 Mamba, AIRS GNN) + neuro‑symbolic diagnostics
+#   • Physics-informed (FGS1 Mamba, AIRS GNN) + neuro-symbolic diagnostics
 #
 # Usage:
 #   dvc repro                 # rebuild entire pipeline
@@ -17,13 +17,16 @@ stages:
 
   # ------------------------------------------------------------------
   calibrate:
+    desc: "ADC, dark, flat, CDS, nonlinearity → calibrated cubes (FGS1 + AIRS)."
     cmd: >
+      bash -c 'set -euo pipefail &&
       poetry run spectramind calibrate
         --config-dir config
         --config-name config_v50.yaml
+        data.mode=${data.mode}
         --input ${data.fgs1_path} ${data.airs_path}
         --output ${data.calibration_path}
-        --log logs/calibration.log
+        --log logs/calibration.log'
     deps:
       - config/config_v50.yaml
       - src/pipeline/calibration_pipeline.py
@@ -31,10 +34,14 @@ stages:
       - ${data.airs_path}
     outs:
       - ${data.calibration_path}
+    outs_no_cache:
+      - logs/calibration.log
     params:
+      - data.mode
       - data.fgs1_path
       - data.airs_path
       - data.calibration_path
+      - calibration  # expose per-step calibration toggles in params.yaml
     metrics:
       - logs/calibration.json
     plots:
@@ -42,10 +49,13 @@ stages:
 
   # ------------------------------------------------------------------
   train:
+    desc: "Train V50 (FGS1 Mamba + AIRS GNN + decoder) with physics/symbolic options."
     cmd: >
+      bash -c 'set -euo pipefail &&
       poetry run spectramind train
         --config-dir config
         --config-name config_v50.yaml
+        data.mode=${data.mode}
         training.epochs=${training.epochs}
         training.batch_size=${training.batch_size}
         training.lr=${training.lr}
@@ -54,7 +64,7 @@ stages:
         model.gnn=${model.gnn}
         model.decoder=${model.decoder}
         data.calibration_path=${data.calibration_path}
-        +outputs.dir=outputs/models
+        +outputs.dir=outputs/models'
     deps:
       - ${data.calibration_path}
       - config/config_v50.yaml
@@ -63,11 +73,13 @@ stages:
       - src/models/airs_gnn.py
       - src/models/multi_scale_decoder.py
     outs:
-      - outputs/models
+      - path: outputs/models
+        persist: true
     params:
+      - data.mode
+      - data.calibration_path
       - training
       - model
-      - data.calibration_path
     metrics:
       - outputs/models/metrics.json
     plots:
@@ -75,20 +87,26 @@ stages:
 
   # ------------------------------------------------------------------
   predict:
+    desc: "Model inference → μ, σ predictions + summary/manifest."
     cmd: >
+      bash -c 'set -euo pipefail &&
       poetry run spectramind predict
         --config-dir config
         --config-name config_v50.yaml
+        data.mode=${data.mode}
         --model outputs/models
         --input ${data.calibration_path}
-        --output outputs/predictions
+        --output outputs/predictions'
     deps:
       - outputs/models
       - ${data.calibration_path}
       - src/predict/predict_v50.py
+      - config/config_v50.yaml
     outs:
-      - outputs/predictions
+      - path: outputs/predictions
+        persist: true
     params:
+      - data.mode
       - data.bins
       - submission.kaggle_format
     metrics:
@@ -96,13 +114,16 @@ stages:
 
   # ------------------------------------------------------------------
   diagnostics:
+    desc: "Generate HTML dashboard + JSON summary (GLL, FFT, SHAP, symbolic overlays)."
     cmd: >
+      bash -c 'set -euo pipefail &&
       poetry run spectramind diagnose dashboard
         --config-dir config
         --config-name config_v50.yaml
+        data.mode=${data.mode}
         --pred outputs/predictions
         --out outputs/diagnostics
-        --html-out outputs/diagnostics/report.html
+        --html-out outputs/diagnostics/report.html'
     deps:
       - outputs/predictions
       - src/diagnostics/generate_html_report.py
@@ -111,9 +132,12 @@ stages:
       - src/diagnostics/plot_umap_v50.py
       - src/diagnostics/plot_tsne_interactive.py
       - src/diagnostics/symbolic_influence_map.py
+      - config/config_v50.yaml
     outs:
-      - outputs/diagnostics
+      - path: outputs/diagnostics
+        persist: true
     params:
+      - data.mode
       - diagnostics
     metrics:
       - outputs/diagnostics/diagnostic_summary.json
@@ -123,22 +147,29 @@ stages:
 
   # ------------------------------------------------------------------
   submit:
+    desc: "Validate & bundle Kaggle submission."
     cmd: >
+      bash -c 'set -euo pipefail &&
       poetry run spectramind submit
         --config-dir config
         --config-name config_v50.yaml
+        data.mode=${data.mode}
         --pred outputs/predictions
         --bundle outputs/submission/bundle.zip
         --meta outputs/submission/manifest.json
-        --validate ${submission.validate_before_zip}
+        --validate ${submission.validate_before_zip}'
     deps:
       - outputs/predictions
       - outputs/diagnostics
       - src/cli/cli_submit.py
+      - config/config_v50.yaml
     outs:
-      - outputs/submission/bundle.zip
-      - outputs/submission/manifest.json
+      - path: outputs/submission/bundle.zip
+        persist: true
+      - path: outputs/submission/manifest.json
+        persist: true
     params:
+      - data.mode
       - submission
     metrics:
       - outputs/submission/manifest.json
@@ -154,32 +185,25 @@ plots:
   - ROC:
       path: outputs/diagnostics/roc.csv
       x: fpr
-      y:
-        - tpr
+      y: [tpr]
       title: "ROC Curve"
   - Calibration:
       path: outputs/diagnostics/reliability.csv
       x: expected
-      y:
-        - observed
+      y: [observed]
       title: "Uncertainty Calibration (Reliability)"
   - GLL:
       path: outputs/diagnostics/binwise.csv
       x: bin
-      y:
-        - gll
+      y: [gll]
       title: "Gaussian Log-Likelihood per Bin"
   - FFT:
       path: outputs/diagnostics/fft.csv
       x: frequency
-      y:
-        - power
+      y: [power]
       title: "FFT Power Spectrum"
   - Symbolic:
       path: outputs/diagnostics/symbolic_violations.csv
       x: bin
-      y:
-        - violation_score
+      y: [violation_score]
       title: "Symbolic Rule Violations"
-
-# ==============================================================================
