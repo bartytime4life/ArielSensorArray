@@ -1,5 +1,3 @@
----
-
 # 🗂️ `/configs/data` — Dataset & Calibration Configurations
 
 ## 0. Purpose & Scope
