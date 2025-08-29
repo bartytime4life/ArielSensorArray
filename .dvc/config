@@ -1,3 +1,7 @@
+# ==============================================================================
+# SpectraMind V50 — DVC Global Config (multi-cloud)
+# ==============================================================================
+
 [core]
     remote = storage
     autostage = true
@@ -7,40 +11,59 @@
     hardlink_lock = true
 
 [cache]
-    # Prefer reflink (fast, copy-on-write) where supported; fall back safely
     type = "reflink,hardlink,copy"
     shared = group
     dir = .dvc/cache
     protected = true
 
+# ───────────────────────── Primary Cloud Remote (S3) ─────────────────────────
 ['remote "storage"']
     url = s3://spectramind-v50-dvc-storage
     region = us-east-1
     endpointurl = https://s3.amazonaws.com
-    # Credentials pulled from environment (kept out of VCS)
+    # Credentials via env (never commit secrets):
+    #   export DVC_AWS_KEY=... ; export DVC_AWS_SECRET=...
     access_key_id = ${DVC_AWS_KEY}
     secret_access_key = ${DVC_AWS_SECRET}
-    # Helpful if bucket has multiple writers (CI, teammates)
     acl = bucket-owner-full-control
+    verify = true
 
+# ───────────────────────── CI / Mirror Remote (Optional) ─────────────────────
 ['remote "ci-mirror"']
-    # Optional secondary S3 remote for CI artifacts / redundancy
     url = s3://spectramind-v50-dvc-ci
     region = us-east-1
     endpointurl = https://s3.amazonaws.com
-
-['remote "local"']
-    # Fast local cache/air‑gap mirror (useful on dev machines)
-    url = ../.dvc-storage
-    type = local
     verify = true
 
+# ───────────────────────── Local / Air-gap Remote ────────────────────────────
+['remote "local"']
+    type = local
+    url = ../.dvc-storage
+    verify = true
+
+# ───────────────────────── Google Drive Remote (Optional) ────────────────────
 ['remote "gdrive"']
-    # Optional Google Drive remote for collaborators
-    # Replace <folder-id> and provide service account JSON via env var
     url = gdrive://<folder-id>
     gdrive_use_service_account = true
     gdrive_service_account_json_file_path = ${DVC_GDRIVE_SA_JSON}
+
+# ───────────────────────── Google Cloud Storage (Optional) ───────────────────
+['remote "gcs"']
+    type = gcs
+    url = gs://spectramind-v50-dvc
+    # Auth: Application Default Credentials (gcloud) or env:
+    #   export GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json
+    # Optionally set project via env: GOOGLE_CLOUD_PROJECT
+
+# ───────────────────────── Azure Blob Storage (Optional) ─────────────────────
+['remote "azure"']
+    type = azure
+    # Use either abfs:// (Data Lake) or azure:// (Blob). Example below for Blob:
+    url = azure://spectramindv50/container
+    # Auth via env (choose one):
+    #   AZURE_STORAGE_CONNECTION_STRING=...
+    #   or AZURE_STORAGE_ACCOUNT=... + AZURE_STORAGE_KEY=...
+    #   or use `az login`/MSI in CI where supported
 
 [experiments]
     auto_push = true
@@ -49,3 +72,7 @@
 
 [plots]
     template_dir = .dvc/plots/templates
+
+[feature "push"]
+    retries = 3
+    jobs = 2
