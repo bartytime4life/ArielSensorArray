@@ -26,12 +26,13 @@
 #     --device <cpu|gpu>    Device hint for tiny training (default: cpu)
 #     --outdir <dir>        Outputs directory (default: outputs/diagnostics)
 #     --timeout <sec>       Per-step timeout if `timeout` exists (default: 600)
+#     --hydra "<args>"      Extra Hydra overrides for train/predict (quoted)
 #   Gates / toggles
 #     --no-install          Skip dependency installation
 #     --no-selftest         Skip `spectramind selftest`
 #     --no-diagnose         Skip dashboard generation
 #     --no-train            Skip tiny training/predict step (even in --deep)
-#     --no-log-summary      Skip `spectramind analyze-log-short`
+#     --no-log-summary      Skip `spectramind analyze-log-short` / fallback
 #     --no-poetry           Do not use Poetry; run via system python/module
 #     --dvc-pull            Run `bin/dvc-pull.sh --status-only` then pull
 #     --sync-lock           Enforce requirements sync (bin/sync-lock.sh --check)
@@ -52,12 +53,13 @@
 #   • Idempotent: repeated runs should not mutate model/data state.
 # ==============================================================================
 
-set -euo pipefail
+set -Eeuo pipefail
+IFS=$'\n\t'
 
 # ---------- Pretty ----------
-BOLD=$'\033[1m'; DIM=$'\033[2m'; RED=$'\033[31m'; GRN=$'\033[32m'; CYN=$'\033[36m'; RST=$'\033[0m'
+BOLD=$'\033[1m'; DIM=$'\033[2m'; RED=$'\033[31m'; GRN=$'\033[32m'; CYN=$'\033[36m'; YLW=$'\033[33m'; RST=$'\033[0m'
 say()  { [[ "${QUIET:-0}" -eq 1 ]] && return 0; printf '%s[SMOKE]%s %s\n' "${CYN}" "${RST}" "$*"; }
-warn() { printf '%s[SMOKE]%s %s\n' "${DIM}" "${RST}" "$*" >&2; }
+warn() { printf '%s[SMOKE]%s %s\n' "${YLW}" "${RST}" "$*" >&2; }
 fail() { printf '%s[SMOKE]%s %s\n' "${RED}" "${RST}" "$*" >&2; }
 
 # ---------- Defaults ----------
@@ -78,6 +80,7 @@ FIX_LOCK=0
 DRY=0
 QUIET=0
 JSON_OUT=0
+HYDRA_OVERRIDES=""
 
 TS="$(date -u +%Y%m%d_%H%M%S)"
 LOG_PATH_DEFAULT="logs/ci/ci-smoke-${TS}.log"
@@ -93,6 +96,7 @@ while [[ $# -gt 0 ]]; do
     --device) DEVICE="${2:?}"; shift ;;
     --outdir) OUTDIR="${2:?}"; shift ;;
     --timeout) STEP_TIMEOUT="${2:?}"; shift ;;
+    --hydra) HYDRA_OVERRIDES="${2:-}"; shift ;;
     --no-install) NO_INSTALL=1 ;;
     --no-selftest) NO_SELFTEST=1 ;;
     --no-diagnose) NO_DIAGNOSE=1 ;;
@@ -117,8 +121,8 @@ if [[ $FAST -eq 0 && $DEEP -eq 0 ]]; then FAST=1; fi
 if [[ $DEEP -eq 1 ]]; then FAST=0; fi
 
 # ---------- Repo root ----------
-if git_root=$(command -v git >/dev/null 2>&1 && git rev-parse --show-toplevel 2>/dev/null); then
-  cd "$git_root"
+if command -v git >/dev/null 2>&1 && git rev-parse --show-toplevel >/dev/null 2>&1; then
+  cd "$(git rev-parse --show-toplevel)"
 else
   SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
   cd "$SCRIPT_DIR/.." || { fail "Cannot locate repo root"; exit 1; }
@@ -129,15 +133,14 @@ mkdir -p "$OUTDIR" logs outputs logs/ci
 # ---------- Env detection ----------
 IS_CI=0; [[ -n "${GITHUB_ACTIONS:-}" || -n "${CI:-}" ]] && IS_CI=1
 IS_KAGGLE=0; [[ -n "${KAGGLE_URL_BASE:-}" || -n "${KAGGLE_KERNEL_RUN_TYPE:-}" || -d "/kaggle" ]] && IS_KAGGLE=1
-
 say "CI: ${BOLD}${IS_CI}${RST}  Kaggle: ${BOLD}${IS_KAGGLE}${RST}  Device: ${BOLD}${DEVICE}${RST}  Out: ${BOLD}${OUTDIR}${RST}"
 
 # ---------- Timeout wrapper ----------
 HAVE_TIMEOUT=0
-if command -v timeout >/dev/null 2>&1; then HAVE_TIMEOUT=1; fi
+command -v timeout >/dev/null 2>&1 && HAVE_TIMEOUT=1
 with_timeout() {
   if [[ $HAVE_TIMEOUT -eq 1 && $STEP_TIMEOUT -gt 0 ]]; then
-    timeout "${STEP_TIMEOUT}s" "$@"
+    timeout --preserve-status --signal=TERM "${STEP_TIMEOUT}" "$@"
   else
     "$@"
   fi
@@ -155,10 +158,7 @@ run() {
 }
 
 # ---------- Logging ----------
-if [[ -z "$LOG_PATH" ]]; then
-  LOG_PATH="$LOG_PATH_DEFAULT"
-fi
-# tee logs unless quiet
+if [[ -z "$LOG_PATH" ]]; then LOG_PATH="$LOG_PATH_DEFAULT"; fi
 if [[ "$QUIET" -eq 0 ]]; then
   # shellcheck disable=SC2094
   exec > >(tee -a "${LOG_PATH}") 2>&1
@@ -168,6 +168,9 @@ fi
 say "Log file: ${BOLD}${LOG_PATH}${RST}"
 
 FAILED=0
+FAIL_STEPS=()
+
+mark_fail() { FAILED=1; FAIL_STEPS+=("$1"); }
 
 # ---------- Resolve CLI ----------
 CLI_BIN=""
@@ -186,7 +189,7 @@ if [[ $DO_DVC_PULL -eq 1 && -d ".dvc" && -x "bin/dvc-pull.sh" ]]; then
   say "DVC preflight: status-only against remote…"
   run "bin/dvc-pull.sh --status-only --json" bash -lc "bin/dvc-pull.sh --status-only --json" || true
   say "DVC preflight: pulling workspace objects…"
-  run "bin/dvc-pull.sh --json" bash -lc "bin/dvc-pull.sh --json" || FAILED=1
+  run "bin/dvc-pull.sh --json" bash -lc "bin/dvc-pull.sh --json" || mark_fail "dvc-pull"
 fi
 
 # ---------- Optional: sync-lock enforcement ----------
@@ -197,10 +200,10 @@ if [[ $ENFORCE_SYNC -eq 1 && -x "bin/sync-lock.sh" ]]; then
   else
     if [[ $FIX_LOCK -eq 1 ]]; then
       warn "Sync-lock drift detected; attempting fix with --lock --write --all"
-      run "sync-lock write" bash -lc "bin/sync-lock.sh --lock --write --all" || FAILED=1
+      run "sync-lock write" bash -lc "bin/sync-lock.sh --lock --write --all" || mark_fail "sync-lock-fix"
     else
       fail "Requirements drift (use --fix-lock to regenerate)."
-      FAILED=1
+      mark_fail "sync-lock-check"
     fi
   fi
 fi
@@ -210,7 +213,7 @@ if [[ $NO_INSTALL -eq 1 ]]; then
   warn "Skipping dependency installation (--no-install)."
 else
   if [[ $USE_POETRY -eq 1 && -x "$(command -v poetry)" ]]; then
-    run "Poetry install (no-root)" poetry install --no-root || FAILED=1
+    run "Poetry install (no-root)" poetry install --no-root || mark_fail "poetry-install"
   else
     warn "Poetry not available; assuming environment already satisfied."
   fi
@@ -228,20 +231,20 @@ fi
 
 # ---------- Step: version alignment (non-fatal gate) ----------
 if [[ -f "bin/version_tools.py" ]]; then
-  run "version validate" python bin/version_tools.py --validate || FAILED=1
+  run "version validate" python bin/version_tools.py --validate || mark_fail "version-validate"
 fi
 
 # ---------- Step: spectramind --version ----------
-run "spectramind --version" ${CLI_BIN} --version || FAILED=1
+run "spectramind --version" ${CLI_BIN} --version || mark_fail "cli-version"
 
 # ---------- Step: selftest ----------
 if [[ $NO_SELFTEST -eq 1 ]]; then
   warn "Skipping CLI selftest (--no-selftest)."
 else
   if [[ $DEEP -eq 1 ]]; then
-    run "spectramind selftest --deep" ${CLI_BIN} selftest --deep || FAILED=1
+    run "spectramind selftest --deep" ${CLI_BIN} selftest --deep || mark_fail "cli-selftest"
   else
-    run "spectramind selftest" ${CLI_BIN} selftest || FAILED=1
+    run "spectramind selftest --quick" ${CLI_BIN} selftest --quick || mark_fail "cli-selftest"
   fi
 fi
 
@@ -250,8 +253,8 @@ if [[ $NO_DIAGNOSE -eq 1 ]]; then
   warn "Skipping diagnostics (--no-diagnose)."
 else
   # Light path always disables UMAP/t-SNE
-  run "diagnose smoothness" ${CLI_BIN} diagnose smoothness --outdir "$OUTDIR" || FAILED=1
-  run "diagnose dashboard (light)" ${CLI_BIN} diagnose dashboard --no-umap --no-tsne --outdir "$OUTDIR" || FAILED=1
+  run "diagnose smoothness" ${CLI_BIN} diagnose smoothness --outdir "$OUTDIR" || mark_fail "diagnose-smoothness"
+  run "diagnose dashboard (light)" ${CLI_BIN} diagnose dashboard --no-umap --no-tsne --outdir "$OUTDIR" || mark_fail "diagnose-dashboard"
 fi
 
 # ---------- Step: tiny train / predict ----------
@@ -259,18 +262,29 @@ if [[ $DEEP -eq 1 && $NO_TRAIN -eq 0 ]]; then
   if [[ $IS_KAGGLE -eq 1 ]]; then
     warn "Skipping tiny training in Kaggle environment (conserve quota)."
   else
-    run "tiny training run" ${CLI_BIN} train +training.epochs=1 --device "$DEVICE" --outdir "outputs/checkpoints/_smoke_${DEVICE}" || FAILED=1
-    # produce a small CSV to ensure predict path exercises I/O
+    # Optional hydra overrides applied to training to keep things minimal (epochs=1 default below)
+    TRAIN_OVR="+training.epochs=1"
+    [[ -n "$HYDRA_OVERRIDES" ]] && TRAIN_OVR="${TRAIN_OVR} ${HYDRA_OVERRIDES}"
+    run "tiny training run" ${CLI_BIN} train ${TRAIN_OVR} --device "$DEVICE" --outdir "outputs/checkpoints/_smoke_${DEVICE}" || mark_fail "tiny-train"
+    # Predict to a small CSV to exercise inference path
     mkdir -p outputs/predictions
-    run "predict (stub CSV)" ${CLI_BIN} predict --out-csv "outputs/predictions/_smoke_submission.csv" || FAILED=1
+    PRED_OVR=""
+    [[ -n "$HYDRA_OVERRIDES" ]] && PRED_OVR="${HYDRA_OVERRIDES}"
+    run "predict (stub CSV)" ${CLI_BIN} predict ${PRED_OVR} --out-csv "outputs/predictions/_smoke_submission.csv" || mark_fail "predict"
   fi
 fi
 
-# ---------- Step: analyze log short ----------
+# ---------- Step: analyze log short (fallback to bin/analyze-log.sh) ----------
 if [[ $NO_LOG_SUMMARY -eq 1 ]]; then
   warn "Skipping log summary (--no-log-summary)."
 else
-  run "analyze-log-short" ${CLI_BIN} analyze-log-short || FAILED=1
+  if ${CLI_BIN} --help 2>/dev/null | grep -qi "analyze-log-short"; then
+    run "analyze-log-short" ${CLI_BIN} analyze-log-short || mark_fail "analyze-log-short"
+  elif [[ -x "bin/analyze-log.sh" ]]; then
+    run "bin/analyze-log.sh --tail 30 --no-refresh" bash -lc "bin/analyze-log.sh --tail 30 --no-refresh" || mark_fail "analyze-log"
+  else
+    warn "No log analysis command available."
+  fi
 fi
 
 # ---------- Optional: DVC status (non-fatal) ----------
@@ -286,12 +300,13 @@ if [[ $FAILED -eq 0 ]]; then
   OK=true; EC=0
 else
   printf "%s✘%s CI smoke encountered issues.\n" "${RED}" "${RST}"
+  [[ ${#FAIL_STEPS[@]} -gt 0 ]] && warn "Failed steps: ${FAIL_STEPS[*]}"
   OK=false; EC=1
 fi
 
 # ---------- JSON summary ----------
 if [[ $JSON_OUT -eq 1 ]]; then
-  START_ISO="${TS:0:4}-${TS:4:2}-${TS:6:2}T${TS:9:2}:${TS:11:2}:${TS:13:2}Z"
+  START_ISO="$(date -u -d "@$(( $(date +%s) - 1 ))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)"
   END_ISO="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   printf '{'
   printf '"ok": %s, ' "$([[ $OK == true ]] && echo true || echo false)"
@@ -301,6 +316,7 @@ if [[ $JSON_OUT -eq 1 ]]; then
   printf '"latest_html": "%s", ' "${LATEST_HTML:-}"
   printf '"log": "%s", ' "$LOG_PATH"
   printf '"ci": %s, "kaggle": %s, ' "$([[ $IS_CI -eq 1 ]] && echo true || echo false)" "$([[ $IS_KAGGLE -eq 1 ]] && echo true || echo false)"
+  printf '"failed_steps": %s, ' "$(printf '[%s]\n' "$(IFS=,; printf '%s' "\"${FAIL_STEPS[*]}\"" | sed 's/,/","/g')")"
   printf '"start": "%s", "end": "%s"' "$START_ISO" "$END_ISO"
   printf '}\n'
 fi
