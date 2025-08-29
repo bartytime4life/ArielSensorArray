@@ -1,0 +1,90 @@
+# configs/ablate.yaml
+# ==============================================================================
+# SpectraMind V50 — Ablation Configuration
+# ------------------------------------------------------------------------------
+# Purpose:
+#   Defines ablation study parameters for systematic evaluation of model
+#   components, symbolic constraints, uncertainty calibration, and training
+#   curricula. Works with auto_ablate_v50.py and CLI `spectramind ablate`.
+#
+# Usage:
+#   spectramind ablate --config-name ablate
+#   spectramind ablate hydra/launcher=submitit_slurm ablate.top_n=5
+#
+# Notes:
+#   - Hydra groups organize config parts for modularity.
+#   - Overrides can disable modules (e.g. symbolic_loss=off).
+#   - Top-N leaderboard export controlled here.
+#   - CI-safe: reproducible across DVC + Hydra + Kaggle.
+# ==============================================================================
+
+defaults:
+  - data: nominal         # Base dataset config
+  - model: v50            # Default model architecture (Mamba+GNN)
+  - optimizer: adamw      # Optimizer baseline
+  - trainer: default      # Training loop defaults
+  - logger: tensorboard   # Logging backend
+  - symbolic: full        # Full symbolic constraints (can override to off/partial)
+  - uncertainty: corel    # COREL binwise calibration (can override)
+  - hydra/job_logging: default
+  - hydra/hydra_logging: default
+
+experiment_name: "ablation_v50"
+
+# ------------------------------------------------------------------------------
+# Ablation parameters
+# ------------------------------------------------------------------------------
+
+ablate:
+  # Run control
+  num_trials: 20          # Number of ablation runs per config mutation
+  parallel: true          # Allow parallel execution via Hydra launcher
+  retries: 1              # Retry failed configs once
+  seed: 42                # Base RNG seed for reproducibility
+
+  # Mutation space (modules to toggle or vary)
+  toggles:
+    - symbolic_loss       # [on/off]
+    - smoothness_loss     # [on/off]
+    - asymmetry_loss      # [on/off]
+    - fft_loss            # [on/off]
+    - uncertainty_corel   # [on/off]
+    - attention_fusion    # [on/off]
+    - shap_overlay        # [on/off]
+
+  # Continuous parameters to sweep (ranges interpolated by Hydra multirun)
+  sweep:
+    optimizer.lr: [1e-3, 5e-4, 1e-4]
+    trainer.batch_size: [32, 64]
+    trainer.gradient_clip_val: [0.5, 1.0]
+
+  # Evaluation metrics
+  metrics:
+    - gll                 # Gaussian Log-Likelihood
+    - rmse                # Root Mean Square Error
+    - entropy             # Predictive entropy
+    - violation_norm      # Symbolic violation norm
+    - l2_smoothness       # Spectral smoothness L2
+
+  # Leaderboard export
+  leaderboard:
+    top_n: 5              # Keep top-N configs by GLL
+    export_md: true       # Write Markdown leaderboard
+    export_html: true     # Generate interactive HTML leaderboard
+    export_zip: true      # Save configs + artifacts to ablate_topN.zip
+    open_browser: false   # Auto-open HTML after run (set true locally)
+
+# ------------------------------------------------------------------------------
+# Runtime integration
+# ------------------------------------------------------------------------------
+
+hydra:
+  run:
+    dir: outputs/ablations/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: outputs/ablations/multirun
+    subdir: ${hydra.job.num}
+  launcher:
+    n_jobs: 4   # Parallel jobs if launcher is enabled
+  job:
+    chdir: true
