@@ -1,0 +1,124 @@
+# ======================================================================
+# configs/selftest.yaml — SpectraMind V50 Smoke / CI Self-Test Config
+# ======================================================================
+# Purpose:
+#   Lightweight configuration for validating pipeline integrity end-to-end.
+#   Runs quickly (<2 min) on CPU/GPU with tiny data subsets, ensuring:
+#     • Hydra config composition is valid
+#     • CLI commands are registered and callable
+#     • Logging, hashing, and DVC integration function correctly
+#     • Model forward/backward passes run without OOM
+#
+# Usage:
+#   spectramind train --config-name selftest.yaml
+#   spectramind diagnose --config-name selftest.yaml
+#
+# ======================================================================
+
+defaults:
+  - data: debug        # Use tiny, cached subset of inputs
+  - model: v50         # Full V50 model, but run in mini mode
+  - optimizer: adam    # Simple optimizer
+  - trainer: default   # Single device, single epoch
+  - loss: gll          # Gaussian log-likelihood baseline loss
+  - logger: tensorboard
+  - override hydra/job_logging: default
+  - override hydra/hydra_logging: default
+
+# ----------------------------------------------------------------------
+# Global experiment metadata
+# ----------------------------------------------------------------------
+experiment:
+  name: "selftest_v50"
+  tags: ["selftest", "ci", "smoke"]
+  seed: 42               # Deterministic seed for reproducibility
+  fast_dev_run: true     # Lightning-style guard for 1-batch run
+
+# ----------------------------------------------------------------------
+# Data loader / calibration
+# ----------------------------------------------------------------------
+data:
+  batch_size: 2          # Tiny batch to run fast
+  num_workers: 0         # Avoid multiprocessing for CI determinism
+  limit_train_batches: 4 # Small subset of training batches
+  limit_val_batches: 2
+  limit_test_batches: 2
+
+# ----------------------------------------------------------------------
+# Model overrides
+# ----------------------------------------------------------------------
+model:
+  v50:
+    hidden_dim: 8        # Downscaled width for CI run
+    depth: 1             # One encoder/decoder block only
+    enable_symbolic: true
+    dropout: 0.1
+
+# ----------------------------------------------------------------------
+# Optimizer & scheduler
+# ----------------------------------------------------------------------
+optimizer:
+  name: "Adam"
+  lr: 1e-3
+  weight_decay: 0.0
+
+# ----------------------------------------------------------------------
+# Training loop
+# ----------------------------------------------------------------------
+trainer:
+  max_epochs: 1          # Single epoch
+  gradient_clip_val: 0.5
+  deterministic: true
+  precision: 32          # No mixed precision in CI
+  log_every_n_steps: 1
+  enable_checkpointing: false
+  enable_progress_bar: true
+
+# ----------------------------------------------------------------------
+# Loss weights (symbolic/physics constraints)
+# ----------------------------------------------------------------------
+loss:
+  gll:
+    weight: 1.0
+  smoothness:
+    weight: 0.0          # Disabled in self-test
+  symbolic:
+    weight: 0.0          # Disabled in self-test
+
+# ----------------------------------------------------------------------
+# Diagnostics & logging
+# ----------------------------------------------------------------------
+diagnostics:
+  run_fft: true
+  run_umap: false        # Too heavy for CI
+  run_tsne: false
+  run_symbolic: true
+  save_html: false       # Skip heavy HTML builds in CI
+
+logger:
+  tensorboard:
+    enabled: true
+    log_dir: logs/selftest
+  mlflow:
+    enabled: false
+  wandb:
+    enabled: false
+
+# ----------------------------------------------------------------------
+# Hydra output dir — auto timestamped
+# ----------------------------------------------------------------------
+hydra:
+  run:
+    dir: outputs/selftest/${now:%Y-%m-%d_%H-%M-%S}
+  sweep:
+    dir: outputs/selftest/multirun/${now:%Y-%m-%d_%H-%M-%S}
+    subdir: ${hydra.job.num}
+
+# ======================================================================
+# ✅ This config ensures that every CI/self-test run validates:
+#    • Config composition & overrides
+#    • CLI registration & logging
+#    • End-to-end pipeline forward pass
+#    • Deterministic hashing and log output
+#    • Kaggle-safe lightweight execution
+# ======================================================================
