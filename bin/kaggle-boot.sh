@@ -26,13 +26,15 @@
 #   --extra "<pkgs>"     Space-separated extra pip packages to install
 #   --index-url <url>    Custom PyPI/simple index URL (optional)
 #   --transformers-offline  Set TRANSFORMERS_OFFLINE=1 during install
+#   --torch-cuda <tag>   Force CUDA tag (e.g. cpu, cu118, cu121) to override autodetect
 #   --dry-run            Print actions only, do not execute
 #   --quiet              Less verbose output
+#   --json               Emit a JSON summary for the bootstrap step
 #   -h|--help            Show help and exit
 #
 # Notes
 #   • Safe in Kaggle notebooks (no sudo; user-level pip installs).
-#   • PyG wheel index is inferred from torch.__version__ and torch.version.cuda.
+#   • PyG wheel index is inferred from torch.__version__ and torch.version.cuda (or --torch-cuda).
 #   • Creates .kaggle_boot_ok sentinel on success.
 # ==============================================================================
 
@@ -53,11 +55,13 @@ PYG_VERSION="2.5.3"
 EXTRA_PKGS=""
 CUSTOM_INDEX=""
 SET_TRANSFORMERS_OFFLINE=0
+FORCE_TORCH_CUDA=""
 DRY=0
 QUIET=0
+JSON=0
 
 usage() {
-  sed -n '1,120p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '1,160p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 # ---------- args ----------
@@ -71,8 +75,10 @@ while [[ $# -gt 0 ]]; do
     --extra) EXTRA_PKGS="${2:?}"; shift 2 ;;
     --index-url) CUSTOM_INDEX="${2:?}"; shift 2 ;;
     --transformers-offline) SET_TRANSFORMERS_OFFLINE=1; shift ;;
+    --torch-cuda) FORCE_TORCH_CUDA="${2:?}"; shift 2 ;;
     --dry-run) DRY=1; shift ;;
     --quiet) QUIET=1; shift ;;
+    --json) JSON=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) fail "Unknown arg: $1"; usage; exit 2 ;;
   esac
@@ -99,6 +105,14 @@ export_if() {
   fi
 }
 
+json_out() {
+  [[ $JSON -eq 1 ]] || return 0
+  local ok="$1" torch_v="$2" cuda="$3" file="$4" pyg="$5"
+  printf '{ "ok": %s, "torch": "%s", "cuda": "%s", "submission_reqs": "%s", "pyg": "%s" }\n' \
+    "$([[ "$ok" == "true" ]] && echo true || echo false)" \
+    "${torch_v:-unknown}" "${cuda:-unknown}" "${file:-none}" "${pyg:-skipped}"
+}
+
 # ---------- sanity: Kaggle-ish environment ----------
 IS_KAGGLE=0
 [[ -n "${KAGGLE_URL_BASE:-}" || -n "${KAGGLE_KERNEL_RUN_TYPE:-}" || -d "/kaggle" ]] && IS_KAGGLE=1
@@ -114,16 +128,13 @@ run "pip --version" $PIP --version || true
 
 # ---------- step 1: optional pip tooling upgrade ----------
 if [[ $UPGRADE_PIP -eq 1 ]]; then
-  if [[ $DRY -eq 1 ]]; then
-    say "[dry-run] $PIP install -U pip setuptools wheel"
-  else
-    $PIP install -U pip setuptools wheel
-  fi
+  run "pip upgrade tooling" $PIP install -U pip setuptools wheel
 else
   warn "Skipping pip/setuptools/wheel upgrade (--no-upgrade-pip)."
 fi
 
 # ---------- step 2: install requirements file ----------
+INSTALLED_REQS="none"
 if [[ $DO_REQ -eq 1 ]]; then
   if [[ ! -f "$REQ_FILE" ]]; then
     fail "Requirements file not found: $REQ_FILE (pass --req <file> or --no-req)"
@@ -136,40 +147,46 @@ if [[ $DO_REQ -eq 1 ]]; then
   PIP_INSTALL_ARGS=(install -r "$REQ_FILE")
   [[ -n "$CUSTOM_INDEX" ]] && PIP_INSTALL_ARGS=(install --index-url "$CUSTOM_INDEX" -r "$REQ_FILE")
   run "pip install -r $REQ_FILE" $PIP "${PIP_INSTALL_ARGS[@]}"
+  INSTALLED_REQS="$REQ_FILE"
 else
   warn "Skipping requirements install (--no-req)."
 fi
 
 # ---------- step 3: install torch-geometric (PyG) wheel to match torch/CUDA ----------
+TORCH_VERSION=""; CUDA_RAW=""
+PYG_STATUS="skipped"
+
 if [[ $DO_PYG -eq 1 ]]; then
-  # Query torch + CUDA
   TORCH_META=$($PY - <<'PY'
-import json, sys
+import json
 try:
     import torch
-    info = {
-        "torch_version": torch.__version__.split('+')[0],
-        "cuda": (torch.version.cuda or "cpu"),
-    }
-    print(json.dumps(info))
+    print(json.dumps({"torch": torch.__version__.split('+')[0], "cuda": (torch.version.cuda or "cpu")}))
 except Exception as e:
     print(json.dumps({"error": str(e)}))
 PY
   )
   if [[ "$TORCH_META" == *"error"* ]]; then
     warn "Torch not importable; skipping torch-geometric install."
+    PYG_STATUS="torch-missing"
   else
-    TORCH_VER="$(python - <<'PY'
+    TORCH_VERSION="$(python - <<'PY'
 import json,sys
-print(json.loads(sys.stdin.read())["torch_version"])
+print(json.loads(sys.stdin.read())["torch"])
 PY
 <<<"$TORCH_META")"
 
-    CUDA_RAW="$(python - <<'PY'
+    CUDA_RAW_OVERRIDE="$FORCE_TORCH_CUDA"
+    if [[ -n "$CUDA_RAW_OVERRIDE" ]]; then
+      say "Forcing CUDA tag via --torch-cuda=${CUDA_RAW_OVERRIDE}"
+      CUDA_RAW="$CUDA_RAW_OVERRIDE"
+    else
+      CUDA_RAW="$(python - <<'PY'
 import json,sys
 print(json.loads(sys.stdin.read())["cuda"])
 PY
 <<<"$TORCH_META")"
+    fi
 
     if [[ "$CUDA_RAW" == "cpu" || -z "$CUDA_RAW" ]]; then
       CU_TAG="cpu"
@@ -177,36 +194,39 @@ PY
       CU_TAG="cu${CUDA_RAW//./}"
     fi
 
-    PYG_INDEX="https://data.pyg.org/whl/torch-${TORCH_VER}+${CU_TAG}.html"
-    say "torch=${BOLD}${TORCH_VER}${RST}  cuda=${BOLD}${CUDA_RAW}${RST}  → PyG index=${BOLD}${PYG_INDEX}${RST}"
+    PYG_INDEX="https://data.pyg.org/whl/torch-${TORCH_VERSION}+${CU_TAG}.html"
+    say "torch=${BOLD}${TORCH_VERSION}${RST}  cuda=${BOLD}${CUDA_RAW}${RST}  → PyG index=${BOLD}${PYG_INDEX}${RST}"
 
     # Install torch-geometric matching wheel index
-    if [[ $DRY -eq 1 ]]; then
-      say "[dry-run] $PIP install torch-geometric==${PYG_VERSION} -f ${PYG_INDEX}"
-    else
+    run "pip install torch-geometric==${PYG_VERSION} -f ${PYG_INDEX}" \
       $PIP install "torch-geometric==${PYG_VERSION}" -f "${PYG_INDEX}"
-    fi
+    PYG_STATUS="installed-${PYG_VERSION}"
   fi
 else
   warn "Skipping torch-geometric install (--no-pyg)."
+  PYG_STATUS="skipped"
 fi
 
 # ---------- step 4: optional extra packages ----------
 if [[ -n "$EXTRA_PKGS" ]]; then
-  if [[ $DRY -eq 1 ]]; then
-    say "[dry-run] $PIP install ${EXTRA_PKGS}"
-  else
-    $PIP install ${EXTRA_PKGS}
-  fi
+  run "pip install extras: ${EXTRA_PKGS}" $PIP install ${EXTRA_PKGS}
 fi
 
 # ---------- step 5: quick sanity prints ----------
-run "python -c 'import torch;print(torch.__version__);print(torch.cuda.is_available())'" \
-  "$PY" - <<'PY'
-import torch
-print("torch:", torch.__version__)
-print("cuda_available:", torch.cuda.is_available())
+TORCH_REPORT="$("$PY" - <<'PY' 2>/dev/null || true
+import json, sys
+try:
+    import torch
+    print(json.dumps({"torch": torch.__version__, "cuda_available": torch.cuda.is_available()}))
+except Exception as e:
+    print(json.dumps({"error": str(e)}))
 PY
+)"
+if [[ "$TORCH_REPORT" == *"error"* ]]; then
+  warn "Torch report unavailable."
+else
+  say "Torch report: ${TORCH_REPORT}"
+fi
 
 # SpectraMind banner (if available)
 if command -v spectramind >/dev/null 2>&1; then
@@ -224,3 +244,5 @@ fi
 
 say "${GRN}Kaggle bootstrap complete.${RST}"
 [[ $DRY -eq 1 ]] && say "(dry-run: no changes were made)"
+
+json_out true "$TORCH_VERSION" "$CUDA_RAW" "$INSTALLED_REQS" "$PYG_STATUS"
