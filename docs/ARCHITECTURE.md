@@ -1,6 +1,3 @@
-
-⸻
-
 🌌 SpectraMind V50 — System Architecture
 
 Neuro-symbolic, physics-informed AI pipeline for the NeurIPS 2025 Ariel Data Challenge
