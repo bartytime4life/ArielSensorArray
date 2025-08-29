@@ -1,0 +1,74 @@
+# ======================================================================
+# configs/data/kaggle.yaml — SpectraMind V50 Kaggle Runtime Data Config
+# ======================================================================
+# Purpose:
+#   Specialized dataset and runtime configuration for Kaggle submissions.
+#   Ensures Kaggle hardware/runtime constraints are respected:
+#     • ≤9 hr runtime on 1 GPU
+#     • No internet calls, no hidden state
+#     • DVC-safe, deterministic data access
+#
+# Usage:
+#   spectramind train --config-name train.yaml data=kaggle
+#   spectramind predict --config-name predict.yaml data=kaggle
+# ======================================================================
+
+dataset:
+  name: "Ariel_Kaggle_2025"
+  provider: "kaggle"             # Kaggle dataset mount (no external URLs)
+  input_dir: "/kaggle/input/neurips-2025-ariel"   # Mounted Kaggle input path
+  output_dir: "/kaggle/working"  # Kaggle writable path
+  cache_dir: "/kaggle/temp"      # Ephemeral cache (cleared between sessions)
+
+  # Data subsets
+  train_file: "train.pkl"
+  val_file: "val.pkl"
+  test_file: "test.pkl"
+
+  # Number of planets and bins (fixed by competition spec)
+  num_planets: 1100
+  num_bins: 283
+
+  # Loader settings
+  batch_size: 64                 # Safe for 16 GB GPU (Tesla P100 / T4)
+  num_workers: 2                 # Conservative to avoid Kaggle kernel crashes
+  pin_memory: true
+  persistent_workers: false
+
+  # Data restrictions
+  internet_access: false          # Safety guard
+  kaggle_time_limit_hr: 9         # Max runtime enforced
+
+preprocessing:
+  normalize_flux: true            # Normalize per planet light curves
+  jitter_injection: true          # Simulate spacecraft jitter (augmentation)
+  phase_alignment: true           # Align transits using FGS1 photometry
+  detrend_method: "polynomial"    # Simple detrending for AIRS inputs
+  spectral_smoothing: false       # Disable heavy FFT smoothing for runtime safety
+
+calibration:
+  adc_correction: true
+  dark_subtraction: true
+  flat_field: true
+  nonlinearity: true
+  cds_correction: true
+  phase_normalization: true
+
+validation:
+  split_strategy: "planet_holdout"
+  val_fraction: 0.1
+  random_seed: 42
+  deterministic: true
+
+logging:
+  enable: true
+  save_dir: "${dataset.output_dir}/logs"
+  format: "jsonl"
+  include_config_hash: true
+
+hydra:
+  run:
+    dir: ${dataset.output_dir}/outputs/${now:%Y-%m-%d_%H-%M-%S}
+  sweep:
+    dir: ${dataset.output_dir}/multirun/${now:%Y-%m-%d_%H-%M-%S}
+    subdir: ${hydra.job.num}
