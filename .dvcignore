@@ -4,7 +4,8 @@
 # Purpose:
 #   • Prevent DVC from scanning ephemeral / reproducible files, caches, CI outputs
 #   • Speed up `dvc status` / `dvc repro` by scoping to true data/model artifacts
-#   • Keep Git, Docker, Kaggle, and Hydra ignores aligned for reproducibility
+#   • Keep Git, Docker, Kaggle, Hydra, and ML ecosystem ignores aligned
+#   • Ensure secrets and transient outputs are never versioned
 # ==============================================================================
 
 # ----------------------------------------------------------------------
@@ -66,6 +67,8 @@ pytest_cache/
 .mypy_cache/
 .tox/
 .nox/
+.pytest_cache/
+htmlcov/
 
 # ----------------------------------------------------------------------
 # Intermediate & scratch outputs
@@ -76,15 +79,21 @@ outputs/cache/
 outputs/debug/
 outputs/tmp/
 outputs/sandbox/
+scratch/
+.simulations/
+experiments/
+ray_results/
+optuna_study/
 
 # ----------------------------------------------------------------------
-# Model bundles & artifacts (tracked selectively)
+# Model bundles & artifacts (tracked selectively via DVC)
 *.ckpt
 *.pth
 *.pt
 *.onnx
 *.h5
 *.tar.gz
+*.mlmodel
 
 # ----------------------------------------------------------------------
 # Kaggle / competition specifics
@@ -92,14 +101,41 @@ outputs/sandbox/
 kaggle.json
 input/
 working/
-# Kaggle kernel checkpoints
 .kernels/
 kernel-metadata.json
 
-# Notebooks (tracked in Git, but DVC doesn’t need to scan them)
+# Kaggle kernel checkpoints & notebooks
 *.ipynb
 .ipynb_checkpoints/
 notebooks/.ipynb_checkpoints/
+
+# ----------------------------------------------------------------------
+# Hugging Face / ML frameworks caches
+.huggingface/
+transformers_cache/
+datasets/
+models/
+wandb/
+mlruns/
+tensorboard/
+tb_logs/
+ray_tune/
+optuna/
+
+# ----------------------------------------------------------------------
+# GUI / UX artifacts
+gui/.cache/
+gui/dist/
+gui/build/
+gui/node_modules/
+assets/screenshots/
+assets/plots/
+assets/tmp/
+assets/**.png
+assets/**.svg
+assets/**.jpg
+assets/**.jpeg
+assets/**.gif
 
 # ----------------------------------------------------------------------
 # DVC internals
@@ -123,15 +159,6 @@ outputs/**.csv
 outputs/**.json
 outputs/**.md
 
-assets/screenshots/
-assets/plots/
-assets/tmp/
-assets/**.png
-assets/**.svg
-assets/**.jpg
-assets/**.jpeg
-assets/**.gif
-
 # ----------------------------------------------------------------------
 # Submission bundles (reproducible via pipeline)
 outputs/submission.csv
@@ -150,6 +177,7 @@ diagnostic_summary.json
 run_hash_summary_v50.json
 version_manifest.json
 pipeline_consistency_report.json
+config_snapshot.yaml
 
 # ----------------------------------------------------------------------
 # Secrets & local creds (never track in DVC)
@@ -159,17 +187,17 @@ pipeline_consistency_report.json
 .gcloud/
 .azure/
 secrets.yaml
+secrets.json
+credentials.json
+token.json
+hf_token.txt
 
 # ----------------------------------------------------------------------
-# ML frameworks caches
-.huggingface/
-wandb/
-mlruns/
-*.mlmodel
-
-# ----------------------------------------------------------------------
-# Git/CI scaffolding
+# CI/CD scaffolding
 .git/
 .github/
 .gitattributes
 .gitignore
+*.sbom.json
+*.sbom.spdx
+*.cyclonedx.json
