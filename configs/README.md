@@ -1,7 +1,3 @@
-Here’s a fully-rebuilt README.md for the /configs directory, aligned with the SpectraMind V50 philosophy and your uploaded technical docs. It explains purpose, structure, usage, reproducibility principles, and ties configs into CLI + Hydra + DVC + Kaggle.
-
-⸻
-
 🗂️ /configs — SpectraMind V50 Configuration System
 
 0. Purpose & Scope
