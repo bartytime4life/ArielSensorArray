@@ -1,50 +1,61 @@
 #!/usr/bin/env bash
-# kaggle-submit.sh — Safe, ergonomic Kaggle submission helper for SpectraMind V50
+# ==============================================================================
+# bin/kaggle-submit.sh — Safe, ergonomic Kaggle submission helper (upgraded)
 # ------------------------------------------------------------------------------
 # Features
-#   • Dry-run by default (use --yes to actually submit)
-#   • Auto-detects submission file (predictions/submission.csv or outputs/submission.csv)
-#   • Validates Kaggle CLI & auth, competition slug, file existence
-#   • Nice logs, optional retries/poll, and quick recent-submissions tail
+#   • DRY-RUN BY DEFAULT (use --yes to actually submit)
+#   • Auto-detects submission file (multiple common locations)
+#   • Validates Kaggle CLI & auth, competition slug, file existence/size
+#   • Optional gzip support and auto-compress if --gzip and file endswith .csv
+#   • Nice logs, optional retries, optional polling of recent submissions
+#   • Optional JSON summary for CI dashboards
+#   • Works locally and inside Kaggle kernels (best-effort)
 #
 # Usage
 #   bin/kaggle-submit.sh [--comp SLUG] [--file PATH] [--message "msg"] [--yes]
-#                        [--retries N] [--sleep SEC] [--open|--no-open] [--quiet]
+#                        [--retries N] [--sleep SEC]
+#                        [--open|--no-open] [--gzip] [--json] [--quiet]
 #
 # Examples
 #   bin/kaggle-submit.sh --yes
-#   bin/kaggle-submit.sh --comp neurips-2025-ariel --file outputs/predictions/submission.csv --message "V50 run #42" --yes
+#   bin/kaggle-submit.sh --comp neurips-2025-ariel \
+#                        --file outputs/predictions/submission.csv \
+#                        --message "V50 run #42" --yes
 #
 # Notes
 #   • Requires: kaggle CLI + valid auth (~/.kaggle/kaggle.json or $KAGGLE_CONFIG_DIR)
-#   • Default competition: neurips-2025-ariel
-# ------------------------------------------------------------------------------
+#   • Default competition: neurips-2025-ariel (override with --comp or $KAGGLE_COMP)
+#   • DRY-RUN prints what would happen and recent submissions tail (no network submit)
+# ==============================================================================
 
 set -euo pipefail
 
 # ----- Colors ---------------------------------------------------------------
 if [[ -t 1 ]]; then
-  BOLD='\033[1m'; DIM='\033[2m'; RED='\033[31m'; GRN='\033[32m'; YLW='\033[33m'; CYN='\033[36m'; RST='\033[0m'
+  BOLD=$'\033[1m'; DIM=$'\033[2m'; RED=$'\033[31m'; GRN=$'\033[32m'; YLW=$'\033[33m'; CYN=$'\033[36m'; RST=$'\033[0m'
 else
   BOLD=''; DIM=''; RED=''; GRN=''; YLW=''; CYN=''; RST=''
 fi
 
 log()   { printf "%b\n" "${*}"; }
-info()  { log "${CYN}::${RST} ${*}"; }
-ok()    { log "${GRN}✓${RST} ${*}"; }
+info()  { [[ "${QUIET:-0}" -eq 1 ]] && return 0; log "${CYN}::${RST} ${*}"; }
+ok()    { [[ "${QUIET:-0}" -eq 1 ]] && return 0; log "${GRN}✓${RST} ${*}"; }
 warn()  { log "${YLW}⚠${RST} ${*}"; }
 err()   { log "${RED}✗${RST} ${*}"; }
 die()   { err "$*"; exit 1; }
+have()  { command -v "$1" >/dev/null 2>&1; }
 
 # ----- Defaults -------------------------------------------------------------
-COMPETITION=${COMPETITION:-neurips-2025-ariel}
+COMPETITION="${KAGGLE_COMP:-neurips-2025-ariel}"
 SUBMIT_FILE=""
-MESSAGE="SpectraMind V50 auto-submit"
+MESSAGE="${KAGGLE_MSG:-SpectraMind V50 auto-submit}"
 YES=0
-RETRIES=0
-SLEEP=15
+RETRIES="${KAGGLE_RETRIES:-0}"
+SLEEP="${KAGGLE_SLEEP:-15}"
 OPEN=1
+GZIP=0
 QUIET=0
+JSON=0
 
 # ----- Helpers --------------------------------------------------------------
 usage() {
@@ -55,17 +66,21 @@ ${BOLD}Options${RST}
   --comp SLUG        Kaggle competition slug (default: ${COMPETITION})
   --file PATH        Path to submission CSV (auto-detected if omitted)
   --message TEXT     Submission message (default: "${MESSAGE}")
-  --yes              Actually submit (dry-run by default)
+  --yes              Actually submit (DRY-RUN by default)
   --retries N        Retries if Kaggle CLI transiently fails (default: ${RETRIES})
   --sleep SEC        Sleep between retries (default: ${SLEEP})
-  --open | --no-open Open the competition page after submit (default: open)
+  --gzip             Gzip the submission (auto .csv.gz) before upload
+  --open | --no-open Open the competition submission page after submit (default: open)
+  --json             Emit a JSON summary (useful for CI)
   --quiet            Minimal logs
   -h, --help         Show help
 
-${BOLD}Auto-detect CSV${RST}
+${BOLD}Auto-detect CSV (first match wins)${RST}
   • predictions/submission.csv
   • outputs/predictions/submission.csv
   • outputs/submission.csv
+  • outputs/submission/submission.csv
+  • submission.csv
 
 Examples:
   bin/kaggle-submit.sh --yes
@@ -73,13 +88,13 @@ Examples:
 EOF
 }
 
-is_cmd() { command -v "$1" >/dev/null 2>&1; }
-
 detect_submit_file() {
   local candidates=(
     "predictions/submission.csv"
     "outputs/predictions/submission.csv"
     "outputs/submission.csv"
+    "outputs/submission/submission.csv"
+    "submission.csv"
   )
   for f in "${candidates[@]}"; do
     if [[ -f "$f" ]]; then SUBMIT_FILE="$f"; return 0; fi
@@ -87,8 +102,16 @@ detect_submit_file() {
   return 1
 }
 
+kaggle_authenticated() {
+  if [[ -n "${KAGGLE_CONFIG_DIR:-}" ]]; then
+    [[ -f "${KAGGLE_CONFIG_DIR%/}/kaggle.json" ]]
+  else
+    [[ -f "$HOME/.kaggle/kaggle.json" ]]
+  fi
+}
+
 print_recent_submissions() {
-  if [[ $QUIET -eq 1 ]]; then return 0; fi
+  [[ $QUIET -eq 1 ]] && return 0
   info "Recent submissions (top 6):"
   if ! kaggle competitions submissions -c "$COMPETITION" -v 2>/dev/null | head -n 7; then
     warn "Could not list recent submissions (permission or CLI issue)."
@@ -97,19 +120,9 @@ print_recent_submissions() {
 
 open_competition_page() {
   local url="https://www.kaggle.com/competitions/${COMPETITION}/submissions"
-  if [[ $OPEN -eq 1 ]]; then
-    if is_cmd xdg-open; then xdg-open "$url" >/dev/null 2>&1 || true
-    elif is_cmd open; then open "$url" >/dev/null 2>&1 || true
-    fi
-  fi
-}
-
-kaggle_authenticated() {
-  # Kaggle CLI prints a helpful message if unauthenticated; we check for config presence.
-  if [[ -n "${KAGGLE_CONFIG_DIR:-}" ]]; then
-    [[ -f "${KAGGLE_CONFIG_DIR%/}/kaggle.json" ]]
-  else
-    [[ -f "$HOME/.kaggle/kaggle.json" ]]
+  [[ $OPEN -eq 1 ]] || return 0
+  if have xdg-open; then xdg-open "$url" >/dev/null 2>&1 || true
+  elif have open; then open "$url" >/dev/null 2>&1 || true
   fi
 }
 
@@ -122,35 +135,82 @@ submit_once() {
   fi
 }
 
+json_emit() {
+  [[ $JSON -eq 1 ]] || return 0
+  # naive JSON emission, values already shell-safe
+  printf '{'
+  printf '"ok": %s, '   "${1:-false}"
+  printf '"competition": "%s", ' "${2}"
+  printf '"file": "%s", '        "${3}"
+  printf '"message": "%s", '     "${4}"
+  printf '"attempts": %s, '      "${5:-0}"
+  printf '"dry_run": %s'         "$([[ $YES -eq 1 ]] && echo false || echo true)"
+  printf '}\n'
+}
+
 # ----- Parse args -----------------------------------------------------------
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --comp)     COMPETITION="$2"; shift 2 ;;
-    --file)     SUBMIT_FILE="$2"; shift 2 ;;
-    --message)  MESSAGE="$2"; shift 2 ;;
+    --comp)     COMPETITION="${2:?}"; shift 2 ;;
+    --file)     SUBMIT_FILE="${2:?}"; shift 2 ;;
+    --message)  MESSAGE="${2:?}"; shift 2 ;;
     --yes)      YES=1; shift ;;
     --retries)  RETRIES="${2:-0}"; shift 2 ;;
     --sleep)    SLEEP="${2:-15}"; shift 2 ;;
     --open)     OPEN=1; shift ;;
     --no-open)  OPEN=0; shift ;;
+    --gzip)     GZIP=1; shift ;;
+    --json)     JSON=1; shift ;;
     --quiet)    QUIET=1; shift ;;
     -h|--help)  usage; exit 0 ;;
     *)          err "Unknown option: $1"; usage; exit 2 ;;
   esac
 done
 
+# ----- Kaggle kernel detection (best-effort) ---------------------------------
+IS_KAGGLE=0
+if [[ -n "${KAGGLE_URL_BASE:-}" || -n "${KAGGLE_KERNEL_RUN_TYPE:-}" || -d "/kaggle" ]]; then
+  IS_KAGGLE=1
+  info "Kaggle environment detected."
+fi
+
 # ----- Validations ----------------------------------------------------------
-[[ -n "$COMPETITION" ]] || die "Competition slug is empty."
-is_cmd kaggle || die "kaggle CLI not found. Install via 'pip install kaggle' and auth."
+[[ -n "$COMPETITION" ]] || die "Competition slug is empty (use --comp)."
+have kaggle || die "kaggle CLI not found. Install via 'pip install kaggle' and auth."
 kaggle_authenticated || die "Kaggle auth not found (~/.kaggle/kaggle.json or \$KAGGLE_CONFIG_DIR). See Kaggle > Account > Create API Token."
 
 if [[ -z "$SUBMIT_FILE" ]]; then
   if ! detect_submit_file; then
-    die "No submission file found. Provide --file PATH or ensure predictions/submission.csv exists."
+    die "No submission file found. Provide --file PATH or ensure submission.csv exists in a common location."
   fi
 fi
 [[ -f "$SUBMIT_FILE" ]] || die "File not found: $SUBMIT_FILE"
 [[ -s "$SUBMIT_FILE" ]] || die "Submission file is empty: $SUBMIT_FILE"
+
+# Gzip if requested
+ORIG_FILE="$SUBMIT_FILE"
+if [[ $GZIP -eq 1 ]]; then
+  if [[ "$SUBMIT_FILE" =~ \.csv$ ]]; then
+    GZ="${SUBMIT_FILE}.gz"
+    info "Gzipping submission → ${BOLD}${GZ}${RST}"
+    gzip -c "$SUBMIT_FILE" > "$GZ"
+    SUBMIT_FILE="$GZ"
+  else
+    warn "Skipping --gzip: file does not end with .csv (${SUBMIT_FILE})."
+  fi
+fi
+
+# Try to enrich default message if untouched
+if [[ "$MESSAGE" == "SpectraMind V50 auto-submit" ]]; then
+  # Prefer VERSION if available; else short git SHA
+  if [[ -f "VERSION" ]]; then
+    V=$(sed -n '1s/[[:space:]]//gp' VERSION || true)
+    [[ -n "$V" ]] && MESSAGE="SpectraMind V50 ${V}"
+  elif have git; then
+    SHA=$(git rev-parse --short HEAD 2>/dev/null || true)
+    [[ -n "$SHA" ]] && MESSAGE="SpectraMind V50 ${SHA}"
+  fi
+fi
 
 # Show context
 if [[ $QUIET -ne 1 ]]; then
@@ -158,12 +218,14 @@ if [[ $QUIET -ne 1 ]]; then
   info "CSV         : ${BOLD}${SUBMIT_FILE}${RST}"
   info "Message     : ${BOLD}${MESSAGE}${RST}"
   info "Mode        : ${BOLD}$([[ $YES -eq 1 ]] && echo "SUBMIT" || echo "DRY-RUN")${RST}"
+  # Best-effort: recent submissions tail
   print_recent_submissions
 fi
 
 # ----- Dry-run guard --------------------------------------------------------
 if [[ $YES -ne 1 ]]; then
-  warn "Dry-run only (no submission). Use ${BOLD}--yes${RST} to submit."
+  warn "DRY-RUN only (no submission). Use ${BOLD}--yes${RST} to submit."
+  json_emit false "$COMPETITION" "$SUBMIT_FILE" "$MESSAGE" 0
   exit 0
 fi
 
@@ -176,9 +238,11 @@ while :; do
     ok "Submitted to ${COMPETITION}."
     open_competition_page
     print_recent_submissions
+    json_emit true "$COMPETITION" "$SUBMIT_FILE" "$MESSAGE" "$attempt"
     exit 0
   fi
   if (( attempt > RETRIES )); then
+    json_emit false "$COMPETITION" "$SUBMIT_FILE" "$MESSAGE" "$attempt"
     die "Submission failed after ${RETRIES} retries."
   fi
   warn "Submission failed. Retrying in ${SLEEP}s…"
