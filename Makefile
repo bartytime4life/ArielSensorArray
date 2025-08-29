@@ -100,6 +100,7 @@ RST  := \033[0m
         analyze-log analyze-log-short check-cli-map \
         dvc-pull dvc-push dvc-status dvc-check dvc-repro \
         bench-selftest benchmark benchmark-cpu benchmark-gpu benchmark-run benchmark-report benchmark-clean \
+        benchmark-bin diagnostics-bin ci-smoke \
         kaggle-verify kaggle-run kaggle-submit kaggle-dataset-create kaggle-dataset-push \
         node-info node-ci mmd-version diagrams diagrams-png diagrams-svg diagrams-watch diagrams-lint diagrams-format diagrams-clean \
         ci ci-docs quickstart clean realclean distclean cache-clean \
@@ -132,6 +133,10 @@ help:
 	@echo "  $(CYN)repair$(RST)              : run ./bin/repair_and_push.sh MSG=\"...\""
 	@echo "  $(CYN)ablate*$(RST)             : ablation sweeps (light/heavy/grid/optuna)"
 	@echo "  $(CYN)analyze-log$(RST)         : parse logs → $(OUT_DIR)/log_table.{md,csv}"
+	@echo "  $(CYN)benchmark$(RST)           : CLI-based benchmark pipeline (kept for parity)"
+	@echo "  $(CYN)benchmark-bin$(RST)       : run ./bin/benchmark.sh (preferred, feature-rich)"
+	@echo "  $(CYN)diagnostics-bin$(RST)     : run ./bin/diagnostics.sh (rich overlays + options)"
+	@echo "  $(CYN)ci-smoke$(RST)            : local smoke of benchmark+diagnostics (CPU)"
 	@echo "  $(CYN)repro-*(RST)              : run snapshot & manifest (config/data hashing)"
 	@echo "  $(CYN)dvc-*(RST)                : DVC pull/push/status/repro & sanity checks"
 	@echo "  $(CYN)kaggle-*(RST)             : Kaggle run/submit/dataset publish"
@@ -275,6 +280,21 @@ repair: ensure-exec
 	@echo "[bin] ./bin/repair_and_push.sh \"$(MSG)\""
 	@./bin/repair_and_push.sh "$(MSG)"
 
+# New: run bin/benchmark.sh (feature-rich wrapper)
+benchmark-bin: ensure-exec
+	@echo "[bin] ./bin/benchmark.sh $(ARGS)"
+	@./bin/benchmark.sh $(ARGS)
+
+# New: run bin/diagnostics.sh (rich overlays/options)
+diagnostics-bin: ensure-exec
+	@echo "[bin] ./bin/diagnostics.sh $(ARGS)"
+	@./bin/diagnostics.sh $(ARGS)
+
+# Local smoke to mirror CI (CPU-only)
+ci-smoke: ensure-exec
+	@./bin/benchmark.sh --profile cpu --epochs 1 --tag ci-smoke --manifest
+	@./bin/diagnostics.sh --no-umap --no-tsne --manifest
+
 # ========= Ablation =========
 ablate: guards init
 	$(CLI) ablate $(OVERRIDES) $(EXTRA_ARGS)
@@ -329,7 +349,7 @@ dvc-check:
 	@$(DVC) status -c || true
 	@$(DVC) doctor || true
 
-# ========= Benchmarks =========
+# ========= Benchmarks (CLI-native pipeline kept for parity) =========
 bench-selftest:
 	$(CLI) selftest
 
