@@ -1,0 +1,72 @@
+# ======================================================================
+# configs/data/debug.yaml — SpectraMind V50 Debug / CI Smoke Dataset
+# ======================================================================
+# Purpose:
+#   Tiny, deterministic slice for CI/self-test and local smoke runs.
+#   Validates end-to-end pipeline (calibration → dataload → train step)
+#   in ~seconds without heavy I/O or GPU demand.
+#
+# Usage:
+#   spectramind train    --config-name train data=debug training.epochs=1
+#   spectramind diagnose --config-name train data=debug diagnostics.fft=false
+# ======================================================================
+
+dataset:
+  name: "Ariel_Debug_Slice"
+  provider: "local"                       # Use a tiny local/debug subset
+  input_dir: "data/debug"                 # e.g., tracked via DVC (tiny files)
+  output_dir: "outputs/debug"             # Writable artifacts for smoke runs
+  cache_dir: "temp/debug_cache"
+
+  # Minimal slice (e.g., 5 planets × few windows/bins) for speed
+  num_planets: 5
+  num_bins: 283                           # Keep model heads consistent
+  train_file: "train_debug.pkl"
+  val_file:   "val_debug.pkl"
+  test_file:  "test_debug.pkl"
+
+  # Loader settings for deterministic CI
+  batch_size: 2
+  num_workers: 0                          # No multiprocessing for stability
+  pin_memory: false
+  persistent_workers: false
+
+  # Optional “fast-dev” caps if your trainer honors them via interpolation
+  limit_train_batches: 4
+  limit_val_batches:   2
+  limit_test_batches:  2
+
+preprocessing:
+  normalize_flux: true
+  jitter_injection: false                 # Keep off in CI to reduce variance
+  phase_alignment: true
+  detrend_method: "polynomial"
+  spectral_smoothing: false
+
+calibration:
+  adc_correction: true
+  dark_subtraction: true
+  flat_field: true
+  nonlinearity: true
+  cds_correction: true
+  phase_normalization: true
+
+validation:
+  split_strategy: "planet_holdout"
+  val_fraction: 0.2
+  random_seed: 42
+  deterministic: true
+
+logging:
+  enable: true
+  save_dir: "${dataset.output_dir}/logs"
+  format: "jsonl"
+  include_config_hash: true
+
+# Hydra-managed outputs keep runs isolated and reproducible
+hydra:
+  run:
+    dir: ${dataset.output_dir}/runs/${now:%Y-%m-%d_%H-%M-%S}
+  sweep:
+    dir: ${dataset.output_dir}/multirun/${now:%Y-%m-%d_%H-%M-%S}
+    subdir: ${hydra.job.num}
