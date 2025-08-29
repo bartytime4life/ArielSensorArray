@@ -64,12 +64,13 @@
 #   • Exit code non-zero if any render fails (even in parallel).
 # ==============================================================================
 
-set -euo pipefail
+set -Eeuo pipefail
+IFS=$'\n\t'
 
 # ---------- colors ----------
-BOLD=$'\033[1m'; DIM=$'\033[2m'; RED=$'\033[31m'; GRN=$'\033[32m'; CYN=$'\033[36m'; RST=$'\033[0m'
+BOLD=$'\033[1m'; DIM=$'\033[2m'; RED=$'\033[31m'; GRN=$'\033[32m'; CYN=$'\033[36m'; YLW=$'\033[33m'; RST=$'\033[0m'
 say()  { [[ "${QUIET:-0}" -eq 1 ]] && return 0; printf '%s[DIAGRAMS]%s %s\n' "${CYN}" "${RST}" "$*"; }
-warn() { printf '%s[DIAGRAMS]%s %s\n' "${DIM}" "${RST}" "$*" >&2; }
+warn() { printf '%s[DIAGRAMS]%s %s\n' "${YLW}" "${RST}" "$*" >&2; }
 fail() { printf '%s[DIAGRAMS]%s %s\n' "${RED}" "${RST}" "$*" >&2; exit 1; }
 
 # ---------- defaults ----------
@@ -83,6 +84,7 @@ JOBS="${JOBS:-0}"; DRY=0; QUIET=0; JSON=0
 TIMEOUT="${DIAGRAMS_TIMEOUT:-90}"
 INCLUDES=(); EXCLUDES=()
 ARGS=()
+LIST_ONLY=0
 
 usage() { sed -n '1,200p' "$0" | sed 's/^# \{0,1\}//'; }
 
@@ -117,21 +119,17 @@ while [[ $# -gt 0 ]]; do
     --dry-run)    DRY=1; shift ;;
     --quiet)      QUIET=1; shift ;;
     -h|--help)    usage; exit 0 ;;
-    --) shift; while [[ $# -gt 0 ]]; do ARGS+=("$1"); shift; done ;;
-    *)  ARGS+=("$1"); shift ;;
+    --)           shift; while [[ $# -gt 0 ]]; do ARGS+=("$1"); shift; done ;;
+    *)            ARGS+=("$1"); shift ;;
   esac
 done
-: "${LIST_ONLY:=0}"
 
 # Defaults: if no formats selected, render SVG
 if [[ $DO_SVG -eq 0 && $DO_PNG -eq 0 && $DO_PDF -eq 0 ]]; then DO_SVG=1; fi
 
 # ---------- repo root ----------
-if git_root=$(command -v git >/dev/null 2>&1 && git rev-parse --show-toplevel 2>/dev/null); then
-  cd "$git_root"
-else
-  SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-  cd "$SCRIPT_DIR/.." || { fail "Cannot locate repo root"; }
+if command -v git >/dev/null 2>&1; then
+  if ROOT=$(git rev-parse --show-toplevel 2>/dev/null); then cd "$ROOT"; fi
 fi
 
 # ---------- helpers ----------
@@ -158,32 +156,48 @@ MMDC_CMD="$(resolve_mmdc)"
 
 # ---------- npm lint/format (optional) ----------
 if [[ $DO_LINT -eq 1 && -f package.json ]]; then
-  if jq -e '.scripts.lint' package.json >/dev/null 2>&1; then
+  if have jq && jq -e '.scripts.lint' package.json >/dev/null 2>&1; then
     run "npm run lint" npm run lint
   else
-    warn "package.json has no 'lint' script."
+    warn "package.json has no 'lint' script or jq missing."
   fi
 fi
 if [[ $DO_FORMAT -eq 1 && -f package.json ]]; then
-  if jq -e '.scripts.format' package.json >/dev/null 2>&1; then
+  if have jq && jq -e '.scripts.format' package.json >/dev/null 2>&1; then
     run "npm run format" npm run format
   else
-    warn "package.json has no 'format' script."
+    warn "package.json has no 'format' script or jq missing."
   fi
 fi
 
 # ---------- prepare ----------
-if [[ $CLEAN -eq 1 ]]; then
-  [[ -d "$OUTDIR" ]] && run "rm -rf $OUTDIR" rm -rf "$OUTDIR"
+if [[ $CLEAN -eq 1 && -d "$OUTDIR" ]]; then
+  run "rm -rf $OUTDIR" rm -rf "$OUTDIR"
 fi
 mkdir -p "$OUTDIR"
 
-# ---------- source discovery ----------
+# ---------- glob discovery (portable) ----------
+# We implement include/exclude using find -path patterns.
+find_match_paths() {
+  local base="$1"; shift
+  local pattern="$1"; shift
+  # Convert a shell-style glob "dir/**/*.mmd" into a find -path regex-ish match
+  # We approximate by letting bash expand dirname and match basename with -name.
+  # For robustness, fallback to find on base dir(s).
+  local d="$(dirname "$pattern")"
+  local n="$(basename "$pattern")"
+  if [[ -d "$d" ]]; then
+    find "$d" -type f -name "$n" 2>/dev/null || true
+  else
+    find "$base" -type f -name "$n" -path "*/$d/*" 2>/dev/null || true
+  fi
+}
+
 collect_sources_from_paths() {
   local -a paths=()
   for p in "${ARGS[@]}"; do
     if [[ -d "$p" ]]; then
-      while IFS= read -r -d '' f; do paths+=("$f"); done < <(find "$p" -type f -name "*.mmd" -print0)
+      while IFS= read -r -d '' f; do paths+=("$f"); done < <(find "$p" -type f -name "*.mmd" -print0 2>/dev/null)
     elif [[ -f "$p" ]]; then
       [[ "$p" == *.mmd ]] && paths+=("$p") || warn "Skipping non-.mmd file: $p"
     else
@@ -197,31 +211,36 @@ collect_sources_default() {
   local -a paths=()
   if [[ ${#INCLUDES[@]} -gt 0 ]]; then
     for g in "${INCLUDES[@]}"; do
-      while IFS= read -r -d '' f; do paths+=("$f"); done < <(find . -type f -name "$(basename "$g")" -path "*/$(dirname "$g")/*" -print0 2>/dev/null || true)
+      while IFS= read -r f; do [[ -n "$f" ]] && paths+=("$f"); done < <(find_match_paths "." "$g")
     done
   else
-    while IFS= read -r -d '' f; do paths+=("$f"); done < <(find diagrams -type f -name "*.mmd" -print0 2>/dev/null || true)
-    while IFS= read -r -d '' f; do paths+=("$f"); done < <(find docs     -type f -name "*.mmd" -print0 2>/dev/null || true)
+    [[ -d diagrams ]] && while IFS= read -r -d '' f; do paths+=("$f"); done < <(find diagrams -type f -name "*.mmd" -print0 2>/dev/null || true)
+    [[ -d docs     ]] && while IFS= read -r -d '' f; do paths+=("$f"); done < <(find docs     -type f -name "*.mmd" -print0 2>/dev/null || true)
   fi
   # Apply excludes
-  if [[ ${#EXCLUDES[@]} -gt 0 ]]; then
-    printf '%s\n' "${paths[@]}" | while IFS= read -r f; do
-      skip=0
-      for ex in "${EXCLUDES[@]}"; do [[ "$f" == $ex ]] && skip=1 && break; done
-      [[ $skip -eq 0 ]] && printf '%s\n' "$f"
+  if [[ ${#EXCLUDES[@]} -gt 0 && ${#paths[@]} -gt 0 ]]; then
+    local keep=()
+    for f in "${paths[@]}"; do
+      local skip=0
+      for ex in "${EXCLUDES[@]}"; do
+        [[ "$f" == $ex ]] && skip=1 && break
+      done
+      [[ $skip -eq 0 ]] && keep+=("$f")
     done
+    printf '%s\n' "${keep[@]}"
   else
     printf '%s\n' "${paths[@]}"
   fi
 }
 
 collect_sources() {
-  if [[ ${#ARGS[@]} -gt 0 ]]; then collect_sources_from_paths | sort -u
-  else collect_sources_default | sort -u
+  if [[ ${#ARGS[@]} -gt 0 ]]; then
+    collect_sources_from_paths | sort -u
+  else
+    collect_sources_default | sort -u
   fi
 }
 
-SOURCES=()
 mapfile -t SOURCES < <(collect_sources)
 
 if [[ $LIST_ONLY -eq 1 ]]; then
@@ -232,9 +251,8 @@ fi
 # ---------- optional: MD extraction via Python ----------
 if [[ $USE_PYTHON -eq 1 ]]; then
   if [[ -f "scripts/export_mermaid.py" ]]; then
-    say "Extracting Mermaid codeblocks from Markdown via scripts/export_mermaid.py"
+    say "Extracting Mermaid blocks from Markdown via scripts/export_mermaid.py"
     run "python scripts/export_mermaid.py" python scripts/export_mermaid.py || warn "export_mermaid.py returned non-zero."
-    # Re-scan sources in case exporter wrote *.mmd files
     mapfile -t SOURCES < <(collect_sources)
   else
     warn "scripts/export_mermaid.py not found; skipping Markdown extraction."
@@ -248,22 +266,29 @@ fi
 # ---------- prune orphaned outputs ----------
 if [[ $PRUNE -eq 1 ]]; then
   say "Pruning orphaned outputs from $OUTDIR…"
+  # Build a set of existing source-relative basenames without extension
+  TMP_SRC="$(mktemp -t mmd_src_XXXX)"; trap 'rm -f "$TMP_SRC" "$TMP_OUTS"' EXIT
+  for s in "${SOURCES[@]}"; do
+    rel="${s#./}"
+    printf '%s\n' "${rel%.*}" >> "$TMP_SRC"
+  done
+  sort -u -o "$TMP_SRC" "$TMP_SRC"
+  # Walk outputs and remove without matching source stem
   while IFS= read -r -d '' out; do
-    base_rel="${out#$OUTDIR/}"          # diagrams/foo/bar.svg
-    src="${base_rel%.*}.mmd"            # diagrams/foo/bar.mmd
-    # Try to locate source anywhere under repo (relative)
-    if ! [[ -f "$src" || -f "./$src" ]]; then
+    stem="${out#$OUTDIR/}"                # diagrams/foo/bar.svg
+    stem="${stem%.*}"                      # diagrams/foo/bar
+    if ! grep -qxF "$stem" "$TMP_SRC" 2>/dev/null; then
       say "Removing orphaned: $out"
       [[ $DRY -eq 1 ]] || rm -f "$out"
     fi
-  done < <(find "$OUTDIR" -type f \( -name "*.svg" -o -name "*.png" -o -name "*.pdf" \) -print0)
+  done < <(find "$OUTDIR" -type f \( -name "*.svg" -o -name "*.png" -o -name "*.pdf" \) -print0 2>/dev/null)
 fi
 
-# ---------- compute outputs / render ----------
+# ---------- renderers ----------
 render_one() {
   local src="$1"
   local rel="${src#./}"
-  local base="${rel%.*}"     # diagrams/foo/bar.mmd -> diagrams/foo/bar
+  local base="${rel%.*}"
   local subdir="$(dirname "$base")"
   local name="$(basename "$base")"
   local out_sub="$OUTDIR/$subdir"
@@ -271,11 +296,11 @@ render_one() {
 
   local common=()
   [[ -n "$MMDC_CONFIG" ]] && common+=(--configFile "$MMDC_CONFIG")
-  [[ -n "$CSS_FILE"    ]] && common+=(--cssFile "$CSS_FILE")
+  [[ -n "$CSS_FILE"    ]] && common+=(--cssFile    "$CSS_FILE")
   common+=(--input "$src" --theme "$THEME" --backgroundColor "$BG")
-  [[ -n "$WIDTH"  ]] && common+=(--width "$WIDTH")
+  [[ -n "$WIDTH"  ]] && common+=(--width  "$WIDTH")
   [[ -n "$HEIGHT" ]] && common+=(--height "$HEIGHT")
-  [[ -n "$SCALE"  ]] && common+=(--scale "$SCALE")
+  [[ -n "$SCALE"  ]] && common+=(--scale  "$SCALE")
 
   local cmd="$MMDC_CMD"
   [[ -n "$MMDC_EXTRA" ]] && cmd="$cmd $MMDC_EXTRA"
@@ -321,19 +346,16 @@ render_one() {
   fi
 }
 
-# Parallelism (best-effort): if jobs > 1, use xargs -P
 render_all() {
   local fails=0
   if [[ ${#SOURCES[@]} -eq 0 ]]; then
     return 0
   fi
-  say "Rendering ${#SOURCES[@]} Mermaid file(s) → ${OUTDIR} (theme=${THEME}, bg=${BG}, timeout=${TIMEOUT}s)"
+  say "Rendering ${#SOURCES[@]} file(s) → ${OUTDIR} (formats: $([[ $DO_SVG -eq 1 ]] && echo SVG ) $([[ $DO_PNG -eq 1 ]] && echo PNG ) $([[ $DO_PDF -eq 1 ]] && echo PDF ); theme=${THEME}, bg=${BG})"
   if [[ "$JOBS" =~ ^[1-9][0-9]*$ && $JOBS -gt 1 ]]; then
     export -f render_one
     export OUTDIR DO_SVG DO_PNG DO_PDF THEME BG MMDC_CMD MMDC_CONFIG CSS_FILE MMDC_EXTRA TIMEOUT DRY QUIET WIDTH HEIGHT SCALE
-    printf '%s\0' "${SOURCES[@]}" \
-      | xargs -0 -n1 -P "$JOBS" bash -lc 'render_one "$0"' \
-      || fails=1
+    printf '%s\0' "${SOURCES[@]}" | xargs -0 -n1 -P "$JOBS" bash -lc 'render_one "$0"' || fails=1
   else
     for s in "${SOURCES[@]}"; do
       render_one "$s" || fails=1
@@ -342,7 +364,7 @@ render_all() {
   return $fails
 }
 
-# ---------- list sources or render ----------
+# ---------- list or render ----------
 if [[ $LIST_ONLY -eq 1 ]]; then
   printf '%s\n' "${SOURCES[@]}"
   exit 0
@@ -355,7 +377,7 @@ render_all || FAILED=1
 if [[ $WATCH -eq 1 ]]; then
   say "Watch mode enabled (re-render on change)…"
   # Preferred: npm run mmd:watch if present
-  if [[ -f package.json ]] && jq -e '.scripts["mmd:watch"]' package.json >/dev/null 2>&1; then
+  if [[ -f package.json ]] && have jq && jq -e '.scripts["mmd:watch"]' package.json >/dev/null 2>&1; then
     run "npm run mmd:watch" npm run mmd:watch
     exit 0
   fi
@@ -378,7 +400,6 @@ fi
 
 # ---------- JSON summary ----------
 if [[ $JSON -eq 1 ]]; then
-  # Minimal robust JSON without external deps
   printf '{'
   printf '"ok": %s, ' "$([[ $FAILED -eq 0 ]] && echo true || echo false)"
   printf '"count": %s, ' "${#SOURCES[@]}"
@@ -389,5 +410,9 @@ if [[ $JSON -eq 1 ]]; then
   printf '}\n'
 fi
 
-[[ $FAILED -eq 0 ]] && say "${GRN}Diagram rendering complete.${RST}" || fail "Some diagrams failed to render."
-exit $FAILED
+if [[ $FAILED -eq 0 ]]; then
+  say "${GRN}Diagram rendering complete.${RST}"
+  exit 0
+else
+  fail "Some diagrams failed to render."
+fi
