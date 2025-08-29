@@ -1,4 +1,16 @@
+# ==============================================================================
+# SpectraMind V50 — DVC Pipeline
+# Purpose:
+#   • Defines full end-to-end pipeline for NeurIPS 2025 Ariel Challenge
+#   • Stages: calibration → training → prediction → diagnostics → submission
+#   • All configs handled by Hydra (YAMLs under /configs)
+#   • Outputs tracked with DVC for reproducibility
+#   • CI-safe: stages can be cached/skipped if inputs unchanged
+# ==============================================================================
+
 stages:
+
+  # ───────────────────────── Data Calibration ─────────────────────────
   calibrate:
     cmd: >
       poetry run spectramind calibrate
@@ -12,6 +24,7 @@ stages:
     outs:
       - data/processed
 
+  # ───────────────────────── Model Training ─────────────────────────
   train:
     cmd: >
       poetry run spectramind train
@@ -22,7 +35,14 @@ stages:
       - configs/training/config_v50.yaml
     outs:
       - outputs/models/model_v50.pth
+    metrics:
+      - outputs/metrics/training.tsv
+      - outputs/metrics/metrics.tsv
+    plots:
+      - outputs/metrics/training.tsv
+      - outputs/metrics/metrics.tsv
 
+  # ───────────────────────── Prediction / Inference ─────────────────────────
   predict:
     cmd: >
       poetry run spectramind predict
@@ -35,6 +55,7 @@ stages:
     outs:
       - outputs/predictions/preds_v50.csv
 
+  # ───────────────────────── Diagnostics & Symbolic Analysis ─────────────────────────
   diagnose:
     cmd: >
       poetry run spectramind diagnose dashboard
@@ -46,7 +67,15 @@ stages:
     outs:
       - outputs/diagnostics/report_v50.html
       - outputs/diagnostics/diagnostic_summary.json
+    plots:
+      - outputs/diagnostics/binwise.csv
+      - outputs/diagnostics/residuals.csv
+      - outputs/diagnostics/fft.csv
+      - outputs/diagnostics/fft_autocorr.csv
+      - outputs/diagnostics/smoothness.csv
+      - outputs/diagnostics/symbolic_violations.csv
 
+  # ───────────────────────── Submission Packaging ─────────────────────────
   submit:
     cmd: >
       poetry run spectramind submit
@@ -58,3 +87,5 @@ stages:
       - configs/submission/submit_v50.yaml
     outs:
       - outputs/submissions/submission_v50.zip
+    metrics:
+      - outputs/metrics/leaderboard.tsv
