@@ -1,59 +1,60 @@
 # ==============================================================================
 # SpectraMind V50 — Parameter Tracking for DVC
+# ------------------------------------------------------------------------------
 # Purpose:
 #   • Single source of truth for pipeline hyperparameters
-#   • Used by Hydra configs, CLI, and DVC stage params
-#   • Ensures reproducibility (captured in run_hash_summary_v50.json)
+#   • Shared by Hydra configs, Typer CLI, and DVC stages
+#   • Ensures NASA-grade reproducibility and run hash traceability
 # ==============================================================================
 
 training:
-  epochs: 100                 # Extended for stability; override via CLI if needed
-  batch_size: 48              # Slightly larger batch (fits Kaggle T4/V100)
-  grad_accum_steps: 2         # Gradient accumulation for memory efficiency
-  lr: 0.00025                 # Tuned for stability with cosine decay
-  lr_scheduler: cosine        # Cosine annealing scheduler
-  warmup_epochs: 5            # LR warmup for smoother convergence
-  seed: 1337                  # Deterministic seeding
-  device: cuda
-  amp: true                   # Mixed precision training
-  checkpoint_interval: 5      # Save every N epochs
-  log_interval: 50            # Log training metrics every N steps
-  optimizer: adamw            # AdamW with weight decay
+  epochs: 100                   # Full training length; override via CLI for quick runs
+  batch_size: 48                # Larger batch size (fits Kaggle T4/V100 constraints)
+  grad_accum_steps: 2           # Gradient accumulation for memory efficiency
+  lr: 0.00025                   # Base learning rate (cosine schedule tuned)
+  lr_scheduler: cosine
+  warmup_epochs: 5              # Linear warmup to stabilize convergence
+  optimizer: adamw
   weight_decay: 0.01
-  early_stop_patience: 15     # Early stopping based on validation loss
+  early_stop_patience: 15       # Validation-based early stop
+  checkpoint_interval: 5        # Save every N epochs
+  log_interval: 50              # Log every N steps
+  amp: true                     # Mixed precision (torch.cuda.amp)
+  device: cuda
+  seed: 1337                    # Deterministic RNG seeds across libs
 
 model:
-  encoder: fgs1_mamba         # Long-sequence encoder for FGS1
-  gnn: airs_gnn               # Graph neural network for AIRS
-  decoder: multi_scale_decoder
+  encoder: fgs1_mamba           # Long-sequence Mamba encoder for FGS1
+  gnn: airs_gnn                 # Graph Neural Network for AIRS spectra
+  decoder: multi_scale_decoder  # Multi-scale μ spectrum decoder
   latent_dim: 256
   dropout: 0.1
-  residual: true              # Enable residual connections
-  attention_fusion: true      # Attention-based fusion across encoders
-  sigma_head: flow_uncertainty # Advanced σ decoder with uncertainty fusion
-  symbolic_loss: true         # Include symbolic logic constraints in training
-  symbolic_weight: 0.2        # Weight of symbolic constraints in loss
-  spectral_smoothness: true   # Enforce smoothness regularizer in decoder
-  asymmetry_loss: true        # Penalize asymmetric spectra artifacts
+  residual: true
+  attention_fusion: true
+  sigma_head: flow_uncertainty  # Flow-based σ head for uncertainty
+  symbolic_loss: true
+  symbolic_weight: 0.2          # Weight of symbolic logic constraints
+  spectral_smoothness: true     # L2/FFT smoothness regularizer
+  asymmetry_loss: true          # Penalize asymmetric spectra
 
 data:
   fgs1_path: data/raw/fgs1/
   airs_path: data/raw/airs/
   calibration_path: data/processed/calibration/
   bins: 283
-  snr_masking: true           # Apply SNR-based masking in MAE pretraining
-  molecule_masking: true      # Mask known molecular bands during curriculum
-  curriculum: true            # Curriculum learning across epochs
-  jitter_augmentation: true   # Add pointing jitter augmentation for realism
-  split_seed: 2025            # Reproducible train/val split
+  split_seed: 2025
+  snr_masking: true             # SNR-based masking (MAE pretraining)
+  molecule_masking: true        # Mask known molecular bands in curriculum
+  curriculum: true              # Epoch-based curriculum learning
+  jitter_augmentation: true     # Pointing jitter augmentation for realism
 
 calibration:
   enable: true
-  method: corel               # Use COREL conformal calibration
+  method: corel                 # Conformal calibration (COREL)
   temperature_scaling: true
-  coverage_target: 0.9        # Expected coverage for conformal prediction
-  per_bin: true               # Calibrate each bin independently
-  plots: true                 # Export calibration overlay plots
+  coverage_target: 0.9
+  per_bin: true
+  plots: true
   save_csv: outputs/calibration/per_bin.csv
 
 diagnostics:
@@ -77,14 +78,14 @@ diagnostics:
 submission:
   bundle_dir: outputs/submission
   bundle_zip: outputs/submission/bundle.zip
-  include_diagnostics: true   # Attach diagnostics summary to bundle
-  validate_before_zip: true   # Run validation/selftest before zipping
-  kaggle_format: true         # Ensure submission.csv is Kaggle-compatible
-  versioned: true             # Version submission with run hash
+  kaggle_format: true           # submission.csv is Kaggle-compliant
+  include_diagnostics: true     # Attach diagnostics summary to bundle
+  validate_before_zip: true     # Run selftest/validation before zipping
+  versioned: true               # Version tag with run hash
 
 ci:
-  selftest: deep              # Run deep selftest before pipelines
-  max_runtime: 9h             # Kaggle GPU runtime guardrail
+  selftest: deep                # Full selftest before pipelines
+  max_runtime: 9h               # Kaggle GPU runtime guardrail
   cache_datasets: true
+  fail_on_violation: true       # Fail CI if symbolic violations exceed threshold
   log_jsonl: logs/ci_events.jsonl
-  fail_on_violation: true     # CI fails if symbolic violations exceed threshold
