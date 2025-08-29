@@ -1,0 +1,120 @@
+# configs/predict.yaml
+# ==============================================================================
+# SpectraMind V50 — Inference / Prediction Configuration
+# ------------------------------------------------------------------------------
+# Purpose
+#   Controls end-to-end inference over validation/test sets, including optional
+#   ensembling, uncertainty calibration (e.g., COREL/temperature scaling), and
+#   submission packaging for Kaggle/CI.
+#
+# Usage
+#   spectramind predict --config-name predict
+#   spectramind predict --config-name predict data=kaggle ckpt.path=/path/to/ckpt.pt
+#
+# Notes
+#   • All behavior is changed via YAML or CLI overrides (Hydra).
+#   • Safe for Kaggle (no internet, ≤9h budget), reproducible via saved snapshot.
+# ==============================================================================
+
+# ----------------------------------------------------------------------
+# Compose defaults from config groups (override on CLI as needed)
+# ----------------------------------------------------------------------
+defaults:
+  - data: nominal          # data/{nominal|kaggle|debug}.yaml
+  - model: v50             # model architecture & weights mapping
+  - trainer: default       # device, precision, workers (read-only here)
+  - logger: tensorboard    # lightweight logging for predict runs
+  # Optional groups (provide if present in your repo)
+  - uncertainty: corel     # conformal / temperature scaling parameters
+  - _self_
+
+# ----------------------------------------------------------------------
+# High-level inference controls
+# ----------------------------------------------------------------------
+predict:
+  run_name: "predict_v50"
+  seed: 42
+
+  # Paths
+  ckpt:
+    path: "artifacts/checkpoints/v50_best.ckpt"   # model weights to load
+    strict: true                                  # strict state_dict load
+
+  # Dataloading / execution
+  batch_size: 128
+  num_workers: 4
+  pin_memory: true
+  device: "auto"           # "auto"|"cpu"|"cuda:0"
+  precision: "bf16"        # "fp32"|"fp16"|"bf16"
+  deterministic: true
+
+  # Inference options
+  tta:
+    enabled: false         # test-time augmentation toggle
+    variants: []           # e.g., ["flip_time", "jitter_0.5px"]
+
+  # Uncertainty calibration (optional; requires uncertainty group or CLI flags)
+  calibration:
+    enabled: true
+    method: "corel"        # "corel"|"temp"|"none"
+    temperature: 1.0       # used if method="temp"
+    # COREL-specific settings are pulled from uncertainty/corel.yaml if present
+
+  # Ensembling (optional)
+  ensemble:
+    enabled: false
+    ckpts: []              # list of ckpt paths for averaging μ, σ
+    reduce: "mean"         # "mean"|"median"|"gmean"
+
+  # Outputs
+  outputs:
+    dir: "outputs/predict/${now:%Y-%m-%d_%H-%M-%S}"
+    save_numpy: true       # save μ, σ arrays per-target
+    save_json: true        # JSON manifest with metrics & hashes
+    save_png: false        # quicklook plots (disable for Kaggle)
+    save_html: false       # HTML diagnostics (disable for Kaggle)
+    write_submission: true # write Kaggle submission CSV
+
+  # Submission file layout
+  submission:
+    csv: "submission.csv"
+    columns:
+      id: "id"             # sample identifier column name
+      mu: "mu"             # serialized μ vector column
+      sigma: "sigma"       # serialized σ vector column
+    compression: "none"    # "none"|"zip"|"gz"
+
+  # Light validation on predict (optional sanity checks)
+  validate:
+    enabled: true
+    checks:
+      shape: true          # verify μ/σ shapes match expected bins
+      finiteness: true     # no NaNs/inf in outputs
+      nonneg_sigma: true   # σ >= 0
+      range_mu: false      # optional clipping/range check for μ
+
+# ----------------------------------------------------------------------
+# Logging (lightweight, file + console)
+# ----------------------------------------------------------------------
+logging:
+  level: "INFO"            # "DEBUG"|"INFO"|"WARNING"|"ERROR"
+  to_console: true
+  to_file: true
+  file_name: "predict.log"
+
+# ----------------------------------------------------------------------
+# Kaggle/CI guardrails
+# ----------------------------------------------------------------------
+runtime:
+  kaggle_safe: true        # disables heavy plots/HTML automatically
+  max_hours: 9
+  fail_fast: true          # abort on early fatal validation failure
+
+# ----------------------------------------------------------------------
+# Hydra output structure
+# ----------------------------------------------------------------------
+hydra:
+  run:
+    dir: ${predict.outputs.dir}
+  job:
+    chdir: true
