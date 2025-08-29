@@ -1,21 +1,38 @@
+# ==============================================================================
+# SpectraMind V50 — DVC Git Ignore Rules
+# Purpose:
+#   • Prevents committing heavy or environment-specific DVC internals
+#   • Ensures reproducibility while keeping Git clean
+#   • Safe defaults for CI, local dev, and Kaggle sync
+# ==============================================================================
+
+# ───────────────────────── DVC Core Internals ─────────────────────────
+.dvc/cache/              # Local cache (large blobs, copy-on-write)
+.dvc/tmp/                # Ephemeral tmp workspace (locks, stage runs, exp cache)
+
+# ───────────────────────── Local Overrides ─────────────────────────
+.dvc/config.local         # Developer-specific overrides (secrets, local remotes)
+
+# ───────────────────────── Experiment / Run Artifacts ─────────────────────────
+.dvc/exp/                # Local experiment tracking metadata
+.dvc/experiments/        # Temporary exp DAGs
+.dvc/lock/               # Lock files (not needed in Git history)
+.dvc/state/              # SQLite state DB, updated dynamically
+
+# ───────────────────────── Logs & Debug ─────────────────────────
+.dvc/logs/               # Local-only logs (not reproducible)
+.dvc/events/             # JSONL/trace logs for interactive runs
+
+# ───────────────────────── Optional Extensions ─────────────────────────
+.dvc/remotes/local/      # Local remote mirrors
+.dvc/plots/tmp/          # Interactive plot cache
+.dvc/user/               # User/session scratch (CLI runs, previews)
+
 # ================================
-# DVC internal controls
-# ================================
-
-# Ignore local cache (large binary blobs, never commit)
-.dvc/cache/
-
-# Ignore tmp staging area (ephemeral, regenerated)
-.dvc/tmp/
-
-# Ignore local developer overrides (may contain secrets)
-.dvc/config.local
-
-# ================================
-# SAFE to commit (keep in Git):
+# SAFE TO COMMIT (KEEP IN GIT):
 #   - .dvc/config
 #   - .dvcignore
 #   - dvc.yaml
 #   - *.dvc pointer files
-#   - .dvc/plots/*
+#   - .dvc/plots/* (templates, tracked plots)
 # ================================
