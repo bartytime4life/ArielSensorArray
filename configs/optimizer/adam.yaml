@@ -1,0 +1,51 @@
+# configs/optimizer/adam.yaml
+# ==============================================================================
+# ⚙️ Optimizer — Adam (baseline adaptive optimizer)
+#
+# Purpose
+#   Configure the Adam optimizer for SpectraMind V50 training.
+#   Adam is chosen for stability and adaptivity on noisy exoplanet spectroscopy data.
+#
+# Usage
+#   Composed in train.yaml via:
+#     defaults:
+#       - optimizer: adam
+#
+#   Override examples:
+#     spectramind train optimizer=adam optimizer.lr=1e-3 optimizer.weight_decay=0.0
+#
+# References
+#   • SpectraMind V50 Technical Plan — reproducibility via Hydra configs:contentReference[oaicite:0]{index=0}
+#   • Kaggle runtime guardrails — safe optimizer defaults for ≤9h GPU runs:contentReference[oaicite:1]{index=1}
+#   • NASA-grade reproducibility — configs logged + hashed:contentReference[oaicite:2]{index=2}
+# ==============================================================================
+
+optimizer:
+  name: "adam"                   # identifier string; parsed by PyTorch Lightning/Trainer
+  type: "Adam"                   # torch.optim.Adam
+  lr: 3.0e-4                     # base learning rate (overridden by scheduler if configured)
+  betas: [0.9, 0.999]            # Adam momentum terms
+  eps: 1.0e-8                    # numerical stability constant
+  weight_decay: 0.01             # decoupled weight decay (AdamW → see optimizer/adamw.yaml)
+  amsgrad: false                 # AMSGrad variant toggle
+
+  # --------------------------------------------------------------------------
+  # Scheduler integration (cosine/onecycle/no-schedule defined in train.yaml)
+  # --------------------------------------------------------------------------
+  scheduler_hook: true            # allow scheduler override in training config
+
+  # --------------------------------------------------------------------------
+  # Precision / AMP compatibility
+  # --------------------------------------------------------------------------
+  precision_safe: true            # Adam supports mixed precision (fp16/bf16)
+  fused: false                    # enable if using fused Adam on newer PyTorch builds
+
+  # --------------------------------------------------------------------------
+  # Notes
+  # --------------------------------------------------------------------------
+  notes: |
+    • Default learning rate = 3e-4, as per V50 baseline:contentReference[oaicite:3]{index=3}.
+    • Use optimizer/adamw.yaml for decoupled L2 regularization (recommended for leaderboard).
+    • lr, betas, and weight_decay are all Hydra-overridable via CLI.
+    • Compatible with AMP/mixed precision (bf16 preferred on A100 GPUs).
+    • Config is logged + hashed for full reproducibility in v50_debug_log.md:contentReference[oaicite:4]{index=4}.
