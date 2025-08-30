@@ -1,0 +1,115 @@
+# configs/optimizer/lookahead.yaml
+# ==============================================================================
+# ⚙️ Meta-Optimizer — Lookahead (wrap ANY base optimizer)
+#
+# Purpose
+#   Wrap a base optimizer (AdamW/Adam/SGD/…) with the Lookahead meta-optimizer.
+#   Lookahead maintains "slow" weights that periodically synchronize with the "fast"
+#   optimizer weights (every k steps) by interpolation with factor alpha.
+#
+# Usage (two patterns)
+#   1) Compose in train.yaml defaults:
+#        defaults:
+#          - optimizer: lookahead
+#          - optimizer/base@lookahead.base: adamw   # ← select base optimizer here
+#
+#      Then override via CLI:
+#        spectramind train lookahead.alpha=0.5 lookahead.k=6 \
+#          lookahead.base.optimizer.lr=5e-4 lookahead.base.optimizer.weight_decay=0.02
+#
+#   2) Direct CLI selection + base swap:
+#        spectramind train optimizer=lookahead +optimizer/base@lookahead.base=adam \
+#          lookahead.base.optimizer.lr=3e-4
+#
+# Notes
+#   • This file defines the wrapper contract; the base optimizer is composed under `lookahead.base`
+#     using Hydra’s group targeting (see examples above).
+#   • All base optimizer keys remain fully overrideable (e.g., lr, betas, momentum).
+#   • Schedulers should be configured in configs/train.yaml; this wrapper forwards `scheduler_hook: true`.
+# ==============================================================================
+
+lookahead:
+  # ------------------------------
+  # Wrapper identity & behavior
+  # ------------------------------
+  name: "lookahead"               # meta-optimizer identifier
+  wrapper: "Lookahead"            # training layer wraps base optimizer with this
+  alpha: 0.5                      # interpolation factor for slow <- fast (0..1)
+  k: 6                            # synchronization steps (integer > 0)
+  sync_on_init: true              # sync slow <- fast at initialization
+  mode: "step"                    # "step" | "epoch"  (sync cadence unit)
+  every: 1                        # sync every N units (steps or epochs depending on mode)
+
+  # Exclusions: parameter name regex patterns to exclude from slow/fast sync (e.g., running stats)
+  exclude:
+    enabled: true
+    patterns:
+      - ".*running_mean.*"
+      - ".*running_var.*"
+      - ".*num_batches_tracked.*"
+
+  # Serialization controls (in case the training loop needs explicit save/restore of slow weights)
+  state:
+    save_slow: true               # include slow weights in checkpoint
+    restore_slow: true            # restore slow weights on resume
+
+  # ------------------------------
+  # Base optimizer (Hydra-composed)
+  # ------------------------------
+  base:
+    # Placeholder that will be *replaced* by the composed file (e.g., optimizer/base@lookahead.base: adamw)
+    optimizer:
+      name: "adamw"
+      type: "AdamW"
+      lr: 3.0e-4
+      betas: [0.9, 0.999]
+      eps: 1.0e-8
+      weight_decay: 0.01
+      amsgrad: false
+      # Hooks & runtime hints propagated from the base
+      scheduler_hook: true
+      precision_safe: true
+      fused: false
+      # Diagnostics from the base optimizer (kept to ensure consistent logging)
+      log_config: true
+      export_json: "outputs/diagnostics/optimizer_adamw.json"
+
+  # ------------------------------
+  # Hooks / compatibility
+  # ------------------------------
+  scheduler_hook: true            # allow train.yaml to attach schedulers to the wrapped optimizer
+  precision_safe: true            # wrapper is AMP-safe if base is AMP-safe
+  fused: false                    # set true only if using a fused base + supported Lookahead binding
+
+  # ------------------------------
+  # Validation (soft checks for robust config)
+  # ------------------------------
+  validate:
+    assert_alpha_range: true      # ensure 0.0 <= alpha <= 1.0
+    assert_k_positive: true       # ensure k >= 1
+    warn_if_epoch_mode_without_exact_batches: true
+
+  # ------------------------------
+  # Diagnostics & logging
+  # ------------------------------
+  log_config: true
+  export_json: "outputs/diagnostics/optimizer_lookahead.json"
+  metrics:
+    log_sync_events: true         # emit an event when a slow/fast sync happens
+    log_interval: 1000            # steps between wrapper metrics logs (if supported)
+
+  # ------------------------------
+  # Notes
+  # ------------------------------
+  notes: |
+    • Compose a base optimizer under `lookahead.base` using Hydra defaults:
+        defaults:
+          - optimizer: lookahead
+          - optimizer/base@lookahead.base: adamw
+    • Override base hyperparameters via `lookahead.base.optimizer.*` on the CLI.
+    • Suggested defaults:
+        - alpha=0.5, k=6 for stability; reduce k for more frequent syncs.
+        - With AdamW base: start lr=3e-4, weight_decay=1e-2, cosine schedule + warmup.
+    • Exclusions skip parameters like BatchNorm running stats to avoid corrupting moments.
+    • Keep scheduler configuration in configs/train.yaml; this wrapper forwards hooks.
+    • Set `mode: "epoch"` + `every: 1` to sync once per epoch (useful for large-batch schedules).
