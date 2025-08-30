@@ -15,7 +15,9 @@
 # ==============================================================================
 
 trainer:
+  # ---------------------------------------------------------------------------
   # Hardware / Strategy
+  # ---------------------------------------------------------------------------
   accelerator: "gpu"
   devices: "auto"                 # override with an int (e.g., 2, 4, 8)
   num_nodes: 1
@@ -23,21 +25,34 @@ trainer:
     class_path: lightning.pytorch.strategies.DDPStrategy
     init_args:
       find_unused_parameters: false
-      static_graph: true          # set false if your graph changes *per step*
+      static_graph: true          # set false if your graph changes per step
       gradient_as_bucket_view: true
+      bucket_cap_mb: 25           # tune per model (25–50 MB typical)
+      broadcast_buffers: false
+      process_group_backend: "nccl"
+      timeout: 1800               # seconds; avoid hanging on init
 
+  # ---------------------------------------------------------------------------
   # Precision & Performance
-  precision: 16                   # AMP mixed precision
+  # ---------------------------------------------------------------------------
+  precision: 16                   # AMP mixed precision; use "bf16-mixed" on Hopper/Ampere if supported
   deterministic: true
-  benchmark: false                # keep determinism; set true only if inputs are fixed-shape
+  benchmark: false                # set true only if shapes are fully static
+  sync_batchnorm: true            # keep BN stats consistent across ranks
+  replace_sampler_ddp: true       # ensure DistributedSampler is used
 
+  # ---------------------------------------------------------------------------
   # Runtime
+  # ---------------------------------------------------------------------------
   max_epochs: 40
   max_time: null                  # e.g., "12:00:00" (H:MM:SS) if desired
   accumulate_grad_batches: 1
   gradient_clip_val: 1.0
+  log_every_n_steps: 50
 
+  # ---------------------------------------------------------------------------
   # Checkpointing
+  # ---------------------------------------------------------------------------
   checkpoint:
     enabled: true
     dirpath: "checkpoints/"
@@ -46,31 +61,52 @@ trainer:
     mode: "min"
     save_last: true
     every_n_epochs: 2
+    filename: "epoch{epoch}-valgll{val/gll:.5f}"
 
+  # ---------------------------------------------------------------------------
   # Early Stopping
+  # ---------------------------------------------------------------------------
   early_stopping:
     enabled: true
     monitor: "val/gll"
     patience: 6
     mode: "min"
 
+  # ---------------------------------------------------------------------------
   # Logging
+  # ---------------------------------------------------------------------------
   logger:
     type: "tensorboard"
     save_dir: "logs/"
     name: "multi_gpu"
+    version: "run_${now:%Y-%m-%d_%H-%M-%S}"
 
+  # ---------------------------------------------------------------------------
   # DataLoader guidance for single-node multi-GPU
+  # ---------------------------------------------------------------------------
   dataloader:
     num_workers: 8
+    prefetch_factor: 2
     pin_memory: true
     persistent_workers: true
 
+  # ---------------------------------------------------------------------------
   # Seeds
+  # ---------------------------------------------------------------------------
   seed: 42
 
+  # ---------------------------------------------------------------------------
+  # Notes
+  # ---------------------------------------------------------------------------
   notes: |
     Single-node DDP optimized for throughput with stable defaults:
     • AMP(16) + gradient clipping for numerical safety.
     • DDP(find_unused_parameters=false) to reduce overhead.
+    • static_graph=true reduces DDP sync overhead for stable graphs.
+    • sync_batchnorm keeps BN statistics consistent across ranks.
     • Increase accumulate_grad_batches if batch size is memory-bound.
+    • Recommended env for stability in launch scripts:
+        NCCL_ASYNC_ERROR_HANDLING=1
+        NCCL_DEBUG=WARN
+        TORCH_DISTRIBUTED_DEBUG=OFF
+        CUDA_LAUNCH_BLOCKING=0
