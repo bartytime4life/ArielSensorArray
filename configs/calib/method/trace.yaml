@@ -1,66 +1,59 @@
 # configs/calib/method/trace.yaml
 # ==============================================================================
-# 🌍 World Discovery Engine (WDE)
-# Trace Normalization Calibration Method
-# ------------------------------------------------------------------------------
-# Purpose:
-#   Normalize extracted traces (e.g., spectral profiles, time-series)
-#   to remove instrumental/systematic effects and prepare for downstream
-#   evaluation (NDVI/EVI, ADE fingerprinting, spectral fitting).
-#
-# Features:
-#   • Polynomial or spline baseline fitting
-#   • Multi-method normalization (median, mean, unity, custom)
-#   • Rolling / adaptive baseline option
-#   • Outlier rejection and masking
-#   • Export of diagnostics (plots, CSV, JSON)
-#   • Reproducible (seeded, deterministic options)
+# 📏 Trace Normalization — Method Config
+# Purpose
+#   Normalize extracted spectral traces (1D profiles from 2D detector images)
+#   to remove baseline drift, flat background, and instrument throughput bias.
+# Usage
+#   Composed by calib/nominal.yaml in the calibration kill chain.
+#   Override example:
+#     spectramind calibrate calib.method.trace.strategy=polynomial
 # ==============================================================================
 
 trace:
   enabled: true
 
-  # ---- Baseline fitting ----
-  method: "polynomial"        # options: polynomial | spline | rolling
-  order: 3                    # polynomial order if method=polynomial
-  spline_s: 0.01              # smoothing factor if method=spline
-  rolling_window: 51          # samples for rolling baseline if method=rolling
-  baseline_window: 20         # pixels or bins used for baseline fitting context
+  # Normalization strategy for extracted spectral traces
+  strategy: "polynomial"          # options: polynomial | spline | median | hybrid
 
-  # ---- Normalization target ----
-  normalize_to: "median"      # options: median | mean | unity | percentile | custom
-  percentile: 95              # used if normalize_to=percentile
-  custom_value: null          # if provided, force normalization target (e.g. 1.0)
+  # Polynomial normalization settings
+  polynomial:
+    order: 3                      # polynomial order for baseline fitting
+    robust: true                  # use robust fitting (RANSAC or Huber loss)
+    window: 51                    # moving window size for local baseline estimation
 
-  # ---- Outlier handling ----
-  sigma_clip: true
-  sigma_threshold: 5.0        # standard deviations for clipping
-  mask_regions: []            # list of wavelength/bin ranges to ignore during fit
+  # Spline normalization settings
+  spline:
+    knots: 20                     # number of spline knots across the trace
+    smoothing_factor: 0.5         # regularization weight (0 = interpolate exactly)
 
-  # ---- Output control ----
-  save_trace: "outputs/trace_norm.csv"
-  save_diagnostics: true
-  diagnostics_dir: "outputs/diagnostics/trace/"
-  export_json: "outputs/trace_metadata.json"
+  # Median filtering (useful for removing outliers & cosmic rays)
+  median:
+    kernel_size: 5                # odd integer, size of moving median window
+    iterative: true               # repeat median filtering until convergence
 
-  # ---- Reproducibility ----
-  random_seed: 42             # seed for stochastic components (if any)
-  deterministic: true         # enforce deterministic outputs for CI/CD
+  # Hybrid strategy (combine polynomial + spline or median)
+  hybrid:
+    primary: "polynomial"
+    secondary: "spline"
+    blend_weight: 0.7             # weight applied to primary vs secondary normalization
 
-  # ---- Metadata ----
-  version: "1.1"
-  provenance: "configs/calib/method/trace.yaml"
+  # Edge handling for normalization
+  edges:
+    extend: true                  # extrapolate fit beyond trace boundaries
+    pad: 16                       # number of pixels to pad before fitting
+
+  # Outlier rejection during baseline estimation
+  outliers:
+    sigma_clip: 4.0               # reject pixels >4σ from baseline fit
+    max_iter: 5                   # maximum rejection iterations
+
+  # Throughput normalization
+  throughput_correction: true     # normalize by instrument throughput profile if available
+  throughput_profile: "calib/trace/throughput.npy"  # external throughput file path
+
   notes: |
-    Trace normalization removes low-frequency drifts and throughput variations.
-    Methods:
-      - Polynomial: fit baseline with Nth-order polynomial
-      - Spline: smooth baseline with adjustable smoothing factor
-      - Rolling: adaptive moving-average baseline subtraction
-    Normalization targets:
-      - median/mean/unity scale traces to common brightness level
-      - percentile enables robust scaling based on distribution
-      - custom allows fixed scaling value (e.g., 1.0 exactly)
-    Outlier rejection with sigma-clipping ensures cosmic rays / hot pixels
-    don’t skew the baseline fit.
-    Outputs include CSV traces, JSON metadata (config, stats), and plots
-    for QA/QC, ensuring reproducibility in Kaggle and CI pipelines.
+    Trace normalization removes low-frequency trends in extracted spectra.
+    Polynomial is fast and stable, spline is flexible, and median is robust
+    to cosmic rays. Hybrid can combine methods for challenging datasets.
+    Throughput correction ensures relative flux calibration across wavelength.
