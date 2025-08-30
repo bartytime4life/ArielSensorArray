@@ -1,22 +1,139 @@
-# Ablation-friendly config: small epochs, easy to sweep
+# configs/train/ablation.yaml
+# ==============================================================================
+# 🧪 Ablation Training Configuration — SpectraMind V50
+# NeurIPS 2025 Ariel Data Challenge (ESA Ariel exoplanet spectroscopy)
+#
+# Purpose:
+#   Defines training hyperparameters for ablation studies, where symbolic/physics
+#   losses, architectures, or augmentation flags are selectively enabled/disabled.
+#
+# Hydra:
+#   Composable with train.yaml via:
+#     defaults:
+#       - train: ablation
+#
+# Usage:
+#   # Run ablation disabling smoothness and FFT priors:
+#   spectramind ablate loss.composite.smoothness.enabled=false \
+#     loss.composite.fft.enabled=false
+#
+#   # Sweep symbolic loss weights:
+#   spectramind ablate -m loss.composite.smoothness.weight=0.0,0.1,0.2
+#
+# Notes:
+#   • Logs all overrides to logs/v50_debug_log.md with config hash.
+#   • Kaggle-safe defaults (≤9h runtime, ≤16GB GPU).
+#   • Ablation runs produce Markdown/HTML leaderboard summaries.
+# ==============================================================================
+
+# ----------------------------------------------------------------------
+# Hydra defaults
+# ----------------------------------------------------------------------
 defaults:
-  - model: mlp
-  - data: toy
   - override hydra/job_logging: default
+  - override hydra/hydra_logging: default
+  - optimizer: adamw
+  - loss: composite
+  - trainer: defaults
+  - data: nominal
+  - model: v50
 
-train:
-  epochs: 10
+# ----------------------------------------------------------------------
+# Experiment metadata
+# ----------------------------------------------------------------------
+experiment:
+  name: "ablation_v50"
+  description: "Ablation study of symbolic/physics-informed losses and modules."
+  tags: ["ablation", "spectramind_v50", "symbolic", "fft", "smoothness"]
+  seed: 42
+
+# ----------------------------------------------------------------------
+# Training hyperparameters
+# ----------------------------------------------------------------------
+trainer:
+  epochs: 30                   # fewer epochs than nominal to iterate quickly
+  batch_size: 32
+  gradient_accumulation: 2
+  max_grad_norm: 1.0
+  mixed_precision: true
+  checkpoint_interval: 5
+  resume: false
   device: "cuda"
-  seed: 2025
-  log_interval: 10
-  save_dir: "outputs/checkpoints_ablation"
 
+# ----------------------------------------------------------------------
+# Optimizer & Scheduler
+# ----------------------------------------------------------------------
 optimizer:
-  name: "adam"
-  lr: 1e-3
-  weight_decay: 0.0
+  name: "AdamW"
+  lr: 5e-4
+  weight_decay: 0.01
+  scheduler:
+    type: "cosine"
+    warmup_steps: 1000
 
-scheduler:
-  name: "step"
-  step_size: 5
-  gamma: 0.5
+# ----------------------------------------------------------------------
+# Loss configuration (composite)
+# ----------------------------------------------------------------------
+loss:
+  composite:
+    gll:
+      enabled: true
+      weight: 1.0
+    smoothness:
+      enabled: true
+      weight: 0.1
+      cutoff: 50         # frequency cutoff for L2 penalty in FFT domain
+    nonnegativity:
+      enabled: true
+      weight: 0.05
+    fft:
+      enabled: true
+      weight: 0.1
+      cutoff_freq: 40
+    asymmetry:
+      enabled: false     # toggled in some ablation runs
+      weight: 0.05
+
+# ----------------------------------------------------------------------
+# Symbolic constraints (per-rule ablation)
+# ----------------------------------------------------------------------
+symbolic:
+  enabled: true
+  rules:
+    - name: "molecular_fingerprint"
+      enabled: true
+      weight: 0.1
+    - name: "gravitational_lensing"
+      enabled: false
+      weight: 0.05
+    - name: "photonic_alignment"
+      enabled: true
+      weight: 0.1
+    - name: "entropy_minimization"
+      enabled: true
+      weight: 0.05
+
+# ----------------------------------------------------------------------
+# Diagnostics & Logging
+# ----------------------------------------------------------------------
+logging:
+  rich_console: true
+  jsonl_stream: "logs/events.jsonl"
+  markdown_log: "logs/v50_debug_log.md"
+  html_report: true
+  leaderboard:
+    markdown: "outputs/ablation_leaderboard.md"
+    html: "outputs/ablation_leaderboard.html"
+    export_top_n: 5
+    open_browser: false
+
+# ----------------------------------------------------------------------
+# Ablation-specific options
+# ----------------------------------------------------------------------
+ablation:
+  top_n: 10                   # keep top-N configs per metric
+  metrics: ["gll", "rmse", "entropy", "symbolic_violation_norm"]
+  retry_failed: true
+  parallel_runs: 2
+  dry_run: false
+  ci_mode: false              # set true in GitHub CI ablation job
