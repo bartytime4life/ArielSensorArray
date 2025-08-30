@@ -1,11 +1,11 @@
+```yaml
 # configs/loss/symbolic.yaml
 # ==============================================================================
-# 🧠 Symbolic Loss — Physics-Informed Constraints
+# 🧠 Symbolic Loss — Physics-Informed Constraints (UPGRADED)
 #
 # Purpose
-#   Encodes domain-specific symbolic rules and physics priors as differentiable
-#   penalties. These constraints guide the model toward scientifically valid spectra,
-#   complementing the Gaussian log-likelihood (GLL).
+#   Encodes domain-specific symbolic rules and physics priors as differentiable penalties to guide
+#   the model toward scientifically valid spectra, complementing Gaussian log-likelihood (GLL).
 #
 # Usage
 #   In train.yaml:
@@ -21,67 +21,209 @@
 #     spectramind train loss.symbolic.smoothness.order=2 \
 #       loss.symbolic.smoothness.weight=0.15
 #
-# Notes
-#   • Symbolic losses extend physics priors (non-negativity, FFT, smoothness).
-#   • Additional modules (molecular fingerprints, gravitational lensing) are integrated.
-#   • Each subterm can be toggled or reweighted independently.
+# Philosophy
+#   • Physics-first: priors rooted in spectroscopy, optics, and astrophysics.
+#   • Modular: each subterm togglable and reweightable without code changes.
+#   • Reproducible: fully controllable via Hydra/CLI and logged in run configs.
 # ==============================================================================
 
 symbolic:
   enabled: true
-  reduction: "mean"     # mean | sum | none
+  reduction: "mean"        # mean | sum | none
+  eps: 1.0e-12             # small epsilon for numerical stability in internal ops
+  mode: "soft"             # soft | hard (hard => stronger penalties / clamps where supported)
+  global_weight: 1.0       # master scalar multiplier applied to the sum of all subterms
+  normalize_by_bins: true  # normalize each subterm by number of bins to keep scales comparable
 
-  # --- Smoothness constraint (spectral curvature penalty)
+  # -----------------------------
+  # Scheduling / Curriculum
+  # -----------------------------
+  schedule:
+    enabled: true
+    # Linear ramp of symbolic influence during training (by global step or epoch depending on trainer)
+    # Effective weight = base_weight * (warmup_factor(step) * anneal_factor(step))
+    warmup:
+      steps: 2000           # steps (or epochs if your trainer maps this) to ramp from 0 → 1
+    anneal:
+      enabled: false
+      steps: 0              # if >0 and enabled, decays from 1 → 0 across this many steps after warmup
+    floor: 0.0              # minimum multiplier after anneal
+    cap: 1.0                # maximum multiplier during/after warmup
+
+  # -----------------------------
+  # Region Masking / Weighting
+  # -----------------------------
+  regions:
+    enabled: false
+    mask_path: null         # optional .npy/.csv of shape [B,BINS] or [BINS] with {0..1} weights
+    continuum_weight: 1.0   # weight for continuum regions (if separate mask fields are used)
+    line_weight: 1.0        # weight for line regions
+    invert_mask: false      # if true, flips mask values -> (1-mask)
+
+  # -----------------------------
+  # Cross-Term Interactions
+  # -----------------------------
+  interactions:
+    enabled: true
+    # Optional multiplicative couplings: e.g. upweight smoothness on molecular windows,
+    # or dampen FFT penalty where lensing explains apparent high frequency.
+    rules:
+      - name: "smooth_on_molecules"
+        when: {molecular_fingerprints.enabled: true, smoothness.enabled: true}
+        effect: "multiply"
+        target: "smoothness.weight"
+        factor: 1.25
+      - name: "dampen_fft_if_lensing"
+        when: {lensing.enabled: true, fft.enabled: true}
+        effect: "multiply"
+        target: "fft.weight"
+        factor: 0.8
+
+  # -----------------------------
+  # Smoothness (spectral continuity)
+  # -----------------------------
   smoothness:
     enabled: true
     weight: 0.10
-    order: 2             # 1 = first-derivative (total variation), 2 = second-derivative (curvature)
+    order: 2                 # 1=first-derivative (TV), 2=second-derivative (curvature)
     normalize: true
+    robust:                  # Huber/Charbonnier options to reduce sensitivity to sharp physical lines
+      enabled: false
+      type: "huber"          # huber | charbonnier
+      delta: 0.01
+    region:
+      use_region_mask: false # if true, multiplies this term by regions.mask_path (or line/continuum weights)
 
-  # --- Non-negativity constraint (flux ≥ 0)
+  # -----------------------------
+  # Non-Negativity (flux ≥ 0)
+  # -----------------------------
   nonnegativity:
     enabled: true
     weight: 0.02
-    mode: "hinge"        # hinge | softplus | exp
-    p: 2                 # L1 or L2 penalty for violations
-    temperature: 1.0
+    mode: "hinge"            # hinge | softplus | exp
+    p: 2                     # 1 or 2 for hinge power
+    temperature: 1.0         # sharpness for smooth barriers
+    margin: 0.0              # allow slight negative tolerance before penalty (e.g. -1e-4)
 
-  # --- FFT high-frequency suppression (reduce noise, enforce smoothness)
+  # -----------------------------
+  # FFT High-Frequency Suppression
+  # -----------------------------
   fft:
     enabled: true
     weight: 0.10
-    cutoff_freq: 50      # bins beyond this frequency are penalized
-    log_scale: false
-    normalize: true
+    cutoff_freq: 50          # bins beyond this frequency are penalized
+    normalize: true          # normalize FFT magnitude prior to penalty
+    log_scale: false         # log(1 + mag) penalty for heavy tails if true
+    taper:
+      enabled: true          # smoothly ramp penalty beyond cutoff (vs hard threshold)
+      width: 8               # number of freq bins over which taper ramps from 0→1
     adaptive:
       enabled: false
       method: "percentile"   # percentile | exponential | fixed
       percentile: 95.0
       decay: 0.95
 
-  # --- Molecular fingerprint coherence (physics-based priors)
+  # -----------------------------
+  # Molecular Fingerprint Coherence
+  # -----------------------------
   molecular_fingerprints:
     enabled: true
     weight: 0.20
-    templates: ["H2O", "CO2", "CH4"]   # molecules to enforce fingerprint alignment
-    mode: "overlay"                    # overlay | mask | hybrid
-    tolerance: 0.02                    # allowable deviation from expected band centers
+    mode: "overlay"          # overlay | mask | hybrid
+    tolerance: 0.02          # allowable deviation from expected band centers (fraction of bin width)
+    # Source of molecular templates (either inline or file-based)
+    templates:
+      names: ["H2O", "CO2", "CH4"]
+      path: null             # optional JSON/YAML/CSV with per-molecule band centers and widths
+      inline:
+        H2O:
+          bands:            # centers (in bins or normalized wavelength units) and half-widths
+            - {center: 0.18, half_width: 0.01}
+            - {center: 0.33, half_width: 0.015}
+        CO2:
+          bands:
+            - {center: 0.43, half_width: 0.015}
+        CH4:
+          bands:
+            - {center: 0.58, half_width: 0.02}
+    per_molecule_weights:     # optional molecule-specific scaling
+      H2O: 1.0
+      CO2: 1.0
+      CH4: 1.0
+    # Penalize inconsistency across a set of known lines within a band window
+    coherence:
+      enabled: true
+      metric: "zscore"       # zscore | l2 | corr
+      target_sign: "absorb"  # absorb | emit | any (sign of feature)
+      # Encourage correlated depth across lines in same molecule
+      cross_line_correlation:
+        enabled: true
+        min_corr: 0.2
+        weight: 0.2
 
-  # --- Gravitational lensing consistency (photometric + spectral constraints)
+  # -----------------------------
+  # Gravitational Lensing Consistency
+  # -----------------------------
   lensing:
     enabled: true
     weight: 0.05
-    method: "einstein_ring"            # einstein_ring | shear_matrix | custom
-    einstein_radius_arcsec: 1.0e-3     # expected scale of lensing features
+    # physical model knobs
+    method: "einstein_ring"          # einstein_ring | shear_matrix | custom
+    einstein_radius_arcsec: 1.0e-3   # expected scale of lensing features
+    shear_gamma: 0.0                 # optional: simple shear magnitude if method=shear_matrix
     tolerance: 0.01
+    # coupling with photometric time-domain (if available in batch metadata)
+    time_spectral_coupling:
+      enabled: false
+      weight: 0.1
+      # penalize spectral features inconsistent with time-domain magnification patterns
+    explain_high_freq_as_lensing:
+      enabled: true                  # reduces FFT penalty in windows explained by lensing model
+      factor: 0.7
+
+  # -----------------------------
+  # Rule Engine (Optional)
+  # -----------------------------
+  rules:
+    enabled: true
+    # You can add simple declarative constraints here; each rule will be turned into a penalty.
+    # Example: enforce monotonicity in a window, or bound local maxima count.
+    list:
+      - name: "monotonic_rise_0_12"
+        enabled: false
+        type: "monotonic"
+        window: {start: 0.00, end: 0.12}
+        direction: "up"              # up | down
+        weight: 0.05
+      - name: "max_peaks_0_30"
+        enabled: false
+        type: "peak_count"
+        window: {start: 0.10, end: 0.30}
+        max_peaks: 3
+        weight: 0.05
+
+  # -----------------------------
+  # Diagnostics / Logging / Export
+  # -----------------------------
+  diagnostics:
+    log_violations: true             # write per-subterm violation magnitudes to diagnostics JSON
+    export_masks: false              # export binary/soft masks used (regions/molecules) for HTML dashboard
+    save_json: true                  # persist effective symbolic config consumed at runtime
+    sample_plots:
+      enabled: false                 # optionally save small plots (requires plotting in pipeline code)
+      max_samples: 8
 
 notes: |
-  • All symbolic loss components are additive with configurable weights.
-  • Each sub-loss enforces a scientific constraint:
-      - Smoothness: discourages rapid spectral oscillations.
-      - Non-negativity: ensures μ spectra ≥ 0.
-      - FFT: penalizes high-frequency artifacts (noise).
-      - Molecular fingerprints: aligns spectral lines with known molecules.
-      - Lensing: penalizes inconsistencies with gravitational lensing physics.
-  • Weights should be tuned cautiously; symbolic terms guide but should not dominate
-    over the primary GLL objective.
+  • All symbolic components are additive with configurable weights; the final symbolic loss equals
+    global_weight * Σ_i (weight_i * term_i), optionally modulated by schedule multipliers.
+  • Smoothness reduces non-physical oscillations; robust options help preserve sharp physical lines.
+  • Non-negativity enforces physical flux limits with soft/hard barrier variants.
+  • FFT penalty suppresses noise-like high-frequency power; taper avoids hard edges at cutoff.
+  • Molecular fingerprints align features with known molecule bands and encourage intra-band coherence.
+  • Lensing explains apparent structure via simple parametric models and can downweight FFT penalties
+    where physically justified.
+  • Interactions let you encode intuitive couplings (e.g., smoothness ↑ on molecular windows).
+  • Regions allow external masks (continuum/lines/SNR) to modulate any or all symbolic terms.
+  • Scheduling supports curriculum: ramp-in or anneal symbolic influence over training.
+  • Keep symbolic weights moderate; they should guide, not dominate, the primary GLL objective.
+```
