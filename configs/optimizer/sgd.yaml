@@ -41,13 +41,13 @@ optimizer:
   # --------------------------------------------------------------------------
   # Scheduler integration
   # --------------------------------------------------------------------------
-  scheduler_hook: true            # allow scheduler override in training config
+  scheduler_hook: true            # allow scheduler override in training config (cosine, onecycle, etc.)
 
   # --------------------------------------------------------------------------
   # Precision / AMP compatibility
   # --------------------------------------------------------------------------
   precision_safe: true            # SGD is fully compatible with fp32/fp16/bf16
-  fused: false                    # leave false unless using fused SGD build
+  fused: false                    # leave false unless using fused SGD kernel
 
   # --------------------------------------------------------------------------
   # Diagnostics & logging
@@ -63,5 +63,5 @@ optimizer:
     • Default LR = 1e-2; tune with cosine/onecycle schedulers for convergence:contentReference[oaicite:4]{index=4}.
     • Momentum + Nesterov improves convergence on noisy gradients.
     • Generally slower than AdamW but can yield smoother convergence curves.
-    • Lookahead wrapper supported: enable for robustness experiments.
-    • Fully Hydra-overridable and reproducibility-logged via v50_debug_log.md:contentReference[oaicite:5]{index=5}.
+    • Lookahead wrapper supported: enable for robustness experiments:contentReference[oaicite:5]{index=5}.
+    • Fully Hydra-overridable and reproducibility-logged via v50_debug_log.md:contentReference[oaicite:6]{index=6}.
