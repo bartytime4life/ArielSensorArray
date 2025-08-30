@@ -1,63 +1,264 @@
-# COREL-style learnable calibration (graph over spectral bins)
+# FILE: configs/calib/method/corel.yaml
+# ==============================================================================
+# 🧩 COREL-Style Learnable Calibration (Graph over Spectral Bins)
+# ------------------------------------------------------------------------------
+# Purpose
+#   Learn binwise relational corrections or uncertainty scalings by passing
+#   (μ, σ, and optional metadata features) through a GNN defined on the spectral
+#   bin graph. Supports:
+#     • Graph construction: knn / dense / threshold with optional edge features
+#     • GNN backends: GCN / GAT / MPNN(NNConv) with residuals & norm
+#     • Heads: "scale" (predict T_b for σ) or "delta" (predict Δμ, Δσ or Δlogσ)
+#     • COREL/conformal coverage evaluation and (optional) post-hoc conformalization
+#
+# Usage
+#   Composed by your calibration chain after model inference (pre-submission).
+#   Example overrides:
+#     spectramind calibrate calib.method.corel.method=corel corel.model.arch=gat corel.train.epochs=50
+# ==============================================================================
+
+_meta:
+  schema_version: "1.0.0"
+  last_updated: "${now:%Y-%m-%d}"
+
 method: "corel"
 
 corel:
-  # Graph construction over bins
+  # ---------------------------------------------------------------------------
+  # Graph over bins
+  # ---------------------------------------------------------------------------
   graph:
-    type: "knn"          # "knn" | "dense" | "threshold"
-    k: 8                 # neighbors if knn
-    distance: "l2"       # "l1" | "l2" | "cosine"
+    type: "knn"                # "knn" | "dense" | "threshold"
+    k: 8                       # used if type == "knn"
+    threshold: 0.15            # used if type == "threshold" on distance/similarity
+    distance: "l2"             # "l1" | "l2" | "cosine"
     self_loops: true
-    normalize_adj: true  # symmetric Ā = D^{-1/2}(A+I)D^{-1/2}
+    normalize_adj: true        # Â = D^{-1/2}(A+I)D^{-1/2}
     dropout: 0.0
 
-  # Model (message passing over bins)
+    # Optional edge features to enrich message passing
+    edge_features:
+      enabled: true
+      # Choose any subset; executor concatenates active edge features
+      use_distance: true                   # scalar d(i,j) (normalized)
+      use_delta_wavelength: true           # |λ_i - λ_j|
+      use_molecule_same_class: true        # 1 if same molecule class, else 0
+      use_detector_same_region: true       # 1 if same detector region, else 0
+      # Fourier/sinusoidal encodings of relative index (positional prior)
+      posenc:
+        enabled: true
+        num_freqs: 6
+        scale: 1.0
+
+  # ---------------------------------------------------------------------------
+  # Node input features
+  # ---------------------------------------------------------------------------
+  features:
+    # Node features are concatenated in this order if enabled
+    include:
+      mu: true                 # predicted mean μ_b
+      sigma: true              # predicted σ_b (pre-calibration)
+      wavelength: true         # λ_b (normalized)
+      snr: true                # μ_b / σ_b
+      region_onehot: false     # detector region ID → onehot
+      molecule_onehot: false   # molecule class → onehot
+    # Pre-normalization per-feature (z-score on train split)
+    normalize: true
+
+  # ---------------------------------------------------------------------------
+  # GNN model
+  # ---------------------------------------------------------------------------
   model:
-    arch: "gat"          # "gcn" | "gat" | "mpnn"
-    in_dim: 2            # input features per bin (μ, σ) — extend if you add more
+    arch: "gat"                # "gcn" | "gat" | "mpnn"
+    in_dim: 2                  # (μ, σ) base; executor expands if extra features enabled
     hidden_dim: 64
     num_layers: 3
-    heads: 4             # only for GAT
-    activation: "gelu"
+    heads: 4                   # GAT only
+    attn_dropout: 0.1          # GAT only
+    mpnn:
+      # For NNConv / MPNN: edge MLP for generating filters
+      edge_mlp_hidden: 32
+      agg: "mean"              # "mean" | "sum" | "max"
+    activation: "gelu"         # "relu" | "gelu" | "silu"
     residual: true
-    norm: "layer"        # "batch" | "layer" | "none"
-    out_head: "scale"    # "scale" (predict T_b) or "delta" (predict Δμ, Δσ)
+    norm: "layer"              # "batch" | "layer" | "none"
+    dropout: 0.1
+    out_head: "scale"          # "scale" | "delta"
+    # If out_head == "delta", choose parameterization for σ
+    delta_param:
+      sigma_space: "log"       # "linear" | "log"
 
+  # ---------------------------------------------------------------------------
+  # Head semantics
+  # ---------------------------------------------------------------------------
+  head:
+    # For out_head == "scale": predict T_b and apply σ’_b = clamp(T_b * σ_b, min_sigma, max_sigma)
+    scale:
+      init_to_one: true
+      apply_to: "sigma"        # "sigma" | "mu_sigma" (future use)
+      min_sigma: 1.0e-8
+      max_sigma: 1.0e2
+      clamp: true
+    # For out_head == "delta": predict Δμ_b and Δ(log σ)_b (or Δσ if linear), then:
+    #   μ’_b = μ_b + Δμ_b
+    #   σ’_b = clamp( exp(logσ_b + Δlogσ_b), min_sigma, max_sigma )
+    delta:
+      predict_mu: true
+      predict_sigma: true
+      min_sigma: 1.0e-8
+      max_sigma: 1.0e2
+      clamp: true
+
+  # ---------------------------------------------------------------------------
   # Optimization
+  # ---------------------------------------------------------------------------
   optim:
     name: "adamw"
-    lr: 1e-3
-    weight_decay: 1e-4
+    lr: 1.0e-3
+    weight_decay: 1.0e-4
     betas: [0.9, 0.999]
-    eps: 1e-8
+    eps: 1.0e-8
 
   # Scheduler (optional)
   sched:
-    name: "cosine"
-    warmup_steps: 100
+    name: "cosine"             # "none" | "cosine" | "plateau"
+    warmup_steps: 200
     min_lr_scale: 0.05
+    plateau:
+      patience: 5
+      factor: 0.5
+      min_lr: 1.0e-6
 
+  # ---------------------------------------------------------------------------
   # Training
+  # ---------------------------------------------------------------------------
   train:
     epochs: 30
-    batch_bins: 283      # operate per-sample over all bins; keep = bins
-    loss: "nll"          # "nll" | "mse" (on μ)
+    batch_bins: 283            # operate per-sample over all bins; usually = #bins
+    loss: "nll"                # "nll" (Gaussian NLL on (μ’,σ’)) | "mse_mu"
     label_smoothing: 0.0
     grad_clip: 1.0
     mixed_precision: false
     log_every: 20
+    early_stop:
+      enabled: true
+      monitor: "val_nll"       # "val_nll" | "val_mse_mu" | "val_coverage"
+      patience: 8
+      mode: "min"
 
+  # ---------------------------------------------------------------------------
   # Regularization / priors
+  # ---------------------------------------------------------------------------
   reg:
-    # Encourage T≈1 for stability
-    t_l2_to_1: 1e-3
-    # Keep σ’ above a floor
-    min_sigma: 1e-8
-    # Optional penalty on μ shifts if using out_head="delta"
+    # Encourage T≈1 for stability when out_head == "scale"
+    t_l2_to_1: 1.0e-3
+    # Penalize large μ shifts when out_head == "delta"
     mu_delta_l2: 0.0
+    # Laplacian smoothness across neighboring bins (graph prior)
+    laplacian_smooth:
+      enabled: true
+      weight: 1.0e-3
+      apply_to: "mu_sigma"     # "mu" | "sigma" | "mu_sigma" | "scale_T"
+    # Keep σ’ above a floor (soft barrier)
+    min_sigma: 1.0e-8
 
+  # ---------------------------------------------------------------------------
+  # Conformal / COREL evaluation (optional post-hoc coverage control)
+  # ---------------------------------------------------------------------------
+  conformal:
+    enabled: true
+    method: "split"            # "split" | "cv_plus"
+    alpha: 0.1                 # (1 - coverage); e.g., 0.1 → 90% nominal coverage
+    mondrian_by: "molecule"    # "none" | "molecule" | "region"
+    # Use validation split for calibration by default; can override to custom indices
+    use_val_split: true
+
+  # ---------------------------------------------------------------------------
   # Checkpointing
+  # ---------------------------------------------------------------------------
   ckpt:
-    dir: "outputs/corel_ckpts"
+    dir: "${oc.env:RUN_DIR, runs}/corel_ckpts"
     keep_last: 3
-    save_best_on: "val_nll"  # or "train_nll"
+    save_best_on: "val_nll"    # "val_nll" | "val_mse_mu" | "val_coverage"
+    filename: "corel-{epoch:03d}-{val_nll:.5f}.pt"
+
+  # ---------------------------------------------------------------------------
+  # Evaluation / metrics
+  # ---------------------------------------------------------------------------
+  eval:
+    metrics:
+      - "val_nll"
+      - "val_mse_mu"
+      - "coverage_68"          # empirical coverage within 1σ
+      - "coverage_95"          # empirical coverage within 1.96σ
+      - "calib_curve"          # calibration curve points
+    # bins/quantiles for calibration curve
+    calib_curve:
+      quantiles: [0.1, 0.2, 0.5, 0.8, 0.9]
+
+  # ---------------------------------------------------------------------------
+  # IO binding (Hydra/pipeline executor contracts)
+  # ---------------------------------------------------------------------------
+  io:
+    input_key: "inference"      # dict containing model predictions & metadata
+    fields_in:
+      mu: "mu_pred"             # [B, C=283]
+      sigma: "sigma_pred"       # [B, C=283]
+      y_true: "y_true"          # [B, C] (optional; required for training/eval)
+      wavelength: "wavelengths" # [C] (optional)
+      molecule_id: "molecule_id"# [C] ints (optional)
+      region_id: "region_id"    # [C] ints (optional)
+      split: "split"            # per-sample split label "train"/"val"/"test" (optional)
+    output_key: "corel"
+    fields_out:
+      mu_cal: "mu_corel"        # calibrated μ’ if out_head=="delta" else copy of μ
+      sigma_cal: "sigma_corel"  # calibrated σ’ (or T*σ)
+      scale_T: "scale_T"        # predicted T if out_head=="scale"
+      metrics: "corel_metrics"  # dict of eval metrics
+      coverage: "corel_coverage"# dict of coverage stats
+
+  # ---------------------------------------------------------------------------
+  # Data split / loader (lightweight; executor may override)
+  # ---------------------------------------------------------------------------
+  data:
+    # If split not provided in inputs, create a split
+    make_split:
+      enabled: true
+      val_fraction: 0.2
+      seed: 1337
+    shuffle_train: true
+
+  # ---------------------------------------------------------------------------
+  # Runtime & logging
+  # ---------------------------------------------------------------------------
+  runtime:
+    device: "auto"              # "auto" | "cpu" | "cuda:0"
+    num_workers: 2
+    deterministic: false
+    seed: 1337
+
+  logging:
+    level: "INFO"               # "DEBUG" | "INFO" | "WARNING" | "ERROR"
+    log_graph_stats: true
+    log_samples: 2
+    tensorboard:
+      enabled: false
+      dir: "${oc.env:RUN_DIR, runs}/corel_tb"
+
+  # ---------------------------------------------------------------------------
+  # Validation (fail fast for missing/incompatible resources)
+  # ---------------------------------------------------------------------------
+  validation:
+    require_y_true_for_training: true
+    check_shape_compatibility: true
+    require_graph_nonempty: true
+    # Ensure σ’ remains finite and >= min_sigma
+    assert_sigma_floor: true
+
+  notes: |
+    • "scale" head is the safest default (learn T_b to rescale σ_b) and tends to stabilize
+      probabilistic calibration. Use "delta" if you want to adjust μ as well.
+    • Enable laplacian_smooth to encourage neighboring bins to behave coherently.
+    • For edge-feature-aware MPNN, set model.arch="mpnn" and graph.edge_features.enabled=true.
+    • Conformal block can be used purely for evaluation (no parameter updates) to report
+      coverage, or to derive post-hoc intervals if your executor supports exporting them.
