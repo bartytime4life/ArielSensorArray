@@ -1,0 +1,50 @@
+# configs/calib/method/flat.yaml
+# ==============================================================================
+# 🧭 Flat Fielding — Method Config
+# Purpose
+#   Correct pixel-to-pixel sensitivity using master flat(s).
+# Usage
+#   Composed by calib/nominal.yaml; typically after dark subtraction.
+#   Override example:
+#     spectramind calibrate calib.method.flat.master_flat_path=calib_refs/flat/master_flat.fits
+# ==============================================================================
+
+flat:
+  enabled: true
+
+  # Master flat (normalized to ~1.0 mean). Can be 2D or wavelength-dependent 3D.
+  master_flat_path: "calib_refs/flat/master_flat.npy"
+
+  # Wavelength (or column) handling: choose slice strategy if 3D
+  wavelength_mode:
+    type: "auto"                 # "auto" | "per_column" | "fixed"
+    fixed_index: 0               # used if type=fixed
+    per_column_axis: 1           # which axis corresponds to wavelength/columns
+
+  # Flat normalization options
+  normalization:
+    enabled: true
+    method: "median"             # "median" | "mean" | "percentile"
+    percentile: 50.0
+
+  # Bad pixel mask (BPM) to augment flat information
+  bad_pixel_mask_path: "calib_refs/flat/bad_pixel_mask.npy"
+  bad_pixel_repair:
+    enabled: true
+    strategy: "inpaint"          # "inpaint" | "median" | "nearest" | "mask"
+    inpaint_window: 3
+
+  # Edge & vignette guards
+  vignette_guard:
+    enabled: true
+    threshold: 0.6               # relative throughput below which pixels are masked
+
+  diagnostics:
+    save_flat_preview: true
+    save_gain_map: false
+    output_dir: "outputs/diagnostics/calib/flat"
+
+  notes: |
+    • Divide science frames by master flat (after dark subtraction).
+    • Normalize master flat to unit response to avoid flux scaling.
+    • If 3D flat, select per-column slice aligned with instrument dispersion.
