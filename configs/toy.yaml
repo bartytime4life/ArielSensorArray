@@ -1,1 +1,63 @@
-delete
+# configs/data/toy.yaml
+# ==============================================================================
+# 🧸 Toy Data Config — SpectraMind V50
+#
+# Purpose
+#   Minimal dataset profile for ultra-fast debugging and CI smoke tests.
+#   • Uses only a handful of planets / batches
+#   • Truncates time-series and spectra for speed
+#   • Ensures the full pipeline can run end-to-end in < 2 min
+#
+# Usage
+#   spectramind train data=toy trainer=ci_fast
+#
+# Notes
+#   • Not for leaderboard use — purely for dev/testing.
+#   • Complements trainer/ci_fast.yaml (runtime throttles) and local/debug.yaml.
+#   • Reproducibility: this config is version-controlled; run hashes are logged.
+# ==============================================================================
+
+data:
+  name: "toy"
+  description: "Tiny subset of Ariel challenge data for smoke tests"
+
+  # Data roots (point to same dirs as nominal, but apply filters)
+  raw_dir: ${oc.env:DATA_RAW, data/raw}
+  processed_dir: ${oc.env:DATA_PROCESSED, data/processed}
+  cache_dir: ${oc.env:DATA_CACHE, .cache/data}
+
+  # Dataset filters (make it tiny)
+  num_planets: 10             # limit to first 10 planets
+  max_timesteps: 512          # truncate FGS1 sequences (normally 100k+)
+  max_wavelengths: 64         # truncate AIRS channels (normally 283)
+  subsample_stride: 8         # downsample timesteps/wavelengths for speed
+
+  # Splits (tiny train/val/test)
+  split:
+    train_frac: 0.6
+    val_frac: 0.2
+    test_frac: 0.2
+    seed: 1234
+
+  # Dataloading
+  batch_size: 4
+  num_workers: 0              # disable workers (simpler for CI)
+  pin_memory: false
+  persistent_workers: false
+  shuffle: true
+
+  # Augmentations (keep off for CI reproducibility)
+  augment:
+    enabled: false
+
+  # Diagnostics hooks
+  log_samples: 2              # log 2 toy samples for inspection
+  save_preview: true          # save a toy preview PNG/JSON
+
+  notes: |
+    This config drastically reduces dataset size for smoke tests:
+      • Only 10 planets loaded
+      • FGS1 truncated to 512 timesteps
+      • AIRS truncated to 64 wavelengths
+      • Batch size = 4
+    Goal: run full pipeline (calibrate → train → diagnose → submit) in CI.
