@@ -1,0 +1,30 @@
+# configs/model/fusion_concat.yaml
+# ==============================================================================
+# 🔗 Fusion — Concatenation preset (fastest, minimal params)
+# ==============================================================================
+
+fusion:
+  method: "concat"
+  hidden_dim: 128
+  num_heads: 0
+  num_layers: 0
+  bidirectional: false
+  dropout: 0.05
+  normalize: true
+  residual: true
+  gating:
+    enabled: false
+  position_encoding:
+    type: "fourier"
+    learnable_scale: false
+  masking:
+    enabled: true
+  alignment_losses:
+    nce: {enabled: false, temperature: 0.07, weight: 0.00}
+    cca: {enabled: false, weight: 0.00}
+  precision:
+    amp_allowed: true
+  init: "xavier_uniform"
+  param_budget:
+    enabled: true
+    max_params: 5.0e6
