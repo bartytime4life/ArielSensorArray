@@ -1,96 +1,121 @@
 # Loss Configurations (`configs/loss/`)
 
-This directory houses all standalone and composite Hydra YAML configurations used to define and tune the loss function components for **SpectraMind V50**. Each config aligns with our mission-critical design ethos: **reproducible**, **physics-informed**, and **fully configurable via CLI**.
+This directory houses all **Hydra YAML configurations** for loss functions used in the **SpectraMind V50** pipeline (NeurIPS 2025 Ariel Data Challenge).  
+Each file defines **standalone physics-aware loss terms** or a **composite controller**, ensuring they are:
+
+* 🛰 **Reproducible** — every parameter tracked via Hydra + DVC:contentReference[oaicite:0]{index=0}  
+* 🔬 **Physics-informed** — enforcing smoothness, non-negativity, symbolic constraints:contentReference[oaicite:1]{index=1}:contentReference[oaicite:2]{index=2}  
+* 🖥 **CLI-driven** — fully overridable from `spectramind train …`:contentReference[oaicite:3]{index=3}  
 
 ---
 
 ## 🗂 Directory Overview
 
-- `gll.yaml` — Gaussian Log-Likelihood (primary metric-based loss)
-- `smoothness.yaml` — Penalizes curvature / promotes spectral smoothness
-- `nonnegativity.yaml` — Soft constraint enforcing μ ≥ 0
-- `fft.yaml` — FFT-domain high-frequency suppression
-- `symbolic.yaml` — Encodes symbolic/physics-first regularizers
-- `composite.yaml` — Unified master config incorporating all above
-- `README.md` — You're here! Guides maintainers and contributors.
+- `gll.yaml` — Gaussian Log-Likelihood (GLL), the **primary metric loss** of the challenge:contentReference[oaicite:4]{index=4}  
+- `smoothness.yaml` — Spectral curvature penalty; promotes **continuity and differentiability**:contentReference[oaicite:5]{index=5}  
+- `nonnegativity.yaml` — Soft μ ≥ 0 constraint to enforce physical realism:contentReference[oaicite:6]{index=6}  
+- `fft.yaml` — FFT-domain regularizer; suppresses high-frequency artifacts:contentReference[oaicite:7]{index=7}  
+- `symbolic.yaml` — Encodes **symbolic physics rules** (molecular patterns, lensing, alignment):contentReference[oaicite:8]{index=8}  
+- `composite.yaml` — Unified Hydra config to toggle/weight all above losses together  
+- `README.md` — You’re here! Maintainers’ and contributors’ guide.
 
 ---
 
-##  Purpose & Design Philosophy
+## 🎯 Purpose & Design Philosophy
 
-These configurations enable modular, composable, and transparent loss definitions that:
+Losses here combine **machine learning flexibility** with **astrophysical constraints**:
 
-- Reflect domain knowledge: spectral smoothness, physical constraints, molecular patterns.
-- Retain full CLI manipulation: toggle modules, adjust weights, override parameters via Hydra.
-- Support reproducible experiments by linking all hyperparameters to version control.
+* **Domain knowledge baked in** — spectral smoothness, symbolic priors, non-negative μ, FFT suppression.  
+* **Modular + composable** — swap terms on/off or adjust weights without code edits:contentReference[oaicite:9]{index=9}.  
+* **CLI discoverability** — every flag accessible via `--help` and tab-completion:contentReference[oaicite:10]{index=10}:contentReference[oaicite:11]{index=11}.  
+* **Reproducibility** — configs tracked via Hydra + Git + DVC; all overrides logged:contentReference[oaicite:12]{index=12}.  
+
+This structure mirrors **NASA-grade scientific modeling** where each regularizer has a **traceable rationale**:contentReference[oaicite:13]{index=13}.
 
 ---
 
-##  How to Use
+## ⚙️ How to Use
 
-### Base Config Usage
+### Base Loss Configs
 
-To employ one of the individual loss configs:
+Use a standalone loss in `train.yaml`:
 
 ```yaml
-# In your training YAML
 defaults:
   - loss: gll
-# CLI example overrides:
-# spectramind train loss.gll.weighting=entropy loss.gll.reduction=sum
 ````
 
-### Composite Config Usage
+CLI override example:
 
-Integrate multiple loss terms via `composite.yaml`:
+```bash
+spectramind train loss.gll.reduction=sum loss.gll.weighting=entropy
+```
+
+### Composite Config
+
+Enable multiple physics-informed losses at once:
 
 ```yaml
 defaults:
   - loss: composite
 ```
 
-Then manipulate via CLI:
+Example CLI overrides:
 
-* Disable FFT regularization:
+* Disable FFT term:
 
-  ```
+  ```bash
   spectramind train loss.composite.fft.enabled=false
   ```
-* Increase smoothness influence:
 
-  ```
-  spectramind train loss.composite.smoothness.weight=0.2 \
+* Increase smoothness weight & change penalty order:
+
+  ```bash
+  spectramind train \
+    loss.composite.smoothness.weight=0.2 \
     loss.composite.smoothness.overrides.order=2
   ```
 
 ---
 
-## Best Practices
+## ✅ Best Practices
 
-* **Start with GLL** (weight ≈ 1.0); add regularizers incrementally.
-* Use composite mode for rapid experimentation and ablations.
-* Keep your config usage reproducible by noting CLI overrides in your experiment logs.
-* Document new sub-configs here to maintain transparency.
-
----
-
-## Want to Contribute?
-
-* Add new physics-informed losses? Create a matching config YAML plus unit tests.
-* Enhancements to existing configs? Update the YAML and add notes/license as needed.
-* Think something’s missing? Let’s evolve it collaboratively—open an issue or PR!
+* **Start simple**: Train with GLL (`weight=1.0`) as baseline.
+* **Add regularizers gradually**: Smoothness first, then FFT, symbolic last.
+* **Use composite mode** for ablations: `spectramind ablate loss.composite.* …`.
+* **Always log overrides**: Kaggle shake-ups happen if losses aren’t reproducible.
+* **Calibrate σ with COREL**: Loss configs must align with uncertainty calibration.
 
 ---
 
-## References & Further Reading
+## 🔧 Contribution Guidelines
 
-* Clear README structure and readability ideas([Medium][1]).
-* Value of README for onboarding new developers and guiding contributions([blogs.incyclesoftware.com][2]).
+Want to add a new loss?
+
+1. Create a YAML file here with its parameters (e.g., `gravitational.yaml`).
+2. Update `composite.yaml` to expose toggles/weights.
+3. Add documentation here (purpose, usage).
+4. Write unit tests under `/tests/loss/` to validate structure.
+
+Loss configs must follow **SpectraMind reproducibility standards**:
+
+* Deterministic seeds
+* Hydra override compatibility
+* Physics-aware justification
 
 ---
 
-> “A README file should be your new team member’s best friend.”
-> — Internal documentation best-practice, emphasizing clarity and onboarding ease([blogs.incyclesoftware.com][2])
+## 📚 References
+
+* **NeurIPS 2025 Ariel Challenge metric** — GLL as primary leaderboard score
+* **Physics constraints** — smoothness, non-negativity, FFT priors
+* **Symbolic astrophysics** — molecular fingerprints, gravitational lensing
+* **Hydra/YAML composition** — modular, CLI-overridable config design
+* **CLI UX** — discoverability, progress feedback, error clarity
+
+---
+
+> “Every loss term is not just a number — it encodes physics.”
+> — SpectraMind V50 Documentation Team
 
 ```
-
