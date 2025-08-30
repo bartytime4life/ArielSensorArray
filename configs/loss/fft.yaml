@@ -1,52 +1,148 @@
+```yaml
 # configs/loss/fft.yaml
 # ==============================================================================
-# 🌊 FFT Smoothness Loss — Physics-Informed Constraint
+# 🌊 FFT Smoothness Loss — Physics-Informed Constraint (UPGRADED)
 #
 # Purpose
-#   Enforce smoothness in predicted spectra by penalizing excess high-frequency
-#   power in the Fourier domain. Ensures outputs remain physically plausible,
-#   consistent with atmospheric radiative transfer (smooth absorption bands).
+#   Penalize excess high-frequency power of μ in the Fourier domain to suppress
+#   noise-like oscillations and encourage physically plausible, smoothly varying
+#   transmission spectra (except for legitimate narrow lines).
+#
+# Highlights
+#   • Hard cutoff, tapered roll-off, or windowed weighting above a chosen frequency.
+#   • Robust options (log/charbonnier) for heavy tails and AMP stability.
+#   • Region masks (continuum/lines), SNR-aware scaling, curriculum scheduling.
+#   • Interactions with symbolic/lensing to avoid double-penalizing explained power.
+#   • Diagnostics: per-bin spectra power exports and JSON for dashboards/CI.
 #
 # Usage
-#   Compose in train.yaml:
+#   In train.yaml:
 #     defaults:
-#       - loss: gll
-#       - loss/fft: default
+#       - loss: fft
 #
-#   Override example:
-#     spectramind train loss.fft.enabled=true loss.fft.weight=0.2 \
-#       loss.fft.cutoff_freq=40
-#
-# Notes
-#   • High-frequency artifacts are unphysical (not seen in exoplanet spectra).
-#   • This loss penalizes FFT power above cutoff_freq bins.
-#   • Supports normalization and adaptive weighting.
+#   CLI examples:
+#     spectramind train loss.fft.enabled=true loss.fft.weight=0.2 loss.fft.cutoff_freq=40
+#     spectramind train loss.fft.taper.enabled=true loss.fft.taper.width=8
+#     spectramind train loss.fft.region_masking.enabled=true \
+#       loss.fft.region_masking.mask_path=calib/masks/continuum_mask.npy
 # ==============================================================================
 
 fft:
   enabled: true
 
-  # Loss weight relative to other loss terms
-  weight: 0.1
+  # Base loss weight
+  weight: 0.10
 
-  # FFT parameters
-  cutoff_freq: 50        # frequency bin cutoff (0 = DC, Nyquist ~ N/2)
-  normalize: true        # normalize FFT magnitude before penalization
-  log_scale: true        # apply log-scaling to FFT power before loss
+  # -----------------------------------------
+  # Numerics / Core Settings
+  # -----------------------------------------
+  reduction: "mean"         # mean | sum | none
+  eps: 1.0e-12              # numeric stability (log/ratios)
+  device: "auto"            # auto | cpu | cuda
+  dtype: "auto"             # auto | float32 | float64
 
-  # Adaptive penalty scaling
+  # FFT computation options
+  detrend: "none"           # none | mean | linear   (pre-FFT baseline removal)
+  window:
+    enabled: false
+    type: "hann"            # hann | hamming | blackman | tukey
+    tukey_alpha: 0.25       # only used for tukey
+  normalize: true           # normalize FFT magnitude spectrum before penalty
+  power: "mag2"             # mag2 | magnitude | db
+  log_scale: false          # if true, penalty ≈ log(1 + power) for heavy tails
+
+  # -----------------------------------------
+  # Frequency Targeting
+  # -----------------------------------------
+  # cutoff_freq is in FFT-bin units (0=DC, Nyquist≈N/2). For normalized freq, set
+  # normalized_cutoff and leave cutoff_freq null; implementation should pick one.
+  cutoff_freq: 50
+  normalized_cutoff: null    # 0..1 (1=Nyquist), overrides cutoff_freq if set
+
+  # Hard/soft shaping of penalty above cutoff
+  shape: "taper"             # hard | taper | custom
+  taper:
+    enabled: true
+    width: 8                 # bins over which penalty ramps 0→1 beyond cutoff
+    curve: "cosine"          # cosine | linear | smoothstep
+
+  # Optional custom frequency weights (post-shape)
+  custom_freq_weights:
+    enabled: false
+    path: null               # .npy/.csv shape [FREQ_BINS] or broadcastable
+
+  # -----------------------------------------
+  # Adaptive Scaling
+  # -----------------------------------------
   adaptive:
     enabled: true
-    method: "percentile"  # options: percentile | exponential | fixed
-    percentile: 95        # if percentile: penalize bins above 95th percentile
-    decay: 0.95           # if exponential: decay factor for penalty scaling
+    method: "percentile"     # percentile | exponential | fixed
+    percentile: 95           # penalty applies to power above this percentile
+    decay: 0.95              # exponential smoothing factor if method=exponential
+    fixed_scale: 1.0         # used if method=fixed
 
-  # Implementation notes
-  reduction: "mean"       # mean | sum | none (aggregation over batch/bins)
-  device: "auto"          # auto-select device for FFT (cuda if available)
+  # -----------------------------------------
+  # Region/SNR Modulation
+  # -----------------------------------------
+  region_masking:
+    enabled: false
+    mask_path: null          # .npy/.csv in [0..1] broadcastable to per-bin or freq bins
+    invert_mask: false
+    scale: 1.0
+
+  snr_weighting:
+    enabled: false
+    snr_path: null           # per-bin SNR (time/wavelength domain), broadcastable
+    exponent: 0.5            # weight multiplier ∝ (SNR^exponent), normalized to mean≈1
+
+  # -----------------------------------------
+  # Scheduling / Curriculum
+  # -----------------------------------------
+  schedule:
+    enabled: true
+    warmup:
+      steps: 1500            # ramp 0→1 over this many steps (or epochs per trainer)
+    anneal:
+      enabled: false
+      steps: 0               # if >0, decay 1→floor across these steps
+    floor: 0.0
+    cap: 1.0
+
+  # -----------------------------------------
+  # Interactions with Other Priors (optional)
+  # -----------------------------------------
+  interactions:
+    enabled: true
+    # Reduce FFT penalty in regions that a lensing model explains (to avoid double counting).
+    lensing_explained_relief:
+      enabled: true
+      factor: 0.7            # multiply penalty by this factor in explained windows
+    # Mildly upweight FFT penalty where smoothness is also active (cooperative smoothing).
+    boost_with_smoothness:
+      enabled: true
+      factor: 1.1
+
+  # -----------------------------------------
+  # Diagnostics / Export
+  # -----------------------------------------
+  diagnostics:
+    export_power_spectrum: true     # save average power spectrum for dashboard
+    export_effective_weights: false # save shaped/adaptive frequency weights used
+    save_json: true                 # persist effective loss config
+    sample_plots:
+      enabled: false
+      max_samples: 8
 
   notes: |
-    • FFT loss complements GLL by enforcing smoothness across bins.
-    • Helps prevent “ringing” or oscillations in μ predictions.
-    • Cutoff frequency should align with physical resolution (~5–10 bins).
-    • Percentile-based adaptive scaling is recommended for robustness.
+    • Pick cutoff at the instrument-physics scale (~5–10 bins from empirical ARIEL settings) to avoid
+      penalizing legitimate features while suppressing noise-like oscillations.
+    • Prefer tapered shaping to avoid ringing from hard thresholds. Cosine/ smoothstep tapers are
+      stable and AMP-friendly.
+    • Use log_scale for robustness to outliers; combine with normalize=true for consistent scaling.
+    • Region masks can relax FFT penalties over narrow molecular lines while enforcing smoothness
+      in continuum; SNR weighting avoids over-penalizing low-confidence bins.
+    • When using lensing priors, enable lensing_explained_relief to prevent double penalization of
+      physically consistent high-frequency structure.
+    • Keep weight moderate and use schedule warmup to stabilize early training without suppressing
+      learnable signal.
+```
