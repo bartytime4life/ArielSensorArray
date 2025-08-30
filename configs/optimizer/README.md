@@ -4,26 +4,29 @@ This folder contains **Hydra-composable** YAML configs for training optimizers u
 Each config is drop-in selectable from `train.yaml` and fully overrideable from the CLI.
 
 > TL;DR
->
-> * **Recommended baseline:** `adamw.yaml`
-> * Alternatives for ablations/diagnostics: `adam.yaml`, `sgd.yaml`
-> * All optimizers support schedulers, AMP/mixed-precision, and optional Lookahead wrapping.
+> • **Recommended baseline:** `adamw.yaml`
+> • Alternatives for ablations/diagnostics: `adam.yaml`, `sgd.yaml`
+> • All optimizers support schedulers, AMP/mixed-precision, and optional Lookahead wrapping.
 
 ---
 
 ## Available optimizers
 
-| File         | Optimizer           | Default LR | Weight Decay | Notes                                                         |
-| ------------ | ------------------- | ---------: | -----------: | ------------------------------------------------------------- |
-| `adamw.yaml` | `torch.optim.AdamW` |     `3e-4` |       `1e-2` | **Recommended**. Decoupled weight decay; best generalization. |
-| `adam.yaml`  | `torch.optim.Adam`  |     `3e-4` |       `1e-2` | Classic Adam. Use if you specifically want coupled L2.        |
-| `sgd.yaml`   | `torch.optim.SGD`   |     `1e-2` |        `0.0` | Momentum + Nesterov. Good for ablations/stability checks.     |
+| File         | Optimizer           | Default LR | Weight Decay | Notes                                                       |
+| ------------ | ------------------- | ---------: | -----------: | ----------------------------------------------------------- |
+| `adamw.yaml` | `torch.optim.AdamW` |     `3e-4` |       `1e-2` | **Recommended.** Decoupled weight decay; strongest default. |
+| `adam.yaml`  | `torch.optim.Adam`  |     `3e-4` |       `1e-2` | Classic Adam. Use if you specifically want coupled L2.      |
+| `sgd.yaml`   | `torch.optim.SGD`   |     `1e-2` |        `0.0` | Momentum + Nesterov. Great for ablations/stability checks.  |
 
 All three configs include:
 
-* `scheduler_hook`: enable schedulers configured in `configs/train.yaml` (e.g., cosine/onecycle/none).
-* `precision_safe`: compatible with fp32/fp16/bf16 (AMP).
+* `scheduler_hook`: enable schedulers configured in `configs/train.yaml` (e.g., cosine / onecycle / none).
+* `precision_safe`: compatible with fp32 / fp16 / bf16 (AMP).
 * Optional **Lookahead** wrapper: `lookahead.enabled=true` (with `alpha`, `k`).
+* JSON export + CLI logging of hyper-params for reproducibility (`export_json`, `log_config`).
+
+> **AdamW vs Adam.** Prefer AdamW for generalization and leaderboard safety; Adam is provided for parity tests and legacy comparisons.
+> **SGD.** Expect slower convergence but often smoother/lower-variance curves—useful for stress-testing stability and scheduler behavior.
 
 ---
 
@@ -61,7 +64,7 @@ spectramind train optimizer=sgd
 
 ## Common CLI overrides
 
-Hydra lets you override any leaf in the config. Examples:
+Hydra lets you override any leaf in the config:
 
 ```bash
 # Tune AdamW
@@ -73,10 +76,11 @@ spectramind train optimizer=adamw optimizer.lookahead.enabled=true \
   optimizer.lookahead.alpha=0.5 optimizer.lookahead.k=6
 
 # SGD ablation with cosine schedule (scheduler set in train.yaml)
-spectramind train optimizer=sgd optimizer.lr=1e-2 optimizer.momentum=0.9 optimizer.nesterov=true
+spectramind train optimizer=sgd \
+  optimizer.lr=1e-2 optimizer.momentum=0.9 optimizer.nesterov=true
 ```
 
-> Tip: You can combine these with your scheduler options from `configs/train.yaml` (e.g., `scheduler.name=cosine`, `scheduler.warmup_steps=500`, `scheduler.min_lr=1e-6`).
+> Tip: Combine with your scheduler options from `configs/train.yaml` (e.g., `scheduler.name=cosine`, `scheduler.warmup_steps=500`, `scheduler.min_lr=1e-6`).
 
 ---
 
@@ -108,25 +112,25 @@ Hydra will create separate runs per combo (with isolated output dirs). Logs and 
 
 ## Tuning recipes (practical defaults)
 
-* **AdamW (recommended)**
+**AdamW (recommended)**
 
-  * Start: `lr=3e-4`, `weight_decay=1e-2`, `betas=[0.9, 0.999]`, Cosine schedule + warmup.
-  * If overfitting: raise `weight_decay` to `2e-2`.
-  * If underfitting early: try `lr=5e-4` (or longer warmup).
+* Start: `lr=3e-4`, `weight_decay=1e-2`, `betas=[0.9, 0.999]`, Cosine + warmup.
+* If overfitting: raise `weight_decay` to `2e-2`.
+* If underfitting early: try `lr=5e-4` (or longer warmup).
 
-* **Adam**
+**Adam**
 
-  * Start: `lr=3e-4`, `weight_decay=1e-2`.
-  * Consider switching to AdamW unless you specifically want Adam’s coupled L2 behavior.
+* Start: `lr=3e-4`, `weight_decay=1e-2`.
+* Consider switching to AdamW unless you specifically want Adam’s coupled L2 behavior.
 
-* **SGD (with Nesterov)**
+**SGD (with Nesterov)**
 
-  * Start: `lr=1e-2`, `momentum=0.9`, `nesterov=true`, Cosine/OneCycle.
-  * Expect slower convergence; good for stability/ablations.
+* Start: `lr=1e-2`, `momentum=0.9`, `nesterov=true`, Cosine/OneCycle.
+* Expect slower convergence; good for stability/ablations.
 
-* **Lookahead** (optional wrapper for any of the above)
+**Lookahead** (optional for any optimizer)
 
-  * Enable for stability in exploratory runs: `lookahead.enabled=true`, `alpha=0.5`, `k=6`.
+* Enable for stability in exploratory runs: `lookahead.enabled=true`, `alpha=0.5`, `k=6`.
 
 ---
 
@@ -150,7 +154,7 @@ This ensures your runs are transparent and reproducible alongside the full Hydra
 └─ sgd.yaml      # torch.optim.SGD
 ```
 
-> Future extension: we can add a dedicated `lookahead.yaml` wrapper to compose on top of any base optimizer (e.g., `optimizer=lookahead base=adamw`). For now, each optimizer supports `lookahead.*` inline.
+> **Future extension:** we can add a dedicated `lookahead.yaml` wrapper to compose on top of any base optimizer (e.g., `optimizer=lookahead base=adamw`). For now, each optimizer supports `lookahead.*` inline.
 
 ---
 
@@ -174,11 +178,11 @@ A: `logs/v50_debug_log.md` and `outputs/diagnostics/optimizer_*.json`, together 
 
 1. Add a new YAML under `/configs/optimizer/<name>.yaml`.
 2. Include keys: `name`, `type`, primary hyperparams, `scheduler_hook`, `precision_safe`, `log_config`, and `export_json`.
-3. Update this README with a short row in the table and tuning recipe.
+3. Update this README with a short row in the table and a tuning recipe.
 4. Verify with a smoke run:
 
-   ```bash
-   spectramind train optimizer=<name> training.epochs=1
-   ```
+```bash
+spectramind train optimizer=<name> training.epochs=1
+```
 
 Happy training 🚀
