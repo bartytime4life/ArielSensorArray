@@ -1,0 +1,65 @@
+# configs/loss/nonnegativity.yaml
+# ==============================================================================
+# 🚧 Non-Negativity Loss — Physics Constraint
+#
+# Purpose
+#   Penalizes negative μ predictions to enforce the physical constraint that
+#   transmission/flux cannot be negative. Keeps the model in a physically
+#   plausible regime while coexisting with primary losses (e.g., GLL).
+#
+# Penalty Forms (select one via `mode`)
+#   • hinge     : λ * Σ ReLU(−μ)^p
+#   • softplus  : λ * Σ softplus(−μ / τ)^p           (smooth barrier, τ = temperature)
+#   • exp       : λ * Σ (exp(−μ / τ) − 1)            (strong barrier near boundary)
+#
+# Usage
+#   In train.yaml:
+#     defaults:
+#       - loss: nonnegativity
+#
+#   CLI override example:
+#     spectramind train loss.nonnegativity.lambda=0.05 loss.nonnegativity.mode=softplus
+# ==============================================================================
+
+nonnegativity:
+  enabled: true
+
+  # Overall strength of the penalty
+  lambda: 0.01
+
+  # Penalty type: hinge | softplus | exp
+  mode: "hinge"
+
+  # Power/exponent for hinge/softplus variants (typically 1 or 2)
+  p: 2
+
+  # Temperature for smooth barriers (softplus/exp). Smaller -> harsher near 0.
+  temperature: 0.05
+
+  # Small epsilon to keep grads/stability near 0
+  eps: 1.0e-8
+
+  # Optional per-bin weighting
+  weighting:
+    scheme: "uniform"        # uniform | custom
+    custom_weights_path: null
+    custom_weights_inline: []  # e.g., [1.0, 0.8, 0.8, ...]
+
+  # Region masks (e.g., relax penalty in known artifact bins if needed)
+  region_masking:
+    enabled: false
+    mask_path: null          # .npy/.csv mask in [0,1] per bin (1 applies full penalty)
+
+  # Normalization across bins/batch
+  reduction: "mean"          # mean | sum | none
+  normalize_by_bins: true
+
+  # Diagnostics
+  log_per_bin: true
+  export_heatmap: true       # per-bin negative mass/penalty heatmap
+  save_json: true            # write nonnegativity config & summary stats
+
+  notes: |
+    • Enforces μ ≥ 0 without hard clamping during training, preserving gradients.
+    • `hinge` with p=2 is a good default; `softplus` provides smoother gradients near 0.
+    • Consider slightly stronger λ early in training, then anneal as calibration stabilizes.
