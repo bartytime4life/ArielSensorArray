@@ -15,57 +15,84 @@
 #       - trainer: kaggle_safe
 #
 #   Example override:
-#     spectramind train trainer.kaggle_safe.max_epochs=40
+#     spectramind train trainer=kaggle_safe trainer.max_epochs=40
 #
 # Notes
 #   • Designed for leaderboard submissions and CI smoke runs.
-#   • For deep research or ablations, prefer trainer/defaults.yaml.
+#   • For deep research or ablations, prefer trainer=defaults.
 # ==============================================================================
 
 trainer:
-  # Backend
-  device: "gpu"              # "cpu" | "gpu" (Kaggle runtime provides ~2 GPUs)
-  accelerator: "auto"        # let PyTorch Lightning detect GPUs
-  strategy: "ddp_find_unused" # distributed strategy safe for 2 GPUs
-  precision: 16              # mixed precision AMP (saves memory, speeds up)
+  # ---------------------------------------------------------------------------
+  # Backend / Devices
+  # ---------------------------------------------------------------------------
+  accelerator: "auto"            # let Lightning detect GPU
+  devices: 1                     # Kaggle typically exposes a single GPU per session
+  strategy: "ddp_find_unused_parameters_false"
+  precision: 16                  # AMP mixed precision (saves memory, speeds up)
 
-  # Runtime guardrails
-  max_epochs: 30             # default epoch budget for Kaggle
-  max_time: "8:30:00"        # hard wall < 9h (H:M:S)
-  accumulate_grad_batches: 2 # gradient accumulation for batch safety
-  gradient_clip_val: 1.0     # prevent exploding gradients
+  # ---------------------------------------------------------------------------
+  # Runtime Guardrails
+  # ---------------------------------------------------------------------------
+  max_epochs: 30                 # default epoch budget for ≤9h
+  max_time: "8:30:00"            # safety wall (< 9h)
+  accumulate_grad_batches: 2     # batch safety on limited VRAM
+  gradient_clip_val: 1.0         # prevent exploding gradients
 
-  # Checkpointing (minimize storage/time overhead)
+  # ---------------------------------------------------------------------------
+  # Checkpointing (throttled I/O)
+  # ---------------------------------------------------------------------------
+  enable_checkpointing: true
   checkpoint:
     enabled: true
     dirpath: "checkpoints/"
     save_top_k: 1
-    monitor: "val/gll"       # monitored metric for "best" model
-    mode: "min"
-    save_last: true
-    every_n_epochs: 5        # throttle checkpoint writes
-
-  # Early stopping for runtime safety
-  early_stopping:
-    enabled: true
-    patience: 5
     monitor: "val/gll"
     mode: "min"
+    save_last: true
+    every_n_epochs: 5            # reduce storage/time overhead
 
-  # Logging
+  # ---------------------------------------------------------------------------
+  # Early Stopping (runtime safety)
+  # ---------------------------------------------------------------------------
+  early_stopping:
+    enabled: true
+    monitor: "val/gll"
+    patience: 5
+    mode: "min"
+
+  # ---------------------------------------------------------------------------
+  # Logging (Kaggle-friendly)
+  # ---------------------------------------------------------------------------
   logger:
-    type: "tensorboard"      # minimal Kaggle-friendly logger
+    type: "tensorboard"          # lightweight and familiar in Kaggle
     save_dir: "logs/"
     name: "kaggle_safe"
 
-  # Determinism & reproducibility
+  # ---------------------------------------------------------------------------
+  # Determinism & Reproducibility
+  # ---------------------------------------------------------------------------
   deterministic: true
   benchmark: false
   seed: 42
 
-  # Profiling (disabled by default to save time)
-  profiler: null
+  # ---------------------------------------------------------------------------
+  # Dataloader Settings (Kaggle-safe defaults)
+  # ---------------------------------------------------------------------------
+  dataloader:
+    num_workers: 2               # conservative on P100/T4 class sessions
+    prefetch_factor: 2
+    pin_memory: true
+    persistent_workers: false
 
+  # ---------------------------------------------------------------------------
+  # Profiling
+  # ---------------------------------------------------------------------------
+  profiler: null                 # disabled by default to save time
+
+  # ---------------------------------------------------------------------------
+  # Notes
+  # ---------------------------------------------------------------------------
   notes: |
     Kaggle-safe trainer ensures jobs complete under 9h with P100/T4 GPUs.
     • AMP precision 16 saves memory and accelerates training.
@@ -73,3 +100,21 @@ trainer:
     • Checkpoints throttled to reduce storage overhead.
     • Early stopping prevents wasted epochs on plateaus.
     • Determinism enabled for full reproducibility.
+
+# Optional dataset limiting knobs (honored by your DataModule, if implemented)
+limits:
+  train_frac: 1.0               # e.g., 0.5 to halve training set for quick iteration
+  val_frac: 1.0
+  max_train_batches: null       # set int to cap batches (e.g., 300)
+  max_val_batches: null
+
+# Hydra output dirs (helpful in notebook environments)
+hydra:
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}_kaggle_safe
+  sweep:
+    dir: multiruns/${now:%Y-%m-%d_%H-%M-%S}_kaggle_safe
+    subdir: ${hydra.job.num}
+  job_logging:
+    root:
+      level: INFO
