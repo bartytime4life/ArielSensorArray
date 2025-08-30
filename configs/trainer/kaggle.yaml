@@ -1,0 +1,78 @@
+# configs/trainer/kaggle.yaml
+# ==============================================================================
+# 🏁 Trainer — Kaggle-Safe Profile (≤9h, AMP, low I/O)
+#
+# Purpose
+#   Quick, resource-aware runs inside Kaggle Notebooks/GPUs with strict time/IO guardrails.
+#
+# Usage
+#   spectramind train trainer=kaggle
+#
+# Notes
+#   • Conservative dataloader workers; AMP enabled.
+#   • Shorter epochs and optional dataset limiting for smoke/iteration.
+#   • Adjust limits via CLI:
+#       spectramind train trainer=kaggle +limits.train_frac=0.5 +limits.val_frac=1.0
+# ==============================================================================
+
+defaults:
+  - optimizer: adamw
+  - loss: composite
+  - logging: rich
+  - _self_
+
+trainer:
+  max_epochs: 12                  # keep modest for ≤9h
+  min_epochs: 3
+  gradient_clip_val: 1.0
+  accumulate_grad_batches: 1
+  deterministic: true
+  benchmark: false
+  enable_checkpointing: true
+  log_every_n_steps: 25
+  check_val_every_n_epoch: 1
+  precision: 16
+  accelerator: "gpu"
+  devices: 1
+  strategy: "ddp_find_unused_parameters_false"
+  detect_anomaly: false
+  fast_dev_run: false             # set true for instant sanity test
+
+# Optional dataset limiting knobs (read by the datamodule)
+limits:
+  train_frac: 1.0                 # e.g., 0.25 for quick iteration
+  val_frac: 1.0
+  max_train_batches: null         # or set integer to cap batches
+  max_val_batches: null
+
+callbacks:
+  early_stopping:
+    monitor: "val/gll"
+    patience: 4
+    mode: "min"
+  model_checkpoint:
+    monitor: "val/gll"
+    mode: "min"
+    save_top_k: 3
+    save_last: true
+    filename: "epoch{epoch}-valgll{val/gll:.4f}"
+
+seed: 42
+cudnn_deterministic: true
+cudnn_benchmark: false
+
+runtime:
+  kaggle_mode: true               # enable Kaggle guards (IO/quotas)
+  max_runtime_hours: 9
+  num_workers: 2                  # Kaggle P100/limited cores:contentReference[oaicite:0]{index=0}
+  pin_memory: true
+
+hydra:
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}_kaggle
+  sweep:
+    dir: multiruns/${now:%Y-%m-%d_%H-%M-%S}_kaggle
+    subdir: ${hydra.job.num}
+  job_logging:
+    root:
+      level: INFO
