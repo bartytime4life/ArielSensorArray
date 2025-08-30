@@ -1,69 +1,297 @@
 # ======================================================================
 # configs/data/debug.yaml — SpectraMind V50 Debug / CI Smoke Dataset
 # ======================================================================
-# Purpose:
+# Purpose
 #   Tiny, deterministic slice for CI/self-test and local smoke runs.
-#   Validates end-to-end pipeline (calibration → dataload → train step)
-#   in ~seconds without heavy I/O or GPU demand.
+#   Validates end-to-end pipeline (calibration → dataload → 1 training step)
+#   in seconds without heavy I/O or GPU demand.
 #
-# Usage:
+# Usage
 #   spectramind train    --config-name train data=debug training.epochs=1
 #   spectramind diagnose --config-name train data=debug diagnostics.fft=false
+#
+# Notes
+#   • Keep this config hermetic: no internet, no remote pulls, tiny files only.
+#   • Shapes & dtypes align with nominal to exercise the same codepaths.
+#   • Meant to pair with toy/debug artifacts (tracked via DVC or generated).
 # ======================================================================
 
+# ----------------------------------------------------------------------
+# Hydra defaults (quiet logs for CI)
+# ----------------------------------------------------------------------
+defaults:
+  - override hydra/job_logging: default
+  - override hydra/hydra_logging: default
+
+# ----------------------------------------------------------------------
+# Dataset metadata & debug paths
+# ----------------------------------------------------------------------
 dataset:
   name: "Ariel_Debug_Slice"
-  provider: "local"                       # Use a tiny local/debug subset
-  input_dir: "data/debug"                 # e.g., tracked via DVC (tiny files)
-  output_dir: "outputs/debug"             # Writable artifacts for smoke runs
+  provider: "local"                          # tiny local/debug subset
+  input_dir: "data/debug"                    # e.g., DVC-tracked tiny files
+  output_dir: "outputs/debug"                # writable artifacts for smoke runs
   cache_dir: "temp/debug_cache"
-
-  # Minimal slice (e.g., 5 planets × few windows/bins) for speed
+  version: "1.0-debug"
+  source: "debug-slice"
+  # Tiny slice for speed (e.g., 5 planets × full 283 bins)
   num_planets: 5
-  num_bins: 283                           # Keep model heads consistent
-  train_file: "train_debug.pkl"
-  val_file:   "val_debug.pkl"
-  test_file:  "test_debug.pkl"
+  num_bins: 283
 
-  # Loader settings for deterministic CI
+paths:
+  # Packed debug tensors (choose any one format present)
+  train_file: "${dataset.input_dir}/train_debug.pkl"
+  val_file:   "${dataset.input_dir}/val_debug.pkl"
+  test_file:  "${dataset.input_dir}/test_debug.pkl"
+
+  # Optional raw debug arrays (if you prefer .npy for smoke)
+  fgs1_train: "${dataset.input_dir}/fgs1_train_debug.npy"  # (N, 32, 32)
+  airs_train: "${dataset.input_dir}/airs_train_debug.npy"  # (N, 32, 356)
+  labels:     "${dataset.input_dir}/labels_debug.csv"
+  fgs1_test:  "${dataset.input_dir}/fgs1_test_debug.npy"
+  airs_test:  "${dataset.input_dir}/airs_test_debug.npy"
+
+  artifacts_dir: "${dataset.output_dir}/diagnostics"
+  split_indices_dir: "${dataset.output_dir}/splits"
+  tensor_cache_dir: "${dataset.cache_dir}/tensors"
+  calibrated_dir: "${dataset.output_dir}/calibrated"
+
+io:
+  allow_pickle: true
+  allow_npz: true
+  memmap: false                # keep off for tiny debug files
+  strict_endianness: false
+  fail_on_missing: true
+  internet_access: false
+  external_urls: []
+
+# ----------------------------------------------------------------------
+# Interface contract (kept identical to nominal to hit same codepaths)
+# ----------------------------------------------------------------------
+interface:
+  num_bins: ${dataset.num_bins}
+  output_dir: "${hydra.run.dir}"
+
+# ----------------------------------------------------------------------
+# Schema (light but fail-fast)
+# ----------------------------------------------------------------------
+schema:
+  fgs1:
+    expected_rank: 3
+    expected_shape: [-1, 32, 32]
+    dtype: "float32"
+    allow_nan: false
+    allow_inf: false
+  airs:
+    expected_rank: 3
+    expected_shape: [-1, 32, 356]      # remapped to 283 by loader if needed
+    dtype: "float32"
+    allow_nan: false
+    allow_inf: false
+  labels:
+    required_columns:
+      - "planet_id"
+      - "split"
+      - "target_mu[0:283]"
+      - "target_sigma[0:283]"
+    allow_missing_targets: true         # allow test-only smoke
+
+instrument:
+  bin_remap:
+    enabled: true
+    map_path: "${dataset.input_dir}/binmap_356_to_283_debug.npy"
+  time_grid:
+    enforce_len: 32
+    resample_missing: "linear"
+    max_gap_frac: 0.25
+
+# ----------------------------------------------------------------------
+# Calibration (lean; OK to toggle steps off for raw-less smoke)
+# ----------------------------------------------------------------------
+calibration:
+  enabled: true
+  steps:
+    - "adc_correction"
+    - "nonlinearity_correction"
+    - "dark_subtraction"
+    - "flat_fielding"
+    - "correlated_double_sampling"
+    - "photometric_extraction"
+    - "trace_normalization"
+    - "phase_alignment"
+  save_intermediate: false
+  save_preview_png: true
+  preview_stride: 32
+  output_dir: "${paths.calibrated_dir}"
+  method:
+    adc_correction:           { enabled: true, bit_depth: 16 }
+    nonlinearity_correction:  { enabled: true, saturation_dn: 65535 }
+    dark_subtraction:         { enabled: true }
+    flat_fielding:            { enabled: true, epsilon: 1.0e-6 }
+    correlated_double_sampling:
+      enabled: true
+      strategy: "nearest"
+      noise_threshold_dn: 50
+    photometric_extraction:
+      enabled: true
+      aperture: "circular"
+      radius_px: 6
+      bkg_annulus_px: [8, 12]
+      method: "sum"
+    trace_normalization:
+      enabled: true
+      reference_window: [0.15, 0.35]
+      epsilon: 1.0e-6
+    phase_alignment:
+      enabled: true
+      method: "xcorr"
+      max_shift: 3
+
+# ----------------------------------------------------------------------
+# Preprocessing (minimal & deterministic)
+# ----------------------------------------------------------------------
+preprocessing:
+  normalize_flux: true
+  standardize_time: true
+  clip_outliers: true
+  outlier_sigma: 6.0
+  detrend_method: "polynomial"          # "polynomial" | "savgol" | "none"
+  savgol:
+    window_length: 7
+    polyorder: 2
+    mode: "interp"
+  spectral_smoothing: false
+  resample_time:
+    enabled: false
+    target_len: 32
+    method: "linear"
+
+# ----------------------------------------------------------------------
+# Symbolic hooks (keep tiny & deterministic)
+# ----------------------------------------------------------------------
+symbolic:
+  enforce_nonnegativity: true
+  fft_prior:
+    enabled: false
+  molecular_masking:
+    enabled: true
+    molecules: ["H2O", "CO2", "CH4"]
+    apply_in_preprocessing: true
+
+# ----------------------------------------------------------------------
+# Augmentation (OFF for CI stability)
+# ----------------------------------------------------------------------
+augmentation:
+  jitter_injection: false
+  jitter:           { enabled: false }
+  noise_injection:  { enabled: false }
+  dropout:          { enabled: false }
+  mask:
+    enabled: false
+    scheme: "block"
+    fraction: 0.0
+
+# ----------------------------------------------------------------------
+# Splits (deterministic small holdout or rely on *_debug.pkl)
+# ----------------------------------------------------------------------
+splits:
+  strategy: "planet_holdout"
+  fractions: { train: 0.80, val: 0.20, test: 0.00 }
+  seed: 42
+  export:
+    enabled: true
+    dir: "${paths.split_indices_dir}"
+    filenames: { train: "train_idx.npy", val: "val_idx.npy", test: "test_idx.npy" }
+  epsilon: 1.0e-6
+
+# ----------------------------------------------------------------------
+# Loader (deterministic CI)
+# ----------------------------------------------------------------------
+loader:
   batch_size: 2
-  num_workers: 0                          # No multiprocessing for stability
+  num_workers: 0                       # no multiprocessing → deterministic
   pin_memory: false
   persistent_workers: false
+  prefetch_factor: 2
+  drop_last: false
+  shuffle_train: false                 # keep steady order for snapshots
+  shuffle_val: false
+  shuffle_test: false
 
-  # Optional “fast-dev” caps if your trainer honors them via interpolation
+# Optional “fast-dev” caps if your trainer honors them via interpolation
+dev_limits:
   limit_train_batches: 4
   limit_val_batches:   2
   limit_test_batches:  2
 
-preprocessing:
-  normalize_flux: true
-  jitter_injection: false                 # Keep off in CI to reduce variance
-  phase_alignment: true
-  detrend_method: "polynomial"
-  spectral_smoothing: false
+# ----------------------------------------------------------------------
+# Validation gates (quick but strict)
+# ----------------------------------------------------------------------
+validate:
+  enabled: true
+  fail_fast: true
+  sample_size_preview: 2
+  checks:
+    - "paths_exist"
+    - "schema_match"
+    - "no_nan_inf"
+    - "bins_match_interface"
+    - "bin_remap_ok"
 
-calibration:
-  adc_correction: true
-  dark_subtraction: true
-  flat_field: true
-  nonlinearity: true
-  cds_correction: true
-  phase_normalization: true
+# ----------------------------------------------------------------------
+# Diagnostics (very light)
+# ----------------------------------------------------------------------
+diagnostics:
+  enabled: true
+  output_dir: "${paths.artifacts_dir}"
+  save_plots: true
+  fft_analysis: false
+  zscore_analysis: true
+  symbolic_overlay: true
+  shap_overlay: false
+  per_step_previews: true
+  artifacts:
+    stats_json: "${diagnostics.output_dir}/stats.json"
+    preview_png: "${diagnostics.output_dir}/preview.png"
+    z_png: "${diagnostics.output_dir}/zscore_preview.png"
+    sym_png: "${diagnostics.output_dir}/symbolic_overlay.png"
 
-validation:
-  split_strategy: "planet_holdout"
-  val_fraction: 0.2
-  random_seed: 42
-  deterministic: true
+# ----------------------------------------------------------------------
+# Runtime guardrails (debug/CI)
+# ----------------------------------------------------------------------
+runtime:
+  ci_safe: true
+  time_budget_sec: 60           # expected walltime budget for smoke
+  write_intermediates: false
+  reduce_heavy_ops: true
 
+# ----------------------------------------------------------------------
+# Consistency & safety
+# ----------------------------------------------------------------------
+consistency_guard:
+  check_paths_writable: true
+  check_gpu_memory: false       # CPU-mode friendly for CI
+  min_gpu_mem_gb: 0
+  warn_only: false
+
+safety:
+  max_abs_mu: 10.0
+  min_sigma: 1.0e-8
+  max_sigma: 1.0
+  action_on_violation: "fail"
+
+# ----------------------------------------------------------------------
+# Logging / manifests
+# ----------------------------------------------------------------------
 logging:
   enable: true
   save_dir: "${dataset.output_dir}/logs"
   format: "jsonl"
   include_config_hash: true
 
-# Hydra-managed outputs keep runs isolated and reproducible
+# ----------------------------------------------------------------------
+# Hydra-managed outputs (isolated runs)
+# ----------------------------------------------------------------------
 hydra:
   run:
     dir: ${dataset.output_dir}/runs/${now:%Y-%m-%d_%H-%M-%S}
