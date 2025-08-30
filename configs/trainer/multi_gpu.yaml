@@ -3,9 +3,10 @@
 # 🧩 Multi-GPU (Single Node) Trainer — SpectraMind V50
 #
 # Purpose
-#   Efficient single-node data/model parallel training with PyTorch Lightning DDP.
-#   • Auto-detect GPUs (or override via CLI: trainer.devices=4)
-#   • AMP for throughput; safe gradient clipping; resumable checkpoints
+#   Efficient single-node distributed training with PyTorch Lightning DDP.
+#   • Auto-detect GPUs (or override: trainer.devices=4)
+#   • AMP/bf16 for throughput; safe gradient clipping; resumable checkpoints
+#   • Clean Hydra interpolation to compose with local/* profiles
 #
 # Usage
 #   spectramind train trainer=multi_gpu
@@ -19,43 +20,46 @@ trainer:
   # Hardware / Strategy
   # ---------------------------------------------------------------------------
   accelerator: "gpu"
-  devices: "auto"                 # override with an int (e.g., 2, 4, 8)
+  devices: ${local.devices, "auto"}   # int (e.g., 2,4,8) or "auto"
   num_nodes: 1
   strategy:
     class_path: lightning.pytorch.strategies.DDPStrategy
     init_args:
       find_unused_parameters: false
-      static_graph: true          # set false if your graph changes per step
+      static_graph: true               # set false if your graph changes per step
       gradient_as_bucket_view: true
-      bucket_cap_mb: 25           # tune per model (25–50 MB typical)
+      bucket_cap_mb: 50                # 25–50 MB typical; tune per model
       broadcast_buffers: false
       process_group_backend: "nccl"
-      timeout: 1800               # seconds; avoid hanging on init
+      timeout: 1800                    # seconds; avoid hanging on init
 
   # ---------------------------------------------------------------------------
   # Precision & Performance
   # ---------------------------------------------------------------------------
-  precision: 16                   # AMP mixed precision; use "bf16-mixed" on Hopper/Ampere if supported
-  deterministic: true
-  benchmark: false                # set true only if shapes are fully static
-  sync_batchnorm: true            # keep BN stats consistent across ranks
-  replace_sampler_ddp: true       # ensure DistributedSampler is used
+  # Prefer bf16 on Ampere/Hopper; fallback to 16 if not set in local/*
+  precision: ${local.precision, 16}
+  deterministic: ${local.deterministic, true}
+  benchmark: false                     # set true only if shapes are fully static
+  sync_batchnorm: true                 # keep BN stats consistent across ranks
+  replace_sampler_ddp: true            # ensure DistributedSampler is used
 
   # ---------------------------------------------------------------------------
   # Runtime
   # ---------------------------------------------------------------------------
-  max_epochs: 40
-  max_time: null                  # e.g., "12:00:00" (H:MM:SS) if desired
-  accumulate_grad_batches: 1
-  gradient_clip_val: 1.0
-  log_every_n_steps: 50
+  max_epochs: ${local.max_epochs, 40}
+  max_time: null                       # e.g., "12:00:00" (H:MM:SS)
+  accumulate_grad_batches: ${local.accumulate_grad_batches, 1}
+  gradient_clip_val: ${local.grad_clip_norm, 1.0}
+  log_every_n_steps: ${local.log_every_n_steps, 50}
+  # ckpt_path is provided to Trainer.fit(), kept here to allow Hydra wiring
+  ckpt_path: null
 
   # ---------------------------------------------------------------------------
-  # Checkpointing
+  # Checkpointing (ModelCheckpoint callback)
   # ---------------------------------------------------------------------------
   checkpoint:
     enabled: true
-    dirpath: "checkpoints/"
+    dirpath: "${local.output_dir, outputs}/checkpoints/"
     save_top_k: 2
     monitor: "val/gll"
     mode: "min"
@@ -64,7 +68,7 @@ trainer:
     filename: "epoch{epoch}-valgll{val/gll:.5f}"
 
   # ---------------------------------------------------------------------------
-  # Early Stopping
+  # Early Stopping (EarlyStopping callback)
   # ---------------------------------------------------------------------------
   early_stopping:
     enabled: true
@@ -76,8 +80,8 @@ trainer:
   # Logging
   # ---------------------------------------------------------------------------
   logger:
-    type: "tensorboard"
-    save_dir: "logs/"
+    type: "tensorboard"                # can be swapped via logger group
+    save_dir: "${local.log_dir, logs}/"
     name: "multi_gpu"
     version: "run_${now:%Y-%m-%d_%H-%M-%S}"
 
@@ -85,22 +89,22 @@ trainer:
   # DataLoader guidance for single-node multi-GPU
   # ---------------------------------------------------------------------------
   dataloader:
-    num_workers: 8
+    num_workers: ${local.num_workers, 8}
     prefetch_factor: 2
-    pin_memory: true
-    persistent_workers: true
+    pin_memory: ${local.pin_memory, true}
+    persistent_workers: ${local.persistent_workers, true}
 
   # ---------------------------------------------------------------------------
   # Seeds
   # ---------------------------------------------------------------------------
-  seed: 42
+  seed: ${local.seed, 42}
 
   # ---------------------------------------------------------------------------
   # Notes
   # ---------------------------------------------------------------------------
   notes: |
     Single-node DDP optimized for throughput with stable defaults:
-    • AMP(16) + gradient clipping for numerical safety.
+    • AMP/bf16 + gradient clipping for numerical safety.
     • DDP(find_unused_parameters=false) to reduce overhead.
     • static_graph=true reduces DDP sync overhead for stable graphs.
     • sync_batchnorm keeps BN statistics consistent across ranks.
