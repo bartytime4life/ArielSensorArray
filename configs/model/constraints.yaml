@@ -1,0 +1,86 @@
+# configs/model/constraints.yaml
+# ==============================================================================
+# ⚖️ Physics & Symbolic Constraints — SpectraMind V50
+#
+# Purpose
+#   Define auxiliary losses, post-processing hooks, and diagnostics that ensure
+#   model outputs are physically plausible, scientifically valid, and leaderboard-safe.
+#
+# Usage
+#   Composed in train.yaml via:
+#     defaults:
+#       - model/constraints: constraints
+#
+#   Override examples:
+#     spectramind train model/constraints=strict
+#     spectramind train model/constraints=lite constraints.smoothness_weight=0.0
+#
+# Profiles
+#   • lite     → minimal penalties, only nonnegativity enforced
+#   • default  → balanced penalties for Kaggle-safe runs
+#   • strict   → heavier penalties, used for diagnostics/science mode
+# ==============================================================================
+
+constraints:
+  # --------------------------------------------------------------------------
+  # Core physical constraints
+  # --------------------------------------------------------------------------
+  enforce_nonnegativity: true                # clamp μ >= 0
+  smoothness_weight: 0.010                   # L2(Δμ) along wavelength
+  fft_smoothness_weight: 0.002               # FFT high-frequency suppression
+  asymmetry_weight: 0.001                    # penalize unphysical asymmetry
+
+  # --------------------------------------------------------------------------
+  # Gravitational lensing and region-specific penalties
+  # --------------------------------------------------------------------------
+  lensing:
+    enabled: true
+    bins: [120, 160]
+    weight: 0.003
+
+  # --------------------------------------------------------------------------
+  # Molecular fingerprints (physics priors)
+  # --------------------------------------------------------------------------
+  molecular_fingerprint:
+    enabled: true
+    molecules: ["H2O", "CO2", "CH4"]
+    match_weight: 0.005                      # encourage peaks at known bands
+    false_positive_weight: 0.002             # penalize lines outside known bands
+
+  # --------------------------------------------------------------------------
+  # Calibration guards
+  # --------------------------------------------------------------------------
+  calibration:
+    nonnegativity_epsilon: 1.0e-8
+    max_clip: 5.0                            # safety cap for extreme μ
+
+  # --------------------------------------------------------------------------
+  # Advanced physics hooks
+  # --------------------------------------------------------------------------
+  corel_uncertainty:
+    enabled: true
+    weight: 0.005                            # COREL-aware calibration penalty
+
+  cycle_consistency:
+    enabled: false                           # forward–backward simulator consistency
+    weight: 0.002
+
+  # --------------------------------------------------------------------------
+  # Diagnostics & logging
+  # --------------------------------------------------------------------------
+  diagnostics:
+    log_violation_maps: true
+    save_fft_plots: true
+    export_json: "outputs/diagnostics/constraint_violations.json"
+
+  # --------------------------------------------------------------------------
+  # Notes
+  # --------------------------------------------------------------------------
+  notes: |
+    • All penalties are auxiliary; main task remains Gaussian log-likelihood (GLL).
+    • Keep weights in 1e-3–1e-2 range for balance.
+    • Nonnegativity is enforced both as clamp (post-proc) and via ε > 0 floor.
+    • FFT + asymmetry stabilize against noise-dominated jagged spectra.
+    • Molecular priors prevent hallucinated lines; adjust weights if over-smoothing.
+    • Lensing region penalty reduces bias in [120–160] bins, validated by diagnostics.
+    • Diagnostics export JSON maps of violations for UMAP/t-SNE overlays.
