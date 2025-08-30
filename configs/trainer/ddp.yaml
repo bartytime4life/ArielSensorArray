@@ -1,0 +1,78 @@
+# configs/trainer/ddp.yaml
+# ==============================================================================
+# 🛰️ Multi-Node DDP Trainer — SpectraMind V50
+#
+# Purpose
+#   Scale training across multiple nodes/GPUs using PyTorch Lightning DDP.
+#   • Explicit multi-node knobs (num_nodes, devices)
+#   • Static graph & bucketed grads for comms efficiency
+#
+# Usage
+#   spectramind train trainer=ddp
+#   # Examples:
+#   spectramind train trainer=ddp trainer.devices=8 trainer.num_nodes=2
+#   spectramind train trainer=ddp trainer.precision=16 trainer.max_epochs=60
+# ==============================================================================
+
+trainer:
+  # Hardware / Strategy (override devices & num_nodes per cluster layout)
+  accelerator: "gpu"
+  devices: 8                      # GPUs per node
+  num_nodes: 2                    # override for your cluster
+  strategy:
+    class_path: lightning.pytorch.strategies.DDPStrategy
+    init_args:
+      find_unused_parameters: false
+      static_graph: true
+      gradient_as_bucket_view: true
+
+  # Precision & Performance
+  precision: 16
+  deterministic: true
+  benchmark: false
+  sync_batchnorm: true            # normalize batches across ranks when model uses BN
+
+  # Runtime Budget
+  max_epochs: 60
+  max_time: null                  # e.g., "24:00:00" for wall clock guardrail
+  accumulate_grad_batches: 1
+  gradient_clip_val: 1.0
+
+  # Checkpointing (rank-zero saving)
+  checkpoint:
+    enabled: true
+    dirpath: "checkpoints/"
+    save_top_k: 3
+    monitor: "val/gll"
+    mode: "min"
+    save_last: true
+    every_n_epochs: 1
+
+  # Early Stopping
+  early_stopping:
+    enabled: true
+    monitor: "val/gll"
+    patience: 8
+    mode: "min"
+
+  # Logging (rank-zero only; distributed logging backends can be swapped in)
+  logger:
+    type: "tensorboard"
+    save_dir: "logs/"
+    name: "ddp_cluster"
+
+  # DataLoader guidance for multi-node runs (tune per I/O subsystem)
+  dataloader:
+    num_workers: 8
+    pin_memory: true
+    persistent_workers: true
+
+  # Seeds
+  seed: 42
+
+  notes: |
+    Multi-node DDP defaults:
+    • Set trainer.num_nodes and trainer.devices to match the allocation.
+    • static_graph=true reduces DDP sync overhead when the graph is stable.
+    • Enable sync_batchnorm for BN-heavy nets to keep statistics consistent.
+    • For slow storage, raise dataloader.num_workers and enable caching in the datamodule.
