@@ -1,4 +1,3 @@
-````md
 # ⚙️ Calibration Methods — SpectraMind V50
 
 This folder defines **method-level calibration profiles** for the SpectraMind V50 pipeline in the  
