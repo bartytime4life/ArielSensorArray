@@ -3,16 +3,17 @@
 # 🏁 Trainer — Kaggle-Safe Profile (≤9h, AMP, low I/O)
 #
 # Purpose
-#   Quick, resource-aware runs inside Kaggle Notebooks/GPUs with strict time/IO guardrails.
+#   Quick, resource-aware runs inside Kaggle Notebooks/GPUs with strict time/I/O guardrails.
 #
 # Usage
 #   spectramind train trainer=kaggle
 #
 # Notes
-#   • Conservative dataloader workers; AMP enabled.
-#   • Shorter epochs and optional dataset limiting for smoke/iteration.
-#   • Adjust limits via CLI:
+#   • Conservative dataloader workers; AMP (precision=16) enabled.
+#   • Optional dataset limiting knobs for fast iteration/smoke tests.
+#   • Override examples:
 #       spectramind train trainer=kaggle +limits.train_frac=0.5 +limits.val_frac=1.0
+#       spectramind train trainer=kaggle trainer.max_epochs=20 trainer.accumulate_grad_batches=2
 # ==============================================================================
 
 defaults:
@@ -22,29 +23,61 @@ defaults:
   - _self_
 
 trainer:
-  max_epochs: 12                  # keep modest for ≤9h
+  # ---------------------------------------------------------------------------
+  # Schedule & logging cadence (kept modest for ≤9h budget)
+  # ---------------------------------------------------------------------------
+  max_epochs: 12
   min_epochs: 3
+  log_every_n_steps: 25
+  check_val_every_n_epoch: 1
+
+  # ---------------------------------------------------------------------------
+  # Stability & determinism
+  # ---------------------------------------------------------------------------
   gradient_clip_val: 1.0
   accumulate_grad_batches: 1
   deterministic: true
   benchmark: false
-  enable_checkpointing: true
-  log_every_n_steps: 25
-  check_val_every_n_epoch: 1
+  detect_anomaly: false
+  fast_dev_run: false
+
+  # ---------------------------------------------------------------------------
+  # Precision & devices (Kaggle: single GPU by default)
+  # ---------------------------------------------------------------------------
   precision: 16
   accelerator: "gpu"
   devices: 1
-  strategy: "ddp_find_unused_parameters_false"
-  detect_anomaly: false
-  fast_dev_run: false             # set true for instant sanity test
+  strategy: "ddp_find_unused_parameters_false"  # harmless on 1 GPU
 
+  # ---------------------------------------------------------------------------
+  # I/O-light checkpointing (policy in callbacks below)
+  # ---------------------------------------------------------------------------
+  enable_checkpointing: true
+
+  # ---------------------------------------------------------------------------
+  # Dataloader defaults (Kaggle-safe)
+  # ---------------------------------------------------------------------------
+  dataloader:
+    num_workers: 2
+    prefetch_factor: 2
+    pin_memory: true
+    persistent_workers: false
+
+  # Optional profiler (disabled for speed)
+  profiler: null
+
+# ------------------------------------------------------------------------------
 # Optional dataset limiting knobs (read by the datamodule)
+# ------------------------------------------------------------------------------
 limits:
-  train_frac: 1.0                 # e.g., 0.25 for quick iteration
+  train_frac: 1.0               # e.g., 0.25 for quick iteration/smoke runs
   val_frac: 1.0
-  max_train_batches: null         # or set integer to cap batches
+  max_train_batches: null       # set int to cap batches (e.g., 200)
   max_val_batches: null
 
+# ------------------------------------------------------------------------------
+# Callbacks (Kaggle-friendly I/O throttling)
+# ------------------------------------------------------------------------------
 callbacks:
   early_stopping:
     monitor: "val/gll"
@@ -55,18 +88,28 @@ callbacks:
     mode: "min"
     save_top_k: 3
     save_last: true
+    every_n_epochs: 1           # throttle saves to reduce disk I/O
     filename: "epoch{epoch}-valgll{val/gll:.4f}"
 
+# ------------------------------------------------------------------------------
+# Reproducibility & seeds
+# ------------------------------------------------------------------------------
 seed: 42
 cudnn_deterministic: true
 cudnn_benchmark: false
 
+# ------------------------------------------------------------------------------
+# Runtime guardrails (Kaggle quotas & time limits)
+# ------------------------------------------------------------------------------
 runtime:
-  kaggle_mode: true               # enable Kaggle guards (IO/quotas)
+  kaggle_mode: true
   max_runtime_hours: 9
-  num_workers: 2                  # Kaggle P100/limited cores:contentReference[oaicite:0]{index=0}
+  num_workers: 2
   pin_memory: true
 
+# ------------------------------------------------------------------------------
+# Hydra output structure (notebooks keep runs separate by timestamp)
+# ------------------------------------------------------------------------------
 hydra:
   run:
     dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}_kaggle
@@ -76,3 +119,13 @@ hydra:
   job_logging:
     root:
       level: INFO
+
+# ------------------------------------------------------------------------------
+# Notes
+# ------------------------------------------------------------------------------
+notes: |
+  Kaggle profile highlights:
+  • Single-GPU, AMP (precision=16), deterministic, and conservative dataloader settings.
+  • Use +limits.* to subsample or cap batches for rapid iteration.
+  • Checkpoint frequency throttled (every_n_epochs=1) to reduce disk I/O.
+  • Increase accumulate_grad_batches to fit larger batch sizes into VRAM within the 9h budget.
