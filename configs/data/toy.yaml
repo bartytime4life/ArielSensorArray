@@ -58,3 +58,8 @@ data:
       • Batch size = 8
     Enables full pipeline (calibrate → train → diagnose → submit) smoke in CI.
     For reproducibility, this config + run hash = identical outputs.
+```
+
+---
+
+✅ With this version:
