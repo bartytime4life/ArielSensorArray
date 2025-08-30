@@ -1,101 +1,192 @@
 # 🗂️ `/configs/data` — Dataset & Calibration Configurations
 
-## 0. Purpose & Scope
+## 0) Purpose & Scope
 
-The `/configs/data` directory defines **all dataset, calibration, and preprocessing parameters** for the SpectraMind V50 pipeline (NeurIPS 2025 Ariel Data Challenge).
-It ensures that **data ingestion, normalization, augmentation, and calibration** are **Hydra-safe**, reproducible, and versioned with DVC.
+This folder defines **all dataset, calibration, preprocessing, split, and loader parameters** for the **SpectraMind V50** pipeline (NeurIPS 2025 Ariel Data Challenge).  
+Everything here is **Hydra-composable**, **DVC-traceable**, **Kaggle-safe**, and suitable for **CI smoke tests**.
 
-Configs here govern:
+Configs in this directory control:
 
-* Dataset sources (nominal, Kaggle, debug)
-* Calibration parameters (ADC correction, dark subtraction, flat-field, jitter)
-* Preprocessing (spectral binning, normalization, masking, augmentation)
-* Environment overrides (local paths, Kaggle data mounts)
-* Diagnostics integration (FFT, autocorrelation, symbolic overlays)
-
----
-
-## 1. Design Philosophy
-
-* **Hydra-first**: All datasets are defined in modular YAMLs (nominal, kaggle, debug) and composed at runtime.
-* **No hardcoding**: Paths, batch sizes, and calibrations live here, never inside Python code.
-* **Physics-informed**: Data configs enforce NASA-grade calibration realism (non-negativity, spectral smoothness, molecular priors).
-* **DVC-tracked**: All raw/processed data is versioned by DVC, ensuring reproducibility across Kaggle, CI, and local runs.
-* **Scenario coverage**: Each YAML corresponds to an operational mode (nominal full dataset, Kaggle-safe, debug smoke test).
+- **Dataset sources** (nominal, kaggle, debug)
+- **Calibration kill-chain** (ADC, nonlinearity, dark, flat, CDS, photometry, trace/phase normalization)
+- **Preprocessing** (detrend/savgol, time/grid standardization, bin mapping, smoothing, resampling)
+- **Augmentations** (jitter, dropout/mask, SNR-based drops, noise injection)
+- **Symbolic physics hooks** (non-negativity, FFT priors, molecular windows, region masks)
+- **Diagnostics** (FFT, Z-score, symbolic overlays, SHAP overlays)
+- **Runtime guardrails** (Kaggle/CI limits, integrity checks, fail-fast validation)
 
 ---
 
-## 2. Directory Structure
+## 1) Design Philosophy
+
+- **Hydra-first**: No hard-coded paths/hparams in Python. All data knobs live in YAML and are selected via `data=<name>`.
+- **Reproducibility by construction**: DVC/lakeFS for data lineage, Hydra for config capture, consistent run directories.
+- **Physics-informed**: Enforce non-negativity, spectral smoothness, molecular priors, and realistic calibration steps.
+- **Scenario coverage**: Distinct YAMLs for full science runs, Kaggle offline runs, and CI/debug smoke tests.
+- **Fail-fast**: Early schema & path validation prevents expensive wasted GPU time.
+
+---
+
+## 2) Directory Layout
 
 ```
+
 configs/data/
-├── nominal.yaml    # Full dataset config (default for experiments)
-├── kaggle.yaml     # Kaggle competition runtime-safe config
-├── debug.yaml      # Lightweight debug config for CI/selftest
-└── README.md       # This file
-```
+├─ nominal.yaml   # Full scientific dataset (default for experiments)
+├─ kaggle.yaml    # Kaggle competition runtime-safe dataset
+├─ debug.yaml     # Tiny, deterministic smoke slice for CI/self-test
+├─ .gitkeep       # Keeps this folder tracked + inline notes
+└─ README.md      # You are here
 
-**File Roles**:
+````
 
-* **`nominal.yaml`**
-  Full scientific configuration. Uses DVC paths, applies all calibration (ADC, dark, flat, trace extraction, jitter correction). Default for training & diagnostics.
+**File roles**
 
-* **`kaggle.yaml`**
-  Kaggle runtime config. Uses competition-provided `/kaggle/input` mounts, disables internet fetches, and enforces ≤9h runtime constraints.
-
-* **`debug.yaml`**
-  Minimal dataset slice (1–2 planets, truncated sequences) for **CI smoke tests** (`spectramind test`), ensuring rapid validation.
+- **`nominal.yaml`** — Mission-grade configuration. Full calibration kill-chain, preprocessing, symbolic hooks, rich diagnostics. DVC paths and integrity checks enabled.
+- **`kaggle.yaml`** — Competition-safe runtime: uses `/kaggle/input` mounts, **no internet**, ≤9 hr runtime hints, lean diagnostics, conservative loaders.
+- **`debug.yaml`** — **Fast** (seconds) CI/self-test dataset. Deterministic, minimal I/O, zero augmentation; exercises the same codepaths as nominal.
 
 ---
 
-## 3. Usage
+## 3) Quick Usage
 
-Select dataset configuration at runtime via Hydra overrides:
+Select the dataset at runtime with Hydra:
 
 ```bash
-# Default (nominal dataset)
+# Full science runs (local/cluster)
 spectramind train data=nominal
 
-# Kaggle-safe
+# Kaggle offline notebook
 spectramind train data=kaggle
 
-# Lightweight debug run
-spectramind train data=debug
+# CI/self-test / local smoke
+spectramind train data=debug training.epochs=1
+````
+
+Other common commands:
+
+```bash
+# Run calibration-only diagnostics on nominal data
+spectramind calibrate data=nominal calibration.save_intermediate=true
+
+# Disable heavy FFT in a quick debug run
+spectramind diagnose data=debug diagnostics.fft_analysis=false
 ```
 
-These configs are referenced by higher-level configs (`train.yaml`, `predict.yaml`, `selftest.yaml`, `ablate.yaml`) through the Hydra `defaults` mechanism.
+Higher-level configs (`train.yaml`, `predict.yaml`, `selftest.yaml`, `ablate.yaml`) include `data=<...>` via Hydra `defaults`.
 
 ---
 
-## 4. Best Practices
+## 4) Calibration Kill-Chain (Order Matters)
 
-* ✅ **Keep all paths versioned in DVC** – never point directly to untracked files.
-* ✅ **Use interpolation**: e.g. `num_classes: ${data.num_classes}` for linking model configs.
-* ✅ **Kaggle configs** must disable internet calls, use only mounted data, and enforce safe memory/runtime.
-* ✅ **Debug configs** should run in <60s for CI pipelines.
-* ✅ **Snapshot every run**: Hydra auto-saves the composed data config under `outputs/` for auditability.
+| Step                         | Key knobs (see YAML)                              | Purpose                              |
+| ---------------------------- | ------------------------------------------------- | ------------------------------------ |
+| `adc_correction`             | `bit_depth`, `gain_map`, `offset_map`             | Remove ADC offsets & gain structure  |
+| `nonlinearity_correction`    | `lut_path`, `saturation_dn`                       | Correct sensor response nonlinearity |
+| `dark_subtraction`           | `master_dark_path`, exposure/temperature scaling  | Remove dark current                  |
+| `flat_fielding`              | `master_flat_path`, `epsilon`                     | Correct pixel sensitivity variations |
+| `correlated_double_sampling` | `strategy`, `noise_threshold_dn`                  | Reduce kTC & 1/f via CDS             |
+| `photometric_extraction`     | `aperture`, `radius_px`, `bkg_annulus_px`, method | Extract photometry                   |
+| `trace_normalization`        | `reference_window`, `epsilon`                     | Normalize per-trace                  |
+| `phase_alignment`            | `method`, `max_shift`                             | Align transit phases                 |
 
----
-
-## 5. Integration
-
-* **CLI**: All commands (`train`, `predict`, `diagnose`, `submit`) reference dataset configs through Hydra.
-* **CI**: GitHub Actions runs `data=debug` in self-tests.
-* **Kaggle**: Uses `data=kaggle`, ensuring compatibility with Kaggle GPU quotas, offline mode, and <9hr runtime.
-* **Dashboard**: Diagnostics (`generate_html_report.py`) embeds dataset metadata, calibration choices, and config hash for transparency.
+> The same composite appears (leaner) in `kaggle.yaml`, and ultra-lean in `debug.yaml`.
 
 ---
 
-## 6. References
+## 5) Schema, Safety & Integrity Gates
 
-* **SpectraMind V50 Technical Plan**
-* **SpectraMind V50 Project Analysis**
-* **SpectraMind V50 Update Strategy**
-* **Hydra for AI Projects**
-* **Kaggle Platform Guide**
+Each config enforces **fail-fast** checks:
+
+* **Schema**: expected ranks/shapes/dtypes for FGS1 `(N,32,32)`, AIRS `(N,32,356)`, labels columns (`target_mu[0:283]`, `target_sigma[0:283]`).
+* **Instrument remap**: optional **356→283** bin mapping (nominal/kaggle/debug) to keep model heads consistent.
+* **Safety bounds**: numeric guards (`min_sigma`, `max_sigma`, `max_abs_mu`) and non-negativity.
+* **Runtime consistency**: DVC remote/path writability, GPU memory (nominal), Kaggle time limit (kaggle), CI time budget (debug).
+
+---
+
+## 6) Diagnostics & Reports
+
+All configs support a lightweight diagnostics suite (richer in `nominal.yaml`):
+
+* **FFT**/**Z-Score** analyses, **symbolic overlays**, **SHAP overlays**
+* Per-step calibration previews (strided to keep I/O modest)
+* JSON/PNG/HTML artifacts under `${paths.artifacts_dir}` / `${hydra.run.dir}`
+
+Example (nominal):
+
+```bash
+spectramind diagnose data=nominal diagnostics.save_plots=true
+```
 
 ---
 
-✅ With this setup, `/configs/data` is the **flight control module for all dataset handling**, ensuring **mission-grade reproducibility** across local, Kaggle, and CI environments.
+## 7) Best Practices
+
+* ✅ **No hardcoding** — never bake absolute paths into code; use config interpolation.
+* ✅ **Keep raw/processed under DVC** — reference data via tracked paths or Kaggle mounts.
+* ✅ **Kaggle** — **no internet**, rely only on `/kaggle/input`, store outputs in `/kaggle/working`.
+* ✅ **Debug** — smoke runs should complete in **< 60 s**; disable heavy ops.
+* ✅ **Commit the composed config** — Hydra already snapshots under `outputs/…`; attach in reports/manifests.
 
 ---
+
+## 8) Common Recipes
+
+**Switch detrending method on-the-fly**
+
+```bash
+spectramind train data=nominal preprocessing.detrend.method=savgol
+```
+
+**Tighten outlier clipping & disable smoothing**
+
+```bash
+spectramind train data=nominal preprocessing.outlier_sigma=4 \
+  preprocessing.smoothing.enabled=false
+```
+
+**Reduce diagnostics to accelerate turnaround**
+
+```bash
+spectramind diagnose data=nominal diagnostics.fft_analysis=false \
+  diagnostics.shap_overlay=false
+```
+
+**Kaggle-safe training**
+
+```bash
+spectramind train data=kaggle runtime.reduce_heavy_ops=true loader.batch_size=48
+```
+
+---
+
+## 9) FAQ
+
+**Q: Why do AIRS arrays have 356 but the model expects 283 bins?**
+A: Use the provided **356→283** `bin_remap` (enabled by default) to keep outputs compatible with the 283-head decoders.
+
+**Q: Can I run without the full calibration kill-chain?**
+A: Yes. Disable steps via `calibration.method.<step>.enabled=false`, but physics performance will degrade.
+
+**Q: How do I create a tiny dataset for a new smoke test?**
+A: Use `configs/dat/ariel_toy_dataset.py` to generate deterministic toy/debug packs, then point `debug.yaml` paths to them.
+
+---
+
+## 10) References
+
+* SpectraMind V50 Technical Plan
+* SpectraMind V50 Project Analysis
+* Strategy for Updating & Extending V50
+* Hydra for AI Projects
+* Kaggle Platform Guide
+
+---
+
+### ✅ TL;DR
+
+`/configs/data` is the **flight control module** for all dataset handling: pick `data=<nominal|kaggle|debug>`, and the pipeline will execute with **mission-grade**, reproducible data behavior across local, Kaggle, and CI environments.
+
+```
+```
