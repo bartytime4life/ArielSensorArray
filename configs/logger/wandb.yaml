@@ -5,7 +5,7 @@
 # Purpose
 #   Configure Weights & Biases experiment tracking for training/diagnostics.
 #   Provides reproducible, CLI-first logging of metrics, configs, artifacts,
-#   and model checkpoints.
+#   and model checkpoints, with Kaggle/CI guardrails.
 #
 # Usage
 #   In train.yaml:
@@ -20,37 +20,54 @@
 #   • Kaggle submissions must run offline (no internet).
 #   • Logs/metrics are mirrored to logs/v50_debug_log.md for audit.
 #   • Enable only when WANDB_API_KEY is set or offline=true.
+#   • Hydra-safe: override any field with `logger.wandb.<field>=<value>`.
 # ==============================================================================
 
 wandb:
   enabled: true                     # Master switch
+
+  # Project metadata
   project: "SpectraMindV50"         # W&B project name
   entity: null                      # Optional team/user account
-  name: null                        # Run name (default = auto w/ timestamp + hash)
-  group: null                       # Optional run group for sweeps
+  name: null                        # Run name (default = timestamp + hash)
+  group: null                       # Optional run group
   tags: []                          # Optional list of tags
-  notes: ""                         # Freeform notes attached to run
+  notes: ""                         # Freeform notes
 
-  # Offline / dry-run modes
-  offline: false                    # True = log locally, sync later
+  # Mode & connectivity
+  offline: false                    # Force offline mode
   mode: "online"                    # online | offline | disabled
+  dryrun: false                     # True = init but don't sync
 
-  # Save checkpoints/artifacts
-  save_code: true                   # Upload code snapshot
-  save_config: true                 # Upload full Hydra config
+  # Artifacts & config sync
+  save_code: true                   # Upload code snapshot (git SHA)
+  save_config: true                 # Upload merged Hydra config
   log_model: true                   # Upload trained model artifacts
+  sync_tensorboard: true            # Mirror TB logs into W&B
 
-  # Sync cadence
+  # Metric cadence
   log_freq: 50                      # Log every N steps
   flush_secs: 30                    # Flush metrics every N seconds
 
-  # Kaggle / CI guardrails
+  # Audit integration
+  audit_log_path: "logs/v50_debug_log.md"   # Mirror key W&B events here
+
+  # Kaggle runtime guardrails
   kaggle_safe:
-    enabled: true                   # Allow logger config, but disable WANDB network calls
+    enabled: true
     offline: true                   # Always offline in Kaggle
     mode: "offline"
     log_model: false                # Don’t upload models (disk only)
     save_code: true                 # Still snapshot code locally
+    save_config: true
 
+  # CI guardrails (disable for smoke/fast tests)
   ci_fast:
-    enabled: false                  # Disable W&B logging in CI smoke runs
+    enabled: false                  # No W&B logging in CI fast runs
+    mode: "disabled"
+
+  # Optional MLflow bridging (future extensibility)
+  mlflow_bridge:
+    enabled: false
+    sync_metrics: false
+    experiment: null
