@@ -1,0 +1,25 @@
+# configs/model/decoder_mean_big.yaml
+# ==============================================================================
+# μ Decoder — Big preset (sharper lines, higher capacity)
+# ==============================================================================
+
+decoder:
+  mean_head:
+    type: "mlp"
+    hidden_dim: 384
+    layers: 4
+    activation: "gelu"
+    dropout: 0.10
+    layer_norm: true
+    residual: true
+    se_block: {enabled: true, reduction: 4}
+    spectral_skip: {enabled: true, weight: 0.25}
+    init: "xavier_uniform"
+    output_activation: "identity"
+    temperature:
+      enabled: true
+      value: 1.0
+      schedule: null
+    post_process:
+      clamp_min: null
+      clamp_max: null
