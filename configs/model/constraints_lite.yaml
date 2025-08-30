@@ -1,0 +1,40 @@
+# configs/model/constraints_lite.yaml
+# ==============================================================================
+# ⚖️ Physics Constraints — Lite preset (gentle guidance, fastest convergence)
+# ==============================================================================
+
+constraints:
+  mode: "lite"
+
+  enforce_nonnegativity: true
+  calibration:
+    nonnegativity_epsilon: 1.0e-8
+    max_clip: 5.0
+
+  smoothness_weight: 0.004
+  fft_smoothness_weight: 0.0005
+  fft:
+    highpass_bins: 24
+    window: "hann"
+
+  asymmetry_weight: 0.0005
+
+  lensing:
+    enabled: true
+    bins: [120, 160]
+    weight: 0.001
+
+  molecular_fingerprint:
+    enabled: true
+    molecules: ["H2O", "CO2", "CH4"]
+    match_weight: 0.002
+    false_positive_weight: 0.001
+
+  schedules:
+    warmup_epochs: 2
+    scale_after_warmup: 1.0
+
+  diagnostics:
+    log_violation_maps: true
+    save_fft_plots: false
+    export_json: "outputs/diagnostics/constraint_violations.json"
