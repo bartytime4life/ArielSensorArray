@@ -1,0 +1,91 @@
+# configs/local/hpc.yaml
+# ==============================================================================
+# 🧪 Local HPC / Multi-GPU Profile — SpectraMind V50
+#
+# Purpose
+#   High-throughput configuration for powerful local workstations or lab servers
+#   (e.g., 2–8× A100/H100) with bf16 precision, DDP, and tuned dataloaders.
+#   Keeps Hydra-safe composition, CLI orchestration, and reproducibility.
+#
+# Usage
+#   In train.yaml (or CLI):
+#     defaults:
+#       - local: hpc
+#
+#   CLI examples:
+#     spectramind train local=hpc local.devices=4
+#     spectramind train local=hpc local.max_epochs=80 local.accumulate_grad_batches=2
+#
+# Notes
+#   • For developer-controlled multi-GPU nodes only (not Kaggle/CI).
+#   • Pair with trainer=multi_gpu or equivalent trainer profile if required.
+#   • Writes full audit (config + hashes) to logs/v50_debug_log.md.
+# ==============================================================================
+
+local:
+  enabled: true
+
+  # Hardware
+  devices: auto                  # Auto-detect; override with int (2,4,8) as needed
+  precision: "bf16"              # Prefer bf16 on Ampere+/Hopper; fallback to 16-mixed if needed
+  deterministic: true            # Deterministic kernels when feasible
+  seed: 2025
+
+  # Paths
+  data_dir: "data/"
+  cache_dir: "/dev/shm/spectramind_cache"   # Fast RAM-disk cache if available
+  output_dir: "outputs/hpc/"
+  log_dir: "logs/"
+
+  # Runtime (throughput-tuned)
+  num_workers: 8                 # Increase workers for higher I/O throughput
+  pin_memory: true
+  persistent_workers: true
+  max_epochs: 80
+  accumulate_grad_batches: 1
+  grad_clip_norm: 1.0
+
+  # Distributed / Strategy hints
+  ddp:
+    enabled: true                # Expect DDP; ensure trainer picks DDP strategy
+    find_unused_parameters: false
+    broadcast_buffers: false
+    static_graph: true
+
+  # Logging
+  logger: rich_console
+  log_every_n_steps: 100
+  save_checkpoint_every_n_epochs: 5
+  keep_last_n_checkpoints: 4
+
+  # Debug / Dev toggles
+  fast_dev_run: false
+  profiler: false
+  trace_config: true
+  trace_hash: true
+
+  # Extra integrations
+  dvc:
+    enabled: true
+    remote: "local"
+  mlflow:
+    enabled: true
+    tracking_uri: "mlruns"
+    experiment_name: "V50_hpc"
+  wandb:
+    enabled: false
+    project: "SpectraMindV50"
+    offline: true
+
+  # Guardrails
+  time_limit_hours: null
+  disk_quota_gb: null
+  internet: true
+
+  notes: |
+    This profile targets multi-GPU workstations/servers:
+      • bf16 precision for Ampere/Hopper, mixed-precision fallback if unsupported.
+      • DDP hints set (find_unused_parameters=false, static_graph=true) to reduce overhead.
+      • Increase num_workers & persistent_workers for dataloader throughput.
+      • Use /dev/shm for cache when possible (override if not available).
+    Combine with an appropriate trainer profile (e.g., trainer=multi_gpu) to activate DDP.
