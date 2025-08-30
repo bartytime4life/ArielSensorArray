@@ -1,0 +1,75 @@
+# configs/trainer/kaggle_safe.yaml
+# ==============================================================================
+# 🚦 Kaggle-Safe Trainer Config — SpectraMind V50
+#
+# Purpose
+#   Provide Kaggle runtime–compatible training defaults:
+#   • Runtime budget: ≤ 9 hours
+#   • GPU safe (T4/P100 class devices, mixed precision)
+#   • Checkpoint frequency throttled to avoid storage issues
+#   • Log-friendly, DVC/CI compatible
+#
+# Usage
+#   In train.yaml (or CLI):
+#     defaults:
+#       - trainer: kaggle_safe
+#
+#   Example override:
+#     spectramind train trainer.kaggle_safe.max_epochs=40
+#
+# Notes
+#   • Designed for leaderboard submissions and CI smoke runs.
+#   • For deep research or ablations, prefer trainer/defaults.yaml.
+# ==============================================================================
+
+trainer:
+  # Backend
+  device: "gpu"              # "cpu" | "gpu" (Kaggle runtime provides ~2 GPUs)
+  accelerator: "auto"        # let PyTorch Lightning detect GPUs
+  strategy: "ddp_find_unused" # distributed strategy safe for 2 GPUs
+  precision: 16              # mixed precision AMP (saves memory, speeds up)
+
+  # Runtime guardrails
+  max_epochs: 30             # default epoch budget for Kaggle
+  max_time: "8:30:00"        # hard wall < 9h (H:M:S)
+  accumulate_grad_batches: 2 # gradient accumulation for batch safety
+  gradient_clip_val: 1.0     # prevent exploding gradients
+
+  # Checkpointing (minimize storage/time overhead)
+  checkpoint:
+    enabled: true
+    dirpath: "checkpoints/"
+    save_top_k: 1
+    monitor: "val/gll"       # monitored metric for "best" model
+    mode: "min"
+    save_last: true
+    every_n_epochs: 5        # throttle checkpoint writes
+
+  # Early stopping for runtime safety
+  early_stopping:
+    enabled: true
+    patience: 5
+    monitor: "val/gll"
+    mode: "min"
+
+  # Logging
+  logger:
+    type: "tensorboard"      # minimal Kaggle-friendly logger
+    save_dir: "logs/"
+    name: "kaggle_safe"
+
+  # Determinism & reproducibility
+  deterministic: true
+  benchmark: false
+  seed: 42
+
+  # Profiling (disabled by default to save time)
+  profiler: null
+
+  notes: |
+    Kaggle-safe trainer ensures jobs complete under 9h with P100/T4 GPUs.
+    • AMP precision 16 saves memory and accelerates training.
+    • Gradient accumulation balances batch size with GPU memory constraints.
+    • Checkpoints throttled to reduce storage overhead.
+    • Early stopping prevents wasted epochs on plateaus.
+    • Determinism enabled for full reproducibility.
