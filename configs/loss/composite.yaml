@@ -1,98 +1,343 @@
+```yaml
 # configs/loss/composite.yaml
 # ==============================================================================
-# 🧩 Composite Loss — Unified control for {GLL, Smoothness, Nonnegativity, FFT}
+# 🧩 Composite Loss — Unified control for {GLL, Smoothness, Nonnegativity, FFT, Symbolic} (UPGRADED)
 #
 # Purpose
-#   Enable/disable and weight all physics-aware loss terms from one place.
-#   Internally composes the individual loss configs into namespaced fields via
-#   Hydra's field-path composition (no group collisions).
+#   Single switchboard for enabling, weighting, and overriding physics-aware loss terms.
+#   Uses Hydra field-path composition to import base configs into a neutral namespace (no collisions).
 #
 # Usage
 #   In train.yaml:
 #     defaults:
 #       - loss: composite
 #
-#   Examples:
-#     # Turn off FFT, bump smoothness, keep others:
+#   Common CLI:
+#     # Turn off FFT, bump smoothness:
 #     spectramind train loss.composite.fft.enabled=false \
 #       loss.composite.smoothness.weight=0.15
 #
-#     # Adjust cutoff & weight:
-#     spectramind train loss.composite.fft.cutoff_freq=40 \
+#     # Adjust FFT cutoff & weight:
+#     spectramind train loss.composite.fft.overrides.cutoff_freq=40 \
 #       loss.composite.fft.weight=0.2
 #
+#     # Enable symbolic fingerprints and increase its weight:
+#     spectramind train loss.composite.symbolic.enabled=true \
+#       loss.composite.symbolic.weight=0.2
+#
 # Notes
-#   • "groups.*" holds the imported underlying loss configs.
-#   • "composite.*" holds master switches/weights you’ll read in the loss builder.
-#   • Trainer should read composite.* flags/weights and then combine groups.*
+#   • "groups.*" holds the imported underlying configs.
+#   • "composite.*" exposes master toggles/weights/overrides consumed by the loss builder.
+#   • Builder: read composite flags → (optional) apply overrides to groups.* → instantiate → sum(weight_i * term_i).
 # ==============================================================================
 
-# Import the four loss configs into a neutral namespace so we can bundle them.
+# Import individual loss configs into a neutral namespace for orchestration.
 defaults:
   - _self_
   - loss@groups.gll: gll
   - loss@groups.smoothness: smoothness
   - loss@groups.nonnegativity: nonnegativity
   - loss@groups.fft: fft
+  - loss@groups.symbolic: symbolic
 
-# Master on/off + weights for each component the trainer will consume.
+# -----------------------------
+# Master Composite Controller
+# -----------------------------
 composite:
   enabled: true
 
-  # Gaussian Log-Likelihood (primary challenge metric)
+  # Global scalars
+  global_weight: 1.0             # Multiplier on the sum of all active subterms
+  reduction: "mean"              # mean | sum | none (final aggregate)
+  eps: 1.0e-12                   # numeric stability (for any composite-level ops)
+
+  # Scheduling for the entire composite (applied on top of each subterm’s own schedule)
+  schedule:
+    enabled: true
+    warmup:
+      steps: 0                   # ramp 0→1 for the composite; 0 disables
+    anneal:
+      enabled: false
+      steps: 0
+    floor: 0.0
+    cap: 1.0
+
+  # Interactions between subterms (optional quality-of-life couplings)
+  interactions:
+    enabled: true
+    rules:
+      - name: "boost_smoothness_when_fft_on"
+        when: { smoothness.enabled: true, fft.enabled: true }
+        effect: "multiply"
+        target: "smoothness.weight"
+        factor: 1.10
+      - name: "relax_fft_if_lensing_explains"
+        when: { symbolic.enabled: true, symbolic.overrides.lensing.enabled: true, fft.enabled: true }
+        effect: "multiply"
+        target: "fft.weight"
+        factor: 0.70
+
+  # ----------
+  # Components
+  # ----------
+  # Gaussian Log-Likelihood (anchor objective)
   gll:
     enabled: true
-    weight: 1.0    # Typically the anchor; override only if you blend objectives
+    weight: 1.0
+    overrides:
+      reduction: null               # mean | sum | none
+      sigma_min: null               # e.g., 1e-4
+      clamp_sigma: null
+      detach_sigma_grad: null
+      weighting: null               # uniform | molecule | entropy | custom
+      custom_weights_path: null
+      custom_weights_inline: null
+      # Calibration stubs
+      calibration:
+        temperature:
+          enabled: null
+          T: null
+        per_bin_scale:
+          enabled: null
+          path: null
+          normalize: null
+        corel:
+          enabled: null
+          params_path: null
+          graph_path: null
+      # Symbolic hooks nested under GLL (if the loss builder supports additive priors within GLL)
+      symbolic:
+        smoothness_penalty: null
+        nonnegativity: null
+        fft_suppression: null
+        molecule_consistency: null
 
-  # Spectral smoothness in the time/wavelength domain (curvature penalty)
+  # Time/wavelength-domain smoothness
   smoothness:
     enabled: true
-    weight: 0.10   # Scales the already-configured smoothness.lambda internally
-    # Optional overrides (passed through to groups.smoothness at runtime if desired)
+    weight: 0.10
     overrides:
-      order: null          # 1 | 2 | null (null = keep underlying file setting)
-      lambda: null         # e.g. 0.02
-      normalize: null      # true | false | null
+      lambda: null                 # e.g., 0.02
+      order: null                  # 1 | 2
+      normalize: null
+      robust:
+        enabled: null
+        type: null                 # huber | charbonnier
+        delta: null
+        p: null
+      region_masking:
+        enabled: null
+        mask_path: null
+        invert_mask: null
+        weight_continuum: null
+        weight_lines: null
+      snr_weighting:
+        enabled: null
+        snr_path: null
+        exponent: null
+      taper:
+        enabled: null
+        mid: null
+        width: null
+      windows:
+        enabled: null
+        list: null
+      schedule:
+        enabled: null
+        warmup: {steps: null}
+        anneal: {enabled: null, steps: null}
+        floor: null
+        cap: null
 
-  # Physical non-negativity constraint on μ
+  # Physical non-negativity on μ
   nonnegativity:
     enabled: true
     weight: 0.02
     overrides:
-      mode: null           # hinge | softplus | exp | null
-      p: null              # 1 or 2
+      lambda: null
+      mode: null                   # hinge | softplus | exp
+      p: null
       temperature: null
+      margin: null
+      mu_shift: null
+      normalize_by_bins: null
+      reduction: null
+      schedule:
+        enabled: null
+        warmup: {steps: null}
+        anneal: {enabled: null, steps: null}
+        floor: null
+        cap: null
+      weighting:
+        scheme: null
+        custom_weights_path: null
+        custom_weights_inline: null
+      region_masking:
+        enabled: null
+        mask_path: null
+        invert_mask: null
+        scale: null
 
-  # FFT-domain high-frequency suppression (physics-informed)
+  # Fourier-domain high-frequency suppression
   fft:
     enabled: true
     weight: 0.10
     overrides:
-      cutoff_freq: null    # e.g. 40 or 50 bins (Nyquist ~ N/2)
-      normalize: null      # true | false | null
-      log_scale: null      # true | false | null
+      reduction: null
+      eps: null
+      device: null
+      dtype: null
+      detrend: null               # none | mean | linear
+      window:
+        enabled: null
+        type: null                # hann | hamming | blackman | tukey
+        tukey_alpha: null
+      normalize: null
+      power: null                 # mag2 | magnitude | db
+      log_scale: null
+      cutoff_freq: null
+      normalized_cutoff: null
+      shape: null                 # hard | taper | custom
+      taper:
+        enabled: null
+        width: null
+        curve: null               # cosine | linear | smoothstep
+      custom_freq_weights:
+        enabled: null
+        path: null
       adaptive:
         enabled: null
-        method: null       # percentile | exponential | fixed
+        method: null              # percentile | exponential | fixed
         percentile: null
         decay: null
-    reduction: "mean"      # mean | sum | none (applies to the FFT term aggregation)
+        fixed_scale: null
+      region_masking:
+        enabled: null
+        mask_path: null
+        invert_mask: null
+        scale: null
+      snr_weighting:
+        enabled: null
+        snr_path: null
+        exponent: null
+      schedule:
+        enabled: null
+        warmup: {steps: null}
+        anneal: {enabled: null, steps: null}
+        floor: null
+        cap: null
+      interactions:
+        enabled: null
+        lensing_explained_relief:
+          enabled: null
+          factor: null
+        boost_with_smoothness:
+          enabled: null
+          factor: null
 
-# The underlying imported configs live here (do not edit in code; override via CLI).
-# Example override: loss.groups.fft.cutoff_freq=48
+  # Symbolic neuro-physics layer (bundles smoothness/nonneg/fft/molecules/lensing)
+  symbolic:
+    enabled: false
+    weight: 0.10
+    # You may either rely on groups.symbolic defaults, or override selectively here:
+    overrides:
+      reduction: null
+      eps: null
+      mode: null                     # soft | hard
+      global_weight: null
+      normalize_by_bins: null
+      schedule:
+        enabled: null
+        warmup: {steps: null}
+        anneal: {enabled: null, steps: null}
+        floor: null
+        cap: null
+      regions:
+        enabled: null
+        mask_path: null
+        continuum_weight: null
+        line_weight: null
+        invert_mask: null
+      interactions:
+        enabled: null
+        rules: null
+      smoothness:
+        enabled: null
+        weight: null
+        order: null
+        normalize: null
+        robust: {enabled: null, type: null, delta: null}
+      nonnegativity:
+        enabled: null
+        weight: null
+        mode: null
+        p: null
+        temperature: null
+        margin: null
+      fft:
+        enabled: null
+        weight: null
+        cutoff_freq: null
+        normalize: null
+        log_scale: null
+        taper: {enabled: null, width: null}
+        adaptive: {enabled: null, method: null, percentile: null, decay: null}
+      molecular_fingerprints:
+        enabled: null
+        weight: null
+        mode: null
+        tolerance: null
+        templates:
+          names: null
+          path: null
+        per_molecule_weights: null
+        coherence:
+          enabled: null
+          metric: null
+          target_sign: null
+          cross_line_correlation:
+            enabled: null
+            min_corr: null
+            weight: null
+      lensing:
+        enabled: null
+        weight: null
+        method: null
+        einstein_radius_arcsec: null
+        shear_gamma: null
+        tolerance: null
+        time_spectral_coupling: {enabled: null, weight: null}
+        explain_high_freq_as_lensing: {enabled: null, factor: null}
+      rules:
+        enabled: null
+        list: null
+      diagnostics:
+        log_violations: null
+        export_masks: null
+        save_json: null
+
+# -----------------------------
+# Imported Configs (do not edit here; override via CLI or composite.overrides.*)
+# Example: spectramind train loss.groups.fft.cutoff_freq=48
+# -----------------------------
 groups:
-  gll:          ${oc.create:}   # populated by defaults above
-  smoothness:   ${oc.create:}
-  nonnegativity:${oc.create:}
-  fft:          ${oc.create:}
+  gll:            ${oc.create:}
+  smoothness:     ${oc.create:}
+  nonnegativity:  ${oc.create:}
+  fft:            ${oc.create:}
+  symbolic:       ${oc.create:}
 
 notes: |
-  • The trainer’s loss builder should:
-      (1) Check composite.enabled.
-      (2) For each sub-loss in {gll, smoothness, nonnegativity, fft}:
-          - If composite.<name>.enabled == true, read its weight
-          - Optionally apply composite.<name>.overrides onto groups.<name>
-          - Instantiate/compute that loss component using groups.<name> settings
-      (3) Sum (weight_i * loss_i) with the chosen reductions.
-  • Keep GLL as the anchor term (weight≈1.0) and tune regularizers
-    (smoothness, fft, nonnegativity) cautiously to avoid over-smoothing.
+  • Process:
+      1) If composite.enabled is false → skip composite entirely.
+      2) For each sub-loss {gll, smoothness, nonnegativity, fft, symbolic}:
+         - Check composite.<name>.enabled; if false → skip.
+         - Read composite.<name>.weight (default in this file).
+         - Apply composite.<name>.overrides onto groups.<name> (non-null keys only).
+         - Instantiate/compute subterm using groups.<name> settings.
+      3) Apply composite.interactions if enabled (modify subterm weights where rules match).
+      4) Aggregate: L = composite.global_weight * Σ_i (w_i * L_i), with composite.reduction.
+  • Keep GLL as the anchor (weight≈1.0). Tune auxiliary priors (smoothness, fft, nonnegativity, symbolic)
+    cautiously to prevent over-smoothing or biasing calibration.
+  • Use per-component schedules for fine control, and composite.schedule to globally ramp-in the stack.
+```
