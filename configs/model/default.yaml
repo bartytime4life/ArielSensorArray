@@ -1,0 +1,42 @@
+# configs/model/constraints/default.yaml
+# ==============================================================================
+# ⚖️ Physics Constraints — Default Profile
+# Balanced enforcement of physics-informed priors (Kaggle-safe, leaderboard-ready)
+# ==============================================================================
+
+constraints:
+  enforce_nonnegativity: true
+  smoothness_weight: 0.010                  # balanced local smoothness
+  fft_smoothness_weight: 0.002              # mild high-frequency suppression
+  asymmetry_weight: 0.001                   # small penalty against unphysical asymmetry
+
+  lensing:
+    enabled: true
+    bins: [120, 160]
+    weight: 0.003                           # moderate penalty in lensing-sensitive bins
+
+  molecular_fingerprint:
+    enabled: true
+    molecules: ["H2O", "CO2", "CH4"]
+    match_weight: 0.005                     # encourage peaks at known bands
+    false_positive_weight: 0.002            # discourage spurious lines
+
+  calibration:
+    nonnegativity_epsilon: 1.0e-8
+    max_clip: 5.0                           # safe clamp for extreme μ
+
+  cycle_consistency:
+    enabled: false                          # optional, off by default
+    weight: 0.0
+
+  diagnostics:
+    log_violation_maps: true
+    save_fft_plots: true
+    export_json: "outputs/diagnostics/constraint_violations_default.json"
+
+  notes: |
+    • Default mode balances speed and physical rigor.
+    • Suitable for Kaggle submissions (≤9h) and daily experiments.
+    • Moderate smoothness + FFT weights stabilize spectra without oversmoothing.
+    • Nonnegativity and molecular priors ensure physically plausible outputs.
+    • Diagnostics enabled for leaderboard tracking and error analysis.
