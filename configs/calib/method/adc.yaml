@@ -1,44 +1,135 @@
 # configs/calib/method/adc.yaml
 # ==============================================================================
-# ⚙️ ADC Correction — Method Config
+# 🌍 World Discovery Engine (WDE)
+# ⚙️ ADC Correction — Method Config (Mission-Grade)
+# ------------------------------------------------------------------------------
 # Purpose
-#   Correct analog-to-digital conversion artifacts (offsets, gain nonuniformity,
-#   bit-depth clipping) before any other calibration step.
+#   Correct analog-to-digital conversion artifacts (offsets, gain non-uniformity,
+#   bit-depth clipping, potential non-linearity) before any other calibration step.
+#
 # Usage
 #   Composed by calib/nominal.yaml in the calibration kill chain.
-#   Override example:
+#   Example overrides (CLI/Hydra-style):
 #     spectramind calibrate calib.method.adc.enabled=false
+#     spectramind calibrate calib.method.adc.clip_guard.repair_strategy=interpolate
+#
+# Guarantees
+#   • Deterministic & CI/Kaggle-safe
+#   • Strong diagnostics (CSV/JSON/plots)
+#   • Safe clamps and robust NaN/outlier handling
 # ==============================================================================
 
 adc:
   enabled: true
 
-  # Raw digitizer characteristics
-  bit_depth: 16                 # native ADC bit depth (e.g., 12, 14, 16)
-  full_well_electrons: 120000   # for saturation guard; used in sanity checks
+  # ---- Raw digitizer characteristics ------------------------------------------------
+  bit_depth: 16                      # native ADC bit depth (e.g., 12, 14, 16)
+  full_well_electrons: 120000        # for saturation guard & sanity checks
+  # Optional explicit DN bounds (defaults derive from bit_depth if null)
+  min_dn: 0
+  max_dn: null                       # if null, uses (2^bit_depth - 1)
 
-  # Per-channel gain/offset (DVC-tracked tables recommended)
-  gain_table_path: "calib_refs/adc/gain_table.npy"    # electrons / DN
-  offset_table_path: "calib_refs/adc/offset_table.npy" # DN
+  # ---- Per-channel gain/offset (DVC-tracked tables recommended) --------------------
+  # Preferred: table paths (array shapes must match detector)
+  gain_table_path:   "calib_refs/adc/gain_table.npy"     # electrons / DN
+  offset_table_path: "calib_refs/adc/offset_table.npy"   # DN pedestal map
+  # Fallback constants if tables absent (used only when tables missing)
+  fallback_gain_e_per_dn:  1.0
+  fallback_offset_dn:      0.0
+  # Channel map (optional) to route per-amplifier segments
+  channel_map_path: null                                      # e.g. JSON/NPY
+  per_channel_overrides: []                                   # e.g., [{channel: 0, gain_scale: 1.002}]
 
-  # Saturation & clipping handling
+  # ---- Bad/Hot pixel handling -------------------------------------------------------
+  bad_pixel_mask: "calib_refs/common/bad_pixel_mask.tif" # 1=bad/ignore, 0=good
+  hot_pixel_threshold_dn: null                           # optional auto-derive by sigma-clip if null
+  nan_policy:
+    enabled: true
+    strategy: "median_window"                           # median_window | nearest | zero
+    window: 3                                           # odd kernel size for median_window
+
+  # ---- Saturation & clipping handling ----------------------------------------------
   clip_guard:
     enabled: true
-    high_dn_threshold: 0.99      # fraction of max DN treated as near-saturation
-    repair_strategy: "mask"      # "mask" | "interpolate" | "leave"
-    interpolate_window: 3        # if strategy=interpolate, odd window size
+    low_dn_threshold:  0.0                              # DN <= threshold → underflow region
+    high_dn_fraction:  0.99                             # fraction of max DN treated near-saturation
+    repair_strategy:  "mask"                            # mask | interpolate | leave
+    interpolate_window: 3                               # odd window if repair_strategy=interpolate
+    export_clip_mask: "outputs/diagnostics/calib/adc/clip_mask.tif"
 
-  # Linearity LUT (optional): DN → electrons correction
+  # ---- Linearity LUT (optional): DN → multiplicative scale or electrons correction --
   linearity:
     enabled: false
-    lut_path: "calib_refs/adc/linearity_lut.npy"       # shape [2, N] (dn, scale)
+    lut_path: "calib_refs/adc/linearity_lut.npy"        # shape [2, N] or dict
+    mode: "scale"                                       # scale | dn_to_e
+    apply_after_gain: true                              # if false, apply on DN before gain
 
-  # Diagnostics & logging
+  # ---- Outlier rejection during pedestal/gain estimation ----------------------------
+  sigma_clip:
+    enabled: true
+    sigma: 5.0
+    max_iters: 3
+
+  # ---- Safety & Stability -----------------------------------------------------------
+  clamps:
+    min_sigma_e: 1e-8                                   # floor for propagated σ (if present)
+    max_sigma_e: 1e+3
+    min_electrons: 0.0                                  # negative electrons are clamped
+    max_electrons: null                                 # if null, set to full_well_electrons
+  allow_negative_electrons: false
+
+  # ---- Order of operations (explicit for reproducibility) ---------------------------
+  # Allowed steps: remove_offset, apply_gain, apply_linearity, handle_clipping, apply_masks
+  pipeline_order:
+    - "remove_offset"                                   # DN ← DN - offset
+    - "apply_gain"                                      # e- ← DN * gain
+    - "apply_linearity"                                 # optional non-linearity compensation
+    - "handle_clipping"                                 # generate & apply clip masks/repairs
+    - "apply_masks"                                     # bad pixel & NaN handling
+
+  # ---- Diagnostics & Logging --------------------------------------------------------
   diagnostics:
-    save_histograms: true
+    enabled: true
     output_dir: "outputs/diagnostics/calib/adc"
+    save_histograms: true
+    save_previews: true                                 # small PNGs before/after
+    save_stats_csv: "outputs/diagnostics/calib/adc/stats.csv"
+    save_summary_json: "outputs/diagnostics/calib/adc/summary.json"
+    histogram_bins: 1024
+    sample_stride: 4                                    # downsample factor for quicklook
+    include_percentiles: [0.1, 1, 5, 50, 95, 99, 99.9]  # reported in summary.json
 
+  # ---- Validation / Sanity checks ---------------------------------------------------
+  validation:
+    require_tables: false                               # if true, tables must exist or fail
+    enforce_shapes: true                                # tables must match detector shape
+    check_monotonic_lut: true                           # if linearity LUT should be monotonic
+    fail_on_extreme_gain: true                          # guard against absurd gain values
+    max_gain_e_per_dn: 10.0
+    min_gain_e_per_dn: 0.001
+
+  # ---- Performance ------------------------------------------------------------------
+  performance:
+    chunk_size: 1024                                    # process in tiles to reduce memory
+    num_workers: 0                                      # 0=auto/serial (Kaggle-safe)
+
+  # ---- Reproducibility --------------------------------------------------------------
+  deterministic: true
+  random_seed: 42
+
+  # ---- Metadata ---------------------------------------------------------------------
+  units:
+    input:  "DN"
+    output: "electrons"
+  version: "1.2"
+  provenance: "configs/calib/method/adc.yaml"
+  created_by: "WDE calibration stack"
   notes: |
-    • Apply ADC offset removal, then gain normalization (DN→electrons).
-    • If linearity LUT is enabled, apply multiplicative scale per DN bin.
-    • Saturated/near-saturated pixels: prefer masking to avoid bias downstream.
+    • Apply ADC offset removal, then gain normalization (DN→electrons). If linearity is enabled,
+      apply the configured mode (scale or dn_to_e) at the designated stage.
+    • Prefer masking saturated/near-saturated pixels to avoid bias downstream; interpolation is
+      available for visualization or non-critical analyses.
+    • Bad/Nan handling is conservative by default (median window=3). Increase window cautiously.
+    • Validation guards (gain bounds, LUT monotonicity) protect against corrupted references.
+    • All outputs are deterministic for CI; diagnostics include histograms, quicklook PNGs, and
+      CSV/JSON summaries for auditing and Kaggle submissions.
