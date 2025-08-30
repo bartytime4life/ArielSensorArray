@@ -1,0 +1,80 @@
+# ==============================================================================
+# 🖥️ Local Default Environment Config — SpectraMind V50
+#
+# Purpose
+#   Provides baseline settings for running the pipeline on a developer’s local
+#   workstation (Linux/Mac/Windows) with GPU/CPU autodetect.
+#   Ensures Hydra-safe defaults, CLI-first orchestration, and reproducibility.
+#
+# Usage
+#   In train.yaml (or any Hydra entrypoint):
+#     defaults:
+#       - local: default
+#
+#   CLI override examples:
+#     spectramind train local.devices=2 local.precision=bf16
+#     spectramind calibrate local.cache_dir=~/.spectramind/cache
+#
+# Notes
+#   • Intended for daily dev iteration: balanced speed, debug info, safe logging.
+#   • Kaggle/CI guardrails are defined in their own configs (not here).
+#   • Every run is snapshotted to logs/v50_debug_log.md + config hash.
+# ==============================================================================
+
+local:
+  enabled: true                   # Master switch for local overrides
+
+  # Hardware
+  devices: auto                   # auto | int (e.g., 1,2,4 GPUs) | cpu
+  precision: "16-mixed"           # options: 32, 16-mixed, bf16
+  deterministic: true             # Force reproducibility (CuDNN determinism)
+  seed: 42                        # Global random seed for PyTorch/Numpy
+
+  # Paths
+  data_dir: "data/"               # Root dataset directory
+  cache_dir: "~/.spectramind/cache"  # Local cache for HF/DVC artifacts
+  output_dir: "outputs/"          # Where checkpoints, logs, diagnostics go
+  log_dir: "logs/"                # Audit + debug logs (incl. v50_debug_log.md)
+
+  # Runtime
+  num_workers: 4                  # Dataloader workers
+  pin_memory: true                # Faster GPU dataloading
+  persistent_workers: true        # Keep workers alive between epochs
+  max_epochs: 50                  # Safe local default (override as needed)
+  accumulate_grad_batches: 1      # Gradient accumulation steps
+  grad_clip_norm: 1.0             # Gradient clipping (stability)
+
+  # Logging
+  logger: rich_console            # Default logger (Hydra group selectable)
+  log_every_n_steps: 50           # Console log frequency
+  save_checkpoint_every_n_epochs: 5
+  keep_last_n_checkpoints: 3
+
+  # Debug / Dev toggles
+  fast_dev_run: false             # If true, run 1 batch train+val (sanity check)
+  profiler: false                 # Enable PyTorch profiler (overhead!)
+  trace_config: true              # Always snapshot merged Hydra config
+  trace_hash: true                # Write config+git+DVC hash to audit log
+
+  # Extra integrations
+  dvc:
+    enabled: true                 # Ensure DVC artifacts tracked
+    remote: "local"               # default remote for pulling data
+  mlflow:
+    enabled: false                # Optional MLflow tracking (local/mlruns/)
+    tracking_uri: "mlruns"
+    experiment_name: "V50_local"
+  wandb:
+    enabled: false                # Default OFF locally (turn on explicitly)
+    project: "SpectraMindV50"
+    offline: true
+
+  # Guardrails (local runs only; Kaggle/CI have separate configs)
+  time_limit_hours: null          # No wall-clock guard locally
+  disk_quota_gb: null             # No artificial disk limit
+  internet: true                  # Local runs can access Hugging Face/Kaggle API
+
+  notes: |
+    Local default profile is intended for dev iteration with rich console
+    logging, reproducibility toggles, and safe defaults for checkpoints.
+    For Kaggle submissions, always switch to trainer=kaggle_safe.
