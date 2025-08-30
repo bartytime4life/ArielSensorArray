@@ -3,7 +3,7 @@
 ## 0. Purpose & Scope
 
 The **`/configs`** directory is the **flight plan** for the **SpectraMind V50 pipeline** (NeurIPS 2025 Ariel Data Challenge).
-It defines all **experiment parameters** and guarantees that **every run is reproducible, physics-informed, and Kaggle-safe**.
+It encodes all **experiment parameters** and ensures that **every run is reproducible, physics-informed, and Kaggle-safe**.
 
 It serves as the **single source of truth** for:
 
@@ -11,7 +11,7 @@ It serves as the **single source of truth** for:
 * 🧠 **Model architectures** — FGS1 Mamba encoder, AIRS GNN, multi-scale decoders, uncertainty heads, COREL calibration
 * ⚙️ **Training hyperparameters** — curriculum schedules, optimizer/scheduler configs, AMP, checkpointing, loss weights
 * 🔬 **Symbolic/physics constraints** — smoothness, non-negativity, FFT priors, molecular fingerprints, gravitational lensing overlays
-* 📊 **Diagnostics & explainability** — SHAP overlays, symbolic violation maps, UMAP/t-SNE projections, uncertainty calibration plots, HTML dashboards
+* 📊 **Diagnostics & explainability** — SHAP overlays, symbolic violation maps, UMAP/t-SNE projections, calibration heatmaps, HTML dashboards
 * 🖥️ **Runtime overrides** — local dev, Kaggle GPU (≤9 hr safe mode), CI/CD, Docker
 
 Each run is **Hydra-safe, DVC-versioned, and audit-logged**:
@@ -25,12 +25,12 @@ Each run is **Hydra-safe, DVC-versioned, and audit-logged**:
 ## 1. Design Philosophy
 
 * **Hydra-first** — modular YAMLs, dynamically composed
-* **No hard-coding** — all behavior driven by configs or CLI overrides, never code edits
-* **Hierarchical layering** — `defaults` compose from groups (`data/`, `model/`, `optimizer/`, etc.); overrides at any depth
+* **No hard-coding** — all behavior comes from configs or CLI overrides, never from code edits
+* **Hierarchical layering** — `defaults` compose from groups (`data/`, `model/`, `optimizer/`, etc.)
 * **Versioned & logged** — every run saves config + hash
 * **DVC-integrated** — datasets/models tracked for exact reruns
 * **Kaggle-safe** — ≤9 hr runtime, GPU RAM guardrails, no internet
-* **Physics-informed** — configs encode symbolic/astrophysical priors
+* **Physics-informed** — configs encode symbolic & astrophysical priors
 
 ---
 
@@ -119,17 +119,17 @@ spectramind test --config-name selftest.yaml --fast
 * **Keep configs in Git**: all YAMLs except `/local/` are version-controlled
 * **Use `/local/` for secrets/paths**: cluster creds, scratch dirs, `.gitignored`
 * **Leverage interpolation**: `${data.num_classes}` ensures cross-consistency
-* **Snapshot every run**: Hydra saves configs under `outputs/`; never run without one
-* **Sync with DVC**: ensure every path is tracked for reproducibility
-* **Layer configs**: use `defaults` to define baselines; override for ablation/debug/Kaggle
-* **Enforce Kaggle runtime safety**: configs tuned for GPU quotas, AMP, checkpointing
+* **Snapshot every run**: Hydra saves configs under `outputs/`
+* **Sync with DVC**: every path tracked for reproducibility
+* **Layer configs**: define baselines in `defaults`, override for ablation/debug/Kaggle
+* **Enforce Kaggle safety**: configs tuned for ≤9 hr GPU limit, AMP, checkpointing
 
 ---
 
 ## 5. Integration
 
 * **CLI** — All commands (`spectramind train`, `spectramind diagnose`, `spectramind submit`) load configs via Hydra
-* **CI** — GitHub Actions auto-runs self-tests to validate configs
+* **CI** — GitHub Actions auto-runs self-tests on configs
 * **Kaggle** — configs guarantee ≤9 hr runtime, GPU RAM compliance, offline reproducibility
 * **Dashboard** — config metadata embedded in `generate_html_report.py` diagnostics
 * **Experiment tracking** — sync with MLflow/W\&B/TensorBoard via logger configs
@@ -217,6 +217,6 @@ spectramind predict --config-name predict data=kaggle \
 ---
 
 ✅ With this setup, **`/configs` is not just parameters**:
-It is the **mission control** for every SpectraMind V50 experiment — delivering **NASA-grade reproducibility**, **physics-informed rigor**, and **Kaggle-safe deployment**.
+It is **mission control** for every SpectraMind V50 experiment — delivering **NASA-grade reproducibility**, **physics-informed rigor**, and **Kaggle-safe deployment**.
 
 ---
