@@ -1,77 +1,160 @@
 # configs/loss/smoothness.yaml
 # ==============================================================================
-# 🌊 Smoothness Loss — Physics-Informed Regularization
+# 🌊 Smoothness Loss — Physics-Informed Regularization (UPGRADED)
 #
 # Purpose
-#   Enforces spectral smoothness by penalizing large curvature (second derivative)
-#   in predicted μ spectra across wavelength bins.
+#   Enforces spectral smoothness by penalizing the discrete derivative of μ across
+#   wavelength bins. Reflects the physical prior that transmission spectra vary
+#   smoothly with wavelength, aside from narrow molecular lines.
 #
-#   This reflects physical priors: real exoplanet transmission spectra vary
-#   smoothly with wavelength, apart from narrow molecular lines. Penalizing
-#   roughness reduces overfitting and encourages physically plausible predictions.
+# Core Formulations
+#   order = 1  (slope / total-variation-like):
+#     L = λ * Σ_i | μ[i] - μ[i-1] |^p              (robust/p can be 1 or 2)
+#   order = 2  (curvature / discrete Laplacian):
+#     L = λ * Σ_i ( μ[i+1] - 2μ[i] + μ[i-1] )^2
 #
-# Formulation
-#   L_smooth = λ * Σ_bins ( μ[i+1] - 2μ[i] + μ[i-1] )²
-#   Equivalent to an L2 penalty on the discrete Laplacian of μ.
-#
-# Features
-#   • Supports 1st-order (slope) or 2nd-order (curvature) penalties.
-#   • Region-aware masking (e.g. stronger smoothness in continuum regions).
-#   • SNR-aware weighting to reduce penalty in noisy bins.
-#   • Symbolic integration hooks (molecular priors, FFT overlays).
+# Highlights
+#   • 1st- or 2nd-order differences (TV vs curvature).
+#   • Robust penalties (Huber/Charbonnier) to preserve sharp physical lines.
+#   • Region masking (continuum/line windows, external masks).
+#   • SNR-aware weighting (reduce penalties in noisy bins).
+#   • Scheduling (warmup/anneal) for curriculum ramp-in.
+#   • Taper windows to localize or fade in/out constraints.
+#   • Diagnostics (per-bin log, heatmap, JSON export).
 #
 # Usage
 #   In train.yaml:
 #     defaults:
 #       - loss: smoothness
 #
-#   CLI override example:
-#     spectramind train loss.smoothness.lambda=0.05 loss.smoothness.order=2
+#   CLI examples:
+#     # Switch to first-order TV-like penalty and increase weight
+#     spectramind train loss.smoothness.order=1 loss.smoothness.lambda=0.05
+#
+#     # Enable robust Huber penalty with delta=0.01
+#     spectramind train loss.smoothness.robust.enabled=true \
+#       loss.smoothness.robust.type=huber loss.smoothness.robust.delta=0.01
+#
+#     # Apply region masking using an external mask file
+#     spectramind train loss.smoothness.region_masking.enabled=true \
+#       loss.smoothness.region_masking.mask_path=calib/masks/continuum_mask.npy
 # ==============================================================================
 
 smoothness:
   enabled: true
 
-  # Strength of the smoothness regularization term
+  # Base weight (λ) of the smoothness penalty
   lambda: 0.01
 
-  # Order of finite difference penalty
-  order: 2                 # options: 1 (slope) | 2 (curvature)
+  # Discrete difference order to penalize
+  order: 2                 # options: 1 (slope/TV-like) | 2 (curvature)
 
-  # Normalization
-  normalize: true           # scale penalty by number of bins
+  # Normalize penalty by number of bins to stabilize scale across resolutions
+  normalize: true
 
-  # Region-aware masking
+  # Global epsilon for numerical stability (e.g., robust/log ops in implementation)
+  eps: 1.0e-12
+
+  # ---------------------------------------------------------------------------
+  # Robustness (optional) — preserve sharp physical features while smoothing noise
+  # ---------------------------------------------------------------------------
+  robust:
+    enabled: false
+    type: "huber"          # huber | charbonnier
+    delta: 0.01            # Huber hinge or Charbonnier epsilon-like parameter
+    p: 2                   # optional power for |.|^p in order=1 mode (1 or 2)
+
+  # ---------------------------------------------------------------------------
+  # Region-Aware Masking — modulate penalty across continuum vs line regions
+  # ---------------------------------------------------------------------------
   region_masking:
     enabled: false
-    mask_path: null         # path to .npy or .csv with [0,1] mask per bin
+    # Accepts .npy/.csv; shapes allowed: [BINS], [B,BINS]. Values in [0..1].
+    # Example: 1.0 in continuum, 0.0 in strong molecular line windows.
+    mask_path: null
+
+    # If no external mask is provided, you can still bias weights by logical regions
+    # produced upstream (e.g., via a molecule window generator).
     weight_continuum: 1.0   # relative weight for continuum bins
     weight_lines: 0.5       # relative weight for molecular line bins
 
-  # SNR-aware weighting (reduce penalty in low-SNR bins)
+    # Invert an external mask (useful when masks encode line windows as 1)
+    invert_mask: false
+
+  # ---------------------------------------------------------------------------
+  # SNR-Aware Weighting — down-weight bins with low SNR to avoid over-penalizing
+  # ---------------------------------------------------------------------------
   snr_weighting:
     enabled: false
-    snr_path: null          # path to per-bin SNR estimates
-    exponent: 0.5           # smoothness weight ∝ (SNR^exponent)
+    # Path to SNR estimates per bin (same shape conventions as mask)
+    snr_path: null
+    # Effective weight multiplier ∝ (SNR^exponent) normalized to mean≈1
+    exponent: 0.5
 
-  # Symbolic/physics-aware enhancements
+  # ---------------------------------------------------------------------------
+  # Tapering / Local Windows — fade-in/out smoothing across spectral ranges
+  # ---------------------------------------------------------------------------
+  taper:
+    enabled: false
+    # Sigmoid taper centered at mid ∈ [0..1], spanning width ∈ (0..1]
+    # Implementation multiplies per-bin penalty by a smooth window in [0..1].
+    mid: 0.5
+    width: 0.25
+
+  # Multiple windows with their own weights; combined multiplicatively with taper above.
+  windows:
+    enabled: false
+    list:
+      # - {start: 0.00, end: 0.20, weight: 1.0}
+      # - {start: 0.35, end: 0.50, weight: 0.5}
+      # Intervals on normalized wavelength (or bin-normalized index) if available.
+
+  # ---------------------------------------------------------------------------
+  # Scheduling / Curriculum — progressively introduce smoothing during training
+  # ---------------------------------------------------------------------------
+  schedule:
+    enabled: true
+    # Linear warmup: multiplier ramps 0 → 1 across 'steps' (or epochs depending on trainer)
+    warmup:
+      steps: 1500
+    # Optional anneal to gradually relax the constraint later in training
+    anneal:
+      enabled: false
+      steps: 0
+    floor: 0.0   # minimum multiplier after anneal
+    cap: 1.0     # maximum multiplier during/after warmup
+
+  # ---------------------------------------------------------------------------
+  # Symbolic / Physics-Aware Hooks — integration hints for higher-level systems
+  # ---------------------------------------------------------------------------
   symbolic:
-    fft_filter: false         # enable FFT-based suppression of high-frequency μ
-    fft_cutoff: 0.25          # fraction of Nyquist to suppress beyond
-    molecule_regions: false   # optional molecule-specific penalty shaping
+    # If a symbolic engine provides molecule region masks, allow coupling:
+    molecule_regions: false   # enable to accept/expect external molecule region overlays
+    # Optional FFT-domain pre-filtering can be applied upstream before differences:
+    fft_filter: false         # indicator for pipeline to pre-suppress high frequency before differencing
+    fft_cutoff: 0.25          # fraction of Nyquist
 
-  # Stability
-  clip_value: 1.0e3         # clamp max contribution per bin for numerical safety
+  # ---------------------------------------------------------------------------
+  # Stability / Safety
+  # ---------------------------------------------------------------------------
+  clip_value: 1.0e3         # clamp max per-bin contribution for safety against outliers
 
-  # Logging & diagnostics
+  # ---------------------------------------------------------------------------
+  # Diagnostics / Logging
+  # ---------------------------------------------------------------------------
   log_per_bin: true
-  export_heatmap: true      # save heatmap of smoothness penalty per bin
-  save_json: true           # write per-run config and diagnostics
+  export_heatmap: true      # save per-bin penalty heatmap for dashboards
+  save_json: true           # persist effective config at runtime for reproducibility
 
   notes: |
-    • Smoothness priors reduce jagged predictions, aligning with physical
-      expectations of transmission spectra:contentReference[oaicite:0]{index=0}.
-    • Use order=2 for curvature penalties (default).
-    • Region-aware masks allow less penalty in sharp molecular absorption bands,
-      while enforcing strong smoothness in continuum regions:contentReference[oaicite:1]{index=1}.
-    • SNR-aware weighting prevents over-penalizing low-SNR bins (robustness).
+    • Use order=2 for curvature to suppress oscillations while retaining broad features; order=1
+      (TV-like) can better preserve sharp, narrow lines at the expense of possible staircase artifacts.
+    • Robust penalties (Huber/Charbonnier) reduce the impact of rare large residuals and help keep
+      genuine spectral lines intact while still discouraging noise-driven jaggedness.
+    • Region masking lets you apply stronger smoothing in continuum and weaker penalties in known
+      molecular bands; external masks or upstream symbolic overlays can drive this.
+    • SNR-aware weighting guards against over-smoothing bins with low confidence while still
+      encouraging global regularity.
+    • Scheduling (warmup/anneal) is recommended: ramp-in smoothing early to stabilize training
+      and optionally relax later to avoid biasing fine structure.
+    • Keep λ moderate; smoothness should guide—not dominate—over primary likelihood (GLL).
