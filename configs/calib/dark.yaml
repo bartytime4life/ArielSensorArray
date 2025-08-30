@@ -1,0 +1,199 @@
+# FILE: configs/calib/dark.yaml
+# ==============================================================================
+# DARK FRAME SUBTRACTION — SpectraMind V50 Calibration Kill Chain (stage 02)
+# ------------------------------------------------------------------------------
+# Purpose
+#   Remove sensor dark signal (bias-independent thermal current + fixed patterns)
+#   from ADC-corrected frames. Supports master darks, per-pixel dark-current maps,
+#   exposure-time & temperature scaling, and hot/bad-pixel mitigation.
+#
+# Contract
+#   In:  io.input_key  (typically produced by configs/calib/adc.yaml)
+#   Out: io.output_key (consumed by flat/cds/photometry stages)
+#
+# Notes
+#   * All paths may be DVC-tracked artifacts. Use ${oc.env:DATA_DIR, data} as root.
+#   * If a method requires a file and it is missing, behavior is controlled by
+#     validation.require_existing_paths.
+# ==============================================================================
+
+version: 1
+enabled: true
+
+# ------------------------------------------------------------------------------
+# Dark subtraction model
+# ------------------------------------------------------------------------------
+dark_model:
+  # method: "none" | "master" | "per_pixel_map"
+  #  - "master": subtract a master dark frame (optionally scaled)
+  #  - "per_pixel_map": compute dark from a per-pixel current map (e-/s) or ADU/s
+  method: "master"
+
+  # ------------------------
+  # MASTER DARK SETTINGS
+  # ------------------------
+  master:
+    # Reference master dark (NPY) aligned with detector geometry (H x W or C x H x W).
+    # Stored in the same units as the input frames (ADU) unless convert_units is used.
+    path: "${oc.env:DATA_DIR, data}/calib/dark/master_dark.npy"
+
+    # Optional exposure-time scaling for master darks. If the master was built at
+    # master.ref_exposure_s and the science frame exposure is t_s, scale by t_s /
+    # master.ref_exposure_s (useful when master encodes dark RATE). If the master
+    # encodes accumulated dark for a specific exposure, keep scale_exposure=false.
+    scale_exposure: false
+    ref_exposure_s: 1.0
+    # Extract per-frame exposure time (seconds) from metadata dict using this key.
+    # Your pipeline executor should supply `meta[exposure_key]` when enabled.
+    exposure_key: "exposure_time_s"
+
+    # Optional temperature scaling (linear or Arrhenius-like approximation).
+    temperature:
+      enabled: false
+      # method: "linear" | "arrhenius"
+      method: "linear"
+      # For linear: dark(T) = dark(Tr) * [1 + slope_per_K * (T - Tr)]
+      slope_per_K: 0.10
+      ref_temp_K: 293.15        # ~20°C
+      # For arrhenius: dark ∝ exp(-Ea / (k * T)); provide activation energy (eV)
+      activation_energy_eV: 0.60
+      # Pull T from metadata; if missing, fall back to ref_temp_K
+      temp_key: "detector_temperature_K"
+
+    # Optional unit conversion if master is in electrons but frames are ADU (or vice versa).
+    convert_units:
+      enabled: false
+      # "e_to_adu" or "adu_to_e"
+      direction: "e_to_adu"
+      conversion_gain_e_per_adu: 1.0
+
+  # ------------------------
+  # PER-PIXEL MAP SETTINGS
+  # ------------------------
+  per_pixel_map:
+    # Dark current map path:
+    #   If units == "e_per_s"  : map is electrons per second (H x W or C x H x W)
+    #   If units == "adu_per_s": map is ADU per second (same shape)
+    map_path: "${oc.env:DATA_DIR, data}/calib/dark/dark_current_map.npy"
+    units: "e_per_s"            # "e_per_s" | "adu_per_s"
+
+    # Exposure/temperature scaling (applied to rate to get accumulated dark).
+    scale_exposure: true
+    exposure_key: "exposure_time_s"
+
+    temperature:
+      enabled: false
+      method: "linear"          # "linear" | "arrhenius"
+      slope_per_K: 0.10
+      ref_temp_K: 293.15
+      activation_energy_eV: 0.60
+      temp_key: "detector_temperature_K"
+
+    # If units == e_per_s but frames are ADU, convert using gain.
+    convert_units:
+      enabled: true
+      direction: "e_to_adu"
+      conversion_gain_e_per_adu: 1.0
+
+  # ------------------------
+  # COMMON OPTIONS
+  # ------------------------
+  # After subtracting the dark, optionally clamp small negatives to zero to avoid
+  # propagating unphysical values into flat/CDS. Keep a small margin to preserve noise.
+  post_subtraction_clamp:
+    enabled: true
+    min_adu: -5.0
+
+# ------------------------------------------------------------------------------
+# Bad / hot pixel handling (applied AFTER subtraction)
+# ------------------------------------------------------------------------------
+bad_pixel_handling:
+  enabled: true
+  # Provide a static bad-pixel map (1 = bad, 0 = good). If missing and required,
+  # behavior depends on validation.require_existing_paths.
+  bpm_path: "${oc.env:DATA_DIR, data}/calib/masks/bad_pixel_map.npy"
+
+  # Identify additional hot pixels dynamically by sigma threshold on residuals.
+  hot_pixel_detection:
+    enabled: true
+    sigma_threshold: 8.0
+    min_value_adu: 200.0          # only consider pixels above this absolute value
+
+  # Replacement policy for bad + detected hot pixels.
+  replace:
+    mode: "median4"               # "median4" | "median8" | "gaussian3"
+    # Guard against replacing too many pixels in a small area; acts as a sanity cap.
+    max_replace_fraction: 0.05
+
+# ------------------------------------------------------------------------------
+# Optional cosmic-ray removal (simple L.A.Cosmic-style gate; conservative defaults)
+# ------------------------------------------------------------------------------
+cosmic_rays:
+  enabled: false
+  sigma_threshold: 10.0
+  grow_radius_px: 1
+  replace_mode: "median8"         # reuse bad-pixel replacement modes
+
+# ------------------------------------------------------------------------------
+# Quality checks (soft guards; do not mutate data)
+# ------------------------------------------------------------------------------
+quality_checks:
+  enabled: true
+
+  # Check a small random subset of frames for residual statistics.
+  sampling:
+    fraction: 0.10
+    min_samples: 2
+
+  residual_stats:
+    # Expect the residual mean to be close to zero after dark removal
+    mean_adu_range: [-200.0, 200.0]
+    # Expect a non-degenerate std; if std is extremely low or extremely high, warn
+    std_adu_min: 1.0
+    std_adu_max: 30000.0
+
+  residual_histogram:
+    bins: 256
+    # Fraction at exact clamp boundary (if clamp enabled); too high suggests over-clamping
+    max_at_clamp_frac: 0.10
+
+  # "warn" (log + continue) or "error" (raise)
+  action_on_fail: "warn"
+
+# ------------------------------------------------------------------------------
+# I/O routing for pipeline memory dict
+# ------------------------------------------------------------------------------
+io:
+  input_key: "adc_corrected"      # produced by ADC stage
+  output_key: "dark_corrected"    # consumed by subsequent stages (e.g., flat/CDS)
+
+# ------------------------------------------------------------------------------
+# Caching & DVC hooks
+# ------------------------------------------------------------------------------
+cache:
+  write_intermediate: true
+  out_dir: "${oc.env:RUN_DIR, runs}/calib/dark"
+  dvc_stage_name: "calib_dark"
+
+# ------------------------------------------------------------------------------
+# Logging & runtime
+# ------------------------------------------------------------------------------
+logging:
+  level: "INFO"                   # "DEBUG" | "INFO" | "WARNING" | "ERROR"
+  log_sample_stats: true
+  save_debug_images: false        # save small image grids of before/after & residuals
+
+runtime:
+  num_workers: 2
+  seed: 1337
+
+# ------------------------------------------------------------------------------
+# Validation — fail fast if required resources are missing or incompatible
+# ------------------------------------------------------------------------------
+validation:
+  require_existing_paths: true    # if method uses files, they must exist
+  check_shape_compatibility: true # ensure master/map shapes line up with first batch
+  # At least one scaling dimension must be resolvable when enabled (exposure/temperature).
+  require_metadata_keys:
+    exposure: ["exposure_time_s"]
+    temperature: ["detector_temperature_K"]
