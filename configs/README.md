@@ -1,153 +1,159 @@
 # 🗂️ `/configs` — SpectraMind V50 Configuration System
 
+---
+
 ## 0. Purpose & Scope
 
-The **`/configs`** directory is the **flight plan** for the **SpectraMind V50 pipeline** (NeurIPS 2025 Ariel Data Challenge).
-It encodes all **experiment parameters** and ensures that **every run is reproducible, physics-informed, and Kaggle-safe**.
+The **`/configs`** directory is the **mission control flight plan** for the **SpectraMind V50 pipeline**  
+(NeurIPS 2025 Ariel Data Challenge).
 
-It serves as the **single source of truth** for:
+It encodes all **parameters, constraints, and overrides** that govern the pipeline — ensuring that every run is:
 
-* 📡 **Data ingestion & calibration** — FGS1 photometer and AIRS spectrometer paths, detrending, jitter/noise models
-* 🧠 **Model architectures** — FGS1 Mamba encoder, AIRS GNN, multi-scale decoders, uncertainty heads, COREL calibration
-* ⚙️ **Training hyperparameters** — curriculum schedules, optimizer/scheduler configs, AMP, checkpointing, loss weights
-* 🔬 **Symbolic/physics constraints** — smoothness, non-negativity, FFT priors, molecular fingerprints, gravitational lensing overlays
-* 📊 **Diagnostics & explainability** — SHAP overlays, symbolic violation maps, UMAP/t-SNE projections, calibration heatmaps, HTML dashboards
-* 🖥️ **Runtime overrides** — local dev, Kaggle GPU (≤9 hr safe mode), CI/CD, Docker
+* 🔬 **Reproducible** — Hydra-safe YAMLs, DVC-tracked data/models, Git-logged config hashes:contentReference[oaicite:3]{index=3}  
+* 🛰️ **Physics-informed** — encodes symbolic constraints (smoothness, non-negativity, FFT priors, molecular fingerprints, gravitational lensing):contentReference[oaicite:4]{index=4}:contentReference[oaicite:5]{index=5}  
+* ⚡ **Kaggle-safe** — ≤9 hr runtime, offline reproducible, GPU RAM guardrails:contentReference[oaicite:6]{index=6}  
+* 📊 **Diagnostics-ready** — outputs HTML dashboards, calibration heatmaps, SHAP overlays, symbolic violation maps:contentReference[oaicite:7]{index=7}  
 
-Each run is **Hydra-safe, DVC-versioned, and audit-logged**:
+Every run is tracked and archived:
 
-* Composed configs saved under `outputs/DATE_TIME/.hydra/`
-* Logged with a **config hash** in `logs/v50_debug_log.md`
-* Large data/model artifacts tracked via **DVC**
+* Hydra snapshots under `outputs/DATE_TIME/.hydra/`
+* Logs & config hashes in `logs/v50_debug_log.md`
+* Large artifacts (datasets/models) via DVC  
 
 ---
 
 ## 1. Design Philosophy
 
-* **Hydra-first** — modular YAMLs, dynamically composed
-* **No hard-coding** — all behavior comes from configs or CLI overrides, never from code edits
-* **Hierarchical layering** — `defaults` compose from groups (`data/`, `model/`, `optimizer/`, etc.)
-* **Versioned & logged** — every run saves config + hash
-* **DVC-integrated** — datasets/models tracked for exact reruns
-* **Kaggle-safe** — ≤9 hr runtime, GPU RAM guardrails, no internet
-* **Physics-informed** — configs encode symbolic & astrophysical priors
+* **Hydra-first** — modular YAMLs composed into layered configs:contentReference[oaicite:8]{index=8}  
+* **No hardcoding** — all pipeline behavior controlled via configs or CLI overrides  
+* **Hierarchical layering** — defaults pull from config groups (data, model, optimizer, etc.)  
+* **Versioned & logged** — all configs are Git/DVC tracked, every run is hash-logged  
+* **Kaggle-safe** — defaults respect GPU time/memory constraints, offline-friendly:contentReference[oaicite:9]{index=9}  
+* **Physics-aware** — symbolic/astrophysical priors (molecular bands, diffraction, radiation, turbulence) are encoded in config knobs:contentReference[oaicite:10]{index=10}:contentReference[oaicite:11]{index=11}  
 
 ---
 
-## 2. Directory Structure
+## 2. Directory Layout
 
 ```
+
 configs/
 ├── train.yaml              # Main training config (composes defaults)
 ├── predict.yaml            # Inference / submission config
-├── ablate.yaml             # Grid for ablation sweeps
-├── selftest.yaml           # Lightweight smoke/self-test config
+├── ablate.yaml             # Grid search & ablation sweeps
+├── selftest.yaml           # Lightweight smoke-test config
 │
-├── data/                   # Dataset + calibration options
+├── data/                   # Data ingestion + calibration modes
 │   ├── nominal.yaml
 │   ├── kaggle.yaml
 │   └── debug.yaml
 │
 ├── model/                  # Model architectures
 │   ├── v50.yaml
-│   ├── fgs1_mamba.yaml
-│   ├── airs_gnn.yaml
-│   └── decoder.yaml
+│   ├── fgs1\_mamba.yaml
+│   ├── airs\_gnn.yaml
+│   ├── fusion.yaml
+│   ├── decoder.yaml
+│   └── constraints.yaml
 │
-├── optimizer/              # Optimizers & schedulers
+├── optimizer/              # Optimizer / scheduler configs
 │   ├── adam.yaml
-│   ├── adamw.yaml
+│   ├── adamw\.yaml
 │   └── sgd.yaml
 │
-├── loss/                   # Physics/symbolic loss weights
+├── loss/                   # Physics + symbolic loss weights
 │   ├── gll.yaml
 │   ├── smoothness.yaml
+│   ├── nonnegativity.yaml
+│   ├── fft.yaml
 │   └── symbolic.yaml
 │
 ├── trainer/                # Training loop configs
 │   ├── default.yaml
 │   ├── gpu.yaml
-│   └── kaggle_safe.yaml
+│   ├── kaggle\_safe.yaml
+│   └── ci\_fast.yaml
 │
-├── logger/                 # Experiment logging
+├── logger/                 # Logging / experiment tracking
 │   ├── tensorboard.yaml
 │   ├── wandb.yaml
-│   └── mlflow.yaml
+│   ├── mlflow\.yaml
+│   └── rich\_console.yaml
 │
-└── local/                  # Machine-specific overrides (git-ignored)
-    └── default.yaml
-```
+└── local/                  # Local dev overrides (gitignored)
+└── default.yaml
+
+````
 
 ---
 
-## 3. Usage
+## 3. Usage Patterns
 
 ### Run with defaults
+```bash
+spectramind train --config-name train
+````
+
+### Override single values
 
 ```bash
-python train_v50.py
-```
-
-### Override values
-
-```bash
-python train_v50.py optimizer=adamw training.epochs=20 model=airs_gnn
+spectramind train model=airs_gnn optimizer=adamw trainer.epochs=20
 ```
 
 ### Multirun sweeps
 
 ```bash
-python train_v50.py -m optimizer=adam,sgd training.batch_size=32,64
+spectramind train -m optimizer=adam,sgd trainer.batch_size=32,64
 ```
 
-### Kaggle-safe run
+### Kaggle-safe leaderboard run
 
 ```bash
-spectramind train --config-name train.yaml trainer=kaggle_safe
+spectramind train --config-name train trainer=kaggle_safe
 ```
 
-### CI self-test
+### CI smoke test
 
 ```bash
-spectramind test --config-name selftest.yaml --fast
+spectramind test --config-name selftest --fast
 ```
 
 ---
 
 ## 4. Best Practices
 
-* **Keep configs in Git**: all YAMLs except `/local/` are version-controlled
-* **Use `/local/` for secrets/paths**: cluster creds, scratch dirs, `.gitignored`
-* **Leverage interpolation**: `${data.num_classes}` ensures cross-consistency
-* **Snapshot every run**: Hydra saves configs under `outputs/`
-* **Sync with DVC**: every path tracked for reproducibility
-* **Layer configs**: define baselines in `defaults`, override for ablation/debug/Kaggle
-* **Enforce Kaggle safety**: configs tuned for ≤9 hr GPU limit, AMP, checkpointing
+✅ **Keep configs in Git** — all except `/local/`
+✅ **Use `/local/` for secrets/paths** — cluster creds, scratch dirs
+✅ **Exploit interpolation** — `${data.num_classes}` ensures consistency
+✅ **Snapshot every run** — Hydra auto-saves configs in outputs
+✅ **Track with DVC** — all dataset/model paths are DVC-linked
+✅ **Layer configs** — define baselines, override for ablations/Kaggle-safe
+✅ **Respect Kaggle limits** — ≤9 hr runtime, AMP enabled, safe batch sizes
 
 ---
 
-## 5. Integration
+## 5. Integration & Automation
 
-* **CLI** — All commands (`spectramind train`, `spectramind diagnose`, `spectramind submit`) load configs via Hydra
-* **CI** — GitHub Actions auto-runs self-tests on configs
-* **Kaggle** — configs guarantee ≤9 hr runtime, GPU RAM compliance, offline reproducibility
-* **Dashboard** — config metadata embedded in `generate_html_report.py` diagnostics
-* **Experiment tracking** — sync with MLflow/W\&B/TensorBoard via logger configs
+* **CLI:** Every `spectramind` subcommand (`train`, `predict`, `diagnose`, `submit`, `ablate`) composes configs via Hydra
+* **CI:** GitHub Actions auto-run `selftest.yaml` on PRs
+* **DVC:** All pipeline stages (calibrate → preprocess → train → predict → diagnose → submit) mapped to configs & DVC DAG
+* **Dashboard:** Config metadata embedded in `generate_html_report.py` for diagnostics
+* **Experiment tracking:** Integrated with TensorBoard/W\&B/MLflow via logger configs
 
 ---
 
 ## 6. References
 
-* Hydra configuration best practices
-* SpectraMind V50 Technical Plan
-* SpectraMind V50 Project Analysis
-* Strategy for Updating & Extending V50
-* Kaggle Platform Guide
-* Physics & Modeling References
+* 📘 \[SpectraMind V50 Technical Plan]
+* 📘 \[SpectraMind V50 Project Analysis]
+* 📘 \[Strategy for Updating & Extending V50]
+* 📘 \[Hydra for AI Projects: Comprehensive Guide]
+* 📘 \[Mermaid Diagrams in GitHub Markdown Reference]
+* 📘 \[Physics & Modeling References: Radiation, Gravitational Lensing, Spectroscopy]
 
 ---
 
-## 7. DVC Pipeline (Execution DAG)
+## 7. Execution DAG (DVC + Hydra)
 
 ```mermaid
 flowchart LR
@@ -184,39 +190,13 @@ flowchart LR
 
 ---
 
-## 8. Quick Commands (Hydra · DVC · Kaggle)
+✅ With this setup, **`/configs` is not just parameters** — it is the **operational DNA** of SpectraMind V50, delivering:
 
-### Hydra & CLI
-
-```bash
-spectramind train --config-name train +dry_run=true
-spectramind train --config-name train optimizer=adamw training.epochs=30 model=airs_gnn
-spectramind train --config-name train -m optimizer=adam,sgd training.batch_size=32,64,96
-spectramind predict --config-name predict uncertainty.corel.enabled=true
-spectramind ablate --config-name ablate ablate.leaderboard.top_n=5 ablate.leaderboard.export_html=true
-```
-
-### DVC
-
-```bash
-dvc repro
-dvc repro train
-dvc repro -S data.mode=kaggle
-dvc dag
-dvc status
-```
-
-### Kaggle Tips
-
-```bash
-spectramind predict --config-name predict data=kaggle \
-  predict.device=auto predict.precision=bf16 \
-  predict.outputs.write_submission=true
-```
+* **NASA-grade reproducibility**
+* **Physics-informed rigor**
+* **Kaggle-ready safety**
+* **Full CLI/DVC/CI integration**
 
 ---
 
-✅ With this setup, **`/configs` is not just parameters**:
-It is **mission control** for every SpectraMind V50 experiment — delivering **NASA-grade reproducibility**, **physics-informed rigor**, and **Kaggle-safe deployment**.
-
----
+```
