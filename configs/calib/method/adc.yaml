@@ -1,135 +1,176 @@
-# configs/calib/method/adc.yaml
+# FILE: configs/calib/method/adc.yaml
 # ==============================================================================
-# 🌍 World Discovery Engine (WDE)
-# ⚙️ ADC Correction — Method Config (Mission-Grade)
+# 🔧 ADC (Analog-to-Digital Conversion) — Method Config (v1.1)
 # ------------------------------------------------------------------------------
 # Purpose
-#   Correct analog-to-digital conversion artifacts (offsets, gain non-uniformity,
-#   bit-depth clipping, potential non-linearity) before any other calibration step.
+#   Apply offset & gain normalization (PRNU), optional reference-pixel / overscan
+#   correction and response linearization, then (optionally) re-quantize to a
+#   target bit-depth/dtype for downstream calibration (dark/flat/CDS).
 #
 # Usage
-#   Composed by calib/nominal.yaml in the calibration kill chain.
-#   Example overrides (CLI/Hydra-style):
-#     spectramind calibrate calib.method.adc.enabled=false
-#     spectramind calibrate calib.method.adc.clip_guard.repair_strategy=interpolate
-#
-# Guarantees
-#   • Deterministic & CI/Kaggle-safe
-#   • Strong diagnostics (CSV/JSON/plots)
-#   • Safe clamps and robust NaN/outlier handling
+#   Composed by your calibration chain as the first stage.
+#   Examples:
+#     spectramind calibrate calib.method.adc.offset.method=per_channel \
+#       calib.method.adc.offset.table_path=data/calib/adc/offsets_per_channel.npy
+#     spectramind calibrate calib.method.adc.linearization.method=lut \
+#       calib.method.adc.linearization.lut_path=data/calib/adc/lin_lut.npy
 # ==============================================================================
+
+_meta:
+  schema_version: "1.1.0"
+  last_updated: "${now:%Y-%m-%d}"
 
 adc:
   enabled: true
 
-  # ---- Raw digitizer characteristics ------------------------------------------------
-  bit_depth: 16                      # native ADC bit depth (e.g., 12, 14, 16)
-  full_well_electrons: 120000        # for saturation guard & sanity checks
-  # Optional explicit DN bounds (defaults derive from bit_depth if null)
-  min_dn: 0
-  max_dn: null                       # if null, uses (2^bit_depth - 1)
+  # ---------------------------------------------------------------------------
+  # Detector I/O & quantization
+  # ---------------------------------------------------------------------------
+  detector:
+    name: "ArielSimCam"
+    bit_depth_in: 16                 # raw input nominal bit depth (DN range)
+    bit_depth_out: 16                # target depth if re-quantizing to int dtype
+    dtype_out: "float32"             # "float32" | "float16" | "uint16" | "uint32"
+    conversion_gain_e_per_adu: 1.0   # electrons per DN (used if converting units)
+    saturation_level_e: 180000.0     # info-only; QC/diagnostics may use this
 
-  # ---- Per-channel gain/offset (DVC-tracked tables recommended) --------------------
-  # Preferred: table paths (array shapes must match detector)
-  gain_table_path:   "calib_refs/adc/gain_table.npy"     # electrons / DN
-  offset_table_path: "calib_refs/adc/offset_table.npy"   # DN pedestal map
-  # Fallback constants if tables absent (used only when tables missing)
-  fallback_gain_e_per_dn:  1.0
-  fallback_offset_dn:      0.0
-  # Channel map (optional) to route per-amplifier segments
-  channel_map_path: null                                      # e.g. JSON/NPY
-  per_channel_overrides: []                                   # e.g., [{channel: 0, gain_scale: 1.002}]
-
-  # ---- Bad/Hot pixel handling -------------------------------------------------------
-  bad_pixel_mask: "calib_refs/common/bad_pixel_mask.tif" # 1=bad/ignore, 0=good
-  hot_pixel_threshold_dn: null                           # optional auto-derive by sigma-clip if null
-  nan_policy:
-    enabled: true
-    strategy: "median_window"                           # median_window | nearest | zero
-    window: 3                                           # odd kernel size for median_window
-
-  # ---- Saturation & clipping handling ----------------------------------------------
-  clip_guard:
-    enabled: true
-    low_dn_threshold:  0.0                              # DN <= threshold → underflow region
-    high_dn_fraction:  0.99                             # fraction of max DN treated near-saturation
-    repair_strategy:  "mask"                            # mask | interpolate | leave
-    interpolate_window: 3                               # odd window if repair_strategy=interpolate
-    export_clip_mask: "outputs/diagnostics/calib/adc/clip_mask.tif"
-
-  # ---- Linearity LUT (optional): DN → multiplicative scale or electrons correction --
-  linearity:
+  # ---------------------------------------------------------------------------
+  # Overscan & per-amplifier options (optional)
+  # ---------------------------------------------------------------------------
+  overscan:
     enabled: false
-    lut_path: "calib_refs/adc/linearity_lut.npy"        # shape [2, N] or dict
-    mode: "scale"                                       # scale | dn_to_e
-    apply_after_gain: true                              # if false, apply on DN before gain
+    # Define 2D boxes in pixel coords for overscan estimation.
+    # Example regions: keys are labels (e.g., amp IDs), values are {y:[y0,y1], x:[x0,x1]} (inclusive bounds).
+    regions:
+      # A: { y: [0, 2047], x: [2048, 2095] }
+    strategy: "median"               # "median" | "polyfit"
+    poly_order: 1
+    subtract_per_amp: true
 
-  # ---- Outlier rejection during pedestal/gain estimation ----------------------------
-  sigma_clip:
+  amplifiers:
+    enabled: false
+    layout: ["A", "B", "C", "D"]
+    # Science regions per amplifier (no overscan region here)
+    regions:
+      # A: { y: [0, 2047], x: [0, 1023] }
+    trim_overscan: true
+    per_amp_gain:
+      enabled: false
+      table_path: "data/calib/adc/gain_per_amp.npy"   # per-amp scalar gains
+
+  # ---------------------------------------------------------------------------
+  # Offset correction (bias removal)
+  #   Order: reference_pixel (if enabled) → table/map/global
+  # ---------------------------------------------------------------------------
+  offset:
+    method: "per_channel"            # "none" | "global" | "per_channel" | "per_pixel"
+    # Global constant (DN) if method == "global"
+    value_adu: 0.0
+    # Per-channel offsets (NPY shape [C]); ignored if input is 2D (assumed C=1)
+    table_path: "data/calib/adc/offsets_per_channel.npy"
+    # Per-pixel offsets (NPY HxW or CxHxW) if method == "per_pixel"
+    map_path: "data/calib/adc/offsets_map.npy"
+
+    reference_pixel:
+      use: false
+      strategy: "border_mean"        # "border_mean" | "mask_mean"
+      border: { top: 4, bottom: 4, left: 4, right: 4 }
+      mask_path: "data/calib/adc/reference_pixels_mask.npy"
+
+  # ---------------------------------------------------------------------------
+  # Gain / PRNU correction (multiplicative)
+  #   Applied as: frame <- frame / gain_map
+  # ---------------------------------------------------------------------------
+  gain:
+    method: "per_channel"            # "none" | "global" | "per_channel" | "per_pixel"
+    value: 1.0
+    table_path: "data/calib/adc/gains_per_channel.npy"   # [C]
+    prnu_map_path: "data/calib/adc/prnu_map.npy"         # HxW or CxHxW
+    epsilon: 1.0e-6
+    renormalize_to_mean_one: true    # rescale gains so mean(gain)=1 after load
+
+  # ---------------------------------------------------------------------------
+  # Linearization (response curve / non-linearity correction)
+  #   Converts non-linear DN response to linear space.
+  # ---------------------------------------------------------------------------
+  linearization:
+    method: "none"                   # "none" | "lut" | "poly"
+    # LUT: 1D mapping input DN -> linearized DN
+    lut_path: "data/calib/adc/linearization_lut.npy"
+    lut_interp: "linear"             # "nearest" | "linear"
+    # Polynomial: y_lin = c0 + c1*x + c2*x^2 + ... with x = raw_DN / poly_norm_adu
+    poly_coeffs: [1.0, 0.0, 0.0]
+    poly_norm_adu: 65535.0
+
+  # ---------------------------------------------------------------------------
+  # Re-quantization / clamping
+  # ---------------------------------------------------------------------------
+  quantization:
+    clip:
+      min_adu: 0.0
+      max_adu: 65535.0
+    rounding: "nearest"              # "nearest" | "floor" | "ceil" | "stochastic"
+    enforce_range: true              # if casting to integer dtype_out
+    # After offset/gain/lin, clamp small negatives if desired (preserve noise margin)
+    post_subtraction_clamp:
+      enabled: true
+      min_adu: -5.0
+
+  # ---------------------------------------------------------------------------
+  # Quality control (soft guards; do not mutate data)
+  # ---------------------------------------------------------------------------
+  qc:
     enabled: true
-    sigma: 5.0
-    max_iters: 3
+    histogram_after:
+      bins: 256
+      max_zero_frac: 0.15            # fraction at exact 0 after processing
+      max_saturated_frac: 0.10       # fraction at max DN after processing
+    stats_after:
+      mean_adu_range: [50.0, 50000.0]
+      std_adu_max: 20000.0
+    on_fail: "warn"                  # "warn" | "raise" | "skip"
 
-  # ---- Safety & Stability -----------------------------------------------------------
-  clamps:
-    min_sigma_e: 1e-8                                   # floor for propagated σ (if present)
-    max_sigma_e: 1e+3
-    min_electrons: 0.0                                  # negative electrons are clamped
-    max_electrons: null                                 # if null, set to full_well_electrons
-  allow_negative_electrons: false
+  # ---------------------------------------------------------------------------
+  # IO mapping (pipeline/executor contract)
+  # ---------------------------------------------------------------------------
+  io:
+    input_key: "raw_frames"
+    output_key: "adc_corrected"
+    # Optional: write overscan/bias structures for debugging
+    debug_keys:
+      overscan_estimate: "adc_overscan_est"
+      bias_map: "adc_bias_map"
 
-  # ---- Order of operations (explicit for reproducibility) ---------------------------
-  # Allowed steps: remove_offset, apply_gain, apply_linearity, handle_clipping, apply_masks
-  pipeline_order:
-    - "remove_offset"                                   # DN ← DN - offset
-    - "apply_gain"                                      # e- ← DN * gain
-    - "apply_linearity"                                 # optional non-linearity compensation
-    - "handle_clipping"                                 # generate & apply clip masks/repairs
-    - "apply_masks"                                     # bad pixel & NaN handling
-
-  # ---- Diagnostics & Logging --------------------------------------------------------
+  # ---------------------------------------------------------------------------
+  # Diagnostics & logging
+  # ---------------------------------------------------------------------------
   diagnostics:
     enabled: true
-    output_dir: "outputs/diagnostics/calib/adc"
-    save_histograms: true
-    save_previews: true                                 # small PNGs before/after
-    save_stats_csv: "outputs/diagnostics/calib/adc/stats.csv"
-    save_summary_json: "outputs/diagnostics/calib/adc/summary.json"
-    histogram_bins: 1024
-    sample_stride: 4                                    # downsample factor for quicklook
-    include_percentiles: [0.1, 1, 5, 50, 95, 99, 99.9]  # reported in summary.json
+    save_samples: 2
+    output_dir: "${oc.env:RUN_DIR, runs}/diag/adc"
+    save_images: false
+    filename_prefix: "adc"
+    plot_format: "png"
 
-  # ---- Validation / Sanity checks ---------------------------------------------------
+  logging:
+    level: "INFO"                   # "DEBUG" | "INFO" | "WARNING" | "ERROR"
+
+  # ---------------------------------------------------------------------------
+  # Runtime & validation
+  # ---------------------------------------------------------------------------
+  runtime:
+    num_workers: 2
+    seed: 1337
+
   validation:
-    require_tables: false                               # if true, tables must exist or fail
-    enforce_shapes: true                                # tables must match detector shape
-    check_monotonic_lut: true                           # if linearity LUT should be monotonic
-    fail_on_extreme_gain: true                          # guard against absurd gain values
-    max_gain_e_per_dn: 10.0
-    min_gain_e_per_dn: 0.001
+    require_existing_paths: true    # if method uses files, they must exist
+    check_shape_compatibility: true # verify [C,H,W] vs loaded maps
+    assert_finite_output: true
 
-  # ---- Performance ------------------------------------------------------------------
-  performance:
-    chunk_size: 1024                                    # process in tiles to reduce memory
-    num_workers: 0                                      # 0=auto/serial (Kaggle-safe)
-
-  # ---- Reproducibility --------------------------------------------------------------
-  deterministic: true
-  random_seed: 42
-
-  # ---- Metadata ---------------------------------------------------------------------
-  units:
-    input:  "DN"
-    output: "electrons"
-  version: "1.2"
-  provenance: "configs/calib/method/adc.yaml"
-  created_by: "WDE calibration stack"
   notes: |
-    • Apply ADC offset removal, then gain normalization (DN→electrons). If linearity is enabled,
-      apply the configured mode (scale or dn_to_e) at the designated stage.
-    • Prefer masking saturated/near-saturated pixels to avoid bias downstream; interpolation is
-      available for visualization or non-critical analyses.
-    • Bad/Nan handling is conservative by default (median window=3). Increase window cautiously.
-    • Validation guards (gain bounds, LUT monotonicity) protect against corrupted references.
-    • All outputs are deterministic for CI; diagnostics include histograms, quicklook PNGs, and
-      CSV/JSON summaries for auditing and Kaggle submissions.
+    • Order of operations: reference-pixel (if enabled) → offset → gain(PRNU) → linearization
+      → clamping/quantization. Overscan/per-amplifier corrections can precede offset/gain
+      if enabled.
+    • Keep units consistent; if you convert to/from electrons for diagnostics, use
+      detector.conversion_gain_e_per_adu consistently.
+    • Renormalizing gain maps to mean 1 avoids global flux scale shifts into downstream stages.
