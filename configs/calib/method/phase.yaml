@@ -1,15 +1,78 @@
 # configs/calib/method/phase.yaml
 # ==============================================================================
-# Phase Correction calibration method
-# Applies phase alignment and timing correction for time-series data.
+# ⏱️ Phase Correction — Method Config
+# Purpose
+#   Apply phase alignment and timing correction for time-series data
+#   (light curves, detector sequences). Ensures all frames share a consistent
+#   temporal reference and corrects for instrument clock drift, spacecraft
+#   motion, and astrophysical timing effects.
+# Usage
+#   Composed by calib/nominal.yaml in the calibration kill chain.
+#   Override example:
+#     spectramind calibrate calib.method.phase.alignment_method=fft
 # ==============================================================================
 
 phase:
   enabled: true
-  reference_clock: "gps"      # options: gps | onboard | external
-  alignment_method: "cross_correlation"  # options: cross_correlation | polynomial_fit
-  drift_tolerance_sec: 0.01   # allowable drift in seconds
-  apply_barycentric: true     # Apply barycentric correction (for astronomy)
+
+  # Reference timing source
+  reference_clock: "gps"            # options: gps | onboard | external
+  fallback_clock: "onboard"         # used if primary reference is missing
+
+  # Alignment strategy
+  alignment_method: "cross_correlation"   # options: cross_correlation | polynomial_fit | fft | template_match
+
+  # Cross-correlation settings
+  cross_correlation:
+    window: 256                  # number of samples in correlation window
+    max_lag_sec: 1.0             # maximum allowed lag to search (in seconds)
+    interpolate: true            # refine alignment with sub-sample interpolation
+
+  # Polynomial fit to drift curve
+  polynomial_fit:
+    order: 3                     # polynomial order for drift correction
+    robust: true                 # robust regression (Huber/RANSAC)
+    segment_size: 1000           # frames per segment for local fitting
+
+  # FFT-based alignment (frequency-domain method)
+  fft:
+    highpass_hz: 1e-4            # high-pass cutoff for detrending
+    lowpass_hz: 0.5              # low-pass cutoff to isolate drift
+    taper: "hann"                # taper window: hann | hamming | none
+
+  # Template matching method
+  template_match:
+    template_file: "calib/phase/template.npy"   # reference template waveform
+    normalize: true                             # normalize before matching
+
+  # Barycentric correction (for astronomy: corrects timing to solar system barycenter)
+  apply_barycentric: true
+  observatory_coords: "calib/phase/observatory_coords.json"  # lat/lon/alt or ephemeris
+  ephemeris: "de440"                # JPL ephemeris for barycentric correction
+  time_scale: "tdb"                 # barycentric dynamical time (TDB)
+
+  # Drift tolerance
+  drift_tolerance_sec: 0.01         # allowable uncorrected drift in seconds
+  max_iter: 10                      # maximum correction iterations
+
+  # Outlier rejection
+  outliers:
+    sigma_clip: 5.0                 # reject points >5σ from drift model
+    max_iter: 3
+
+  # Logging and diagnostic exports
+  diagnostics:
+    save_drift_curve: true
+    save_crosscorr_plots: true
+    output_dir: "outputs/phase_corrections/"
+
   notes: |
-    Phase correction ensures time-series frames are aligned to a common
-    temporal reference, correcting drift and enabling phase-folding.
+    Phase correction ensures all time-series frames are aligned to a common
+    temporal reference. This prevents astrophysical signals (e.g. transits) from
+    being smeared out by clock drift or spacecraft timing jitter.
+    - Cross-correlation is robust when signal SNR is high.
+    - Polynomial fitting is useful for slow, smooth drift trends.
+    - FFT methods are effective when drift has a dominant frequency component.
+    - Template matching locks data to a reference transit/eclipse model.
+    Barycentric correction accounts for Earth/spacecraft orbital motion so
+    observed timestamps are consistent with solar system ephemerides.
