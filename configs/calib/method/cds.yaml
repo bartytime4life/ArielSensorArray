@@ -1,14 +1,211 @@
-# configs/calib/method/cds.yaml
+# FILE: configs/calib/method/cds.yaml
 # ==============================================================================
-# Correlated Double Sampling (CDS) method
-# Reduces kTC noise and 1/f noise by subtracting reset frames.
+# ⚡ Correlated Double Sampling (CDS) — Method Config (v1.2)
+# ------------------------------------------------------------------------------
+# Purpose
+#   Reduce kTC/reset noise and low-frequency (1/f) drifts by differencing RESET and
+#   SIGNAL reads. Flexible pairing (index/timestamp), explicit RESET flags, static
+#   reset frames fallback, robust outlier handling, optional temporal cleanup, and QC.
+#
+# Usage
+#   Composed by your calibration chain (after flat) to produce CDS-corrected frames.
+#   Examples:
+#     spectramind calibrate calib.method.cds.pairing.policy=nearest \
+#       calib.method.cds.pairing.window_s=3.0
+#     spectramind calibrate calib.method.cds.reset_source.mode=static \
+#       calib.method.cds.reset_source.static.path=calib/cds/reset_frame.tif
+#     spectramind calibrate calib.method.cds.subtraction.order=signal_minus_reset
 # ==============================================================================
+
+_meta:
+  schema_version: "1.2.0"
+  last_updated: "${now:%Y-%m-%d}"
 
 cds:
   enabled: true
-  reset_frame: "calib/cds/reset_frame.tif"  # Reference reset frame
-  noise_threshold: 50                       # DN threshold for subtraction
-  pair_strategy: "nearest"                  # nearest | exact | interpolate
+
+  # ---------------------------------------------------------------------------
+  # Geometry & units (informative; executor remains shape-agnostic)
+  # ---------------------------------------------------------------------------
+  frames:
+    # Supported: [B,H,W] or [B,C,H,W]; method applies per-channel if C>1
+    allow_3d: true
+    allow_4d: true
+    preferred_dtype_out: "float32"     # "float32" | "float16" | "uint16" (if quantizing later)
+    gain_e_per_adu: 1.0                # used only for diagnostics / optional var models
+
+  # ---------------------------------------------------------------------------
+  # Reset source & classification of reads
+  # ---------------------------------------------------------------------------
+  reset_source:
+    # mode: "explicit_flags" | "static" | "pattern" | "none"
+    #  - explicit_flags: use metadata boolean (is_reset) per frame
+    #  - static: use a single static reset reference frame for all pairs
+    #  - pattern: infer RESET/SIGNAL from a known cadence (e.g., even/odd)
+    #  - none: perform generic frame differencing (no explicit RESET)
+    mode: "explicit_flags"
+
+    explicit_flags:
+      key: "is_reset"                 # metadata key (boolean)
+      # When unavailable for some frames, optionally fall back to pattern
+      fallback_to_pattern: false
+
+    static:
+      # Static reference reset frame (any image format supported by executor: .npy/.tif/.fits)
+      path: "calib/cds/reset_frame.tif"
+      # If needed, scale static reset by exposure or temperature (rare):
+      scale:
+        enabled: false
+        by_exposure:
+          enabled: false
+          key_candidates: ["EXPTIME", "EXPOSURE"]
+          fallback_seconds: 1.0
+        by_temperature:
+          enabled: false
+          key_candidates: ["SENSOR_TEMP_C", "CCD-TEMP"]
+          model: "linear"            # "linear" | "exp"
+          params:
+            slope_per_C: 0.02        # for "linear"
+            T0_C: 0.0
+            A: 1.0                   # for "exp": A*exp(B*(T-T0))
+            B: 0.07
+
+    pattern:
+      # Interpret frame index parity: even=RESET odd=SIGNAL (or vice versa)
+      scheme: "even_reset_odd_signal"   # "even_reset_odd_signal" | "odd_reset_even_signal"
+      index_key: "frame_index"          # metadata key (int)
+
+  # ---------------------------------------------------------------------------
+  # Pairing rules
+  # ---------------------------------------------------------------------------
+  pairing:
+    # policy: "n_minus_1" | "nearest" | "exact" | "interpolate"
+    #  - n_minus_1 : pair frame n with n-1
+    #  - nearest   : nearest candidate (by index or timestamp) within window_s
+    #  - exact     : require same frame_id/index match (e.g., RESET id == SIGNAL id)
+    #  - interpolate: linearly interpolate RESET between neighbors (timestamp mode)
+    policy: "nearest"
+
+    # order_by: "index" | "timestamp"
+    order_by: "index"
+    timestamp_key: "acq_timestamp_s"
+    index_key: "frame_index"
+
+    # Temporal window (seconds) for "nearest"/"exact"/"interpolate" when order_by=="timestamp"
+    window_s: 5.0
+
+    # Enforce directionality: RESET must precede SIGNAL within window
+    require_reset_before_signal: true
+
+  # ---------------------------------------------------------------------------
+  # Subtraction & robustness
+  # ---------------------------------------------------------------------------
+  subtraction:
+    # order: "signal_minus_reset" | "reset_minus_signal"
+    order: "signal_minus_reset"
+
+    # noise_floor_dn: differences with absolute magnitude below this are treated as 0
+    # (helps suppress tiny numerical noise when static reset used)
+    noise_floor_dn: 0.0
+
+    # Robust sigma-clip on the differenced frame (spatial)
+    sigma_clip:
+      enabled: true
+      sigma: 10.0
+      max_iters: 1
+
+    # Replace extreme outliers post-CDS (e.g., CR hits)
+    outlier_replace:
+      enabled: true
+      threshold_sigma: 12.0
+      mode: "median4"          # "median4" | "median8" | "gaussian3"
+      max_replace_fraction: 0.03
+
+  # ---------------------------------------------------------------------------
+  # Temporal cleanup (optional, post-CDS)
+  # ---------------------------------------------------------------------------
+  temporal_filter:
+    enabled: false
+    kind: "highpass"              # "highpass" | "bandpass"
+    highpass_cutoff_frac: 0.05    # fraction of Nyquist
+    bandpass_range: [0.02, 0.30]  # low/high as fractions of Nyquist
+    zero_phase: true
+
+  # ---------------------------------------------------------------------------
+  # Normalization (optional)
+  # ---------------------------------------------------------------------------
+  normalization:
+    enabled: false
+    method: "mad"                 # "none" | "mad" | "global_median"
+    eps: 1.0e-8
+
+  # ---------------------------------------------------------------------------
+  # Quality control
+  # ---------------------------------------------------------------------------
+  qc:
+    enabled: true
+    # Max fraction of frames that remained unpaired or failed policy
+    max_unpaired_fraction: 0.10
+    # Post-CDS basic stats on a sample
+    sample:
+      fraction: 0.10
+      min_samples: 2
+      mean_dn_range: [-1000.0, 1000.0]
+      std_dn_range: [0.1, 30000.0]
+    histogram:
+      bins: 256
+      max_at_zero_frac: 0.25
+    on_fail: "warn"               # "warn" | "raise" | "skip"
+
+  # ---------------------------------------------------------------------------
+  # IO mapping (pipeline/executor contract)
+  # ---------------------------------------------------------------------------
+  io:
+    input_key: "flat_corrected"
+    output_key: "cds_corrected"
+    # Optional metadata keys used/required by this method
+    metadata_keys:
+      is_reset: ["is_reset"]
+      timestamp: ["acq_timestamp_s"]
+      index: ["frame_index"]
+
+  # ---------------------------------------------------------------------------
+  # Diagnostics & logging
+  # ---------------------------------------------------------------------------
+  diagnostics:
+    enabled: true
+    save_samples: 2               # number of paired examples to dump
+    output_dir: "${oc.env:RUN_DIR, runs}/diag/cds"
+    save_images: false
+    filename_prefix: "cds"
+    plot_format: "png"
+
+  logging:
+    level: "INFO"                 # "DEBUG" | "INFO" | "WARNING" | "ERROR"
+
+  # ---------------------------------------------------------------------------
+  # Runtime & validation
+  # ---------------------------------------------------------------------------
+  runtime:
+    num_workers: 2
+    seed: 1337
+
+  validation:
+    # If pairing requires metadata, enforce their presence
+    require_metadata:
+      timestamp_for_ts_mode: true
+      index_for_index_mode: true
+      is_reset_for_explicit_flags: true
+    check_shape_compatibility: true
+    # Ensure we don't emit NaN/Inf
+    assert_finite_output: true
+
   notes: |
-    CDS subtracts pixel reset values from signal values to reduce temporal
-    noise. Common in IR detectors and low-light imaging pipelines.
+    • CDS forms (SIGNAL − RESET) to suppress kTC & low-freq noise. Prefer explicit RESET flags
+      when available; otherwise a pattern or static reset frame can be used.
+    • For rolling-shutter or interleaved readout, choose pairing.policy=nearest and supply
+      timestamps with pairing.window_s tuned to cadence.
+    • The original keys are preserved:
+        - reset_source.static.path extends `reset_frame` functionality.
+        - subtraction.noise_floor_dn generalizes the previous `noise_threshold`.
+        - pairing.policy accepts "nearest" | "exact" | plus "n_minus_1" & "interpolate".
