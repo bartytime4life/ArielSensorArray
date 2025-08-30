@@ -1,0 +1,77 @@
+# configs/loss/smoothness.yaml
+# ==============================================================================
+# 🌊 Smoothness Loss — Physics-Informed Regularization
+#
+# Purpose
+#   Enforces spectral smoothness by penalizing large curvature (second derivative)
+#   in predicted μ spectra across wavelength bins.
+#
+#   This reflects physical priors: real exoplanet transmission spectra vary
+#   smoothly with wavelength, apart from narrow molecular lines. Penalizing
+#   roughness reduces overfitting and encourages physically plausible predictions.
+#
+# Formulation
+#   L_smooth = λ * Σ_bins ( μ[i+1] - 2μ[i] + μ[i-1] )²
+#   Equivalent to an L2 penalty on the discrete Laplacian of μ.
+#
+# Features
+#   • Supports 1st-order (slope) or 2nd-order (curvature) penalties.
+#   • Region-aware masking (e.g. stronger smoothness in continuum regions).
+#   • SNR-aware weighting to reduce penalty in noisy bins.
+#   • Symbolic integration hooks (molecular priors, FFT overlays).
+#
+# Usage
+#   In train.yaml:
+#     defaults:
+#       - loss: smoothness
+#
+#   CLI override example:
+#     spectramind train loss.smoothness.lambda=0.05 loss.smoothness.order=2
+# ==============================================================================
+
+smoothness:
+  enabled: true
+
+  # Strength of the smoothness regularization term
+  lambda: 0.01
+
+  # Order of finite difference penalty
+  order: 2                 # options: 1 (slope) | 2 (curvature)
+
+  # Normalization
+  normalize: true           # scale penalty by number of bins
+
+  # Region-aware masking
+  region_masking:
+    enabled: false
+    mask_path: null         # path to .npy or .csv with [0,1] mask per bin
+    weight_continuum: 1.0   # relative weight for continuum bins
+    weight_lines: 0.5       # relative weight for molecular line bins
+
+  # SNR-aware weighting (reduce penalty in low-SNR bins)
+  snr_weighting:
+    enabled: false
+    snr_path: null          # path to per-bin SNR estimates
+    exponent: 0.5           # smoothness weight ∝ (SNR^exponent)
+
+  # Symbolic/physics-aware enhancements
+  symbolic:
+    fft_filter: false         # enable FFT-based suppression of high-frequency μ
+    fft_cutoff: 0.25          # fraction of Nyquist to suppress beyond
+    molecule_regions: false   # optional molecule-specific penalty shaping
+
+  # Stability
+  clip_value: 1.0e3         # clamp max contribution per bin for numerical safety
+
+  # Logging & diagnostics
+  log_per_bin: true
+  export_heatmap: true      # save heatmap of smoothness penalty per bin
+  save_json: true           # write per-run config and diagnostics
+
+  notes: |
+    • Smoothness priors reduce jagged predictions, aligning with physical
+      expectations of transmission spectra:contentReference[oaicite:0]{index=0}.
+    • Use order=2 for curvature penalties (default).
+    • Region-aware masks allow less penalty in sharp molecular absorption bands,
+      while enforcing strong smoothness in continuum regions:contentReference[oaicite:1]{index=1}.
+    • SNR-aware weighting prevents over-penalizing low-SNR bins (robustness).
