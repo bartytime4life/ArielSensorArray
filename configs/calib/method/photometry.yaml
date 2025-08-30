@@ -1,0 +1,86 @@
+# configs/calib/method/photometry.yaml
+# ==============================================================================
+# 📐 Photometric Extraction — Method Config
+# Purpose
+#   Extract stellar flux time series from calibrated frames (FGS1/AIRS traces).
+# Usage
+#   Composed by calib/nominal.yaml; after flat and CDS.
+#   Override examples:
+#     spectramind calibrate calib.method.photometry.type=aperture calib.method.photometry.aperture.radius_px=8
+#     spectramind calibrate calib.method.photometry.type=psf calib.method.photometry.psf.model=gaussian
+# ==============================================================================
+
+photometry:
+  enabled: true
+
+  # Method selection
+  type: "aperture"               # "aperture" | "psf" | "optimal"
+
+  # Common centroiding options
+  centroid:
+    method: "gaussian"           # "barycenter" | "gaussian" | "2d-moffat"
+    window_px: 9
+    max_shift_px: 3.0
+    robust: true
+
+  # Background estimation
+  background:
+    method: "annulus"            # "annulus" | "local-median" | "global"
+    annulus_inner_px: 12
+    annulus_outer_px: 20
+    sigma_clip:
+      enabled: true
+      sigma: 3.0
+      iters: 3
+
+  # Aperture photometry parameters
+  aperture:
+    radius_px: 8.0
+    shape: "circular"            # "circular" | "elliptical"
+    ellipse:
+      a_px: 8.0
+      b_px: 6.0
+      theta_deg: 0.0
+
+  # PSF photometry parameters
+  psf:
+    model: "gaussian"            # "gaussian" | "moffat" | "empirical"
+    fwhm_px: 3.0
+    beta: 2.5                    # used for moffat
+    grid_size_px: 15
+    fit_window_px: 11
+    regularization: 1.0e-3
+
+  # Horne (1986) optimal extraction
+  optimal:
+    enabled: false
+    profile_window_px: 11
+    variance_floor: 1.0e-6
+    cosmic_ray_reject:
+      enabled: true
+      sigma: 5.0
+
+  # Per-wavelength (spectral trace) handling for AIRS
+  spectral_trace:
+    enabled: true
+    column_axis: 1               # axis index of wavelength dimension
+    per_column_centroid: true
+    per_column_aperture: false   # if true, radius scales with FWHM per column
+
+  # Output formatting
+  outputs:
+    save_lightcurves: true
+    save_centroids: true
+    save_background: false
+    output_dir: "outputs/calib/photometry"
+
+  diagnostics:
+    save_cutouts: false
+    save_profiles: true
+    output_dir: "outputs/diagnostics/calib/photometry"
+
+  notes: |
+    • For FGS1 (imaging/photometer), use circular aperture; for AIRS (spectral trace),
+      enable per-column centroiding and (optionally) optimal extraction.
+    • Background estimation critically affects transit depth stability—prefer annulus with sigma-clip.
+    • PSF/optimal methods improve SNR in crowded or undersampled regimes; aperture is fastest for Kaggle.
