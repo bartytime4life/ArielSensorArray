@@ -14,54 +14,68 @@
 #
 #   Override examples:
 #     spectramind train optimizer=adamw optimizer.lr=5e-4 optimizer.weight_decay=0.02
-#
-# References
-#   • SpectraMind V50 Technical Plan — Hydra configs ensure reproducibility:contentReference[oaicite:0]{index=0}
-#   • Kaggle runtime guardrails — AdamW chosen for leaderboard safety/stability:contentReference[oaicite:1]{index=1}
-#   • Project Analysis — AdamW baseline matches current Kaggle best practices:contentReference[oaicite:2]{index=2}
 # ==============================================================================
 
 optimizer:
-  name: "adamw"                  # identifier string; parsed by PyTorch Lightning/Trainer
+  name: "adamw"                  # identifier string; consumed by our trainer
   type: "AdamW"                  # torch.optim.AdamW
-  lr: 3.0e-4                     # base learning rate (overridden by scheduler if configured)
-  betas: [0.9, 0.999]            # AdamW momentum terms
+  lr: 3.0e-4                     # base learning rate (scheduler may override)
+  betas: [0.9, 0.999]            # momentum terms
   eps: 1.0e-8                    # numerical stability constant
-  weight_decay: 0.01             # decoupled weight decay (preferred to L2 penalty in Adam)
-  amsgrad: false                 # AMSGrad variant toggle
+  weight_decay: 0.01             # decoupled weight decay (preferred vs L2)
+  amsgrad: false                 # AMSGrad toggle (rarely needed for AdamW)
 
   # --------------------------------------------------------------------------
-  # Advanced variants
+  # 🔬 Parameter groups (optional quality-of-life helpers)
+  # --------------------------------------------------------------------------
+  # When true, the trainer can auto-build param groups so that biases and norm/BN
+  # parameters use weight_decay=0.0. (The model-to-optimizer bridge implements this.)
+  auto_param_groups:
+    enabled: true
+    no_decay_patterns: ["bias", "LayerNorm.weight", "layer_norm.weight", "ln", "norm", "bn", "BatchNorm.weight"]
+    override_no_decay_weight: 0.0
+
+  # --------------------------------------------------------------------------
+  # 🚀 Advanced variants
   # --------------------------------------------------------------------------
   lookahead:
-    enabled: false               # Lookahead wrapper around AdamW
+    enabled: false               # Wrap AdamW in Lookahead for extra stability
     alpha: 0.5                   # slow weight step size
     k: 6                         # synchronization steps
+  gradient_centralization: false # normalize gradients before update
+  adaptive_weight_decay: false   # per-group adaptive decay (off by default)
 
   # --------------------------------------------------------------------------
-  # Scheduler integration
+  # 📈 Scheduler / runtime hooks
   # --------------------------------------------------------------------------
-  scheduler_hook: true            # allow scheduler override in training config (cosine, onecycle, etc.)
+  scheduler_hook: true           # allow cosine/onecycle/poly/etc. via config
+  warmup_steps: 0                # linear warmup steps before steady LR
+  clip_grad_norm: 1.0            # gradient norm clipping (None/0 to disable)
+  accumulate_steps: 1            # gradient accumulation for large effective batch
 
   # --------------------------------------------------------------------------
-  # Precision / AMP compatibility
+  # ⚙️ Precision / kernel optimizations
   # --------------------------------------------------------------------------
-  precision_safe: true            # AdamW supports mixed precision (fp16/bf16)
-  fused: false                    # enable if using fused AdamW on supported PyTorch builds
+  precision_safe: true           # AMP/mixed precision compatibility
+  bf16_preferred: true           # prefer bfloat16 on A100/modern GPUs
+  fused: false                   # enable if torch has fused AdamW kernel
+  detect_anomaly: false          # PyTorch autograd anomaly detection
 
   # --------------------------------------------------------------------------
-  # Diagnostics & logging
+  # 🧪 Diagnostics & logging
   # --------------------------------------------------------------------------
-  log_config: true                # write optimizer hyperparams to v50_debug_log.md
+  log_config: true
   export_json: "outputs/diagnostics/optimizer_adamw.json"
+  rich_console: true             # pretty-print optimizer table in CLI
+  hash_to_debuglog: true         # append config hash → logs/v50_debug_log.md
 
   # --------------------------------------------------------------------------
-  # Notes
+  # 📝 Notes
   # --------------------------------------------------------------------------
   notes: |
-    • AdamW is the recommended optimizer for SpectraMind V50:contentReference[oaicite:3]{index=3}.
-    • Default learning rate = 3e-4, tuned for Kaggle GPU 9h budget:contentReference[oaicite:4]{index=4}.
-    • Decoupled weight decay avoids implicit L2 penalty coupling in Adam.
-    • Lookahead wrapper supported: enable for stability/ablations.
-    • All parameters are Hydra-overridable via CLI.
-    • Fully reproducible: config values logged + hashed in v50_debug_log.md:contentReference[oaicite:5]{index=5}.
+    • AdamW is the recommended optimizer for SpectraMind V50.
+    • Default lr = 3e-4 is a safe baseline for Kaggle ≤9h GPU budgets.
+    • Decoupled weight decay avoids the implicit coupling of L2 in Adam.
+    • Auto param groups can zero decay for biases/normalization params.
+    • Supports Lookahead, gradient centralization, adaptive decay toggles.
+    • Fully Hydra-overridable and AMP/bf16-ready; logs JSON + CLI table.
