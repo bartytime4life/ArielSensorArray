@@ -1,0 +1,25 @@
+# configs/model/fgs1_mamba.yaml
+# ==============================================================================
+# 🛰️ FGS1 Encoder — Mamba SSM (ultra–long time-series)
+# Replaces ViT to achieve linear-time scaling on 100k+ steps:contentReference[oaicite:2]{index=2}.
+# ==============================================================================
+
+encoder:
+  fgs1:
+    type: "mamba"               # Structured State Space Model
+    input_shape: [135000, 32, 32]   # (T, H, W) nominal; downstream loaders may flatten
+    d_model: 128
+    depth: 12
+    dropout: 0.10
+    layer_norm: true
+    residual: true
+    positional_encoding: "fourier"  # robust for very long sequences
+    init: "xavier_uniform"
+    activation: "silu"
+    # Regularization & stability
+    grad_clip: 1.0
+    weight_decay: 0.01
+    # Notes
+    notes: |
+      Mamba/SSM chosen per V50 plan to replace ViT, enabling efficient modeling
+      of the ultra-long FGS1 stream while preserving subtle instrument dynamics:contentReference[oaicite:3]{index=3}.
