@@ -15,9 +15,9 @@
 #     spectramind train optimizer=adam optimizer.lr=1e-3 optimizer.weight_decay=0.0
 #
 # References
-#   • SpectraMind V50 Technical Plan — reproducibility via Hydra configs:contentReference[oaicite:0]{index=0}
-#   • Kaggle runtime guardrails — safe optimizer defaults for ≤9h GPU runs:contentReference[oaicite:1]{index=1}
-#   • NASA-grade reproducibility — configs logged + hashed:contentReference[oaicite:2]{index=2}
+#   • SpectraMind V50 Technical Plan — Hydra-driven configs ensure reproducibility:contentReference[oaicite:0]{index=0}
+#   • Kaggle runtime guardrails — defaults tuned for ≤9h GPU runs:contentReference[oaicite:1]{index=1}
+#   • NASA-grade reproducibility — configs logged + hashed for every run:contentReference[oaicite:2]{index=2}
 # ==============================================================================
 
 optimizer:
@@ -26,26 +26,42 @@ optimizer:
   lr: 3.0e-4                     # base learning rate (overridden by scheduler if configured)
   betas: [0.9, 0.999]            # Adam momentum terms
   eps: 1.0e-8                    # numerical stability constant
-  weight_decay: 0.01             # decoupled weight decay (AdamW → see optimizer/adamw.yaml)
+  weight_decay: 0.01             # L2 penalty (for decoupled see optimizer/adamw.yaml)
   amsgrad: false                 # AMSGrad variant toggle
 
   # --------------------------------------------------------------------------
-  # Scheduler integration (cosine/onecycle/no-schedule defined in train.yaml)
+  # Advanced variants
   # --------------------------------------------------------------------------
-  scheduler_hook: true            # allow scheduler override in training config
+  decoupled: false               # set true → alias AdamW (see adamw.yaml for full config)
+  lookahead:
+    enabled: false               # Lookahead wrapper around Adam
+    alpha: 0.5                   # slow weight step size
+    k: 6                         # synchronization steps
+
+  # --------------------------------------------------------------------------
+  # Scheduler integration
+  # --------------------------------------------------------------------------
+  scheduler_hook: true           # allow scheduler override in training config (cosine, onecycle, etc.)
 
   # --------------------------------------------------------------------------
   # Precision / AMP compatibility
   # --------------------------------------------------------------------------
-  precision_safe: true            # Adam supports mixed precision (fp16/bf16)
-  fused: false                    # enable if using fused Adam on newer PyTorch builds
+  precision_safe: true           # Adam supports mixed precision (fp16/bf16)
+  fused: false                   # enable if using fused Adam kernel on newer PyTorch builds
+
+  # --------------------------------------------------------------------------
+  # Diagnostics & logging
+  # --------------------------------------------------------------------------
+  log_config: true               # write optimizer hyperparams to v50_debug_log.md
+  export_json: "outputs/diagnostics/optimizer_adam.json"
 
   # --------------------------------------------------------------------------
   # Notes
   # --------------------------------------------------------------------------
   notes: |
-    • Default learning rate = 3e-4, as per V50 baseline:contentReference[oaicite:3]{index=3}.
-    • Use optimizer/adamw.yaml for decoupled L2 regularization (recommended for leaderboard).
-    • lr, betas, and weight_decay are all Hydra-overridable via CLI.
-    • Compatible with AMP/mixed precision (bf16 preferred on A100 GPUs).
-    • Config is logged + hashed for full reproducibility in v50_debug_log.md:contentReference[oaicite:4]{index=4}.
+    • Default lr = 3e-4, as per V50 baseline:contentReference[oaicite:3]{index=3}.
+    • Use optimizer/adamw.yaml for decoupled L2 regularization (preferred for leaderboard runs).
+    • Lookahead wrapper supported: enable for stability in ablation experiments:contentReference[oaicite:4]{index=4}.
+    • lr, betas, eps, and weight_decay are Hydra-overridable via CLI.
+    • Compatible with AMP/mixed precision (bf16 preferred on A100 GPUs):contentReference[oaicite:5]{index=5}.
+    • Config values logged + hashed for full reproducibility in v50_debug_log.md:contentReference[oaicite:6]{index=6}.
