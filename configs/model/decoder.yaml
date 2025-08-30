@@ -1,0 +1,132 @@
+# configs/model/decoder.yaml
+# ==============================================================================
+# 🎯 SpectraMind V50 — Decoder Configs
+# NeurIPS 2025 Ariel Data Challenge
+#
+# Purpose:
+#   Defines decoders for μ (mean spectrum) and σ (uncertainty) with
+#   physics-aware and symbolic-aware features.
+#
+# Hydra:
+#   Override via CLI, e.g.:
+#     spectramind train model/decoder=decoder model.decoder.mean_head.se_block.enabled=false
+# ==============================================================================
+
+decoder:
+  # ----------------------------------------------------------------------
+  # μ Head — Mean Spectrum Predictor
+  # ----------------------------------------------------------------------
+  mean_head:
+    type: "mlp"
+    hidden_dim: 256
+    layers: 3
+    activation: "gelu"
+    dropout: 0.10
+    layer_norm: true
+    residual: true
+
+    # Extra features
+    se_block:                      # squeeze-excite for sharper spectral lines
+      enabled: true
+      reduction: 4
+    spectral_skip:                 # skip connection from AIRS encoder → μ head
+      enabled: true
+      weight: 0.2
+
+    # Initialization & stability
+    init: "xavier_uniform"
+    output_activation: "identity"  # keep identity; constraints handle physics
+    temperature:
+      enabled: true
+      value: 1.0
+      schedule: null               # e.g. {"type":"linear","start":1.2,"end":1.0,"epochs":10}
+
+    post_process:
+      clamp_min: null              # leave null; rely on constraints for ≥0
+      clamp_max: null
+
+    notes: |
+      Residual + SE improves spectral sharpness.
+      Keep output_activation=identity; physics constraints enforce nonnegativity.
+
+  # ----------------------------------------------------------------------
+  # σ Head — Heteroscedastic Uncertainty
+  # ----------------------------------------------------------------------
+  sigma_head:
+    type: "flow_uncertainty"       # options: flow_uncertainty | softplus
+    hidden_dim: 128
+    layers: 2
+    activation: "silu"
+    dropout: 0.10
+    layer_norm: false
+    residual: false
+    init: "xavier_uniform"
+
+    # Base behavior
+    base_activation: "softplus"    # ensures σ > 0
+    min_sigma: 1.0e-6              # floor for numerical stability
+    max_sigma: 5.0                 # ceiling for safety / Kaggle runtime
+
+    # Symbolic overlays
+    symbolic_overlay: true
+    overlay:
+      mode: "multiplicative"       # multiplicative | additive
+      weight: 0.25
+      region_boost:
+        enabled: true
+        factor: 1.25
+      clip: [0.5, 2.0]
+
+    # Calibration stack
+    calibration:
+      temperature_scaling:
+        enabled: true
+        init_T: 1.0
+        learn_T_per_bin: false
+      isotonic:
+        enabled: false
+      conformal_corel:
+        enabled: false
+        coverage: 0.90
+        weight: 0.005
+        neighbor_k: 8
+
+    # Epistemic toggles (train-time only; off in Kaggle submissions)
+    epistemic:
+      mc_dropout:
+        enabled: false
+        passes: 8
+      ensemble:
+        enabled: false
+        members: 3
+
+    # Priors and physics-aware blending
+    prior_blend:
+      photon_noise_floor:
+        enabled: true
+        scale: 1.0
+      smoothness_prior:
+        enabled: true
+        weight: 0.05
+
+    notes: |
+      σ models aleatoric uncertainty. Symbolic overlays upweight σ in
+      sensitive spectral regions (molecules, lensing).
+      Calibration should default to temperature scaling; COREL conformal can
+      be enabled for leaderboard runs.
+
+  # ----------------------------------------------------------------------
+  # Optional Outputs
+  # ----------------------------------------------------------------------
+  optional:
+    quantile: false
+    diffusion: false
+
+  # ----------------------------------------------------------------------
+  # Notes
+  # ----------------------------------------------------------------------
+  notes: |
+    • Mean head predicts μ; σ head predicts heteroscedastic uncertainty.
+    • Both integrate with physics-aware constraints.
+    • Hydra-composable: swap heads via CLI overrides if needed.
+    • Kaggle runtime guardrails: dropout/ensembles disabled in inference.
