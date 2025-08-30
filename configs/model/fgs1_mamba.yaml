@@ -1,25 +1,99 @@
 # configs/model/fgs1_mamba.yaml
 # ==============================================================================
-# 🛰️ FGS1 Encoder — Mamba SSM (ultra–long time-series)
-# Replaces ViT to achieve linear-time scaling on 100k+ steps:contentReference[oaicite:2]{index=2}.
+# 🛰️ FGS1 Encoder — Mamba State Space Model (ultra–long time-series)
+# NeurIPS 2025 Ariel Data Challenge — SpectraMind V50
+#
+# Purpose:
+#   Defines the encoder for the Fine Guidance Sensor (FGS1) stream.
+#   Replaces ViT with Mamba/SSM to achieve linear-time scaling on 100k+ steps,
+#   preserving subtle temporal patterns, jitter artifacts, and physics fingerprints.
+#
+# Hydra:
+#   Composable sub-config, used by configs/model/v50.yaml
+#   Override via CLI, e.g.:
+#     spectramind train model=fgs1_mamba encoder.fgs1.depth=16
+#
+# References:
+#   • V50 Technical Plan:contentReference[oaicite:7]{index=7}
+#   • Project Analysis & Gap Strategy:contentReference[oaicite:8]{index=8}:contentReference[oaicite:9]{index=9}
+#   • Computational Physics modeling (smoothness constraints):contentReference[oaicite:10]{index=10}:contentReference[oaicite:11]{index=11}
+#   • Cosmic Fingerprints (spectroscopy, Fraunhofer lines):contentReference[oaicite:12]{index=12}
 # ==============================================================================
 
 encoder:
   fgs1:
-    type: "mamba"               # Structured State Space Model
-    input_shape: [135000, 32, 32]   # (T, H, W) nominal; downstream loaders may flatten
+    type: "mamba"                  # Structured State Space Model (SSM)
+    input_shape: [135000, 32, 32]  # (T, H, W) nominal; downstream loaders may flatten
     d_model: 128
     depth: 12
     dropout: 0.10
     layer_norm: true
     residual: true
+    activation: "silu"
     positional_encoding: "fourier"  # robust for very long sequences
     init: "xavier_uniform"
-    activation: "silu"
-    # Regularization & stability
+
+    # --------------------------------------------------------------------------
+    # Regularization & Stability
+    # --------------------------------------------------------------------------
     grad_clip: 1.0
     weight_decay: 0.01
+    spectral_norm: true            # stabilize long-range temporal operators
+    stochastic_depth: 0.1          # drop-path for deep encoders
+    attention_jitter_aug: true     # simulate telescope jitter artifacts
+
+    # --------------------------------------------------------------------------
+    # Advanced Sequence Handling
+    # --------------------------------------------------------------------------
+    blockwise_processing:
+      enabled: true
+      block_length: 4096           # split ultra-long stream into blocks
+      overlap: 128                 # overlap to preserve continuity
+      merge: "mean"                # merge strategy: mean | concat | residual
+
+    fourier_filtering:
+      enabled: true
+      cutoff: 0.25                 # fraction of Nyquist frequency to keep
+      notes: "FFT-based smoothness filtering improves stability:contentReference[oaicite:13]{index=13}"
+
+    fractal_time_embedding:
+      enabled: true
+      dimension: 32
+      notes: "Self-similar/fractal patterns aid in multi-scale dynamics:contentReference[oaicite:14]{index=14}"
+
+    # --------------------------------------------------------------------------
+    # Symbolic & Physics-Informed Hooks
+    # --------------------------------------------------------------------------
+    symbolic_overlay:
+      enforce_nonnegativity: true
+      smoothness_weight: 0.01
+      asymmetry_weight: 0.001
+      fft_smoothness_weight: 0.002
+      molecular_fingerprint:
+        enabled: true
+        molecules: ["H2O", "CO2", "CH4"]
+      gravitational_lensing_overlay:
+        enabled: true
+        bins: [120, 160]           # AIRS-correlated bins:contentReference[oaicite:15]{index=15}
+
+    # --------------------------------------------------------------------------
+    # Runtime & Export
+    # --------------------------------------------------------------------------
+    jit: true
+    torchscript: true
+    kaggle_safe: true              # ≤9h runtime guardrail:contentReference[oaicite:16]{index=16}
+    max_params: 3e7                # ≤30M params budget (encoder portion)
+
+    # --------------------------------------------------------------------------
     # Notes
+    # --------------------------------------------------------------------------
     notes: |
-      Mamba/SSM chosen per V50 plan to replace ViT, enabling efficient modeling
-      of the ultra-long FGS1 stream while preserving subtle instrument dynamics:contentReference[oaicite:3]{index=3}.
+      • Mamba SSM chosen per V50 plan:contentReference[oaicite:17]{index=17} — replaces ViT for efficient 
+        modeling of 100k+ timesteps.
+      • Fourier positional encodings ensure stability in ultra-long time series.
+      • Blockwise processing + FFT filtering stabilize learning at Kaggle runtime.
+      • Symbolic overlays enforce physics priors: nonnegativity, smoothness, and 
+        molecular fingerprints:contentReference[oaicite:18]{index=18}.
+      • Regularization tuned for NASA-grade reproducibility:contentReference[oaicite:19]{index=19}:contentReference[oaicite:20]{index=20}.
+      • Kaggle-safe guardrails: ≤30M params, linear-time complexity, ≤9h runtime.
+```
