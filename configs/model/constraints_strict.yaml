@@ -1,0 +1,43 @@
+# configs/model/constraints_strict.yaml
+# ==============================================================================
+# ⚖️ Physics Constraints — Strict preset (max physics, use once model is stable)
+# ==============================================================================
+
+constraints:
+  mode: "strict"
+
+  enforce_nonnegativity: true
+  calibration:
+    nonnegativity_epsilon: 1.0e-8
+    max_clip: 5.0
+
+  smoothness_weight: 0.020
+  fft_smoothness_weight: 0.005
+  fft:
+    highpass_bins: 20
+    window: "hann"
+
+  asymmetry_weight: 0.002
+
+  lensing:
+    enabled: true
+    bins: [120, 160]
+    weight: 0.006
+
+  molecular_fingerprint:
+    enabled: true
+    molecules: ["H2O", "CO2", "CH4"]
+    match_weight: 0.010
+    false_positive_weight: 0.004
+
+  schedules:
+    warmup_epochs: 5
+    scale_after_warmup: 1.0
+    per_constraint:
+      fft_smoothness_weight: {start: 0.0, end: 0.005, epochs: 6}
+      smoothness_weight:      {start: 0.004, end: 0.020, epochs: 6}
+
+  diagnostics:
+    log_violation_maps: true
+    save_fft_plots: true
+    export_json: "outputs/diagnostics/constraint_violations.json"
