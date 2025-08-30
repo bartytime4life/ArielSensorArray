@@ -1,0 +1,76 @@
+# configs/trainer/gpu.yaml
+# ==============================================================================
+# 🧠 Trainer — Multi-GPU / Cluster (DDP) Profile
+#
+# Purpose
+#   High-throughput training on multi-GPU nodes (or multi-node clusters).
+#   Keeps AMP mixed precision and strict reproducibility.
+#
+# Usage
+#   spectramind train trainer=gpu
+#
+# Notes
+#   • Uses DDP with static_graph for fewer syncs (if your model supports it).
+#   • Hydra composition stays identical; override devices/nodes via CLI:
+#       spectramind train trainer=gpu trainer.devices=8 trainer.num_nodes=2
+# ==============================================================================
+
+defaults:
+  - optimizer: adamw
+  - loss: composite
+  - logging: rich
+  - _self_
+
+trainer:
+  max_epochs: 60
+  min_epochs: 5
+  gradient_clip_val: 1.0
+  accumulate_grad_batches: 1
+  deterministic: true
+  benchmark: false
+  enable_checkpointing: true
+  log_every_n_steps: 25
+  check_val_every_n_epoch: 1
+  precision: 16
+  accelerator: "gpu"
+  devices: "auto"                 # or set an integer (e.g., 4, 8)
+  num_nodes: 1
+  strategy:
+    class_path: lightning.pytorch.strategies.DDPStrategy
+    init_args:
+      static_graph: true          # set false if model graph is dynamic
+      find_unused_parameters: false
+  detect_anomaly: false
+  fast_dev_run: false
+
+callbacks:
+  early_stopping:
+    monitor: "val/gll"
+    patience: 6
+    mode: "min"
+  model_checkpoint:
+    monitor: "val/gll"
+    mode: "min"
+    save_top_k: 3
+    save_last: true
+    filename: "epoch{epoch}-valgll{val/gll:.4f}"
+
+seed: 42
+cudnn_deterministic: true
+cudnn_benchmark: false
+
+runtime:
+  kaggle_mode: false              # cluster profile (set true for Kaggle)
+  max_runtime_hours: 24
+  num_workers: 8                  # typical server IO
+  pin_memory: true
+
+hydra:
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}_gpu
+  sweep:
+    dir: multiruns/${now:%Y-%m-%d_%H-%M-%S}_gpu
+    subdir: ${hydra.job.num}
+  job_logging:
+    root:
+      level: INFO
