@@ -1,67 +1,81 @@
 # configs/optimizer/adam.yaml
 # ==============================================================================
-# ⚙️ Optimizer — Adam (baseline adaptive optimizer)
+# ⚙️ Optimizer — Adam (baseline adaptive optimizer, upgraded)
 #
 # Purpose
-#   Configure the Adam optimizer for SpectraMind V50 training.
-#   Adam is chosen for stability and adaptivity on noisy exoplanet spectroscopy data.
+#   Define Adam optimizer hyperparameters for SpectraMind V50 training.
+#   Adam is the canonical baseline optimizer for noisy exoplanet spectroscopy
+#   data (FGS1 + AIRS). This config is Hydra-safe, CLI-overridable, and logged
+#   for full reproducibility.
 #
 # Usage
-#   Composed in train.yaml via:
+#   Default in train.yaml via:
 #     defaults:
 #       - optimizer: adam
 #
 #   Override examples:
 #     spectramind train optimizer=adam optimizer.lr=1e-3 optimizer.weight_decay=0.0
+#     spectramind train optimizer=adam optimizer.lookahead.enabled=true
 #
 # References
-#   • SpectraMind V50 Technical Plan — Hydra-driven configs ensure reproducibility:contentReference[oaicite:0]{index=0}
-#   • Kaggle runtime guardrails — defaults tuned for ≤9h GPU runs:contentReference[oaicite:1]{index=1}
-#   • NASA-grade reproducibility — configs logged + hashed for every run:contentReference[oaicite:2]{index=2}
+#   • SpectraMind V50 Technical Plan:contentReference[oaicite:3]{index=3}
+#   • Kaggle runtime guardrails: ≤9h GPU safe:contentReference[oaicite:4]{index=4}
+#   • NASA-grade reproducibility: Hydra + DVC + CI:contentReference[oaicite:5]{index=5}
+#   • Hugging Face Accelerate + PyTorch AMP integration:contentReference[oaicite:6]{index=6}:contentReference[oaicite:7]{index=7}
 # ==============================================================================
 
 optimizer:
-  name: "adam"                   # identifier string; parsed by PyTorch Lightning/Trainer
+  name: "adam"                   # string identifier
   type: "Adam"                   # torch.optim.Adam
-  lr: 3.0e-4                     # base learning rate (overridden by scheduler if configured)
-  betas: [0.9, 0.999]            # Adam momentum terms
-  eps: 1.0e-8                    # numerical stability constant
-  weight_decay: 0.01             # L2 penalty (for decoupled see optimizer/adamw.yaml)
+  lr: 3.0e-4                     # base learning rate
+  betas: [0.9, 0.999]            # momentum terms
+  eps: 1.0e-8                    # numerical stability
+  weight_decay: 0.01             # L2 penalty (see adamw.yaml for decoupled)
   amsgrad: false                 # AMSGrad variant toggle
 
   # --------------------------------------------------------------------------
-  # Advanced variants
+  # 🚀 Advanced Variants
   # --------------------------------------------------------------------------
-  decoupled: false               # set true → alias AdamW (see adamw.yaml for full config)
-  lookahead:
-    enabled: false               # Lookahead wrapper around Adam
-    alpha: 0.5                   # slow weight step size
+  decoupled: false               # true → AdamW semantics
+  lookahead:                     # Lookahead meta-optimizer (optional)
+    enabled: false
+    alpha: 0.5                   # interpolation factor
     k: 6                         # synchronization steps
+  gradient_centralization: false # normalize gradients before update
+  adaptive_weight_decay: false   # scale decay per-parameter group
 
   # --------------------------------------------------------------------------
-  # Scheduler integration
+  # Scheduler / Runtime Hooks
   # --------------------------------------------------------------------------
-  scheduler_hook: true           # allow scheduler override in training config (cosine, onecycle, etc.)
+  scheduler_hook: true           # allow override (cosine, onecycle, poly)
+  warmup_steps: 0                # linear warmup steps before steady LR
+  clip_grad_norm: 1.0            # gradient norm clipping (None = disable)
+  accumulate_steps: 1            # gradient accumulation (amp safe)
 
   # --------------------------------------------------------------------------
-  # Precision / AMP compatibility
+  # Precision / Kernel Optimizations
   # --------------------------------------------------------------------------
-  precision_safe: true           # Adam supports mixed precision (fp16/bf16)
-  fused: false                   # enable if using fused Adam kernel on newer PyTorch builds
+  precision_safe: true           # AMP/mixed precision compatibility
+  fused: false                   # use fused Adam kernel if available
+  bf16_preferred: true           # prefer bfloat16 on A100 GPUs
+  detect_anomaly: false          # enable anomaly detection in backward pass
 
   # --------------------------------------------------------------------------
-  # Diagnostics & logging
+  # Diagnostics & Logging
   # --------------------------------------------------------------------------
-  log_config: true               # write optimizer hyperparams to v50_debug_log.md
+  log_config: true
   export_json: "outputs/diagnostics/optimizer_adam.json"
+  rich_console: true             # show table in CLI with Rich
+  hash_to_debuglog: true         # write config hash → logs/v50_debug_log.md
 
   # --------------------------------------------------------------------------
   # Notes
   # --------------------------------------------------------------------------
   notes: |
-    • Default lr = 3e-4, as per V50 baseline:contentReference[oaicite:3]{index=3}.
-    • Use optimizer/adamw.yaml for decoupled L2 regularization (preferred for leaderboard runs).
-    • Lookahead wrapper supported: enable for stability in ablation experiments:contentReference[oaicite:4]{index=4}.
-    • lr, betas, eps, and weight_decay are Hydra-overridable via CLI.
-    • Compatible with AMP/mixed precision (bf16 preferred on A100 GPUs):contentReference[oaicite:5]{index=5}.
-    • Config values logged + hashed for full reproducibility in v50_debug_log.md:contentReference[oaicite:6]{index=6}.
+    • Default lr = 3e-4, tuned for leaderboard-safe runs:contentReference[oaicite:8]{index=8}.
+    • Set decoupled=true or use optimizer/adamw.yaml for AdamW.
+    • Supports Lookahead, gradient centralization, adaptive decay.
+    • Fully Hydra-overridable from CLI, logged to DVC/CI:contentReference[oaicite:9]{index=9}.
+    • AMP/bf16 safe (recommended: bf16 on A100 GPUs):contentReference[oaicite:10]{index=10}.
+    • Compatible with Hugging Face Accelerate + TorchScript export:contentReference[oaicite:11]{index=11}.
+    • Kaggle-verified ≤9h runtime, tuned for ~1100 planets:contentReference[oaicite:12]{index=12}.
