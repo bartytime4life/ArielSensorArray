@@ -1,0 +1,56 @@
+# configs/logger/wandb.yaml
+# ==============================================================================
+# 🌐 Weights & Biases (W&B) Logger — SpectraMind V50
+#
+# Purpose
+#   Configure Weights & Biases experiment tracking for training/diagnostics.
+#   Provides reproducible, CLI-first logging of metrics, configs, artifacts,
+#   and model checkpoints.
+#
+# Usage
+#   In train.yaml:
+#     defaults:
+#       - logger: wandb
+#
+#   CLI override examples:
+#     spectramind train logger=wandb logger.wandb.project=SpectraMindV50
+#     spectramind train logger.wandb.offline=true
+#
+# Notes
+#   • Kaggle submissions must run offline (no internet).
+#   • Logs/metrics are mirrored to logs/v50_debug_log.md for audit.
+#   • Enable only when WANDB_API_KEY is set or offline=true.
+# ==============================================================================
+
+wandb:
+  enabled: true                     # Master switch
+  project: "SpectraMindV50"         # W&B project name
+  entity: null                      # Optional team/user account
+  name: null                        # Run name (default = auto w/ timestamp + hash)
+  group: null                       # Optional run group for sweeps
+  tags: []                          # Optional list of tags
+  notes: ""                         # Freeform notes attached to run
+
+  # Offline / dry-run modes
+  offline: false                    # True = log locally, sync later
+  mode: "online"                    # online | offline | disabled
+
+  # Save checkpoints/artifacts
+  save_code: true                   # Upload code snapshot
+  save_config: true                 # Upload full Hydra config
+  log_model: true                   # Upload trained model artifacts
+
+  # Sync cadence
+  log_freq: 50                      # Log every N steps
+  flush_secs: 30                    # Flush metrics every N seconds
+
+  # Kaggle / CI guardrails
+  kaggle_safe:
+    enabled: true                   # Allow logger config, but disable WANDB network calls
+    offline: true                   # Always offline in Kaggle
+    mode: "offline"
+    log_model: false                # Don’t upload models (disk only)
+    save_code: true                 # Still snapshot code locally
+
+  ci_fast:
+    enabled: false                  # Disable W&B logging in CI smoke runs
