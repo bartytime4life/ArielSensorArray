@@ -1,4 +1,3 @@
-```yaml
 # configs/train.yaml
 # ==============================================================================
 # 🛰️ SpectraMind V50 — Training Configuration (Hydra-safe, Kaggle/CI-ready)
@@ -24,7 +23,8 @@
 # ----------------------------------------------------------------------
 defaults:
   - data: nominal              # data/{nominal|kaggle|debug}.yaml
-  - model: v50                 # model architecture & heads
+  - model: v50                 # model architecture & heads (FGS1+AIRS fusion)
+  - model/decoder: decoder     # ✅ unified μ/σ decoder config
   - optimizer: adamw           # optimizer/{adam|adamw|sgd}.yaml
   - loss: gll                  # loss stack; add smoothness/symbolic below
   - loss: smoothness
@@ -251,4 +251,3 @@ cli:
 #      training.epochs=1 data.num_workers=0 training.limit_train_batches=0.1
 #      diagnostics.html_report=false
 # ----------------------------------------------------------------------
-```
