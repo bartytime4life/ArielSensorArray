@@ -14,55 +14,81 @@
 # Notes
 #   • Disables checkpointing & early stopping to minimize I/O.
 #   • Limits batches to exercise one full optimizer step and validation pass.
+#   • Enforces determinism for reproducibility across CI environments.
 # ==============================================================================
 
 trainer:
-  # Hardware: prefer whatever CI runner provides (CPU/GPU)
-  device: "auto"              # "cpu" | "gpu" | "auto"
-  accelerator: "auto"
-  strategy: "auto"
-  precision: 32               # CPU-safe; avoids AMP setup in CI
+  # ---------------------------------------------------------------------------
+  # Hardware & Precision
+  # ---------------------------------------------------------------------------
+  device: "auto"              # options: "cpu" | "gpu" | "auto"
+  accelerator: "auto"         # Lightning/Hydra will choose CPU/GPU as available
+  strategy: "auto"            # fallback strategy (ddp, single, etc.)
+  precision: 32               # CPU-safe (avoid AMP in CI)
 
-  # Tight runtime budget
+  # ---------------------------------------------------------------------------
+  # Runtime Budget (tight)
+  # ---------------------------------------------------------------------------
   max_epochs: 1
-  max_time: "0:20:00"         # H:MM:SS safety wall
+  max_time: "0:20:00"         # CI safety wall-clock limit (H:MM:SS)
 
-  # Batch/step limits to exercise full loop quickly
-  limit_train_batches: 8
+  # ---------------------------------------------------------------------------
+  # Batch/Step Limits
+  # ---------------------------------------------------------------------------
+  limit_train_batches: 8      # ensures at least one optimizer step
   limit_val_batches: 4
   limit_test_batches: 4
 
-  # Training stability
   accumulate_grad_batches: 1
   gradient_clip_val: 0.0
 
-  # Determinism for reproducible CI
-  deterministic: true
-  benchmark: false
-  seed: 123
+  # ---------------------------------------------------------------------------
+  # Reproducibility
+  # ---------------------------------------------------------------------------
+  deterministic: true         # reproducibility guarantee
+  benchmark: false            # disables CuDNN nondeterminism
+  seed: 123                   # fixed seed for consistency
 
-  # Disable heavy features in CI
+  # ---------------------------------------------------------------------------
+  # Checkpointing / Early Stopping
+  # ---------------------------------------------------------------------------
   checkpoint:
-    enabled: false
+    enabled: false            # no checkpoints in CI (fast I/O only)
+    dirpath: null
+    save_top_k: 0
 
   early_stopping:
     enabled: false
 
-  # Lightweight logging
+  # ---------------------------------------------------------------------------
+  # Logging (lightweight, disk-safe)
+  # ---------------------------------------------------------------------------
   logger:
-    type: "csv"               # small on-disk footprint
+    type: "csv"               # minimal log footprint
     save_dir: "logs/"
     name: "ci_fast"
+    version: "ci_${now:%Y-%m-%d_%H-%M-%S}"
 
-  # Dataloader safety on CI (single-process loaders)
+  # ---------------------------------------------------------------------------
+  # Dataloader Settings
+  # ---------------------------------------------------------------------------
   dataloader:
-    num_workers: 0
+    num_workers: 0            # single-process loaders for CI safety
     pin_memory: false
     persistent_workers: false
 
-  # Optional profiler off to save time
-  profiler: null
+  # ---------------------------------------------------------------------------
+  # Profiling
+  # ---------------------------------------------------------------------------
+  profiler: null              # profiling disabled for speed
 
+  # ---------------------------------------------------------------------------
+  # CI Notes
+  # ---------------------------------------------------------------------------
   notes: |
     CI-fast run verifies the end-to-end training/validation loop with minimal batches.
     Designed to catch interface and numerical issues without relying on GPUs or long jobs.
+    • Determinism enforced: seed=123, benchmark=False.
+    • Logging is CSV-only for minimal footprint.
+    • Disables checkpointing and early stopping to reduce I/O.
+    • Tight limits ensure job completes under 20 minutes on GitHub Actions or Kaggle CI.
