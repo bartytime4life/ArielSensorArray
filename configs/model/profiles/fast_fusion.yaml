@@ -1,0 +1,95 @@
+# configs/model/profiles/fast_fusion.yaml
+# ==============================================================================
+# 🚀 Profile — Fast Fusion (speed-optimized, Kaggle-safe)
+#
+# What this does
+#   • Uses a lightweight cross-attention fusion (1 layer, 2 heads)
+#   • Switches σ head to simple softplus (no flow / symbolic overlay)
+#   • Applies lite physics constraints (gentle, fast convergence)
+#   • Downscales encoder widths/depths to reduce params/latency
+#   • Keeps AMP/JIT on and caps fusion params for Kaggle runtime safety
+#
+# Apply with:
+#   spectramind train model/profiles@model=profiles/fast_fusion
+# ==============================================================================
+
+defaults:
+  - /model/fusion: fusion_fast               # cross_attention, 1 layer, 2 heads, small dim
+  - /model/decoder_sigma: decoder_sigma_softplus
+  - /model/constraints: constraints_lite
+
+# ---- Lightweight overrides to speed up end-to-end runs ----
+encoder:
+  fgs1:
+    # Mamba SSM — narrow/shallower for faster long-sequence passes
+    d_model: 96
+    depth: 8
+    dropout: 0.10
+    residual: true
+    layer_norm: true
+  airs:
+    # GNN — narrower & fewer layers/heads to reduce graph compute
+    hidden_dim: 96
+    num_layers: 4
+    gnn_type: "gat"
+    heads: 2
+    dropout: 0.10
+    residual: true
+    edge_features:
+      wavelength_proximity:
+        enabled: true
+        k: 3                  # fewer neighbors per node for faster message passing
+      molecule_links:
+        enabled: true
+      detector_region:
+        enabled: true
+
+fusion:
+  # Keep the fast preset but enforce a tighter param/latency budget
+  param_budget:
+    enabled: true
+    max_params: 8.0e6
+  bidirectional: false          # single-direction attention for speed
+  alignment_losses:
+    nce:
+      enabled: true
+      temperature: 0.07
+      weight: 0.01              # lower than default to minimize overhead
+    cca:
+      enabled: false
+
+decoder:
+  # Keep μ head compact but still capable of sharp lines
+  mean_head:
+    hidden_dim: 224
+    layers: 3
+    residual: true
+    se_block:
+      enabled: true
+      reduction: 4
+    spectral_skip:
+      enabled: true
+      weight: 0.20
+    dropout: 0.10
+    activation: "gelu"
+
+runtime:
+  # Kaggle-friendly guards
+  jit: true
+  torchscript: true
+  kaggle_safe: true
+  max_params: 5.0e7             # global cap (includes encoders + fusion + heads)
+
+# Optional: gentle constraint warmup for stability (inherits from constraints_lite)
+constraints:
+  schedules:
+    warmup_epochs: 2
+    scale_after_warmup: 1.0
+
+notes: |
+  This profile prioritizes throughput while preserving core quality:
+    • Mamba/SSM width/depth trimmed; AIRS GAT made shallower/narrower with 2 heads.
+    • Fusion uses a single cross-attn block (fast preset) and disables bidirectional pass.
+    • σ via softplus with temp scaling only (no flow or symbolic overlay) for quick, stable
+      calibration. You can re-enable flow/symbolic later for maximum reliability.
+    • Lite constraints provide gentle physics priors; warmups avoid early domination.
