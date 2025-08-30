@@ -1,0 +1,57 @@
+# configs/logger/rich_console.yaml
+# ==============================================================================
+# 🎨 Rich Console Logger — SpectraMind V50
+#
+# Purpose
+#   Provide colorful, human-friendly terminal logging during training/evaluation.
+#   Uses the `rich` library to render progress bars, tables, and styled logs,
+#   integrated with Python’s logging for audit trail compatibility.
+#
+# Usage
+#   Selected in train.yaml (or via CLI):
+#     spectramind train logger=rich_console
+#
+#   Example override:
+#     spectramind train logger=rich_console logger.level=DEBUG
+#
+# Notes
+#   • Designed for CLI-first workflows (Typer + Hydra).
+#   • Plays well with file/MLflow/W&B loggers — they can run in parallel.
+#   • Rich provides ephemeral dashboards: live progress, status tables, spinners.
+#   • All important events also persist to logs/v50_debug_log.md for audit.
+# ==============================================================================
+
+rich_console:
+  _target_: pytorch_lightning.loggers.base.LoggerCollection  # wrapper for safety
+
+  enabled: true               # Toggle rich logging on/off
+  level: INFO                 # INFO | DEBUG | WARNING | ERROR
+  timestamp: true             # Show timestamps in log lines
+  rich_tracebacks: true       # Pretty tracebacks with syntax highlighting
+  console_width: 120          # Max characters per line (adjust to terminal)
+  emoji: true                 # Enable emoji in progress/status output
+  progress_bar: true          # Show live progress bars for training/validation
+  live_metrics: true          # Render live metrics tables (loss, acc, etc.)
+  dashboard_refresh: 0.5      # Refresh rate (seconds) for live console dashboard
+  save_audit_log: true        # Always append runs to logs/v50_debug_log.md
+
+  # Color/style theme (Rich supports named themes or hex codes)
+  style:
+    info: "cyan"
+    debug: "dim white"
+    warning: "yellow"
+    error: "bold red"
+    success: "green"
+
+  # Optional parallel loggers (compose with others if needed)
+  extra_loggers: []           # e.g., ["mlflow", "tensorboard", "wandb"]
+
+  notes: |
+    This logger enhances the user experience for CLI runs:
+      - Color-coded, human-friendly console messages.
+      - Live progress bars for epochs/batches.
+      - Dynamic metrics table updates (loss, acc, GLL, etc.).
+      - Styled tracebacks with source highlighting.
+    It is Kaggle-safe: Rich gracefully falls back to plain logs if the
+    environment does not support interactive console features.
+```
