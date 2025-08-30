@@ -1,0 +1,33 @@
+# configs/model/fusion_fast.yaml
+# ==============================================================================
+# 🔗 Fusion — Cross-attention, fast preset (balanced speed/quality)
+# ==============================================================================
+
+fusion:
+  method: "cross_attention"
+  hidden_dim: 192
+  num_heads: 2
+  num_layers: 1
+  bidirectional: false
+  dropout: 0.10
+  attn_dropout: 0.05
+  normalize: true
+  residual: true
+  gating:
+    enabled: true
+    type: "sigmoid"
+    init_bias: 0.0
+  position_encoding:
+    type: "fourier"
+    learnable_scale: true
+  masking:
+    enabled: true
+  alignment_losses:
+    nce: {enabled: true, temperature: 0.07, weight: 0.01}
+    cca: {enabled: false, weight: 0.00}
+  precision:
+    amp_allowed: true
+  init: "xavier_uniform"
+  param_budget:
+    enabled: true
+    max_params: 1.0e7
