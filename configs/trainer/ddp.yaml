@@ -15,30 +15,45 @@
 # ==============================================================================
 
 trainer:
+  # ---------------------------------------------------------------------------
   # Hardware / Strategy (override devices & num_nodes per cluster layout)
+  # ---------------------------------------------------------------------------
   accelerator: "gpu"
-  devices: 8                      # GPUs per node
-  num_nodes: 2                    # override for your cluster
+  devices: 8                        # GPUs per node (override via CLI)
+  num_nodes: 2                      # Nodes (override via CLI)
   strategy:
     class_path: lightning.pytorch.strategies.DDPStrategy
     init_args:
       find_unused_parameters: false
-      static_graph: true
-      gradient_as_bucket_view: true
+      static_graph: true            # fewer graph rebuilds → less sync overhead
+      gradient_as_bucket_view: true # memory-efficient gradient bucketing
+      bucket_cap_mb: 25             # tune per model; 25–50 MB typical
+      broadcast_buffers: false      # avoid syncing non-parameter buffers
+      process_group_backend: "nccl" # NCCL for multi-GPU; set to "gloo" for CPU
+      timeout: 1800                 # seconds; avoid long-hang on init
 
+  # ---------------------------------------------------------------------------
   # Precision & Performance
-  precision: 16
-  deterministic: true
-  benchmark: false
-  sync_batchnorm: true            # normalize batches across ranks when model uses BN
+  # ---------------------------------------------------------------------------
+  precision: 16                     # use "bf16-mixed" if your GPUs support BF16
+  deterministic: true               # bitwise-stable runs across ranks
+  benchmark: false                  # keep deterministic kernels
+  sync_batchnorm: true              # BN stats synchronized across ranks
+  detect_anomaly: false
+  replace_sampler_ddp: true         # ensure DistributedSampler is used
 
+  # ---------------------------------------------------------------------------
   # Runtime Budget
+  # ---------------------------------------------------------------------------
   max_epochs: 60
-  max_time: null                  # e.g., "24:00:00" for wall clock guardrail
+  max_time: null                    # e.g., "24:00:00" to enforce wall clock
   accumulate_grad_batches: 1
   gradient_clip_val: 1.0
+  log_every_n_steps: 50
 
-  # Checkpointing (rank-zero saving)
+  # ---------------------------------------------------------------------------
+  # Checkpointing (rank-zero saving only)
+  # ---------------------------------------------------------------------------
   checkpoint:
     enabled: true
     dirpath: "checkpoints/"
@@ -47,32 +62,51 @@ trainer:
     mode: "min"
     save_last: true
     every_n_epochs: 1
+    filename: "epoch{epoch}-valgll{val/gll:.5f}"
 
+  # ---------------------------------------------------------------------------
   # Early Stopping
+  # ---------------------------------------------------------------------------
   early_stopping:
     enabled: true
     monitor: "val/gll"
     patience: 8
     mode: "min"
 
-  # Logging (rank-zero only; distributed logging backends can be swapped in)
+  # ---------------------------------------------------------------------------
+  # Logging (rank-zero only; swap backends as needed)
+  # ---------------------------------------------------------------------------
   logger:
-    type: "tensorboard"
+    type: "tensorboard"             # swap to "csv" or "wandb" via CLI if desired
     save_dir: "logs/"
     name: "ddp_cluster"
+    version: "run_${now:%Y-%m-%d_%H-%M-%S}"
 
+  # ---------------------------------------------------------------------------
   # DataLoader guidance for multi-node runs (tune per I/O subsystem)
+  # ---------------------------------------------------------------------------
   dataloader:
-    num_workers: 8
+    num_workers: 8                  # increase on fast I/O; reduce on slow disks
+    prefetch_factor: 2
     pin_memory: true
     persistent_workers: true
 
+  # ---------------------------------------------------------------------------
   # Seeds
+  # ---------------------------------------------------------------------------
   seed: 42
 
+  # ---------------------------------------------------------------------------
+  # Notes
+  # ---------------------------------------------------------------------------
   notes: |
     Multi-node DDP defaults:
     • Set trainer.num_nodes and trainer.devices to match the allocation.
     • static_graph=true reduces DDP sync overhead when the graph is stable.
     • Enable sync_batchnorm for BN-heavy nets to keep statistics consistent.
     • For slow storage, raise dataloader.num_workers and enable caching in the datamodule.
+    • Recommended env for stability (set in your launch script or cluster profile):
+        NCCL_ASYNC_ERROR_HANDLING=1
+        NCCL_DEBUG=WARN
+        TORCH_DISTRIBUTED_DEBUG=OFF
+        CUDA_LAUNCH_BLOCKING=0
