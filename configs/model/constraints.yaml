@@ -13,30 +13,37 @@
 #
 #   Override examples:
 #     spectramind train model/constraints=strict
-#     spectramind train model/constraints=lite constraints.smoothness_weight=0.0
+#     spectramind train model/constraints=lite constraints.smoothness.weight=0.0
+#     spectramind train model/constraints=constraints constraints.symbolic_logic.enabled=false
 #
 # Profiles
-#   • lite     → minimal penalties, only nonnegativity enforced
+#   • lite     → minimal penalties, only nonnegativity & safety clamps
 #   • default  → balanced penalties for Kaggle-safe runs
 #   • strict   → heavier penalties, used for diagnostics/science mode
 # ==============================================================================
 
 constraints:
   # --------------------------------------------------------------------------
-  # Core physical constraints
+  # Core physical constraints (applied as aux losses; post-proc clamps below)
   # --------------------------------------------------------------------------
-  enforce_nonnegativity: true                # clamp μ >= 0
-  smoothness_weight: 0.010                   # L2(Δμ) along wavelength
-  fft_smoothness_weight: 0.002               # FFT high-frequency suppression
-  asymmetry_weight: 0.001                    # penalize unphysical asymmetry
+  enforce_nonnegativity: true              # post-proc clamp μ ≥ ε
+  nonnegativity_epsilon: 1.0e-8            # numerical floor ε
+  smoothness_weight: 0.010                 # L2(Δμ) along wavelength axis
+  fft_smoothness_weight: 0.002             # suppress high-frequency spectral noise
+  asymmetry_weight: 0.001                  # penalize unphysical left/right skew
+
+  # Optional temporal guidance from FGS1 (if available to constraint module)
+  smoothness_time:
+    enabled: false
+    weight: 0.0005                         # tiny; uses FGS1 latent/phase context if wired
 
   # --------------------------------------------------------------------------
-  # Gravitational lensing and region-specific penalties
+  # Gravitational lensing & region-specific penalties
   # --------------------------------------------------------------------------
   lensing:
     enabled: true
-    bins: [120, 160]
-    weight: 0.003
+    bins: [120, 160]                       # lensing-prone region (AIRS indices)
+    weight: 0.003                          # promote conservative μ/σ in this span
 
   # --------------------------------------------------------------------------
   # Molecular fingerprints (physics priors)
@@ -44,43 +51,147 @@ constraints:
   molecular_fingerprint:
     enabled: true
     molecules: ["H2O", "CO2", "CH4"]
-    match_weight: 0.005                      # encourage peaks at known bands
-    false_positive_weight: 0.002             # penalize lines outside known bands
+    match_weight: 0.005                    # encourage energy near known band centers
+    false_positive_weight: 0.002           # discourage peaks outside known bands
+    band_expansion_bins: 1                 # widen bands by ±bins to account for shifts
+    coherence_weight: 0.0                  # (opt) encourage inter-line consistency
 
   # --------------------------------------------------------------------------
-  # Calibration guards
+  # Symbolic logic (soft/hard priors; integrates with symbolic engine if present)
+  # --------------------------------------------------------------------------
+  symbolic_logic:
+    enabled: true
+    mode: "soft"                           # "soft"|"hard"
+    per_rule_weights: {}                   # e.g., {"nonneg":1.0,"molecule_coherence":0.5}
+    violation_floor: 0.0                   # min penalty per violation (soft mode)
+
+  # --------------------------------------------------------------------------
+  # Calibration guards & post-processing clamps
   # --------------------------------------------------------------------------
   calibration:
-    nonnegativity_epsilon: 1.0e-8
-    max_clip: 5.0                            # safety cap for extreme μ
+    max_clip: 5.0                          # safety cap for extreme μ after clamp
+    zscore_guard:
+      enabled: true
+      max_abs_z: 6.0                       # cap extreme |(μ−y)/σ| if labels present (eval only)
 
   # --------------------------------------------------------------------------
-  # Advanced physics hooks
+  # Advanced physics hooks (invoke only when wired in pipeline)
   # --------------------------------------------------------------------------
   corel_uncertainty:
     enabled: true
-    weight: 0.005                            # COREL-aware calibration penalty
+    weight: 0.005                          # COREL-aware coverage penalty on σ
 
   cycle_consistency:
-    enabled: false                           # forward–backward simulator consistency
+    enabled: false                         # forward–backward simulator consistency
     weight: 0.002
+    # Optionally point to simulator name/group if multiple are available
+    simulator_key: "radiative_transfer"
 
   # --------------------------------------------------------------------------
-  # Diagnostics & logging
+  # Schedules (ramp penalties to avoid early domination)
+  # --------------------------------------------------------------------------
+  schedules:
+    warmup_epochs: 3
+    per_constraint:
+      smoothness_weight:        {start: 0.002, end: 0.010, epochs: 5}
+      fft_smoothness_weight:    {start: 0.0000, end: 0.002, epochs: 5}
+      asymmetry_weight:         {start: 0.0005, end: 0.001, epochs: 5}
+      lensing.weight:           {start: 0.001, end: 0.003, epochs: 5}
+      molecular_fingerprint.match_weight:        {start: 0.002, end: 0.005, epochs: 5}
+      molecular_fingerprint.false_positive_weight:{start: 0.001, end: 0.002, epochs: 5}
+      corel_uncertainty.weight: {start: 0.002, end: 0.005, epochs: 5}
+
+  # --------------------------------------------------------------------------
+  # Diagnostics & logging (Kaggle-safe defaults; heavy viz guarded elsewhere)
   # --------------------------------------------------------------------------
   diagnostics:
     log_violation_maps: true
     save_fft_plots: true
+    save_symbolic_table: true
     export_json: "outputs/diagnostics/constraint_violations.json"
+    export_csv:  "outputs/diagnostics/constraint_violations.csv"
+    # Optional mask exports for UI overlays
+    export_masks:
+      molecular_regions: true
+      lensing_region: true
+
+  # --------------------------------------------------------------------------
+  # Presets (Hydra-friendly profiles via `model/constraints={lite|strict}`)
+  # --------------------------------------------------------------------------
+  presets:
+    lite:
+      enforce_nonnegativity: true
+      smoothness_weight: 0.000
+      fft_smoothness_weight: 0.000
+      asymmetry_weight: 0.000
+      lensing:
+        enabled: false
+        bins: [120, 160]
+        weight: 0.000
+      molecular_fingerprint:
+        enabled: true
+        molecules: ["H2O", "CO2", "CH4"]
+        match_weight: 0.001
+        false_positive_weight: 0.000
+        band_expansion_bins: 1
+        coherence_weight: 0.0
+      symbolic_logic:
+        enabled: true
+        mode: "soft"
+        per_rule_weights: {}
+        violation_floor: 0.0
+      corel_uncertainty:
+        enabled: false
+        weight: 0.000
+      cycle_consistency:
+        enabled: false
+        weight: 0.000
+      diagnostics:
+        log_violation_maps: true
+        save_fft_plots: false
+        save_symbolic_table: true
+
+    strict:
+      enforce_nonnegativity: true
+      smoothness_weight: 0.020
+      fft_smoothness_weight: 0.005
+      asymmetry_weight: 0.002
+      lensing:
+        enabled: true
+        bins: [120, 160]
+        weight: 0.006
+      molecular_fingerprint:
+        enabled: true
+        molecules: ["H2O", "CO2", "CH4"]
+        match_weight: 0.010
+        false_positive_weight: 0.004
+        band_expansion_bins: 2
+        coherence_weight: 0.002
+      symbolic_logic:
+        enabled: true
+        mode: "hard"
+        per_rule_weights: {}
+        violation_floor: 0.0
+      corel_uncertainty:
+        enabled: true
+        weight: 0.010
+      cycle_consistency:
+        enabled: true
+        weight: 0.004
+      diagnostics:
+        log_violation_maps: true
+        save_fft_plots: true
+        save_symbolic_table: true
 
   # --------------------------------------------------------------------------
   # Notes
   # --------------------------------------------------------------------------
   notes: |
-    • All penalties are auxiliary; main task remains Gaussian log-likelihood (GLL).
-    • Keep weights in 1e-3–1e-2 range for balance.
-    • Nonnegativity is enforced both as clamp (post-proc) and via ε > 0 floor.
-    • FFT + asymmetry stabilize against noise-dominated jagged spectra.
-    • Molecular priors prevent hallucinated lines; adjust weights if over-smoothing.
-    • Lensing region penalty reduces bias in [120–160] bins, validated by diagnostics.
-    • Diagnostics export JSON maps of violations for UMAP/t-SNE overlays.
+    • All penalties are auxiliary; the primary objective remains Gaussian Log-Likelihood (GLL).
+    • Keep weights in the 1e-3–1e-2 band for balance; use schedules to ramp in smoothly.
+    • Nonnegativity applied both as post-proc clamp (ε floor) and via optional loss barrier internally.
+    • FFT + asymmetry stabilize jagged, noise-dominated spectra; increase carefully to avoid over-smoothing.
+    • Molecular priors prevent hallucinated lines; widen bands with band_expansion_bins if offsets observed.
+    • Lensing region weighting reduces bias in [120–160] bins; inspect violation maps to tune.
+    • Symbolic logic integrates soft/hard rule enforcement and logs per-rule violation tables for audits.
+    • COREL-aware uncertainty term encourages calibrated σ coverage; enable for leaderboard validation.
