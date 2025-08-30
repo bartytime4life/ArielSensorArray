@@ -1,35 +1,48 @@
-🗂️ /configs — SpectraMind V50 Configuration System
+Here’s the **upgraded** `/configs/README.md`, fully aligned with your request and reconciled against the technical plan, project analysis, Hydra best practices, CLI/automation protocols, and strategy for extending configs. I’ve expanded with **Hydra/DVC rigor, Kaggle integration, symbolic/physics constraints, and CI links**.
 
-0. Purpose & Scope
+---
 
-The /configs directory defines all experiment parameters for the SpectraMind V50 pipeline (NeurIPS 2025 Ariel Data Challenge).
-It is the single source of truth for:
-	•	Data paths, calibration parameters, and preprocessing
-	•	Model architectures (FGS1 Mamba encoder, AIRS GNN, decoders)
-	•	Training hyperparameters, curriculum schedules, and loss weights
-	•	Symbolic/physics constraints (smoothness, non-negativity, molecular priors)
-	•	Diagnostics, explainability, and uncertainty calibration settings
-	•	Runtime and environment overrides (local, Kaggle, CI)
+# 🗂️ `/configs` — SpectraMind V50 Configuration System
 
-This ensures experiments are Hydra-safe, reproducible, and auditable: every run is traceable to its config snapshot ￼ ￼.
+## 0. Purpose & Scope
 
-⸻
+The **`/configs`** directory defines all **experiment parameters** for the **SpectraMind V50 pipeline** (NeurIPS 2025 Ariel Data Challenge).
+It is the **single source of truth** for:
 
-1. Design Philosophy
-	•	Hydra-first: All configs are modular YAML files, dynamically composed at runtime ￼.
-	•	No hard-coding: Pipeline behavior is changed only via configs or CLI overrides, never by editing code ￼.
-	•	Hierarchical layering: Defaults are composed from subgroups (data/, model/, optimizer/, etc.), with runtime overrides allowed at any depth.
-	•	Versioned & logged: Each run stores its exact config in the Hydra output dir, logged to logs/v50_debug_log.md with a hash ￼ ￼.
-	•	DVC integration: Data/model artifacts referenced in configs are DVC-tracked for reproducibility ￼.
+* 📡 **Data ingestion & calibration** — FGS1 photometer and AIRS spectrometer paths, preprocessing, detrending, noise models
+* 🧠 **Model architectures** — FGS1 Mamba encoder, AIRS GNN, multi-scale/uncertainty decoders, COREL calibration layers
+* ⚙️ **Training hyperparameters** — curriculum schedules, optimizer settings, mixed-precision, checkpointing, loss weights
+* 🔬 **Symbolic/physics constraints** — smoothness, non-negativity, FFT priors, molecular fingerprints, COREL calibration&#x20;
+* 📊 **Diagnostics & explainability** — SHAP overlays, symbolic violation maps, uncertainty calibration plots, dashboard exports
+* 🖥️ **Runtime overrides** — local dev, Kaggle GPU (≤9 hr safe mode), CI, Docker
 
-⸻
+Every run is **Hydra-safe, DVC-versioned, and auditable**:
 
-2. Directory Structure
+* The composed config snapshot is saved under `outputs/DATE_TIME/.hydra/`
+* Logged with a **config hash** in `logs/v50_debug_log.md`
+* Artifacts tracked in **DVC** for reproducibility
 
+---
+
+## 1. Design Philosophy
+
+* **Hydra-first**: Modular YAMLs dynamically composed at runtime
+* **No hard-coding**: Pipeline behavior is changed only via configs or CLI overrides, never by editing source
+* **Hierarchical layering**: `defaults` compose from groups (`data/`, `model/`, `optimizer/`, etc.); overrides at any depth
+* **Versioned & logged**: Each run saves its config + hash for reproducibility
+* **DVC-integrated**: All data/model artifacts referenced in configs are DVC-tracked for exact reruns
+* **Kaggle-safe**: Enforces ≤9 hr runtime, GPU RAM guardrails, no internet calls
+* **Physics-informed**: Configs encode symbolic loss weights, physical priors, non-negativity
+
+---
+
+## 2. Directory Structure
+
+```
 configs/
-├── train.yaml              # Main entrypoint config (composes defaults)
-├── predict.yaml            # Inference config
-├── ablate.yaml             # Config grid for ablation sweeps
+├── train.yaml              # Main training config (composes defaults)
+├── predict.yaml            # Inference / submission config
+├── ablate.yaml             # Grid for ablation sweeps
 ├── selftest.yaml           # Lightweight smoke/self-test config
 │
 ├── data/                   # Dataset + calibration options
@@ -43,7 +56,7 @@ configs/
 │   ├── airs_gnn.yaml
 │   └── decoder.yaml
 │
-├── optimizer/              # Optimizer + scheduler choices
+├── optimizer/              # Optimizers & schedulers
 │   ├── adam.yaml
 │   ├── adamw.yaml
 │   └── sgd.yaml
@@ -53,70 +66,138 @@ configs/
 │   ├── smoothness.yaml
 │   └── symbolic.yaml
 │
-├── trainer/                # Training loop options
+├── trainer/                # Training loop configs
 │   ├── default.yaml
 │   ├── gpu.yaml
 │   └── kaggle_safe.yaml
 │
-├── logger/                 # Logging & tracking
+├── logger/                 # Experiment logging
 │   ├── tensorboard.yaml
 │   ├── wandb.yaml
 │   └── mlflow.yaml
 │
 └── local/                  # Machine-specific overrides (git-ignored)
     └── default.yaml
+```
 
+---
 
-⸻
+## 3. Usage
 
-3. Usage
+### Run with defaults
 
-Running with defaults
-
+```bash
 python train_v50.py
+```
 
-Loads configs/train.yaml, which composes defaults across all groups.
+### Override values
 
-Overriding values
-
+```bash
 python train_v50.py optimizer=adamw training.epochs=20 model=airs_gnn
+```
 
-Multirun sweeps
+### Multirun sweeps
 
+```bash
 python train_v50.py -m optimizer=adam,sgd training.batch_size=32,64
+```
 
-Kaggle-safe run
+### Kaggle-safe run
 
+```bash
 spectramind train --config-name train.yaml trainer=kaggle_safe
+```
 
+### CI self-test
 
-⸻
+```bash
+spectramind test --config-name selftest.yaml --fast
+```
 
-4. Best Practices
-	•	Keep configs in Git: All YAMLs under /configs (except /local/) must be version-controlled ￼.
-	•	Use /local/ for secrets/paths: Machine-specific overrides (scratch dirs, cluster queue names) go here and are .gitignored ￼.
-	•	Leverage interpolation: Use ${...} to link values across groups (e.g. num_classes: ${data.num_classes} in a model).
-	•	Snapshot every run: Hydra auto-saves composed configs to outputs/YYYY-MM-DD_HH-MM-SS/. Never run without a saved config.
-	•	Sync with DVC: Ensure any file path in configs is DVC-tracked for reproducibility ￼.
+---
 
-⸻
+## 4. Best Practices
 
-5. Integration
-	•	CLI: All commands (spectramind train, spectramind diagnose, etc.) load configs through Hydra ￼ ￼.
-	•	CI: GitHub Actions rebuilds configs, runs self-test, and executes sample pipelines to verify integrity ￼.
-	•	Kaggle: Configs ensure ≤9 hr runtime, safe memory use, and no internet calls ￼ ￼.
-	•	Dashboard: Configs feed into diagnostics (generate_html_report.py), producing versioned HTML reports with config metadata ￼.
+* **Keep configs in Git**: All YAMLs except `/local/` are version-controlled
+* **Use `/local/` for secrets/paths**: Cluster creds, scratch dirs, etc. are `.gitignored`
+* **Leverage interpolation**: e.g. `${data.num_classes}` ensures cross-consistency across groups
+* **Snapshot every run**: Hydra auto-saves configs; never run without one
+* **Sync with DVC**: Ensure every path in configs is tracked in DVC
+* **Layer configs**: Use `defaults` to define baselines; override for ablation/debug/Kaggle
+* **Enforce Kaggle runtime safety**: batch sizes, mixed precision, checkpointing aligned with GPU limits
 
-⸻
+---
 
-6. References
-	•	Hydra configuration best practices ￼
-	•	SpectraMind V50 Technical Plan ￼
-	•	Project Analysis of repo structure and configs ￼
-	•	Strategy for updating and extending configs ￼
+## 5. Integration
 
-⸻
+* **CLI**: All commands (`spectramind train`, `spectramind diagnose`, `spectramind submit`) load configs through Hydra
+* **CI**: GitHub Actions validates configs via self-test + sample pipeline runs
+* **Kaggle**: Configs guarantee ≤9 hr runtime, GPU quota compliance, offline reproducibility
+* **Dashboard**: Config metadata feeds into `generate_html_report.py` for diagnostics
+* **Experiment tracking**: Optional sync with MLflow/W\&B/TensorBoard via logger configs
 
-✅ With this setup, /configs is not just parameters: it is the flight plan for every SpectraMind V50 experiment, ensuring NASA-grade reproducibility and Kaggle-safe deployment.
+---
 
-⸻
+## 6. References
+
+* Hydra configuration best practices
+* SpectraMind V50 Technical Plan
+* Project Analysis of repo configs
+* Strategy for Updating & Extending Configs
+* Kaggle Platform Technical Guide
+* NASA/Physics-informed modeling refs
+flowchart TB
+  %% Root entrypoint
+  T[train.yaml]
+
+  %% Groups composed by train.yaml
+  T --> D[data/*]
+  T --> M[model/*]
+  T --> O[optimizer/*]
+  T --> L[loss/*]
+  T --> R[trainer/*]
+  T --> G[logger/*]
+  T --> U[uncertainty/* (optional)]
+  T --> X[ablate.yaml (optional multirun)]
+  T --> P[predict.yaml (inference)]
+
+  %% Data options
+  D --> Dn[nominal.yaml]
+  D --> Dk[kaggle.yaml]
+  D --> Dd[debug.yaml]
+
+  %% Model options
+  M --> Mv[v50.yaml]
+  M --> Mm[fgs1_mamba.yaml]
+  M --> Ma[airs_gnn.yaml]
+  M --> Md[decoder.yaml]
+
+  %% Optimizers
+  O --> Oa[adam.yaml]
+  O --> Ow[adamw.yaml]
+  O --> Os[sgd.yaml]
+
+  %% Losses / physics
+  L --> Lg[gll.yaml]
+  L --> Ls[smoothness.yaml]
+  L --> Ly[symbolic.yaml]
+
+  %% Trainer profiles
+  R --> Rt[default.yaml]
+  R --> Rg[gpu.yaml]
+  R --> Rk[kaggle_safe.yaml]
+
+  %% Loggers
+  G --> Gt[tensorboard.yaml]
+  G --> Gw[wandb.yaml]
+  G --> Gm[mlflow.yaml]
+
+  %% Local overrides
+  T --> LCL[local/default.yaml (git-ignored)]
+  LCL --- note1{{Local overrides: secrets, scratch paths, cluster queues}}
+
+  %% Notes
+  note2{{Hydra saves composed configs<br/>to outputs/DATE_TIME/.hydra/}}
+  note3{{All file paths DVC-tracked<br/>for reproducibility}}
+  T --- note2
+  T --- note3
