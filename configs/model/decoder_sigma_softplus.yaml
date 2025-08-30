@@ -1,0 +1,29 @@
+# configs/model/decoder_sigma_softplus.yaml
+# ==============================================================================
+# σ Decoder — Simple softplus head (no flow, no symbolic overlay)
+# ==============================================================================
+
+decoder:
+  sigma_head:
+    type: "softplus"
+    hidden_dim: 96
+    layers: 2
+    activation: "silu"
+    dropout: 0.10
+    layer_norm: false
+    residual: false
+    init: "xavier_uniform"
+    base_activation: "softplus"
+    min_sigma: 1.0e-6
+    max_sigma: 5.0
+    symbolic_overlay: false
+    calibration:
+      temperature_scaling:
+        enabled: true
+        init_T: 1.0
+        learn_T_per_bin: false
+      isotonic: {enabled: false}
+      conformal_corel: {enabled: false}
+    epistemic:
+      mc_dropout: {enabled: false, passes: 8}
+      ensemble:   {enabled: false, members: 3}
