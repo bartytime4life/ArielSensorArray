@@ -1,0 +1,79 @@
+# configs/logger/mlflow.yaml
+# ==============================================================================
+# 🧪 MLflow Logger — SpectraMind V50
+#
+# Purpose
+#   Configure MLflow tracking for training and diagnostics. Supports local file-
+#   based tracking (offline) for Kaggle/CI and remote tracking servers for labs.
+#
+# Usage
+#   In train.yaml:
+#     defaults:
+#       - logger: mlflow
+#
+#   CLI override examples:
+#     spectramind train logger=mlflow logger.mlflow.tracking_uri=mlruns
+#     spectramind train logger.mlflow.experiment_name="V50_ablations"
+#     spectramind train logger.mlflow.run_name="run_${now:%Y%m%d_%H%M%S}"
+#
+# Notes
+#   • In Kaggle/CI, this config defaults to a local file backend (no internet).
+#   • All runs also mirror key metadata to logs/v50_debug_log.md for audit.
+#   • Set MLFLOW_TRACKING_URI / MLFLOW_EXPERIMENT_NAME via env or override here.
+# ==============================================================================
+
+mlflow:
+  enabled: true                        # Master switch for MLflow logging
+
+  # Tracking backend
+  tracking_uri: "mlruns"               # "mlruns" (local folder) or http(s)://server:port
+  registry_uri: null                   # Optional Model Registry URI (null = same as tracking)
+
+  # Experiment / run metadata
+  experiment_name: "SpectraMindV50"    # Default experiment
+  run_name: null                       # Auto if null (timestamp + hash)
+  tags:                                # Key/value tags attached to the run
+    project: "spectramind_v50"
+    profile: "${trainer}"              # Example: trainer profile captured as a tag
+
+  # What to log
+  autolog: false                       # Enable framework autologging (can be heavy)
+  log_params: true                     # Log flattened Hydra config/params
+  log_artifacts: true                  # Log artifacts directory (plots, reports)
+  log_model: true                      # Log final model artifact(s)
+  save_code_snapshot: true             # Zip code snapshot and log as artifact
+  save_config_snapshot: true           # Save merged Hydra config to artifacts
+
+  # Artifact & run output layout
+  artifacts_dir: "outputs/artifacts"   # Local staging dir before upload
+  artifact_location: null              # Override MLflow artifact location (null = default)
+
+  # Performance / cadence
+  flush_secs: 30                       # Force flush to backend at this cadence
+  step_log_freq: 50                    # Log metrics every N steps/updates
+
+  # Safety & reproducibility
+  capture_env:
+    conda_env: false                   # If true, log conda env YAML (can be large)
+    pip_freeze: true                   # Log pip freeze to artifact for reproducibility
+    system_info: true                  # Log CUDA/host info to artifact
+
+  # Kaggle / CI guardrails (offline, minimal I/O)
+  kaggle_safe:
+    enabled: true
+    tracking_uri: "mlruns"             # Local file store only
+    autolog: false                     # Avoid heavy hooks
+    log_model: false                   # Don’t store large model files
+    log_artifacts: true                # Keep small plots/reports
+    flush_secs: 60
+    step_log_freq: 200
+
+  ci_fast:
+    enabled: true
+    tracking_uri: "mlruns"             # Local file store
+    enabled_override: false            # If true, disable MLflow entirely in CI
+    autolog: false
+    log_model: false
+    log_artifacts: false               # Keep CI minimal
+    flush_secs: 300
+    step_log_freq: 10_000
