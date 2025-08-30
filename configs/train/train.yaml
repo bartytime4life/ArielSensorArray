@@ -1,0 +1,20 @@
+# configs/train.yaml (snippet)
+# ----------------------------------------------------------------------
+# Compose defaults from config groups (override any on the CLI)
+# ----------------------------------------------------------------------
+defaults:
+  - data: nominal                # data/{nominal|kaggle|debug}.yaml
+  - model: v50                   # model architecture & heads
+  - model/fusion: fusion          # cross-attn fusion by default
+  - model/decoder_mean: decoder_mean
+  - model/decoder_sigma: decoder_sigma
+  - model/constraints: default    # ⚖️ balanced physics constraints
+  - optimizer: adamw
+  - loss: gll
+  - loss: smoothness
+  - loss: symbolic
+  - trainer: kaggle_safe
+  - logger: tensorboard
+  - override hydra/job_logging: default
+  - override hydra/hydra_logging: default
+  - _self_
