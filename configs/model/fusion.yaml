@@ -1,0 +1,136 @@
+```yaml
+# configs/model/fusion.yaml
+# ==============================================================================
+# 🔗 Fusion — Cross-Attention between FGS1 (SSM latent) and AIRS (GNN latent)
+# Swappable via CLI: model/fusion={concat|cross_attn|gated_sum}
+# ==============================================================================
+
+fusion:
+  method: "cross_attention"      # options: cross_attention | concat | gated_sum
+  hidden_dim: 256
+  num_heads: 4
+  dropout: 0.10
+  normalize: true
+  residual: true
+  gating:
+    enabled: true                # used for 'gated_sum' fallback
+    type: "sigmoid"
+  init: "xavier_uniform"
+  notes: |
+    Cross-attention lets FGS1 time-series context inform AIRS spectral reasoning.
+    Swap to 'concat' for a lightweight baseline or 'gated_sum' for residual-style fusion.
+```
+
+```yaml
+# configs/model/decoder_mean.yaml
+# ==============================================================================
+# μ Decoder — Multi-layer MLP head for the mean spectrum prediction
+# Swappable via CLI: model/decoder_mean={mlp_small|mlp|mlp_big}
+# ==============================================================================
+
+decoder:
+  mean_head:
+    type: "mlp"
+    hidden_dim: 256
+    layers: 3
+    activation: "gelu"
+    dropout: 0.10
+    layer_norm: true
+    residual: false
+    init: "xavier_uniform"
+    output_activation: "identity"   # leave μ unconstrained; constraints handle post-process
+    notes: |
+      Compact, stable MLP head. For sharper features, bump hidden_dim/layers or add residual=true.
+```
+
+```yaml
+# configs/model/decoder_sigma.yaml
+# ==============================================================================
+# σ Decoder — Flow/softplus head for per-bin uncertainty with symbolic overlay
+# Swappable via CLI: model/decoder_sigma={softplus|symbolic_flow}
+# ==============================================================================
+
+decoder:
+  sigma_head:
+    type: "flow_uncertainty"     # options: flow_uncertainty | softplus
+    hidden_dim: 128
+    layers: 2
+    activation: "silu"
+    dropout: 0.10
+    layer_norm: false
+    residual: false
+    init: "xavier_uniform"
+    base_activation: "softplus"  # ensures σ > 0
+    symbolic_overlay: true       # blend σ with rule-weighted adjustments
+    overlay:
+      weight: 0.25               # symbolic contribution to σ
+      clip: [0.5, 2.0]           # clamp multiplicative overlay to stabilize training
+    notes: |
+      Produces heteroscedastic σ. Symbolic overlay upweights bins in rule-violation regions to
+      reflect epistemic risk proxies; disable by setting symbolic_overlay=false.
+```
+
+```yaml
+# configs/model/constraints.yaml
+# ==============================================================================
+# ⚖️ Physics & Symbolic Constraints — applied as auxiliary losses/post-proc hooks
+# Swappable via CLI: model/constraints={lite|default|strict}
+# ==============================================================================
+
+constraints:
+  enforce_nonnegativity: true             # clamp μ >= 0 at inference (safe post-proc)
+  smoothness_weight: 0.010                # L2(Δμ) along wavelength (local smoothness)
+  fft_smoothness_weight: 0.002            # L2 on high-frequency FFT components
+  asymmetry_weight: 0.001                 # penalize left/right spectral asymmetry if unphysical
+  lensing:
+    enabled: true
+    bins: [120, 160]                      # region more sensitive to lensing artifacts
+    weight: 0.003
+  molecular_fingerprint:
+    enabled: true
+    molecules: ["H2O", "CO2", "CH4"]
+    match_weight: 0.005                   # encourage μ peaks near known band centers
+    false_positive_weight: 0.002          # penalize strong lines outside known bands
+  calibration:
+    nonnegativity_epsilon: 1.0e-8
+    max_clip: 5.0                         # safety cap for extreme μ after constraint pass
+  diagnostics:
+    log_violation_maps: true
+    save_fft_plots: true
+    export_json: "outputs/diagnostics/constraint_violations.json"
+  notes: |
+    Keep losses modest (10^-3–10^-2) so they guide, not dominate, the main likelihood (GLL).
+    Tune per-dataset: start with defaults, then adjust per-planet diagnostics to reduce artifacts.
+```
+
+**How to wire these in `train.yaml` (example):**
+
+```yaml
+# in configs/train.yaml (snippet)
+defaults:
+  - model: v50
+  - model/fusion: fusion
+  - model/decoder_mean: decoder_mean
+  - model/decoder_sigma: decoder_sigma
+  - model/constraints: constraints
+```
+
+**Examples of overrides:**
+
+* Lightweight fusion for speed:
+
+```
+spectramind train model/fusion=+{method=concat,hidden_dim=128}
+```
+
+* Softer σ without symbolic blending:
+
+```
+spectramind train model/decoder_sigma=decoder_sigma model.decoder.sigma_head.symbolic_overlay=false
+```
+
+* Strict physics mode:
+
+```
+spectramind train model/constraints=strict
+```
