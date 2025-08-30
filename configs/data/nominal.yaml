@@ -1,19 +1,26 @@
-# configs/data/nominal.yaml
-# ==============================================================================
 # 🛰️ SpectraMind V50 — Nominal Data Configuration
 # NeurIPS 2025 Ariel Data Challenge (ESA Ariel telescope simulation)
 #
 # Purpose:
-#   Define the nominal dataset and calibration setup used in standard runs.
-#   Covers:
-#     • Input data (FGS1 photometer, AIRS spectrometer)
-#     • Preprocessing + calibration steps
-#     • Augmentations (jitter, dropout, masking)
-#     • Symbolic/physics-aware data treatments
-#     • DVC integration (paths are DVC-tracked)
+#   Define the nominal dataset + calibration setup for standard runs.
+#   Includes ESA Ariel–style photometer/spectrometer cubes, preprocessing,
+#   calibration kill chain, augmentations, symbolic-aware masking, and DVC tracking.
 #
-# This file is Hydra-composable and intended as the default "data" config.
+# Hydra:
+#   This config is Hydra-composable (part of defaults: in train.yaml).
+#   All fields can be overridden via CLI, e.g.:
+#     spectramind train data=nominal augmentation.jitter.amplitude_ppm=50
+#
+# DVC:
+#   Paths and outputs are DVC-tracked for reproducibility.
 # ==============================================================================
+
+# ----------------------------------------------------------------------
+# Hydra defaults (ensures clean composition)
+# ----------------------------------------------------------------------
+defaults:
+  - override hydra/job_logging: default
+  - override hydra/hydra_logging: default
 
 # ----------------------------------------------------------------------
 # Dataset metadata
@@ -21,10 +28,12 @@
 dataset:
   name: "nominal_v50"
   description: "Default ESA Ariel Challenge dataset (FGS1 + AIRS) with calibration."
-  version: "1.0"
+  version: "1.1"
   source: "neurips-2025-ariel"     # Kaggle competition slug
-  dvc_stage: "data/nominal"        # DVC stage name for tracking
-  cache: "data/cache"              # Local cache directory (DVC-managed)
+  dvc_stage: "data/nominal"
+  dvc_remote: "storage"           # remote DVC target
+  cache: "data/cache"
+  hash: "${now:%Y%m%d}_${now:%H%M%S}"  # run-level DVC hash for traceability
 
 # ----------------------------------------------------------------------
 # File paths (DVC-tracked)
@@ -32,11 +41,12 @@ dataset:
 paths:
   raw_dir: "data/raw"
   processed_dir: "data/processed/nominal"
-  fgs1_file: "${paths.raw_dir}/fgs1_train.npy"   # (135k, 32, 32)
-  airs_file: "${paths.raw_dir}/airs_train.npy"   # (11k, 32, 356)
-  labels_file: "${paths.raw_dir}/labels.csv"     # planet metadata + targets
+  fgs1_file: "${paths.raw_dir}/fgs1_train.npy"     # shape (135k, 32, 32)
+  airs_file: "${paths.raw_dir}/airs_train.npy"     # shape (11k, 32, 356)
+  labels_file: "${paths.raw_dir}/labels.csv"       # metadata + targets
   test_fgs1: "${paths.raw_dir}/fgs1_test.npy"
   test_airs: "${paths.raw_dir}/airs_test.npy"
+  submission_template: "data/sample_submission.csv"
 
 # ----------------------------------------------------------------------
 # Calibration pipeline (kill chain)
@@ -44,7 +54,7 @@ paths:
 calibration:
   enabled: true
   steps:
-    - "adc_correction"       # Analog-to-digital correction
+    - "adc_correction"
     - "nonlinearity_correction"
     - "dark_subtraction"
     - "flat_fielding"
@@ -52,7 +62,7 @@ calibration:
     - "photometric_extraction"
     - "trace_normalization"
     - "phase_alignment"
-  save_intermediate: true    # Save intermediate cubes for diagnostics
+  save_intermediate: true
   output_dir: "${paths.processed_dir}/calibrated"
 
 # ----------------------------------------------------------------------
@@ -71,24 +81,28 @@ preprocessing:
     enabled: true
     window: 5
     method: "median"
+  resample_time: false  # default: preserve original cadence
 
 # ----------------------------------------------------------------------
-# Augmentation (for training robustness)
+# Augmentation (training robustness)
 # ----------------------------------------------------------------------
 augmentation:
   jitter:
     enabled: true
-    amplitude_ppm: 100           # spacecraft jitter injection
+    amplitude_ppm: 100
   dropout:
     enabled: true
     prob: 0.01
   mask:
     enabled: true
-    scheme: "block"              # block masking for MAE pretraining
+    scheme: "block"
     fraction: 0.15
   snr_dropout:
     enabled: true
     snr_threshold: 5.0
+  temporal_shift:
+    enabled: false
+    max_phase_offset: 0.02
 
 # ----------------------------------------------------------------------
 # Symbolic & physics-aware constraints
@@ -97,6 +111,10 @@ symbolic:
   enforce_nonnegativity: true
   smoothness_penalty: 0.01
   asymmetry_penalty: 0.001
+  fft_prior:
+    enabled: true
+    freq_cutoff: 0.25       # normalized frequency cutoff
+    weight: 0.002
   molecular_masking:
     enabled: true
     molecules: ["H2O", "CO2", "CH4"]
@@ -107,12 +125,12 @@ symbolic:
   region_masking:
     enabled: true
     regions:
-      - name: "AIRS_short_IR"
-        start: 0
-        end: 100
-      - name: "AIRS_long_IR"
-        start: 200
-        end: 356
+      - { name: "AIRS_short_IR", start: 0, end: 100 }
+      - { name: "AIRS_long_IR",  start: 200, end: 356 }
+      - { name: "Grav_lens_corr", start: 120, end: 160 }  # gravitational lensing overlay
+  corel_uncertainty:
+    enabled: true
+    weight: 0.005
 
 # ----------------------------------------------------------------------
 # Splits
@@ -142,7 +160,7 @@ diagnostics:
   fft_analysis: true
   zscore_analysis: true
   symbolic_overlay: true
-  shap_overlay: false
+  shap_overlay: true
   output_dir: "outputs/diagnostics/data_nominal"
 
 # ----------------------------------------------------------------------
@@ -150,8 +168,9 @@ diagnostics:
 # ----------------------------------------------------------------------
 notes: |
   • This config defines the *nominal data pipeline* for SpectraMind V50.
-  • All paths must be DVC-tracked to ensure reproducibility.
-  • Preprocessing includes flux normalization, outlier clipping, and polynomial detrending.
-  • Symbolic constraints ensure smoothness, non-negativity, and molecular-region masking.
+  • All paths are DVC-tracked; commit pointers ensure reproducibility.
+  • Symbolic rules applied at data stage enforce physical priors (nonnegativity, smoothness).
   • Augmentations simulate spacecraft/system noise (jitter, dropout, SNR masking).
-  • Diagnostics output FFT and symbolic overlays for audit.
+  • FFT and molecular overlays provide early diagnostics of constraint compliance.
+  • Kaggle runtime guardrails: tuned for ≤9 hr execution with GPU-safe defaults.
+```
