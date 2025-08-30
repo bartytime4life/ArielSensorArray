@@ -1,74 +1,318 @@
+```yaml
 # ======================================================================
 # configs/data/kaggle.yaml — SpectraMind V50 Kaggle Runtime Data Config
 # ======================================================================
-# Purpose:
-#   Specialized dataset and runtime configuration for Kaggle submissions.
-#   Ensures Kaggle hardware/runtime constraints are respected:
-#     • ≤9 hr runtime on 1 GPU
-#     • No internet calls, no hidden state
-#     • DVC-safe, deterministic data access
+# Purpose
+#   Specialized dataset + runtime configuration for Kaggle submissions.
+#   Enforces Kaggle kernel constraints:
+#     • ≤ 9 hr total runtime on a single GPU
+#     • No internet, no hidden state, deterministic behavior
+#     • DVC-safe layout (local only), reproducible paths
 #
-# Usage:
-#   spectramind train --config-name train.yaml data=kaggle
+# Usage
+#   spectramind train   --config-name train.yaml   data=kaggle
 #   spectramind predict --config-name predict.yaml data=kaggle
+#
+# Notes
+#   • Uses Kaggle’s mounted volumes:
+#       /kaggle/input     (read-only)
+#       /kaggle/working   (read/write)
+#       /kaggle/temp      (ephemeral cache)
+#   • Keep diagnostics light; prefer HTML/PNG in /kaggle/working only.
+#   • Do not attempt network calls or remote DVC pulls in Kaggle runs.
 # ======================================================================
 
+# ----------------------------------------------------------------------
+# Hydra defaults (quiet, CI/Kaggle friendly)
+# ----------------------------------------------------------------------
+defaults:
+  - override hydra/job_logging: default
+  - override hydra/hydra_logging: default
+
+# ----------------------------------------------------------------------
+# Dataset metadata & Kaggle paths
+# ----------------------------------------------------------------------
 dataset:
   name: "Ariel_Kaggle_2025"
-  provider: "kaggle"             # Kaggle dataset mount (no external URLs)
-  input_dir: "/kaggle/input/neurips-2025-ariel"   # Mounted Kaggle input path
-  output_dir: "/kaggle/working"  # Kaggle writable path
-  cache_dir: "/kaggle/temp"      # Ephemeral cache (cleared between sessions)
-
-  # Data subsets
-  train_file: "train.pkl"
-  val_file: "val.pkl"
-  test_file: "test.pkl"
-
-  # Number of planets and bins (fixed by competition spec)
+  provider: "kaggle"
+  input_dir: "/kaggle/input/neurips-2025-ariel"    # competition dataset mount
+  output_dir: "/kaggle/working"                    # writable workspace
+  cache_dir: "/kaggle/temp"                        # ephemeral cache
+  version: "1.0-kaggle"
+  source: "neurips-2025-ariel"
+  # Fixed by competition spec
   num_planets: 1100
   num_bins: 283
 
-  # Loader settings
-  batch_size: 64                 # Safe for 16 GB GPU (Tesla P100 / T4)
-  num_workers: 2                 # Conservative to avoid Kaggle kernel crashes
+# Structured paths used by loaders/tools (local-only; no remote DVC)
+paths:
+  # Packed files provided by upstream preparation notebook or competition data
+  train_file: "${dataset.input_dir}/train.pkl"
+  val_file:   "${dataset.input_dir}/val.pkl"
+  test_file:  "${dataset.input_dir}/test.pkl"
+  # If .npy/.npz provided instead of .pkl, the IO layer can auto-detect
+  fallback_train_npy: "${dataset.input_dir}/train.npy"
+  fallback_val_npy:   "${dataset.input_dir}/val.npy"
+  fallback_test_npy:  "${dataset.input_dir}/test.npy"
+
+  # Optional raw arrays (if competition ships them)
+  fgs1_train: "${dataset.input_dir}/fgs1_train.npy"
+  airs_train: "${dataset.input_dir}/airs_train.npy"
+  labels:     "${dataset.input_dir}/labels.csv"
+  fgs1_test:  "${dataset.input_dir}/fgs1_test.npy"
+  airs_test:  "${dataset.input_dir}/airs_test.npy"
+  submission_template: "${dataset.input_dir}/sample_submission.csv"
+
+  # Outputs & artifacts
+  artifacts_dir: "${dataset.output_dir}/diagnostics"
+  split_indices_dir: "${dataset.output_dir}/splits"
+  tensor_cache_dir: "${dataset.cache_dir}/tensors"
+  calibrated_dir: "${dataset.output_dir}/calibrated"
+
+io:
+  allow_pickle: true               # enable for .pkl fast paths
+  memmap: true                    # use np.memmap for large arrays
+  allow_npz: true                 # transparently read .npz if present
+  strict_endianness: false
+  fail_on_missing: true
+  # Prefer Kaggle-local files; never pull from remote
+  internet_access: false
+  external_urls: []
+
+# ----------------------------------------------------------------------
+# Interface contract
+# ----------------------------------------------------------------------
+interface:
+  num_bins: ${dataset.num_bins}
+  output_dir: "${hydra.run.dir}"
+
+# ----------------------------------------------------------------------
+# Schema (light checks; fail fast)
+# ----------------------------------------------------------------------
+schema:
+  fgs1:
+    expected_rank: 3
+    expected_shape: [-1, 32, 32]
+    dtype: "float32"
+    allow_nan: false
+    allow_inf: false
+  airs:
+    expected_rank: 3
+    expected_shape: [-1, 32, 356]   # remapped to 283 if needed by loader
+    dtype: "float32"
+    allow_nan: false
+    allow_inf: false
+  labels:
+    required_columns: ["planet_id", "split", "target_mu[0:283]", "target_sigma[0:283]"]
+    allow_missing_targets: true     # some Kaggle runs are test-only
+
+instrument:
+  # Optional spectral bin remap 356→283 if competition data requires it
+  bin_remap:
+    enabled: true
+    map_path: "${dataset.input_dir}/binmap_356_to_283.npy"
+  time_grid:
+    enforce_len: 32
+    resample_missing: "linear"
+    max_gap_frac: 0.25
+
+# ----------------------------------------------------------------------
+# Kaggle-calibration (lean; heavy ops disabled)
+# ----------------------------------------------------------------------
+calibration:
+  enabled: true
+  steps:
+    - "adc_correction"
+    - "nonlinearity_correction"
+    - "dark_subtraction"
+    - "flat_fielding"
+    - "correlated_double_sampling"
+    - "photometric_extraction"
+    - "trace_normalization"
+    - "phase_alignment"
+  save_intermediate: false          # keep storage usage low
+  save_preview_png: true
+  preview_stride: 16
+  output_dir: "${paths.calibrated_dir}"
+  method:
+    adc_correction: { enabled: true, bit_depth: 16 }
+    nonlinearity_correction: { enabled: true, saturation_dn: 65535 }
+    dark_subtraction: { enabled: true }
+    flat_fielding: { enabled: true, epsilon: 1.0e-6 }
+    correlated_double_sampling:
+      enabled: true
+      strategy: "nearest"
+      noise_threshold_dn: 50
+    photometric_extraction:
+      enabled: true
+      aperture: "circular"
+      radius_px: 6
+      bkg_annulus_px: [8, 12]
+      method: "sum"
+    trace_normalization:
+      enabled: true
+      reference_window: [0.15, 0.35]
+      epsilon: 1.0e-6
+    phase_alignment:
+      enabled: true
+      method: "xcorr"
+      max_shift: 3
+
+# ----------------------------------------------------------------------
+# Preprocessing (lean)
+# ----------------------------------------------------------------------
+preprocessing:
+  normalize_flux: true
+  standardize_time: true
+  clip_outliers: true
+  outlier_sigma: 6.0
+  detrend_method: "polynomial"      # "polynomial" | "savgol" | "none"
+  savgol:
+    window_length: 7
+    polyorder: 2
+    mode: "interp"
+  spectral_smoothing: false         # disable FFT-heavy ops for runtime safety
+  resample_time:
+    enabled: false
+    target_len: 32
+    method: "linear"
+
+# ----------------------------------------------------------------------
+# Symbolic hooks (minimal; diagnostics on)
+# ----------------------------------------------------------------------
+symbolic:
+  enforce_nonnegativity: true
+  fft_prior:
+    enabled: false                   # off to save time
+  molecular_masking:
+    enabled: true
+    molecules: ["H2O", "CO2", "CH4"]
+    apply_in_preprocessing: true
+
+# ----------------------------------------------------------------------
+# Augmentation (training only; conservative)
+# ----------------------------------------------------------------------
+augmentation:
+  jitter_injection: true
+  jitter:
+    enabled: true
+    amplitude_ppm: 60
+    mode: "sinusoid"
+    max_hz: 0.30
+  noise_injection:
+    enabled: true
+    sigma_ppm: 10.0
+    mode: "gaussian"
+  dropout:
+    enabled: true
+    prob: 0.005
+  mask:
+    enabled: true
+    scheme: "block"
+    fraction: 0.10
+    block: { max_bins: 8, max_steps: 4 }
+
+# ----------------------------------------------------------------------
+# Splits (deterministic CV inside Kaggle; or use provided val.pkl)
+# ----------------------------------------------------------------------
+splits:
+  strategy: "planet_holdout"         # "planet_holdout" | "stratified" | "random"
+  fractions: { train: 0.90, val: 0.10, test: 0.00 }
+  seed: 42
+  export:
+    enabled: true
+    dir: "${paths.split_indices_dir}"
+    filenames: { train: "train_idx.npy", val: "val_idx.npy", test: "test_idx.npy" }
+  epsilon: 1.0e-6
+
+# ----------------------------------------------------------------------
+# Loader (Kaggle-safe)
+# ----------------------------------------------------------------------
+loader:
+  batch_size: 64                     # safe for P100/T4 (16 GB) with our models
+  num_workers: 2                     # conservative to avoid kernel crashes
   pin_memory: true
   persistent_workers: false
+  prefetch_factor: 2
+  drop_last: false
+  shuffle_train: true
+  shuffle_val: false
+  shuffle_test: false
 
-  # Data restrictions
-  internet_access: false          # Safety guard
-  kaggle_time_limit_hr: 9         # Max runtime enforced
+# ----------------------------------------------------------------------
+# Validation gates
+# ----------------------------------------------------------------------
+validate:
+  enabled: true
+  fail_fast: true
+  sample_size_preview: 4
+  checks:
+    - "paths_exist"
+    - "schema_match"
+    - "no_nan_inf"
+    - "bins_match_interface"
+    - "bin_remap_ok"
 
-preprocessing:
-  normalize_flux: true            # Normalize per planet light curves
-  jitter_injection: true          # Simulate spacecraft jitter (augmentation)
-  phase_alignment: true           # Align transits using FGS1 photometry
-  detrend_method: "polynomial"    # Simple detrending for AIRS inputs
-  spectral_smoothing: false       # Disable heavy FFT smoothing for runtime safety
+# ----------------------------------------------------------------------
+# Diagnostics (lightweight only)
+# ----------------------------------------------------------------------
+diagnostics:
+  enabled: true
+  output_dir: "${paths.artifacts_dir}"
+  save_plots: true
+  fft_analysis: false
+  zscore_analysis: true
+  symbolic_overlay: true
+  shap_overlay: false
+  per_step_previews: true
+  artifacts:
+    stats_json: "${diagnostics.output_dir}/stats.json"
+    preview_png: "${diagnostics.output_dir}/preview.png"
+    z_png: "${diagnostics.output_dir}/zscore_preview.png"
+    sym_png: "${diagnostics.output_dir}/symbolic_overlay.png"
 
-calibration:
-  adc_correction: true
-  dark_subtraction: true
-  flat_field: true
-  nonlinearity: true
-  cds_correction: true
-  phase_normalization: true
+# ----------------------------------------------------------------------
+# Runtime guardrails (Kaggle)
+# ----------------------------------------------------------------------
+runtime:
+  kaggle_safe: true
+  kaggle_time_limit_hr: 9
+  enforce_no_internet: true
+  write_intermediates: true
+  fast_preview_limit: 48
+  reduce_heavy_ops: true
 
-validation:
-  split_strategy: "planet_holdout"
-  val_fraction: 0.1
-  random_seed: 42
-  deterministic: true
+# ----------------------------------------------------------------------
+# Consistency & safety
+# ----------------------------------------------------------------------
+consistency_guard:
+  check_paths_writable: true
+  check_gpu_memory: true
+  min_gpu_mem_gb: 12
+  warn_only: false
 
+safety:
+  max_abs_mu: 10.0
+  min_sigma: 1.0e-8
+  max_sigma: 1.0
+  action_on_violation: "fail"
+
+# ----------------------------------------------------------------------
+# Logging / manifests
+# ----------------------------------------------------------------------
 logging:
   enable: true
   save_dir: "${dataset.output_dir}/logs"
   format: "jsonl"
   include_config_hash: true
 
+# ----------------------------------------------------------------------
+# Hydra output dirs (under /kaggle/working)
+# ----------------------------------------------------------------------
 hydra:
   run:
     dir: ${dataset.output_dir}/outputs/${now:%Y-%m-%d_%H-%M-%S}
   sweep:
     dir: ${dataset.output_dir}/multirun/${now:%Y-%m-%d_%H-%M-%S}
     subdir: ${hydra.job.num}
+```
