@@ -1,0 +1,50 @@
+# configs/logger/tensorboard.yaml
+# ==============================================================================
+# 📊 TensorBoard Logger — SpectraMind V50
+#
+# Purpose
+#   Configure TensorBoard logging for training and diagnostics.
+#   Provides runtime-safe defaults for Kaggle/CI while enabling
+#   rich local logging (scalars, histograms, graphs).
+#
+# Usage
+#   In train.yaml:
+#     defaults:
+#       - logger: tensorboard
+#
+#   CLI override examples:
+#     spectramind train logger=tensorboard logger.tensorboard.log_dir=logs/tb_runs
+#     spectramind train logger.tensorboard.flush_secs=30
+#
+# Notes
+#   • Keep I/O minimal in Kaggle mode (flush every few minutes).
+#   • All logs are mirrored to logs/v50_debug_log.md for audit.
+#   • Compatible with Lightning/Trainer or custom hooks.
+# ==============================================================================
+
+tensorboard:
+  enabled: true                # Master switch
+  log_dir: "logs/tb_runs"      # Root dir for TensorBoard event files
+  name: "spectramind_v50"      # Run name prefix (appended with timestamp/hash)
+  version: null                # Auto if null; set manually for reproducibility
+  default_hp_metric: false     # Avoid spurious hp_metric logging
+  prefix: ""                   # Optional subdir prefix inside log_dir
+
+  # Scalars, histograms, and graphs
+  log_graph: false             # Set true to log model graph (overhead)
+  histogram_freq: 0            # 0 = disable; >0 = log histograms every N epochs
+  write_images: false          # Log input images (large overhead, off by default)
+
+  # Flush cadence / performance knobs
+  flush_secs: 120              # Seconds between async flushes
+  max_queue: 10                # Queue size before forcing flush
+  workers: 1                   # DataLoader workers for summary writing
+
+  # Kaggle / CI guardrails
+  kaggle_safe:
+    flush_secs: 300            # Throttle flushes to reduce I/O
+    histogram_freq: 0          # Disable heavy histogram logging
+    write_images: false        # Disable image writing
+
+  ci_fast:
+    enabled: false             # Disable TB logging in CI smoke tests
