@@ -1,0 +1,82 @@
+# configs/trainer/defaults.yaml
+# ==============================================================================
+# 🚀 Trainer Defaults — SpectraMind V50 (NeurIPS 2025 Ariel Data Challenge)
+#
+# Purpose
+#   Central Hydra config for PyTorch Lightning training orchestration.
+#   Provides safe defaults (Kaggle ≤9h), modular overrides, and reproducibility.
+#
+# Usage
+#   In train.yaml:
+#     defaults:
+#       - trainer: defaults
+#
+#   Override examples:
+#     spectramind train trainer.max_epochs=30 trainer.precision=16
+#     spectramind train trainer.devices=1 trainer.accelerator=gpu
+#
+# Notes
+#   • Keeps GPU runtime guardrails (≤9h jobs).
+#   • AMP-safe mixed precision.
+#   • Hydra interpolation used for defaults across optimizer, loss, logging.
+# ==============================================================================
+
+defaults:
+  - optimizer: adamw         # baseline optimizer (can override)
+  - loss: composite          # physics-aware composite loss
+  - logging: rich            # console logging, Rich-enhanced
+  - _self_                   # ensures local values override group defaults
+
+# Core training hyperparameters
+trainer:
+  max_epochs: 50             # typical full run; override for Kaggle
+  min_epochs: 5              # ensures scheduler warmup
+  gradient_clip_val: 1.0     # stabilize training
+  accumulate_grad_batches: 1 # bump to 2–4 for large models
+  deterministic: true        # reproducibility on GPU:contentReference[oaicite:0]{index=0}
+  benchmark: false           # avoid nondeterministic CuDNN autotuning
+  enable_checkpointing: true
+  log_every_n_steps: 25
+  check_val_every_n_epoch: 1
+  precision: 16              # AMP mixed precision (safe for Kaggle GPUs)
+  accelerator: "gpu"
+  devices: 1
+  strategy: "ddp_find_unused_parameters_false"
+  detect_anomaly: false
+  fast_dev_run: false        # quick sanity check
+
+# Early stopping & LR scheduler knobs
+callbacks:
+  early_stopping:
+    monitor: "val/gll"       # validation metric (Gaussian log-likelihood)
+    patience: 5
+    mode: "min"
+  model_checkpoint:
+    monitor: "val/gll"
+    mode: "min"
+    save_top_k: 3
+    save_last: true
+    filename: "epoch{epoch}-valgll{val/gll:.4f}"
+
+# Reproducibility & seeds
+seed: 42
+cudnn_deterministic: true
+cudnn_benchmark: false
+
+# Runtime guardrails (Kaggle safety)
+runtime:
+  kaggle_mode: true          # toggles safe defaults for ≤9h
+  max_runtime_hours: 9
+  num_workers: 2             # low IO workers for Kaggle GPU quota
+  pin_memory: true
+
+# Hydra sweep / multirun support
+hydra:
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: multiruns/${now:%Y-%m-%d_%H-%M-%S}
+    subdir: ${hydra.job.num}
+  job_logging:
+    root:
+      level: INFO
