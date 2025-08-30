@@ -1,0 +1,14 @@
+# configs/calib/method/cds.yaml
+# ==============================================================================
+# Correlated Double Sampling (CDS) method
+# Reduces kTC noise and 1/f noise by subtracting reset frames.
+# ==============================================================================
+
+cds:
+  enabled: true
+  reset_frame: "calib/cds/reset_frame.tif"  # Reference reset frame
+  noise_threshold: 50                       # DN threshold for subtraction
+  pair_strategy: "nearest"                  # nearest | exact | interpolate
+  notes: |
+    CDS subtracts pixel reset values from signal values to reduce temporal
+    noise. Common in IR detectors and low-light imaging pipelines.
