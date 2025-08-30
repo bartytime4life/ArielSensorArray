@@ -1,0 +1,52 @@
+# configs/optimizer/sgd.yaml
+# ==============================================================================
+# ⚙️ Optimizer — SGD (Stochastic Gradient Descent with Momentum / Nesterov)
+#
+# Purpose
+#   Configure the SGD optimizer for SpectraMind V50 training.
+#   While AdamW is the recommended baseline, SGD with momentum is included
+#   for ablations, diagnostics, and leaderboard comparisons.
+#
+# Usage
+#   Composed in train.yaml via:
+#     defaults:
+#       - optimizer: sgd
+#
+#   Override examples:
+#     spectramind train optimizer=sgd optimizer.lr=1e-2 optimizer.momentum=0.9
+#
+# References
+#   • SpectraMind V50 Strategy — Ablation configs ensure full optimizer coverage:contentReference[oaicite:0]{index=0}
+#   • Kaggle Baseline Practices — SGD variants used in comparative leaderboard models:contentReference[oaicite:1]{index=1}
+#   • NASA-grade reproducibility — all optimizer configs logged and hash-tracked:contentReference[oaicite:2]{index=2}
+# ==============================================================================
+
+optimizer:
+  name: "sgd"                     # identifier string; parsed by PyTorch Lightning/Trainer
+  type: "SGD"                     # torch.optim.SGD
+  lr: 1.0e-2                      # higher LR than Adam/AdamW; typical for SGD
+  momentum: 0.9                   # momentum coefficient
+  dampening: 0.0                  # dampening for momentum
+  weight_decay: 0.0               # optional L2 penalty (decoupled in AdamW)
+  nesterov: true                  # enable Nesterov momentum
+
+  # --------------------------------------------------------------------------
+  # Scheduler integration
+  # --------------------------------------------------------------------------
+  scheduler_hook: true             # allow scheduler override in training config
+
+  # --------------------------------------------------------------------------
+  # Precision / AMP compatibility
+  # --------------------------------------------------------------------------
+  precision_safe: true             # SGD is fully compatible with fp32/fp16/bf16
+  fused: false                     # leave false unless using fused SGD build
+
+  # --------------------------------------------------------------------------
+  # Notes
+  # --------------------------------------------------------------------------
+  notes: |
+    • Use SGD for ablations and stability tests:contentReference[oaicite:3]{index=3}.
+    • Default LR = 1e-2; tune with cosine/onecycle schedulers for convergence:contentReference[oaicite:4]{index=4}.
+    • Momentum + Nesterov improves convergence on noisy gradients.
+    • Generally slower than AdamW but can yield smoother convergence curves.
+    • Fully Hydra-overridable and reproducibility-logged via v50_debug_log.md:contentReference[oaicite:5]{index=5}.
