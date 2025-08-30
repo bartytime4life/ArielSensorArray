@@ -1,0 +1,15 @@
+# configs/calib/method/phase.yaml
+# ==============================================================================
+# Phase Correction calibration method
+# Applies phase alignment and timing correction for time-series data.
+# ==============================================================================
+
+phase:
+  enabled: true
+  reference_clock: "gps"      # options: gps | onboard | external
+  alignment_method: "cross_correlation"  # options: cross_correlation | polynomial_fit
+  drift_tolerance_sec: 0.01   # allowable drift in seconds
+  apply_barycentric: true     # Apply barycentric correction (for astronomy)
+  notes: |
+    Phase correction ensures time-series frames are aligned to a common
+    temporal reference, correcting drift and enabling phase-folding.
