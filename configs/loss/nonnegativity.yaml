@@ -1,65 +1,141 @@
 # configs/loss/nonnegativity.yaml
 # ==============================================================================
-# 🚧 Non-Negativity Loss — Physics Constraint
+# 🚧 Non-Negativity Loss — Physics Constraint (UPGRADED)
 #
 # Purpose
-#   Penalizes negative μ predictions to enforce the physical constraint that
-#   transmission/flux cannot be negative. Keeps the model in a physically
-#   plausible regime while coexisting with primary losses (e.g., GLL).
+#   Penalizes negative μ predictions to enforce the physical constraint μ ≥ 0
+#   (transmission/flux cannot be negative). Designed to coexist with primary
+#   likelihood terms (e.g., GLL) without hard-clamping during training.
 #
-# Penalty Forms (select one via `mode`)
-#   • hinge     : λ * Σ ReLU(−μ)^p
-#   • softplus  : λ * Σ softplus(−μ / τ)^p           (smooth barrier, τ = temperature)
-#   • exp       : λ * Σ (exp(−μ / τ) − 1)            (strong barrier near boundary)
+# Penalty Forms (select via `mode`)
+#   • hinge     :  L = λ * Σ ReLU(−μ − margin)^p
+#   • softplus  :  L = λ * Σ softplus(−μ − margin, β=1/temperature)^p
+#   • exp       :  L = λ * Σ (exp((−μ − margin)/temperature) − 1)
+#
+# Key Features
+#   • Margin / dead-zone (small tolerance around 0 to avoid over-penalizing noise).
+#   • Region masks to modulate penalty in known artifact/molecular bins.
+#   • Custom per-bin weights and normalization by #bins.
+#   • Scheduling (warmup/anneal) to ramp in physical constraint.
+#   • Optional “hard” clamp at inference only (safety net).
+#   • Diagnostics: per-bin logging, heatmaps, JSON export.
 #
 # Usage
 #   In train.yaml:
 #     defaults:
 #       - loss: nonnegativity
 #
-#   CLI override example:
-#     spectramind train loss.nonnegativity.lambda=0.05 loss.nonnegativity.mode=softplus
+#   CLI examples:
+#     # Smooth barrier with a small temperature and 2-norm:
+#     spectramind train loss.nonnegativity.mode=softplus \
+#       loss.nonnegativity.temperature=0.05 loss.nonnegativity.p=2
+#
+#     # Increase penalty and add 1e-4 margin:
+#     spectramind train loss.nonnegativity.lambda=0.05 \
+#       loss.nonnegativity.margin=1e-4
+#
+#     # Enable scheduling warmup:
+#     spectramind train loss.nonnegativity.schedule.enabled=true \
+#       loss.nonnegativity.schedule.warmup.steps=1500
 # ==============================================================================
 
 nonnegativity:
   enabled: true
 
-  # Overall strength of the penalty
+  # Overall strength (λ)
   lambda: 0.01
 
   # Penalty type: hinge | softplus | exp
   mode: "hinge"
 
-  # Power/exponent for hinge/softplus variants (typically 1 or 2)
+  # Power/exponent for hinge/softplus variants (1 or 2)
   p: 2
 
-  # Temperature for smooth barriers (softplus/exp). Smaller -> harsher near 0.
+  # Smoothness/steepness for soft barriers (smaller => harsher near 0)
   temperature: 0.05
 
-  # Small epsilon to keep grads/stability near 0
+  # Small epsilon for stability near boundary (e.g., logs/divisions in implementation)
   eps: 1.0e-8
 
-  # Optional per-bin weighting
-  weighting:
-    scheme: "uniform"        # uniform | custom
-    custom_weights_path: null
-    custom_weights_inline: []  # e.g., [1.0, 0.8, 0.8, ...]
+  # Dead-zone margin: allow slight negatives (measurement noise) before penalty
+  margin: 0.0               # e.g., 1e-4
 
-  # Region masks (e.g., relax penalty in known artifact bins if needed)
-  region_masking:
-    enabled: false
-    mask_path: null          # .npy/.csv mask in [0,1] per bin (1 applies full penalty)
+  # Optional offset for known baseline biases (μ_shift is subtracted before penalty)
+  mu_shift: 0.0
 
-  # Normalization across bins/batch
-  reduction: "mean"          # mean | sum | none
+  # Normalize loss by number of bins (and optionally batch) to stabilize scale
   normalize_by_bins: true
 
-  # Diagnostics
+  # Reduction across batch/bins
+  reduction: "mean"         # mean | sum | none
+
+  # ---------------------------------------------------------------------------
+  # Scheduling / Curriculum — progressively introduce the constraint
+  # ---------------------------------------------------------------------------
+  schedule:
+    enabled: true
+    warmup:
+      steps: 1500           # steps (or epochs depending on trainer mapping)
+    anneal:
+      enabled: false
+      steps: 0
+    floor: 0.0
+    cap: 1.0
+
+  # ---------------------------------------------------------------------------
+  # Optional per-bin weighting
+  # ---------------------------------------------------------------------------
+  weighting:
+    scheme: "uniform"       # uniform | custom
+    custom_weights_path: null      # .npy/.csv; shapes [BINS] or [B,BINS]
+    custom_weights_inline: []      # e.g., [1.0, 0.8, 0.8, ...]
+
+  # ---------------------------------------------------------------------------
+  # Region masks (e.g., relax penalty in known artifact or molecular bins)
+  # ---------------------------------------------------------------------------
+  region_masking:
+    enabled: false
+    mask_path: null         # .npy/.csv in [0,1] per bin (1 applies full penalty)
+    invert_mask: false      # if true, uses (1 - mask)
+    scale: 1.0              # overall scaling for mask application
+
+  # ---------------------------------------------------------------------------
+  # Interactions (optional) — couple with other losses/contexts
+  # ---------------------------------------------------------------------------
+  interactions:
+    enabled: true
+    rules:
+      # Example: lower nonneg penalty in molecular windows (to avoid over-penalizing tiny dips)
+      - name: "relax_in_molecule_regions"
+        when: { symbolic.molecular_fingerprints.enabled: true }
+        effect: "multiply"
+        target: "lambda"
+        factor: 0.9
+
+  # ---------------------------------------------------------------------------
+  # Inference-time Safety Net (no effect during training unless you enforce it)
+  # ---------------------------------------------------------------------------
+  inference:
+    hard_clamp:
+      enabled: true         # if true, clamp μ̂ := max(μ̂, 0) *at inference only*
+      margin: 0.0           # clamp threshold (usually 0). Keep 0 to avoid bias.
+
+  # ---------------------------------------------------------------------------
+  # Diagnostics / Logging
+  # ---------------------------------------------------------------------------
   log_per_bin: true
-  export_heatmap: true       # per-bin negative mass/penalty heatmap
-  save_json: true            # write nonnegativity config & summary stats
+  export_heatmap: true      # export per-bin penalty heatmap for dashboards
+  save_json: true           # persist effective configuration for reproducibility
+  sample_plots:
+    enabled: false
+    max_samples: 8
 
   notes: |
-    • Enforces μ ≥ 0 without hard clamping during training, preserving gradients.
-    • `hinge` with p=2 is a good default; `softplus` provides smoother gradients near 0.
-    • Consider slightly stronger λ early in training, then anneal as calibration stabilizes.
+    • Choose `hinge, p=2` as a strong, simple default; `softplus` offers smoother gradients near 0;
+      `exp` becomes very steep near the boundary—use with caution.
+    • Use a small `margin` (e.g., 1e-4) to tolerate measurement noise around zero without
+      encouraging positive bias.
+    • Prefer warmup scheduling so the constraint stabilizes training early without dominating.
+    • Keep λ moderate; the non-negativity term should guide, not overpower, GLL.
+    • Consider enabling inference hard-clamp as a final safety net; avoid training-time hard clamps
+      to preserve usable gradients.
