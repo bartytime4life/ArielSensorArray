@@ -1,0 +1,87 @@
+# configs/loss/symbolic.yaml
+# ==============================================================================
+# 🧠 Symbolic Loss — Physics-Informed Constraints
+#
+# Purpose
+#   Encodes domain-specific symbolic rules and physics priors as differentiable
+#   penalties. These constraints guide the model toward scientifically valid spectra,
+#   complementing the Gaussian log-likelihood (GLL).
+#
+# Usage
+#   In train.yaml:
+#     defaults:
+#       - loss: symbolic
+#
+#   CLI examples:
+#     # Disable lensing, increase molecular fingerprint weight
+#     spectramind train loss.symbolic.lensing.enabled=false \
+#       loss.symbolic.molecular_fingerprints.weight=0.3
+#
+#     # Switch smoothness order and bump its weight
+#     spectramind train loss.symbolic.smoothness.order=2 \
+#       loss.symbolic.smoothness.weight=0.15
+#
+# Notes
+#   • Symbolic losses extend physics priors (non-negativity, FFT, smoothness).
+#   • Additional modules (molecular fingerprints, gravitational lensing) are integrated.
+#   • Each subterm can be toggled or reweighted independently.
+# ==============================================================================
+
+symbolic:
+  enabled: true
+  reduction: "mean"     # mean | sum | none
+
+  # --- Smoothness constraint (spectral curvature penalty)
+  smoothness:
+    enabled: true
+    weight: 0.10
+    order: 2             # 1 = first-derivative (total variation), 2 = second-derivative (curvature)
+    normalize: true
+
+  # --- Non-negativity constraint (flux ≥ 0)
+  nonnegativity:
+    enabled: true
+    weight: 0.02
+    mode: "hinge"        # hinge | softplus | exp
+    p: 2                 # L1 or L2 penalty for violations
+    temperature: 1.0
+
+  # --- FFT high-frequency suppression (reduce noise, enforce smoothness)
+  fft:
+    enabled: true
+    weight: 0.10
+    cutoff_freq: 50      # bins beyond this frequency are penalized
+    log_scale: false
+    normalize: true
+    adaptive:
+      enabled: false
+      method: "percentile"   # percentile | exponential | fixed
+      percentile: 95.0
+      decay: 0.95
+
+  # --- Molecular fingerprint coherence (physics-based priors)
+  molecular_fingerprints:
+    enabled: true
+    weight: 0.20
+    templates: ["H2O", "CO2", "CH4"]   # molecules to enforce fingerprint alignment
+    mode: "overlay"                    # overlay | mask | hybrid
+    tolerance: 0.02                    # allowable deviation from expected band centers
+
+  # --- Gravitational lensing consistency (photometric + spectral constraints)
+  lensing:
+    enabled: true
+    weight: 0.05
+    method: "einstein_ring"            # einstein_ring | shear_matrix | custom
+    einstein_radius_arcsec: 1.0e-3     # expected scale of lensing features
+    tolerance: 0.01
+
+notes: |
+  • All symbolic loss components are additive with configurable weights.
+  • Each sub-loss enforces a scientific constraint:
+      - Smoothness: discourages rapid spectral oscillations.
+      - Non-negativity: ensures μ spectra ≥ 0.
+      - FFT: penalizes high-frequency artifacts (noise).
+      - Molecular fingerprints: aligns spectral lines with known molecules.
+      - Lensing: penalizes inconsistencies with gravitational lensing physics.
+  • Weights should be tuned cautiously; symbolic terms guide but should not dominate
+    over the primary GLL objective.
