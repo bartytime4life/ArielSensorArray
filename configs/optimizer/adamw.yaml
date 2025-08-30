@@ -31,6 +31,14 @@ optimizer:
   amsgrad: false                 # AMSGrad variant toggle
 
   # --------------------------------------------------------------------------
+  # Advanced variants
+  # --------------------------------------------------------------------------
+  lookahead:
+    enabled: false               # Lookahead wrapper around AdamW
+    alpha: 0.5                   # slow weight step size
+    k: 6                         # synchronization steps
+
+  # --------------------------------------------------------------------------
   # Scheduler integration
   # --------------------------------------------------------------------------
   scheduler_hook: true            # allow scheduler override in training config (cosine, onecycle, etc.)
@@ -42,11 +50,18 @@ optimizer:
   fused: false                    # enable if using fused AdamW on supported PyTorch builds
 
   # --------------------------------------------------------------------------
+  # Diagnostics & logging
+  # --------------------------------------------------------------------------
+  log_config: true                # write optimizer hyperparams to v50_debug_log.md
+  export_json: "outputs/diagnostics/optimizer_adamw.json"
+
+  # --------------------------------------------------------------------------
   # Notes
   # --------------------------------------------------------------------------
   notes: |
     • AdamW is the recommended optimizer for SpectraMind V50:contentReference[oaicite:3]{index=3}.
     • Default learning rate = 3e-4, tuned for Kaggle GPU 9h budget:contentReference[oaicite:4]{index=4}.
     • Decoupled weight decay avoids implicit L2 penalty coupling in Adam.
+    • Lookahead wrapper supported: enable for stability/ablations.
     • All parameters are Hydra-overridable via CLI.
-    • Fully reproducible: config is logged + hashed in v50_debug_log.md:contentReference[oaicite:5]{index=5}.
+    • Fully reproducible: config values logged + hashed in v50_debug_log.md:contentReference[oaicite:5]{index=5}.
