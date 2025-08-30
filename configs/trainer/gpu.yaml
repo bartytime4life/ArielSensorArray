@@ -3,16 +3,21 @@
 # 🧠 Trainer — Multi-GPU / Cluster (DDP) Profile
 #
 # Purpose
-#   High-throughput training on multi-GPU nodes (or multi-node clusters).
-#   Keeps AMP mixed precision and strict reproducibility.
+#   High-throughput training on multi-GPU nodes (and multi-node if desired).
+#   • Mixed-precision AMP by default
+#   • Strict reproducibility and DDP-safe defaults
 #
 # Usage
 #   spectramind train trainer=gpu
+#   # Scale within a node:
+#   spectramind train trainer=gpu trainer.devices=8
+#   # Multi-node:
+#   spectramind train trainer=gpu trainer.devices=8 trainer.num_nodes=2
 #
 # Notes
-#   • Uses DDP with static_graph for fewer syncs (if your model supports it).
-#   • Hydra composition stays identical; override devices/nodes via CLI:
-#       spectramind train trainer=gpu trainer.devices=8 trainer.num_nodes=2
+#   • Uses DDP with static_graph for fewer syncs (set false if your graph is dynamic).
+#   • Hydra composition remains identical; override devices/nodes via CLI as shown.
+#   • Swap precision to "bf16-mixed" on Ampere+/Hopper if supported.
 # ==============================================================================
 
 defaults:
@@ -22,26 +27,57 @@ defaults:
   - _self_
 
 trainer:
+  # ---------------------------------------------------------------------------
+  # Core schedule
+  # ---------------------------------------------------------------------------
   max_epochs: 60
   min_epochs: 5
+  log_every_n_steps: 25
+  check_val_every_n_epoch: 1
+
+  # ---------------------------------------------------------------------------
+  # Stability & determinism
+  # ---------------------------------------------------------------------------
   gradient_clip_val: 1.0
   accumulate_grad_batches: 1
   deterministic: true
   benchmark: false
-  enable_checkpointing: true
-  log_every_n_steps: 25
-  check_val_every_n_epoch: 1
-  precision: 16
+  detect_anomaly: false
+  fast_dev_run: false
+
+  # ---------------------------------------------------------------------------
+  # Precision & devices
+  # ---------------------------------------------------------------------------
+  precision: 16                  # change to "bf16-mixed" if your GPUs support BF16
   accelerator: "gpu"
-  devices: "auto"                 # or set an integer (e.g., 4, 8)
+  devices: "auto"                # override with int (e.g., 4, 8) when known
   num_nodes: 1
+
+  # ---------------------------------------------------------------------------
+  # DDP strategy (safe, high-throughput defaults)
+  # ---------------------------------------------------------------------------
   strategy:
     class_path: lightning.pytorch.strategies.DDPStrategy
     init_args:
-      static_graph: true          # set false if model graph is dynamic
       find_unused_parameters: false
-  detect_anomaly: false
-  fast_dev_run: false
+      static_graph: true          # set false if model graph changes per step
+      gradient_as_bucket_view: true
+      bucket_cap_mb: 25           # tune per model (25–50 MB typical)
+      broadcast_buffers: false
+      process_group_backend: "nccl"
+      timeout: 1800               # seconds; avoid hanging on init
+      # replace_sampler_ddp handled via Lightning; ensure DistributedSampler is used
+
+  # ---------------------------------------------------------------------------
+  # BN & sampler behavior
+  # ---------------------------------------------------------------------------
+  sync_batchnorm: true
+  replace_sampler_ddp: true
+
+  # ---------------------------------------------------------------------------
+  # Checkpointing (rank-zero saving)
+  # ---------------------------------------------------------------------------
+  enable_checkpointing: true
 
 callbacks:
   early_stopping:
@@ -53,18 +89,40 @@ callbacks:
     mode: "min"
     save_top_k: 3
     save_last: true
+    every_n_epochs: 1
     filename: "epoch{epoch}-valgll{val/gll:.4f}"
 
+# ------------------------------------------------------------------------------
+# Reproducibility & seeds
+# ------------------------------------------------------------------------------
 seed: 42
 cudnn_deterministic: true
 cudnn_benchmark: false
 
+# ------------------------------------------------------------------------------
+# Runtime & I/O guidance (server profile)
+# ------------------------------------------------------------------------------
 runtime:
-  kaggle_mode: false              # cluster profile (set true for Kaggle)
+  kaggle_mode: false             # set true for Kaggle runtime guardrails
   max_runtime_hours: 24
-  num_workers: 8                  # typical server IO
+  num_workers: 8                 # increase on fast storage; reduce on slow disks
   pin_memory: true
 
+# Dataloader defaults (can be overridden by your datamodule)
+trainer:
+  dataloader:
+    num_workers: 8
+    prefetch_factor: 2
+    pin_memory: true
+    persistent_workers: true
+
+# Optional profiler (disabled by default)
+trainer:
+  profiler: null
+
+# ------------------------------------------------------------------------------
+# Hydra output structure
+# ------------------------------------------------------------------------------
 hydra:
   run:
     dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}_gpu
@@ -74,3 +132,18 @@ hydra:
   job_logging:
     root:
       level: INFO
+
+# ------------------------------------------------------------------------------
+# Notes
+# ------------------------------------------------------------------------------
+notes: |
+  Multi-GPU/Cluster profile highlights:
+  • Override trainer.devices and trainer.num_nodes to match your allocation.
+  • static_graph=true reduces DDP sync overhead for stable graphs.
+  • sync_batchnorm keeps BN statistics consistent across ranks.
+  • For stability in large jobs, set env vars in your launcher:
+      NCCL_ASYNC_ERROR_HANDLING=1
+      NCCL_DEBUG=WARN
+      TORCH_DISTRIBUTED_DEBUG=OFF
+      CUDA_LAUNCH_BLOCKING=0
+  • On Hopper/Ampere GPUs, consider precision="bf16-mixed" for speed & stability.
