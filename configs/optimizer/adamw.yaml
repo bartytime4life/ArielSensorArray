@@ -1,0 +1,52 @@
+# configs/optimizer/adamw.yaml
+# ==============================================================================
+# ⚙️ Optimizer — AdamW (decoupled weight decay; recommended baseline)
+#
+# Purpose
+#   Configure the AdamW optimizer for SpectraMind V50 training.
+#   AdamW is preferred over Adam due to its decoupled weight decay formulation,
+#   which improves generalization stability and is widely used in modern deep learning.
+#
+# Usage
+#   Composed in train.yaml via:
+#     defaults:
+#       - optimizer: adamw
+#
+#   Override examples:
+#     spectramind train optimizer=adamw optimizer.lr=5e-4 optimizer.weight_decay=0.02
+#
+# References
+#   • SpectraMind V50 Technical Plan — Hydra configs ensure reproducibility:contentReference[oaicite:0]{index=0}
+#   • Kaggle runtime guardrails — AdamW chosen for leaderboard safety/stability:contentReference[oaicite:1]{index=1}
+#   • Project Analysis — AdamW baseline matches current Kaggle best practices:contentReference[oaicite:2]{index=2}
+# ==============================================================================
+
+optimizer:
+  name: "adamw"                  # identifier string; parsed by PyTorch Lightning/Trainer
+  type: "AdamW"                  # torch.optim.AdamW
+  lr: 3.0e-4                     # base learning rate (overridden by scheduler if configured)
+  betas: [0.9, 0.999]            # AdamW momentum terms
+  eps: 1.0e-8                    # numerical stability constant
+  weight_decay: 0.01             # decoupled weight decay (preferred to L2 penalty in Adam)
+  amsgrad: false                 # AMSGrad variant toggle
+
+  # --------------------------------------------------------------------------
+  # Scheduler integration
+  # --------------------------------------------------------------------------
+  scheduler_hook: true            # allow scheduler override in training config (cosine, onecycle, etc.)
+
+  # --------------------------------------------------------------------------
+  # Precision / AMP compatibility
+  # --------------------------------------------------------------------------
+  precision_safe: true            # AdamW supports mixed precision (fp16/bf16)
+  fused: false                    # enable if using fused AdamW on supported PyTorch builds
+
+  # --------------------------------------------------------------------------
+  # Notes
+  # --------------------------------------------------------------------------
+  notes: |
+    • AdamW is the recommended optimizer for SpectraMind V50:contentReference[oaicite:3]{index=3}.
+    • Default learning rate = 3e-4, tuned for Kaggle GPU 9h budget:contentReference[oaicite:4]{index=4}.
+    • Decoupled weight decay avoids implicit L2 penalty coupling in Adam.
+    • All parameters are Hydra-overridable via CLI.
+    • Fully reproducible: config is logged + hashed in v50_debug_log.md:contentReference[oaicite:5]{index=5}.
