@@ -1,69 +1,63 @@
 # configs/calib/method/temperature.yaml
 # ==============================================================================
-# 🌍 World Discovery Engine (WDE)
-# Temperature Scaling Calibration Method (Closed-Form)
-# ------------------------------------------------------------------------------
-# Purpose:
-#   Calibrate predictive uncertainty (σ) by scaling logits or variance
-#   with a learned temperature factor T.
-#
-# Features:
-#   • Supports global or per-bin temperature scaling
-#   • Optional L2 regularization toward T=1.0 (to avoid degenerate scaling)
-#   • Safe clamping of σ to avoid numerical instability
-#   • Fallback strategies if calibration targets unavailable
-#   • Diagnostics export (plots, JSON summary, coverage metrics)
-#   • Reproducibility controls (seeded, deterministic)
+# 🌡️ Temperature Drift Correction — Method Config
+# Purpose
+#   Correct detector and instrument response variations due to temperature
+#   fluctuations during observation. Compensates for gain shifts, bias drift,
+#   and wavelength calibration offsets induced by thermal instability.
+# Usage
+#   Composed by calib/nominal.yaml in the calibration kill chain.
+#   Override example:
+#     spectramind calibrate calib.method.temperature.enabled=false
 # ==============================================================================
 
-method: "temperature"
-
 temperature:
-  # ---- Mode ----
-  mode: "global"              # options: global | perbin | perregion
-  fit_method: "closed_form"   # closed_form | grid_search | nll_opt
+  enabled: true
 
-  # ---- Regularization ----
-  l2: 0.0                     # L2 penalty toward T=1.0 (0 = off)
-  l2_schedule: null            # optional: schedule {start, end, decay}
+  # Source of temperature telemetry
+  telemetry_file: "calib/temperature/telemetry.csv"   # CSV with time vs temperature
+  column_map:
+    time: "timestamp"                                # time column in telemetry
+    detector_temp: "detector_C"                      # detector temperature column
+    optics_temp: "optics_C"                          # optics temperature column
 
-  # ---- Safety & Stability ----
-  min_sigma: 1e-8              # clamp floor for σ
-  max_sigma: 1e+3              # optional upper clamp
-  fallback_T: 1.0              # fallback value if no calibration possible
-  allow_negative: false        # if false, enforce T > 0
+  # Interpolation of telemetry to match science frames
+  interpolation:
+    method: "linear"          # options: linear | spline | nearest
+    fill_extrapolate: true    # allow extrapolation beyond telemetry bounds
+    smoothing_window: 15      # moving average window (seconds) to reduce noise
 
-  # ---- Diagnostics ----
-  save_calibrated: "outputs/calibration/calibrated_preds.csv"
-  save_temperature: "outputs/calibration/temperature_values.json"
-  save_plots: true
-  diagnostics_dir: "outputs/diagnostics/temperature/"
-  metrics:                     # metrics to compute on calibration set
-    - ece                     # Expected Calibration Error
-    - nll                     # Negative Log-Likelihood
-    - brier                   # Brier score
-    - coverage                # coverage vs confidence
+  # Gain and bias correction model
+  gain_model:
+    type: "linear"            # options: linear | polynomial | lookup
+    coefficients: [1.0, 0.002]   # example: gain = a0 + a1 * (ΔT)
+    reference_temp: 20.0      # °C baseline reference
+  bias_model:
+    type: "linear"
+    coefficients: [0.0, 0.01] # DN offset per °C
+    reference_temp: 20.0
 
-  # ---- Reproducibility ----
-  random_seed: 42
-  deterministic: true
+  # Wavelength calibration drift correction
+  wavelength_drift:
+    enabled: true
+    model: "polynomial"       # options: polynomial | spline
+    order: 2
+    reference_temp: 20.0      # °C baseline reference
+    coeffs: [0.0, 0.05, -0.002] # Δλ shift per ΔT (example in nm/°C)
 
-  # ---- Metadata ----
-  version: "1.1"
-  provenance: "configs/calib/method/temperature.yaml"
+  # Outlier rejection for telemetry
+  outliers:
+    sigma_clip: 4.0           # reject temperature points >4σ from trend
+    max_iter: 5
+
+  # Optional external correction map
+  correction_map: "calib/temperature/correction_table.npy"  
+  use_correction_map: false   # if true, apply lookup-table correction instead of models
+
   notes: |
-    Temperature scaling corrects model calibration by scaling logits/σ.
-    Modes:
-      - global   : single T across all bins
-      - perbin   : distinct T for each output bin (more flexible)
-      - perregion: group bins by region (e.g., molecular, wavelength, AOI)
-    Fit methods:
-      - closed_form: analytic solution (fast, reliable baseline)
-      - grid_search: brute force search for T minimizing NLL
-      - nll_opt   : gradient-based optimization of NLL loss
-    Regularization:
-      - L2 penalty keeps T near 1.0, preventing over-scaling
-    Diagnostics:
-      - Produces plots of pre/post calibration reliability diagrams
-      - Exports JSON with fitted T values and summary metrics
-    This ensures reproducibility, CI/CD compatibility, and Kaggle runtime safety.
+    Temperature fluctuations affect both detector electronics (bias/gain drift)
+    and optical alignment (wavelength calibration). This method interpolates
+    temperature telemetry to science frame timestamps, models gain/bias drift,
+    and applies wavelength shift corrections. For best results, reference
+    coefficients should be calibrated in lab using flat-field exposures and
+    arc-lamp wavelength standards.
