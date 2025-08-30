@@ -1,16 +1,66 @@
 # configs/calib/method/trace.yaml
 # ==============================================================================
-# Trace Normalization calibration method
-# Normalizes extracted traces for spectroscopic pipelines.
+# 🌍 World Discovery Engine (WDE)
+# Trace Normalization Calibration Method
+# ------------------------------------------------------------------------------
+# Purpose:
+#   Normalize extracted traces (e.g., spectral profiles, time-series)
+#   to remove instrumental/systematic effects and prepare for downstream
+#   evaluation (NDVI/EVI, ADE fingerprinting, spectral fitting).
+#
+# Features:
+#   • Polynomial or spline baseline fitting
+#   • Multi-method normalization (median, mean, unity, custom)
+#   • Rolling / adaptive baseline option
+#   • Outlier rejection and masking
+#   • Export of diagnostics (plots, CSV, JSON)
+#   • Reproducible (seeded, deterministic options)
 # ==============================================================================
 
 trace:
   enabled: true
-  method: "polynomial"        # options: polynomial | spline
+
+  # ---- Baseline fitting ----
+  method: "polynomial"        # options: polynomial | spline | rolling
   order: 3                    # polynomial order if method=polynomial
-  baseline_window: 20         # pixels used for baseline fitting
-  normalize_to: "median"      # options: median | mean | unity
+  spline_s: 0.01              # smoothing factor if method=spline
+  rolling_window: 51          # samples for rolling baseline if method=rolling
+  baseline_window: 20         # pixels or bins used for baseline fitting context
+
+  # ---- Normalization target ----
+  normalize_to: "median"      # options: median | mean | unity | percentile | custom
+  percentile: 95              # used if normalize_to=percentile
+  custom_value: null          # if provided, force normalization target (e.g. 1.0)
+
+  # ---- Outlier handling ----
+  sigma_clip: true
+  sigma_threshold: 5.0        # standard deviations for clipping
+  mask_regions: []            # list of wavelength/bin ranges to ignore during fit
+
+  # ---- Output control ----
   save_trace: "outputs/trace_norm.csv"
+  save_diagnostics: true
+  diagnostics_dir: "outputs/diagnostics/trace/"
+  export_json: "outputs/trace_metadata.json"
+
+  # ---- Reproducibility ----
+  random_seed: 42             # seed for stochastic components (if any)
+  deterministic: true         # enforce deterministic outputs for CI/CD
+
+  # ---- Metadata ----
+  version: "1.1"
+  provenance: "configs/calib/method/trace.yaml"
   notes: |
-    Trace normalization removes low-frequency drifts in extracted spectra,
-    correcting for throughput and blaze function variations.
+    Trace normalization removes low-frequency drifts and throughput variations.
+    Methods:
+      - Polynomial: fit baseline with Nth-order polynomial
+      - Spline: smooth baseline with adjustable smoothing factor
+      - Rolling: adaptive moving-average baseline subtraction
+    Normalization targets:
+      - median/mean/unity scale traces to common brightness level
+      - percentile enables robust scaling based on distribution
+      - custom allows fixed scaling value (e.g., 1.0 exactly)
+    Outlier rejection with sigma-clipping ensures cosmic rays / hot pixels
+    don’t skew the baseline fit.
+    Outputs include CSV traces, JSON metadata (config, stats), and plots
+    for QA/QC, ensuring reproducibility in Kaggle and CI pipelines.
