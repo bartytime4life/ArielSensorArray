@@ -1,0 +1,52 @@
+# configs/calib/method/dark.yaml
+# ==============================================================================
+# 🌙 Dark Subtraction — Method Config
+# Purpose
+#   Remove dark current & bias structure using master dark frames.
+# Usage
+#   Composed by calib/nominal.yaml; runs after ADC & nonlinearity correction.
+#   Override example:
+#     spectramind calibrate calib.method.dark.master_dark_path=calib_refs/dark/master_dark.fits
+# ==============================================================================
+
+dark:
+  enabled: true
+
+  # Master dark frame (same shape as raw; electrons or DN consistent with pipeline)
+  master_dark_path: "calib_refs/dark/master_dark.npy"
+
+  # Temperature & exposure scaling (if master dark is normalized)
+  scaling:
+    enabled: true
+    # exposure_time will be read from metadata if available; fallback to below
+    exposure_time_seconds: 10.0
+    # Optional temperature model: dark_current ~ A * exp(B * (T - T0))
+    temperature_compensation:
+      enabled: false
+      T0_C: -40.0
+      A: 1.0
+      B: 0.07
+      sensor_temperature_key: "SENSOR_TEMP_C"  # metadata key
+
+  # Hot pixel handling
+  hot_pixels:
+    enabled: true
+    map_path: "calib_refs/dark/hot_pixel_map.npy"  # boolean mask
+    repair_strategy: "median"   # "median" | "neighbor" | "mask"
+    median_window: 3
+
+  # Residual bias plane fit (slow; optional)
+  residual_plane:
+    enabled: false
+    model: "poly2d"             # "poly2d" | "spline2d"
+    poly_order: 2
+    robust: true
+
+  diagnostics:
+    save_residuals: true
+    output_dir: "outputs/diagnostics/calib/dark"
+
+  notes: |
+    • Ensure unit consistency (DN vs electrons) between ADC output and master dark.
+    • If metadata exposure differs from master, scale master dark accordingly.
+    • Hot pixels are handled before residual bias fitting.
