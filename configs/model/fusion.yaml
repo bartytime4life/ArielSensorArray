@@ -1,31 +1,58 @@
 ```yaml
 # configs/model/fusion.yaml
 # ==============================================================================
-# 🔗 Fusion — Cross-Attention between FGS1 (SSM latent) and AIRS (GNN latent)
-# Swappable via CLI: model/fusion={concat|cross_attn|gated_sum}
+# 🔗 Fusion — Cross-Modal Fusion between FGS1 (SSM latent) and AIRS (GNN latent)
+# Swap via CLI: model/fusion={concat|cross_attn|gated_sum}
 # ==============================================================================
 
 fusion:
-  method: "cross_attention"      # options: cross_attention | concat | gated_sum
+  method: "cross_attention"             # cross_attention | concat | gated_sum
   hidden_dim: 256
   num_heads: 4
+  num_layers: 2                         # stack multiple x-attn blocks for capacity
+  bidirectional: true                   # if true, do both FGS1->AIRS and AIRS->FGS1
   dropout: 0.10
-  normalize: true
+  attn_dropout: 0.05
+  normalize: true                       # pre/post layernorm inside fusion blocks
   residual: true
   gating:
-    enabled: true                # used for 'gated_sum' fallback
+    enabled: true                       # used by 'gated_sum' and for residual gates
     type: "sigmoid"
+    init_bias: 0.0
+  position_encoding:
+    type: "fourier"                     # extra pe for cross-modal alignment
+    learnable_scale: true
+  masking:
+    enabled: true                       # masks invalid / padded timesteps or bins
+  alignment_losses:
+    # Optional auxiliary alignment losses to stabilize cross-modal learning
+    nce:
+      enabled: true
+      temperature: 0.07                 # InfoNCE temperature
+      weight: 0.02
+    cca:
+      enabled: false
+      weight: 0.00
+  regularization:
+    l2_weight: 0.0
+    spectral_norm: false
+  precision:
+    amp_allowed: true                   # enable mixed precision in fusion block
   init: "xavier_uniform"
+  param_budget:
+    enabled: true
+    max_params: 1.5e7                   # hard cap for fusion subgraph (Kaggle-safe)
   notes: |
-    Cross-attention lets FGS1 time-series context inform AIRS spectral reasoning.
-    Swap to 'concat' for a lightweight baseline or 'gated_sum' for residual-style fusion.
+    Cross-attention exposes AIRS graph nodes to FGS1 temporal context (and vice-versa when
+    bidirectional=true). Use alignment_losses to gently co-regularize latent spaces.
+    For speed-sensitive runs: set num_layers=1, num_heads=2, method=concat.
 ```
 
 ```yaml
 # configs/model/decoder_mean.yaml
 # ==============================================================================
-# μ Decoder — Multi-layer MLP head for the mean spectrum prediction
-# Swappable via CLI: model/decoder_mean={mlp_small|mlp|mlp_big}
+# μ Decoder — Mean spectrum head (sharp + stable)
+# Swap via CLI: model/decoder_mean={mlp_small|mlp|mlp_big}
 # ==============================================================================
 
 decoder:
@@ -36,23 +63,37 @@ decoder:
     activation: "gelu"
     dropout: 0.10
     layer_norm: true
-    residual: false
+    residual: true                    # allow residual MLP for sharper peaks
+    se_block:
+      enabled: true                   # lightweight squeeze-excite across wavelength axis
+      reduction: 4
+    spectral_skip:
+      enabled: true                   # add skip from AIRS encoder readout → μ head input
+      weight: 0.2
     init: "xavier_uniform"
-    output_activation: "identity"   # leave μ unconstrained; constraints handle post-process
+    output_activation: "identity"     # constraints handle post-processing
+    temperature:
+      enabled: true                   # scales logits before 'identity'—acts as contrast sharpener
+      value: 1.0
+      schedule: null                  # e.g., cosine, or {"type":"linear","start":1.2,"end":1.0,"epochs":10}
+    post_process:
+      clamp_min: null                 # e.g., 0.0 to pre-enforce nonnegativity (prefer constraints)
+      clamp_max: null
     notes: |
-      Compact, stable MLP head. For sharper features, bump hidden_dim/layers or add residual=true.
+      Residual+SE helps resolve narrow lines without destabilizing training.
+      Keep output_activation=identity and let constraints control physics.
 ```
 
 ```yaml
 # configs/model/decoder_sigma.yaml
 # ==============================================================================
-# σ Decoder — Flow/softplus head for per-bin uncertainty with symbolic overlay
-# Swappable via CLI: model/decoder_sigma={softplus|symbolic_flow}
+# σ Decoder — Heteroscedastic uncertainty with calibration & symbolic blending
+# Swap via CLI: model/decoder_sigma={softplus|symbolic_flow}
 # ==============================================================================
 
 decoder:
   sigma_head:
-    type: "flow_uncertainty"     # options: flow_uncertainty | softplus
+    type: "flow_uncertainty"          # flow_uncertainty | softplus
     hidden_dim: 128
     layers: 2
     activation: "silu"
@@ -60,53 +101,138 @@ decoder:
     layer_norm: false
     residual: false
     init: "xavier_uniform"
-    base_activation: "softplus"  # ensures σ > 0
-    symbolic_overlay: true       # blend σ with rule-weighted adjustments
+    base_activation: "softplus"       # ensures σ > 0
+    min_sigma: 1.0e-6                 # numerical floor
+    max_sigma: 5.0                    # safety ceiling (can raise for high-noise bins)
+
+    # Symbolic overlay: increase σ where rules flag risk (proxy for epistemic)
+    symbolic_overlay: true
     overlay:
-      weight: 0.25               # symbolic contribution to σ
-      clip: [0.5, 2.0]           # clamp multiplicative overlay to stabilize training
+      mode: "multiplicative"          # multiplicative | additive
+      weight: 0.25
+      region_boost:
+        enabled: true                 # extra boost in sensitive/lensing/molecular regions
+        factor: 1.25
+      clip: [0.5, 2.0]
+
+    # Calibration stack (applied on validation/calibration split)
+    calibration:
+      temperature_scaling:
+        enabled: true
+        init_T: 1.0
+        learn_T_per_bin: false        # set true to learn T(λ)
+      isotonic:
+        enabled: false
+      conformal_corel:
+        enabled: false                # enable when COREL is wired into pipeline
+        coverage: 0.90
+        weight: 0.005
+        neighbor_k: 8
+
+    # Epistemic toggles (train-time only; inference must be Kaggle-safe)
+    epistemic:
+      mc_dropout:
+        enabled: false
+        passes: 8
+      ensemble:
+        enabled: false
+        members: 3
+
+    prior_blend:
+      photon_noise_floor:
+        enabled: true
+        scale: 1.0                    # blend σ with sqrt(N) prior floor if available
+      smoothness_prior:
+        enabled: true
+        weight: 0.05
+
     notes: |
-      Produces heteroscedastic σ. Symbolic overlay upweights bins in rule-violation regions to
-      reflect epistemic risk proxies; disable by setting symbolic_overlay=false.
+      Calibrate σ with temperature scaling first; enable conformal_corel when COREL artifacts exist.
+      Keep mc_dropout/ensemble off for leaderboard inference unless allowed by runtime constraints.
 ```
 
 ```yaml
 # configs/model/constraints.yaml
 # ==============================================================================
-# ⚖️ Physics & Symbolic Constraints — applied as auxiliary losses/post-proc hooks
-# Swappable via CLI: model/constraints={lite|default|strict}
+# ⚖️ Physics & Symbolic Constraints — auxiliary losses + safe post-processing
+# Swap via CLI: model/constraints={lite|default|strict}
 # ==============================================================================
 
 constraints:
-  enforce_nonnegativity: true             # clamp μ >= 0 at inference (safe post-proc)
-  smoothness_weight: 0.010                # L2(Δμ) along wavelength (local smoothness)
-  fft_smoothness_weight: 0.002            # L2 on high-frequency FFT components
-  asymmetry_weight: 0.001                 # penalize left/right spectral asymmetry if unphysical
+  # Modes define presets for weights; CLI can still override any numeric
+  mode: "default"                      # lite | default | strict
+
+  enforce_nonnegativity: true          # clamp μ >= 0 at inference
+  calibration:
+    nonnegativity_epsilon: 1.0e-8
+    max_clip: 5.0
+
+  # Local & global smoothness
+  smoothness_weight: 0.010             # L2(Δμ) along wavelength
+  fft_smoothness_weight: 0.002         # penalize high-freq FFT magnitudes
+  fft:
+    highpass_bins: 24                  # bins beyond this treated as high-freq
+    window: "hann"
+
+  # Asymmetry (optional, keep small unless physically justified)
+  asymmetry_weight: 0.001
+
+  # Lensing / sensitive regions
   lensing:
     enabled: true
-    bins: [120, 160]                      # region more sensitive to lensing artifacts
+    bins: [120, 160]
     weight: 0.003
+
+  # Molecular fingerprints
   molecular_fingerprint:
     enabled: true
     molecules: ["H2O", "CO2", "CH4"]
-    match_weight: 0.005                   # encourage μ peaks near known band centers
-    false_positive_weight: 0.002          # penalize strong lines outside known bands
-  calibration:
-    nonnegativity_epsilon: 1.0e-8
-    max_clip: 5.0                         # safety cap for extreme μ after constraint pass
+    match_weight: 0.005               # encourage energy near known band centers
+    false_positive_weight: 0.002       # discourage spurious strong lines
+
+  # Limb darkening / baseline physics (used by forward validators)
+  limb_darkening:
+    enabled: false
+    law: "quadratic"
+    a: 0.3
+    b: 0.2
+
+  # Schedules to ramp constraints over training
+  schedules:
+    warmup_epochs: 3                   # start with near-zero weights to avoid early domination
+    scale_after_warmup: 1.0            # multiply all weights by this factor after warmup
+    per_constraint:
+      fft_smoothness_weight: {start: 0.0, end: 0.002, epochs: 5}
+      smoothness_weight:      {start: 0.002, end: 0.010, epochs: 5}
+
   diagnostics:
     log_violation_maps: true
+    violation_clip: 5.0                # clip extreme violation scores in logs
     save_fft_plots: true
     export_json: "outputs/diagnostics/constraint_violations.json"
+
+  presets:
+    lite:
+      smoothness_weight: 0.004
+      fft_smoothness_weight: 0.0005
+      asymmetry_weight: 0.0005
+      lensing: {enabled: true, bins: [120,160], weight: 0.001}
+    strict:
+      smoothness_weight: 0.020
+      fft_smoothness_weight: 0.005
+      asymmetry_weight: 0.002
+      lensing: {enabled: true, bins: [120,160], weight: 0.006}
+
   notes: |
-    Keep losses modest (10^-3–10^-2) so they guide, not dominate, the main likelihood (GLL).
-    Tune per-dataset: start with defaults, then adjust per-planet diagnostics to reduce artifacts.
+    • Keep constraint magnitudes ≤ 1e-2 relative to main likelihood.
+    • Use schedules to ramp physics in; start light, end at target weights.
+    • For strict physics, set mode=strict or override individual weights.
 ```
 
-**How to wire these in `train.yaml` (example):**
+### Wiring tips (unchanged)
 
 ```yaml
-# in configs/train.yaml (snippet)
+# configs/train.yaml (snippet)
 defaults:
   - model: v50
   - model/fusion: fusion
@@ -115,21 +241,28 @@ defaults:
   - model/constraints: constraints
 ```
 
-**Examples of overrides:**
+### Handy overrides
 
-* Lightweight fusion for speed:
+* Faster fusion:
 
 ```
-spectramind train model/fusion=+{method=concat,hidden_dim=128}
+spectramind train model/fusion=+{method=concat,num_layers=1,num_heads=2,hidden_dim=128}
 ```
 
-* Softer σ without symbolic blending:
+* Turn off symbolic σ overlay:
 
 ```
 spectramind train model/decoder_sigma=decoder_sigma model.decoder.sigma_head.symbolic_overlay=false
 ```
 
-* Strict physics mode:
+* Enable conformal calibration with target 90% coverage:
+
+```
+spectramind train model.decoder.sigma_head.calibration.conformal_corel.enabled=true \
+                 model.decoder.sigma_head.calibration.conformal_corel.coverage=0.90
+```
+
+* Strict physics:
 
 ```
 spectramind train model/constraints=strict
