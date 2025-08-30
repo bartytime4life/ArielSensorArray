@@ -1,3 +1,6 @@
+```yaml
+# configs/data/nominal.yaml
+# ==============================================================================
 # 🛰️ SpectraMind V50 — Nominal Data Configuration
 # NeurIPS 2025 Ariel Data Challenge (ESA Ariel telescope simulation)
 #
@@ -29,11 +32,17 @@ dataset:
   name: "nominal_v50"
   description: "Default ESA Ariel Challenge dataset (FGS1 + AIRS) with calibration."
   version: "1.1"
-  source: "neurips-2025-ariel"     # Kaggle competition slug
+  source: "neurips-2025-ariel"        # Kaggle competition slug
   dvc_stage: "data/nominal"
-  dvc_remote: "storage"           # remote DVC target
+  dvc_remote: "storage"               # remote DVC target
   cache: "data/cache"
-  hash: "${now:%Y%m%d}_${now:%H%M%S}"  # run-level DVC hash for traceability
+  hash: "${now:%Y%m%d}_${now:%H%M%S}" # run-level DVC hash for traceability
+
+# Optional provenance hooks (filled at runtime by CLI)
+provenance:
+  git_commit: null
+  dvc_rev: null
+  created_at: "${now:%Y-%m-%d %H:%M:%S}"
 
 # ----------------------------------------------------------------------
 # File paths (DVC-tracked)
@@ -41,12 +50,27 @@ dataset:
 paths:
   raw_dir: "data/raw"
   processed_dir: "data/processed/nominal"
-  fgs1_file: "${paths.raw_dir}/fgs1_train.npy"     # shape (135k, 32, 32)
-  airs_file: "${paths.raw_dir}/airs_train.npy"     # shape (11k, 32, 356)
+  fgs1_file: "${paths.raw_dir}/fgs1_train.npy"     # shape (N_fgs1, 32, 32)
+  airs_file: "${paths.raw_dir}/airs_train.npy"     # shape (N_airs, 32, 356)
   labels_file: "${paths.raw_dir}/labels.csv"       # metadata + targets
   test_fgs1: "${paths.raw_dir}/fgs1_test.npy"
   test_airs: "${paths.raw_dir}/airs_test.npy"
   submission_template: "data/sample_submission.csv"
+
+# ----------------------------------------------------------------------
+# Instrument & schema expectations (for validation)
+# ----------------------------------------------------------------------
+schema:
+  fgs1:
+    expected_rank: 3
+    expected_shape: [-1, 32, 32]      # -1 = any (num frames)
+    dtype: "float32"
+  airs:
+    expected_rank: 3
+    expected_shape: [-1, 32, 356]
+    dtype: "float32"
+  labels:
+    required_columns: ["planet_id", "split", "target_mu[0:283]", "target_sigma[0:283]"]
 
 # ----------------------------------------------------------------------
 # Calibration pipeline (kill chain)
@@ -75,13 +99,13 @@ preprocessing:
   outlier_sigma: 6.0
   detrend:
     enabled: true
-    method: "polyfit"
+    method: "polyfit"                # "polyfit"|"savgol"|"none"
     degree: 2
   smoothing:
     enabled: true
     window: 5
-    method: "median"
-  resample_time: false  # default: preserve original cadence
+    method: "median"                 # "median"|"gaussian"
+  resample_time: false               # preserve original cadence by default
 
 # ----------------------------------------------------------------------
 # Augmentation (training robustness)
@@ -95,7 +119,7 @@ augmentation:
     prob: 0.01
   mask:
     enabled: true
-    scheme: "block"
+    scheme: "block"                  # "block"|"random"
     fraction: 0.15
   snr_dropout:
     enabled: true
@@ -113,7 +137,7 @@ symbolic:
   asymmetry_penalty: 0.001
   fft_prior:
     enabled: true
-    freq_cutoff: 0.25       # normalized frequency cutoff
+    freq_cutoff: 0.25                # normalized frequency cutoff
     weight: 0.002
   molecular_masking:
     enabled: true
@@ -125,7 +149,7 @@ symbolic:
   region_masking:
     enabled: true
     regions:
-      - { name: "AIRS_short_IR", start: 0, end: 100 }
+      - { name: "AIRS_short_IR", start: 0,   end: 100 }
       - { name: "AIRS_long_IR",  start: 200, end: 356 }
       - { name: "Grav_lens_corr", start: 120, end: 160 }  # gravitational lensing overlay
   corel_uncertainty:
@@ -141,6 +165,8 @@ splits:
   test_fraction: 0.1
   stratify: true
   seed: 42
+  export_paths:
+    indices_dir: "${paths.processed_dir}/splits"   # save split indices for reproducibility
 
 # ----------------------------------------------------------------------
 # Loader parameters
@@ -153,6 +179,20 @@ loader:
   persistent_workers: true
 
 # ----------------------------------------------------------------------
+# Validation & sanity checks
+# ----------------------------------------------------------------------
+validate:
+  enabled: true
+  checks:
+    - "paths_exist"                  # raw_dir, labels_file present
+    - "schema_match"                 # shapes/dtypes align with schema
+    - "no_nan_inf"                   # basic numeric hygiene
+    - "split_sums_to_one"            # train+val+test fractions sum→1.0 (±1e-6)
+    - "stratify_ok"                  # class/planet distribution balanced if stratify
+  fail_fast: true
+  sample_size_preview: 8
+
+# ----------------------------------------------------------------------
 # Diagnostics
 # ----------------------------------------------------------------------
 diagnostics:
@@ -162,6 +202,24 @@ diagnostics:
   symbolic_overlay: true
   shap_overlay: true
   output_dir: "outputs/diagnostics/data_nominal"
+  artifacts:
+    stats_json: "${diagnostics.output_dir}/stats.json"
+    preview_png: "${diagnostics.output_dir}/preview.png"
+
+# ----------------------------------------------------------------------
+# Kaggle/runtime guardrails (data-side toggles)
+# ----------------------------------------------------------------------
+runtime:
+  kaggle_safe: true                  # prefer light-weight I/O & plots
+  max_hours: 9
+  write_intermediates: true
+
+# ----------------------------------------------------------------------
+# Interface hooks (shared across configs)
+# ----------------------------------------------------------------------
+interface:
+  num_bins: 283                      # AIRS spectral bins (used by model/metrics)
+  output_dir: "${hydra.run.dir}"     # inherit hydra run dir unless overridden
 
 # ----------------------------------------------------------------------
 # Runtime notes
