@@ -1,0 +1,76 @@
+# configs/trainer/multi_gpu.yaml
+# ==============================================================================
+# 🧩 Multi-GPU (Single Node) Trainer — SpectraMind V50
+#
+# Purpose
+#   Efficient single-node data/model parallel training with PyTorch Lightning DDP.
+#   • Auto-detect GPUs (or override via CLI: trainer.devices=4)
+#   • AMP for throughput; safe gradient clipping; resumable checkpoints
+#
+# Usage
+#   spectramind train trainer=multi_gpu
+#   # Examples:
+#   spectramind train trainer=multi_gpu trainer.devices=4
+#   spectramind train trainer=multi_gpu trainer.max_epochs=50 trainer.accumulate_grad_batches=2
+# ==============================================================================
+
+trainer:
+  # Hardware / Strategy
+  accelerator: "gpu"
+  devices: "auto"                 # override with an int (e.g., 2, 4, 8)
+  num_nodes: 1
+  strategy:
+    class_path: lightning.pytorch.strategies.DDPStrategy
+    init_args:
+      find_unused_parameters: false
+      static_graph: true          # set false if your graph changes *per step*
+      gradient_as_bucket_view: true
+
+  # Precision & Performance
+  precision: 16                   # AMP mixed precision
+  deterministic: true
+  benchmark: false                # keep determinism; set true only if inputs are fixed-shape
+
+  # Runtime
+  max_epochs: 40
+  max_time: null                  # e.g., "12:00:00" (H:MM:SS) if desired
+  accumulate_grad_batches: 1
+  gradient_clip_val: 1.0
+
+  # Checkpointing
+  checkpoint:
+    enabled: true
+    dirpath: "checkpoints/"
+    save_top_k: 2
+    monitor: "val/gll"
+    mode: "min"
+    save_last: true
+    every_n_epochs: 2
+
+  # Early Stopping
+  early_stopping:
+    enabled: true
+    monitor: "val/gll"
+    patience: 6
+    mode: "min"
+
+  # Logging
+  logger:
+    type: "tensorboard"
+    save_dir: "logs/"
+    name: "multi_gpu"
+
+  # DataLoader guidance for single-node multi-GPU
+  dataloader:
+    num_workers: 8
+    pin_memory: true
+    persistent_workers: true
+
+  # Seeds
+  seed: 42
+
+  notes: |
+    Single-node DDP optimized for throughput with stable defaults:
+    • AMP(16) + gradient clipping for numerical safety.
+    • DDP(find_unused_parameters=false) to reduce overhead.
+    • Increase accumulate_grad_batches if batch size is memory-bound.
