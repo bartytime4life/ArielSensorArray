@@ -1,58 +1,182 @@
 # =====================================================================
-# SpectraMind V50 — Calibration Config (Hydra)
+# 🛰️ SpectraMind V50 — Calibration Config (Hydra, mission-grade)
+# =====================================================================
+# Role
+#   Post-prediction uncertainty calibration for Ariel spectra (μ, σ).
+#   Supports:
+#     • Temperature scaling (global/per-bin) for σ calibration
+#     • (Future) COREL graph calibrator for correlation-aware coverage
+#   Designed for CLI-first runs, DVC-friendly paths, and CI/Kaggle safety.
+#
+# Usage (examples)
+#   spectramind calibrate calib=temperature preds_pt=outputs/preds.pt
+#   spectramind calibrate calib=temperature temperature.mode=perbin
+#   spectramind calibrate calib=corel corel.epochs=100
+#
+# Notes
+#   • Inputs can be torch .pt (dict with keys: mu, sigma, ids) or a CSV
+#     with columns: planet_id, mu_0..mu_282, sigma_0..sigma_282.
+#   • Targets (if available) are μ* truth per planet/bin for fitting T.
+#   • When targets are unavailable, falls back to safety (no-op T=1.0).
 # =====================================================================
 
+# ---------------------------------------------------------------------
+# Hydra defaults (logging remains lightweight + CI safe)
+# ---------------------------------------------------------------------
 defaults:
   - override hydra/job_logging: default
   - override hydra/hydra_logging: default
 
-# --- Data context (optional for temperature; useful for COREL/future) ---
+# ---------------------------------------------------------------------
+# Data context (used for loader helpers / COREL / reports)
+# ---------------------------------------------------------------------
 data:
   root: "data/"
-  split: "train"          # "train" | "val" | "toy"
-  batch_size: 8
-  num_workers: 0
-  bins: 283
+  split: "train"            # "train" | "val" | "toy" | "custom"
+  batch_size: 8             # CI/Kaggle-safe default
+  num_workers: 0            # 0 for full portability
+  bins: 283                 # AIRS spectral bins
 
-# --- I/O + runtime ---
-device: "cpu"             # or "cuda"
+# ---------------------------------------------------------------------
+# Runtime & reproducibility
+# ---------------------------------------------------------------------
+device: "cpu"               # "cpu" | "cuda"
 seed: 1337
+deterministic: true
 
-calibration:
-  method: "temperature"   # "temperature" | "corel" | "none"
-  preds_pt: "outputs/preds.pt"
-  targets_pt: null        # e.g., "data/y_val.pt" if available
-  ids_path: null          # optional text file with planet_id lines
+# ---------------------------------------------------------------------
+# I/O schema
+#   preds_pt: torch file containing {"mu": [N, B], "sigma": [N, B], "ids": [N]}
+#   targets_pt/csv: optional truth for fitting T; if null => skip fitting
+# ---------------------------------------------------------------------
+io:
+  preds_pt: "outputs/preds.pt"              # primary input (Torch)
+  preds_csv: null                           # optional CSV input
+  targets_pt: null                          # e.g., "data/y_val.pt"
+  targets_csv: null                         # optional CSV targets
+  ids_path: null                            # optional text file with planet_id per line
   out_csv: "outputs/submission_calibrated.csv"
   out_preds_pt: "outputs/preds_calibrated.pt"
   report_html: "outputs/diagnostics/calib_report.html"
+  manifest_json: "outputs/diagnostics/calib_manifest.json"
 
-# --- Temperature scaling options (used when method=temperature) ---
+# ---------------------------------------------------------------------
+# Master switch: which calibrator to run
+# ---------------------------------------------------------------------
+calib:
+  method: "temperature"     # "temperature" | "corel" | "none"
+
+# ---------------------------------------------------------------------
+# Temperature scaling (σ ← T·σ)
+#   mode:
+#     • global : single scalar T across all bins
+#     • perbin : vector T_b per bin (size = bins)
+# ---------------------------------------------------------------------
 temperature:
-  mode: "global"          # "global" or "perbin"
-  l2: 0.0                 # L2 regularization toward T=1.0
-  min_sigma: 1e-8         # sigma clamp floor for safety
-  fallback_T: 1.0         # used when no valid targets
+  mode: "global"            # "global" | "perbin"
+  solver: "lbfgs"           # "lbfgs" | "adam"
+  max_steps: 500
+  lr: 5e-2                  # if solver=adam
+  l2: 0.0                   # L2 penalty toward T=1.0 (global) or 1-vector (perbin)
+  min_sigma: 1.0e-8         # clamp floor to avoid degenerate σ
+  max_sigma: 1.0            # optional safety ceiling
+  clamp_after_scale: true   # clamp σ after applying T
+  fallback_T: 1.0           # used when no valid targets or ill-conditioning
+  warm_start:
+    enabled: false
+    T_init: 1.0             # starting T (or all-ones vector for perbin)
+  val_holdout:
+    enabled: false          # if true, hold out a split from provided targets to validate T
+    fraction: 0.2
+    seed: 202
 
-# --- COREL (future learnable graph calibrator; currently off) ---
+# ---------------------------------------------------------------------
+# COREL (future): correlation-aware conformal graph calibrator
+#   Currently scaffolded; engine may be disabled by default.
+# ---------------------------------------------------------------------
 corel:
-  model: "gat"            # "gat" | "gcn" | "mpnn"
+  enabled: false            # toggled automatically when calib.method=corel
+  model: "gat"              # "gat" | "gcn" | "mpnn"
   epochs: 50
-  lr: 1e-3
-  weight_decay: 1e-4
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
   hidden_dim: 128
-  dropout: 0.1
+  dropout: 0.10
+  patience: 10
   log_interval: 10
+  coverage:
+    target: 0.90            # desired marginal coverage for intervals
+    max_iters: 20
   graph:
-    type: "knn"           # "knn" | "dense" | "threshold"
+    type: "knn"             # "knn" | "dense" | "threshold"
     k: 8
     distance: "l2"
     self_loops: true
     normalize_adj: true
+  regularization:
+    smooth_T: 0.0           # encourage neighboring bins to have similar calibration
+    nonneg: true            # ensure positive predictive intervals
+  export:
+    save_corel_model: false
+    path: "outputs/corel_calibrator.pt"
 
+# ---------------------------------------------------------------------
+# Evaluation / diagnostics
+# ---------------------------------------------------------------------
+eval:
+  metrics:
+    - "gll"                 # Gaussian log-likelihood
+    - "mae"                 # optional: mean absolute error on μ
+    - "rmse"                # optional
+    - "nll_cal"             # negative log-likelihood after calibration
+  per_bin_breakdown: true
+  qq_plot: true
+  reliability_plot: true
+  interval_coverage_plot: true
+  fft_overlay: false        # optional sanity (slow)
+  molecular_overlay: false  # optional (requires molecule windows)
+
+# ---------------------------------------------------------------------
+# Safety & integrity checks
+# ---------------------------------------------------------------------
+safety:
+  require_ids_match: true       # ids alignment between preds and targets
+  allow_missing_targets: true   # if false => hard fail when targets missing
+  drop_nan_rows: true
+  validate_shapes: true
+  max_abs_mu: 10.0              # sanity limit for μ (flux domain)
+  min_sigma: 1.0e-8             # ensure post-calibration σ >= floor
+  max_sigma: 1.0                # ensure post-calibration σ <= ceiling
+
+# ---------------------------------------------------------------------
+# Logging / manifest
+# ---------------------------------------------------------------------
+logging:
+  verbose: true
+  save_manifest: true
+  manifest_fields:
+    - "method"
+    - "temperature.mode"
+    - "temperature.l2"
+    - "corel.model"
+    - "data.split"
+    - "device"
+    - "seed"
+
+# ---------------------------------------------------------------------
+# Hydra output directories (timestamped run dir + multirun root)
+# ---------------------------------------------------------------------
 hydra:
   run:
     dir: outputs/calib/${now:%Y%m%d_%H%M%S}
   sweep:
     dir: outputs/calib/multirun
     subdir: ${hydra.job.num}
+
+# ---------------------------------------------------------------------
+# CLI-override convenience (adapters for quick switches)
+#   Examples:
+#     +preds_pt=...  +targets_pt=...   OR use io.preds_pt/io.targets_pt
+# ---------------------------------------------------------------------
+preds_pt: ${io.preds_pt}
+targets_pt: ${io.targets_pt}
