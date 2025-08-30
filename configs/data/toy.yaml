@@ -1,20 +1,60 @@
 # configs/data/toy.yaml
-# ---------------------------------------------------------------------
-# SpectraMind V50 — Toy Dataset Config
-# ---------------------------------------------------------------------
+# ==============================================================================
+# 🧸 SpectraMind V50 — Toy Dataset Config
+# ------------------------------------------------------------------------------
 # Purpose:
 #   Small synthetic dataset used for CI pipelines, quick dev loops, or
-#   debugging. Produces deterministic AIRS/FGS1 tensors with optional
-#   synthetic targets.
-# ---------------------------------------------------------------------
+#   debugging. Provides deterministic AIRS/FGS1 tensors with optional
+#   synthetic targets. Enables full pipeline smoke tests (< 2 min).
+#
+# Usage:
+#   # Fast CI/dev loop
+#   spectramind train data=toy trainer=ci_fast
+#
+#   # Local quick test with debug profile
+#   spectramind train data=toy local=debug
+#
+# Notes:
+#   • Not for leaderboard submissions.
+#   • Deterministic: run hash + seed ensure reproducibility.
+#   • Complements trainer/ci_fast.yaml and local/debug.yaml.
+# ==============================================================================
 
 data:
+  name: "toy"
+  description: "Synthetic toy dataset for CI and debugging"
+
   root: "data/"
-  split: "toy"            # synthetic generator (ArielToyDataset)
+  split: "toy"                 # synthetic generator (ArielToyDataset)
+  cache_dir: ".cache/data/toy" # allow DVC/cache consistency
+
+  # Shape controls
+  bins: 283                    # AIRS bins (full count; can be truncated)
+  fgs1_len: 128                # toy FGS1 time length
+  n_samples: 64                # dataset size
+
+  # Dataloader
   batch_size: 8
-  num_workers: 0          # keep 0 in CI; override locally for speed
-  bins: 283               # AIRS bins
-  fgs1_len: 128           # toy FGS1 time length
-  n_samples: 64           # toy dataset size
-  with_targets: true      # include synthetic targets for training/calibration
-  seed: 1337              # ensures deterministic samples + DataLoader order
+  num_workers: 0               # 0 = CI-friendly; override locally
+  pin_memory: false
+  persistent_workers: false
+  shuffle: true
+
+  # Targets
+  with_targets: true           # include synthetic targets for training/calibration
+
+  # Determinism
+  seed: 1337                   # ensures reproducible samples + DataLoader order
+
+  # Diagnostics
+  log_samples: 2               # log a couple toy samples to audit log
+  save_preview: true           # save a preview PNG/JSON for CI artifacts
+
+  notes: |
+    Toy config intentionally small:
+      • 64 samples total
+      • 128-length FGS1 sequences
+      • 283-bin AIRS spectra
+      • Batch size = 8
+    Enables full pipeline (calibrate → train → diagnose → submit) smoke in CI.
+    For reproducibility, this config + run hash = identical outputs.
