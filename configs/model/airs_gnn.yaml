@@ -1,0 +1,108 @@
+# configs/model/airs_gnn.yaml
+# ==============================================================================
+# 🌈 AIRS Encoder — Edge-Feature-Aware Graph Neural Network (283 spectral bins)
+# NeurIPS 2025 Ariel Data Challenge — SpectraMind V50
+#
+# Purpose:
+#   Encodes the infrared spectrum (AIRS; 283 wavelength bins) as a graph where
+#   nodes = bins and edges encode physics-informed relations (wavelength proximity,
+#   molecule links, detector region). Supports attention extraction for XAI.
+#
+# Hydra:
+#   Composable sub-config, used by configs/model/v50.yaml
+#   Override via CLI, e.g.:
+#     spectramind train model=airs_gnn encoder.airs.gnn_type=rgcn
+#
+# ==============================================================================
+
+encoder:
+  airs:
+    type: "gnn"                      # Graph encoder over spectral bins
+    input_shape: [283]               # 283 wavelength bins
+    gnn_type: "gat"                  # gat | rgcn | mpnn | nnconv
+    hidden_dim: 128
+    num_layers: 6
+    dropout: 0.10
+    residual: true
+    layer_norm: true
+    activation: "gelu"
+
+    positional_encoding: "fourier"   # per-bin PE across wavelength axis
+    fourier:
+      n_frequencies: 32
+      normalize: true
+
+    # --------------------------------------------------------------------------
+    # Graph Construction (Hybrid: kNN + Radius + Domain edges)
+    # --------------------------------------------------------------------------
+    graph_builder:
+      kind: "hybrid"                 # knn | radius | hybrid
+      knn_k: 8
+      radius: 3.0e-3                 # normalized wavelength units
+      add_self_loops: true
+      undirected: true
+
+      # Edge features fused into message passing
+      edge_features:
+        wavelength_proximity: true
+        molecule_links: true
+        detector_region: true
+
+      edge_feature_dims:
+        wavelength_proximity: 1
+        molecule_links: 8
+        detector_region: 4
+
+      # Relative weights for initial edge importance
+      weights:
+        wavelength_proximity: 1.0
+        molecule_links: 1.0
+        detector_region: 0.5
+
+    # --------------------------------------------------------------------------
+    # Attention / Message Passing Controls
+    # --------------------------------------------------------------------------
+    attention:
+      heads: 4                       # for GAT-based layers
+      concat_heads: true
+      dropout: 0.10
+      return_coeffs: true            # export attention for explainability
+
+    export_latents: true
+    validate_graph_shapes: true      # check edge_index vs edge_attr sizes
+
+    # --------------------------------------------------------------------------
+    # Symbolic & Physics-Informed Hooks (acts on latent spectral structure)
+    # --------------------------------------------------------------------------
+    symbolic_overlay:
+      # Encourage local spectral consistency and physical plausibility
+      smoothness_weight_wavelength: 0.010
+      asymmetry_weight: 0.001
+      fft_smoothness_weight: 0.002
+      molecular_fingerprint:
+        enabled: true
+        molecules: ["H2O", "CO2", "CH4"]
+        band_expansion_bins: 1
+      gravitational_lensing_overlay:
+        enabled: true
+        bins: [120, 160]
+        weight: 0.15
+
+    # --------------------------------------------------------------------------
+    # Runtime & Export Guardrails
+    # --------------------------------------------------------------------------
+    jit: true
+    torchscript: true
+    kaggle_safe: true
+    param_limit: 20000000            # ≤20M params (encoder portion)
+    check_param_count: true
+
+    # --------------------------------------------------------------------------
+    # Notes
+    # --------------------------------------------------------------------------
+    notes: |
+      • AIRS spectral graph uses wavelength proximity + molecule/region edges.
+      • Attention coeffs are exported for XAI and diagnostics.
+      • Symbolic overlays add physics priors (smoothness, molecular bands).
+      • Shape checks protect against misaligned edge features.
+      • Kaggle-safe budget and JIT export for reliable runtime.
