@@ -1,0 +1,133 @@
+# configs/logger/many_loggers.yaml
+# ==============================================================================
+# 🧰 Many Loggers — TensorBoard + W&B + MLflow + Rich Console
+#
+# Purpose
+#   Compose multiple loggers under one Hydra selection: `logger=many_loggers`.
+#   - Local dev: log to all (Rich console, TensorBoard, W&B, MLflow).
+#   - Kaggle: auto-prune to offline-safe (Rich + TB offline; W&B offline; MLflow local).
+#   - CI fast: optionally disable or throttle heavy loggers.
+#
+# How it works
+#   This config **imports** the individual logger configs into namespaced keys
+#   under `many_loggers.*` using Hydra’s targeted defaults composition.
+#   Your runtime can initialize all active sub-loggers by iterating `many_loggers.order`
+#   and reading each sub-logger’s config from `many_loggers.<key>`.
+#
+# Usage
+#   In train.yaml (or your main config):
+#     defaults:
+#       - logger: many_loggers
+#
+#   CLI examples:
+#     # Disable MLflow but keep TB + W&B + Rich
+#     spectramind train logger=many_loggers many_loggers.active.mlflow=false
+#
+#     # Kaggle-safe hard overrides (if not auto-detected)
+#     spectramind train logger=many_loggers many_loggers.profile=kaggle
+#
+# Notes
+#   • This file relies on the existence of:
+#       - configs/logger/tensorboard.yaml
+#       - configs/logger/wandb.yaml
+#       - configs/logger/mlflow.yaml
+#       - configs/logger/rich_console.yaml
+#   • All sub-loggers mirror critical events to logs/v50_debug_log.md for audit.
+# ==============================================================================
+
+# Bring in each sub-logger config into namespaced keys under many_loggers.*
+# (Hydra targeted composition: group/item@target_key: option)
+defaults:
+  - logger/tensorboard@many_loggers.tb: tensorboard
+  - logger/wandb@many_loggers.wb: wandb
+  - logger/mlflow@many_loggers.mf: mlflow
+  - logger/rich_console@many_loggers.rc: rich_console
+
+many_loggers:
+  enabled: true
+
+  # Initialize sub-loggers in this order (your runtime may use this to control init/close sequence).
+  order: [rc, tb, wb, mf]
+
+  # Activation toggles for each sub-logger (useful for quick pruning at CLI).
+  active:
+    rich_console: true
+    tensorboard:  true
+    wandb:        true
+    mlflow:       true
+
+  # Sub-logger configs imported via the targeted defaults above.
+  # (They already carry their own Kaggle/CI guardrails; we can still override here if needed.)
+  rc: ${many_loggers.rc}
+  tb: ${many_loggers.tb}
+  wb: ${many_loggers.wb}
+  mf: ${many_loggers.mf}
+
+  # Global audit log path (each sub-logger should mirror key events to this)
+  audit_log_path: "logs/v50_debug_log.md"
+
+  # Runtime profiles — quick presets for different environments.
+  # Select via: `many_loggers.profile=<local|kaggle|ci_fast>`
+  profile: "local"
+
+  profiles:
+    local:
+      active:
+        rich_console: true
+        tensorboard:  true
+        wandb:        true
+        mlflow:       true
+      # Light quality-of-life tweaks for local dev
+      tb_overrides:
+        flush_secs: 30
+      wb_overrides:
+        mode: "online"
+        offline: false
+      mf_overrides:
+        enabled: true
+
+    kaggle:
+      # Internet-off, I/O-throttled; prefer offline + minimal artifacts
+      active:
+        rich_console: true
+        tensorboard:  true
+        wandb:        true      # stays offline
+        mlflow:       true      # local file backend
+      tb_overrides:
+        flush_secs: 300
+        histogram_freq: 0
+        write_images: false
+        log_graph: false
+      wb_overrides:
+        mode: "offline"
+        offline: true
+        log_model: false
+        save_code: true
+        save_config: true
+      mf_overrides:
+        enabled: true
+        tracking_uri: "mlruns"   # local file store
+
+    ci_fast:
+      # Minimal logging to keep pipelines fast and deterministic
+      active:
+        rich_console: true
+        tensorboard:  false
+        wandb:        false
+        mlflow:       false
+      tb_overrides:
+        flush_secs: 600
+        histogram_freq: 0
+        write_images: false
+      wb_overrides:
+        mode: "disabled"
+        offline: true
+      mf_overrides:
+        enabled: false
+
+  # A tiny helper map your runtime can consult to apply per-profile overrides cleanly.
+  # Pseudocode at init:
+  #   p = cfg.many_loggers.profile
+  #   apply(cfg.many_loggers.profiles[p].*_overrides) onto corresponding sub-logger configs
+  #   and honor `active.*` toggles to initialize only enabled backends.
+  apply_profile_overrides: true
