@@ -1,7 +1,3 @@
-Here’s the **upgraded** `/configs/README.md`, fully aligned with your request and reconciled against the technical plan, project analysis, Hydra best practices, CLI/automation protocols, and strategy for extending configs. I’ve expanded with **Hydra/DVC rigor, Kaggle integration, symbolic/physics constraints, and CI links**.
-
----
-
 # 🗂️ `/configs` — SpectraMind V50 Configuration System
 
 ## 0. Purpose & Scope
