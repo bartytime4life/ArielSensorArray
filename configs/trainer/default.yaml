@@ -17,38 +17,59 @@
 #
 # Notes
 #   • Keeps GPU runtime guardrails (≤9h jobs).
-#   • AMP-safe mixed precision.
+#   • AMP-safe mixed precision (precision=16 by default).
 #   • Hydra interpolation used for defaults across optimizer, loss, logging.
+#   • DDP-ready by default (strategy), harmless on 1-GPU.
 # ==============================================================================
 
 defaults:
-  - optimizer: adamw         # baseline optimizer (can override)
-  - loss: composite          # physics-aware composite loss
-  - logging: rich            # console logging, Rich-enhanced
-  - _self_                   # ensures local values override group defaults
+  - optimizer: adamw           # baseline optimizer (can override)
+  - loss: composite            # physics-aware composite loss
+  - logging: rich              # console logging, Rich-enhanced
+  - _self_                     # ensures local values override group defaults
 
+# ------------------------------------------------------------------------------
 # Core training hyperparameters
+# ------------------------------------------------------------------------------
 trainer:
-  max_epochs: 50             # typical full run; override for Kaggle
-  min_epochs: 5              # ensures scheduler warmup
-  gradient_clip_val: 1.0     # stabilize training
-  accumulate_grad_batches: 1 # bump to 2–4 for large models
-  deterministic: true        # reproducibility on GPU:contentReference[oaicite:0]{index=0}
-  benchmark: false           # avoid nondeterministic CuDNN autotuning
-  enable_checkpointing: true
+  # Epochs & steps
+  max_epochs: 50               # typical full run; override for Kaggle
+  min_epochs: 5                # ensures scheduler warmup
   log_every_n_steps: 25
   check_val_every_n_epoch: 1
-  precision: 16              # AMP mixed precision (safe for Kaggle GPUs)
-  accelerator: "gpu"
-  devices: 1
-  strategy: "ddp_find_unused_parameters_false"
-  detect_anomaly: false
-  fast_dev_run: false        # quick sanity check
 
-# Early stopping & LR scheduler knobs
+  # Stability & determinism
+  gradient_clip_val: 1.0       # stabilize training
+  accumulate_grad_batches: 1   # bump to 2–4 for large models
+  deterministic: true          # reproducibility on GPU
+  benchmark: false             # avoid nondeterministic CuDNN autotuning
+  detect_anomaly: false
+  fast_dev_run: false          # quick sanity check
+
+  # Precision & devices
+  precision: 16                # AMP mixed precision (safe for Kaggle GPUs)
+  accelerator: "gpu"           # set "auto" if running across CPU/GPU transparently
+  devices: 1                   # override via CLI when scaling up
+  strategy: "ddp_find_unused_parameters_false"  # safe default; ignored on 1 GPU
+
+  # Checkpointing toggle (actual policy in callbacks below)
+  enable_checkpointing: true
+
+  # Dataloader defaults (may be overridden by datamodule)
+  dataloader:
+    num_workers: 2             # conservative default (Kaggle-safe)
+    pin_memory: true
+    persistent_workers: false  # safer default for mixed CI/local use
+
+  # Optional profiler
+  profiler: null
+
+# ------------------------------------------------------------------------------
+# Callbacks (Early stopping & Checkpointing)
+# ------------------------------------------------------------------------------
 callbacks:
   early_stopping:
-    monitor: "val/gll"       # validation metric (Gaussian log-likelihood)
+    monitor: "val/gll"         # validation metric (Gaussian log-likelihood)
     patience: 5
     mode: "min"
   model_checkpoint:
@@ -58,19 +79,25 @@ callbacks:
     save_last: true
     filename: "epoch{epoch}-valgll{val/gll:.4f}"
 
+# ------------------------------------------------------------------------------
 # Reproducibility & seeds
+# ------------------------------------------------------------------------------
 seed: 42
 cudnn_deterministic: true
 cudnn_benchmark: false
 
+# ------------------------------------------------------------------------------
 # Runtime guardrails (Kaggle safety)
+# ------------------------------------------------------------------------------
 runtime:
-  kaggle_mode: true          # toggles safe defaults for ≤9h
+  kaggle_mode: true            # toggles safe defaults for ≤9h
   max_runtime_hours: 9
-  num_workers: 2             # low IO workers for Kaggle GPU quota
+  num_workers: 2               # low IO workers for Kaggle GPU quota
   pin_memory: true
 
+# ------------------------------------------------------------------------------
 # Hydra sweep / multirun support
+# ------------------------------------------------------------------------------
 hydra:
   run:
     dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
@@ -80,3 +107,14 @@ hydra:
   job_logging:
     root:
       level: INFO
+
+# ------------------------------------------------------------------------------
+# Notes
+# ------------------------------------------------------------------------------
+notes: |
+  Defaults are Kaggle- and CI-friendly:
+  • Deterministic kernels, AMP (precision=16), and conservative dataloader settings.
+  • DDP strategy pre-configured; when devices>1, distributed training is enabled.
+  • Override devices/num_workers/precision per environment:
+      spectramind train trainer.devices=2 trainer.dataloader.num_workers=6
+  • Guardrails encourage ≤9h runs on Kaggle; adjust max_epochs/accumulation to fit budget.
