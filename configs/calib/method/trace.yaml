@@ -1,0 +1,16 @@
+# configs/calib/method/trace.yaml
+# ==============================================================================
+# Trace Normalization calibration method
+# Normalizes extracted traces for spectroscopic pipelines.
+# ==============================================================================
+
+trace:
+  enabled: true
+  method: "polynomial"        # options: polynomial | spline
+  order: 3                    # polynomial order if method=polynomial
+  baseline_window: 20         # pixels used for baseline fitting
+  normalize_to: "median"      # options: median | mean | unity
+  save_trace: "outputs/trace_norm.csv"
+  notes: |
+    Trace normalization removes low-frequency drifts in extracted spectra,
+    correcting for throughput and blaze function variations.
