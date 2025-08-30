@@ -1,0 +1,35 @@
+# =====================================================================
+# 📂 configs/data/.gitkeep
+# ---------------------------------------------------------------------
+# Purpose:
+#   This file ensures the configs/data/ directory is preserved in Git
+#   even if no dataset-specific YAML configs are present yet.
+#
+#   In SpectraMind V50, all dataset definitions live here, e.g.:
+#     • nominal.yaml — ESA Ariel nominal dataset (FGS1 + AIRS)
+#     • toy.yaml     — tiny synthetic dataset for CI smoke/dev
+#     • custom.yaml  — user-extended datasets
+#
+# Integration:
+#   • Hydra: configs in this folder are composed by train.yaml and
+#     calibrate.yaml via Hydra’s defaults list.
+#   • CLI: selected with commands like:
+#         spectramind train data=nominal
+#         spectramind train data=toy trainer=ci_fast
+#   • DVC: each data config maps to a DVC stage (calibration, split).
+#   • Kaggle: configs include kaggle_safe toggles for ≤9 hr runtime.
+#
+# Why Keep This File:
+#   Git will not track empty directories. By convention, we include a
+#   .gitkeep with documentation so this folder remains in version
+#   control until populated with YAML configs. This also signals to
+#   collaborators and CI/CD that data configs are an expected part of
+#   the repository structure.
+#
+# Notes:
+#   • Never delete this file unless configs/data/ contains at least one
+#     YAML config and repo policy no longer requires .gitkeep.
+#   • Treated as documentation — safe to ignore in Hydra composition.
+#   • Maintains mission-grade reproducibility: every run must pin its
+#     data config (even toy/CI runs).
+# =====================================================================
