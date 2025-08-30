@@ -1,0 +1,196 @@
+# FILE: configs/calib/cds.yaml
+# ==============================================================================
+# CORRELATED DOUBLE SAMPLING (CDS) — SpectraMind V50 Calibration Kill Chain (stage 04)
+# ------------------------------------------------------------------------------
+# Purpose
+#   Suppress kTC/reset noise and low-frequency drifts by differencing suitably
+#   paired reads/frames. Supports classic reset-signal CDS, frame-to-frame CDS,
+#   rolling stacks, robust pairing rules, and optional temporal high-pass cleanup.
+#
+# Contract
+#   In:  io.input_key   (typically produced by configs/calib/flat.yaml)
+#   Out: io.output_key  (consumed by photometry/trace stages)
+#
+# Notes
+#   * This stage is geometry-agnostic: works for [B,H,W] or [B,C,H,W] tensors.
+#   * It relies on metadata when pairing by read indices/timestamps.
+#   * If a required metadata key is missing, behavior follows `validation`.
+# ==============================================================================
+
+version: 1
+enabled: true
+
+# ------------------------------------------------------------------------------
+# CDS strategy
+# ------------------------------------------------------------------------------
+cds:
+  # mode: "reset_signal" | "frame_diff" | "rolling_window"
+  # - reset_signal  : pair each SIGNAL read with a preceding RESET (true CDS)
+  # - frame_diff    : pair consecutive science frames Fn - F(n-1)
+  # - rolling_window: subtract a local baseline (median or mean) in a time window
+  mode: "frame_diff"
+
+  # ------------------------
+  # PAIRING RULES
+  # ------------------------
+  pairing:
+    # Only used when mode in {"reset_signal","frame_diff"}.
+    # policy: "n_minus_1" | "nearest" | "time_window"
+    #  - n_minus_1 : pair frame n with n-1
+    #  - nearest   : pair frame n with nearest candidate according to time/index
+    #  - time_window: pair frame n with a candidate within +/- window_s (fails if none)
+    policy: "n_minus_1"
+
+    # Choose the domain that defines ordering:
+    # "index" uses monotonically increasing frame indices
+    # "timestamp" uses acquisition times from metadata
+    order_by: "index"               # "index" | "timestamp"
+
+    # Metadata keys (only used if order_by == "timestamp")
+    timestamp_key: "acq_timestamp_s"   # seconds (float)
+    # Frame index key (optional; used for logging even if order_by==timestamp)
+    index_key: "frame_index"
+
+    # Time window (seconds) when policy == "time_window" or "nearest"
+    window_s: 5.0
+
+    # When mode == "reset_signal", identify RESET vs SIGNAL frames
+    reset_signal:
+      reset_flag_key: "is_reset"    # boolean in metadata
+      # If true, (signal - reset). If false, (reset - signal)
+      subtract_signal_minus_reset: true
+      # Require a reset within window_s preceding the signal (else warn/error)
+      require_temporal_proximity: true
+
+  # ------------------------
+  # ROLLING-WINDOW BASELINE (mode = "rolling_window")
+  # ------------------------
+  rolling_window:
+    # baseline: "median" | "mean"
+    baseline: "median"
+    # window in frames on each side (total window size = 2*half_window + 1)
+    half_window: 3
+    # Exclude the center frame from baseline computation (recommended)
+    exclude_center: true
+    # Robust sigma clipping on time axis before baseline statistic
+    robust:
+      enabled: true
+      sigma_clip: 3.0
+      max_iters: 3
+
+  # ------------------------
+  # ROBUST DIFFERENCING & OUTLIER TREATMENT
+  # ------------------------
+  robust:
+    # Clip pair residuals before write-out (helps suppress CRs in differenced frames)
+    sigma_clip:
+      enabled: true
+      sigma: 10.0
+      max_iters: 1
+    # Replace extreme outliers after CDS with local spatial median
+    outlier_replace:
+      enabled: true
+      threshold_sigma: 12.0
+      mode: "median4"           # "median4" | "median8" | "gaussian3"
+      max_replace_fraction: 0.03
+
+  # ------------------------
+  # TEMPORAL CLEANUP (optional)
+  # ------------------------
+  temporal_filter:
+    enabled: false
+    # kind: "highpass" | "bandpass"
+    kind: "highpass"
+    # For highpass: cutoff as fraction of Nyquist in (0,1)
+    highpass_cutoff: 0.05
+    # For bandpass: [low, high] fractions of Nyquist
+    bandpass_range: [0.02, 0.30]
+    # Apply per-pixel along time using a zero-phase IIR/FIR (implementation-dependent)
+    zero_phase: true
+
+  # ------------------------
+  # SCALE NORMALIZATION (optional)
+  # ------------------------
+  normalization:
+    enabled: true
+    # Normalize per-frame by median absolute deviation (MAD) or by global median
+    method: "none"              # "none" | "mad" | "global_median"
+    eps: 1.0e-8
+
+# ------------------------------------------------------------------------------
+# NOISE MODEL (for diagnostics/quality checks; does not change pixel values)
+# ------------------------------------------------------------------------------
+noise_model:
+  enabled: true
+  # Read noise per read (ADU). Used for expected CDS variance:
+  # var_cds ≈ var(read1) + var(read2) when differenced; displayed in logs/metrics.
+  read_noise_adu: 5.0
+  # Optional shot noise estimate if conversion gain is known
+  shot_noise:
+    enabled: false
+    conversion_gain_e_per_adu: 1.0
+
+# ------------------------------------------------------------------------------
+# Quality checks (soft guards; do not mutate data)
+# ------------------------------------------------------------------------------
+quality_checks:
+  enabled: true
+
+  pairing_integrity:
+    # Max fraction of frames allowed to be unpaired (or missing reset) before warning/error
+    max_unpaired_fraction: 0.10
+
+  post_cds_stats:
+    sampling_fraction: 0.10
+    min_samples: 2
+    # Expect near-zero mean (CDS removes DC), but allow margin for signal transients
+    mean_adu_range: [-1000.0, 1000.0]
+    # Expect reasonable spread (not degenerate, not exploded)
+    std_adu_range: [0.1, 30000.0]
+
+  histogram_after:
+    bins: 256
+    # Too-large zero pile-up may indicate over-aggressive clipping or dead frames
+    max_at_zero_frac: 0.25
+
+  action_on_fail: "warn"         # "warn" | "error"
+
+# ------------------------------------------------------------------------------
+# I/O routing for pipeline memory dict
+# ------------------------------------------------------------------------------
+io:
+  input_key: "flat_corrected"
+  output_key: "cds_corrected"
+
+# ------------------------------------------------------------------------------
+# Caching & DVC
+# ------------------------------------------------------------------------------
+cache:
+  write_intermediate: true
+  out_dir: "${oc.env:RUN_DIR, runs}/calib/cds"
+  dvc_stage_name: "calib_cds"
+
+# ------------------------------------------------------------------------------
+# Logging & runtime
+# ------------------------------------------------------------------------------
+logging:
+  level: "INFO"                   # "DEBUG" | "INFO" | "WARNING" | "ERROR"
+  log_sample_stats: true          # per-batch stats before/after CDS
+  save_debug_images: false        # save small grids of paired frames & CDS outputs
+
+runtime:
+  num_workers: 2
+  seed: 1337
+
+# ------------------------------------------------------------------------------
+# Validation — fail fast for missing metadata or impossible pairing
+# ------------------------------------------------------------------------------
+validation:
+  # When pairing requires metadata (timestamps, reset flags), enforce presence
+  require_metadata_keys:
+    timestamp: ["acq_timestamp_s"]
+    index: ["frame_index"]
+    reset_signal: ["is_reset"]
+  # If the chosen policy/mode depends on these keys, they must exist. Otherwise ignored.
+  require_existing_paths: false
+  check_shape_compatibility: true
