@@ -1,0 +1,52 @@
+# configs/loss/fft.yaml
+# ==============================================================================
+# 🌊 FFT Smoothness Loss — Physics-Informed Constraint
+#
+# Purpose
+#   Enforce smoothness in predicted spectra by penalizing excess high-frequency
+#   power in the Fourier domain. Ensures outputs remain physically plausible,
+#   consistent with atmospheric radiative transfer (smooth absorption bands).
+#
+# Usage
+#   Compose in train.yaml:
+#     defaults:
+#       - loss: gll
+#       - loss/fft: default
+#
+#   Override example:
+#     spectramind train loss.fft.enabled=true loss.fft.weight=0.2 \
+#       loss.fft.cutoff_freq=40
+#
+# Notes
+#   • High-frequency artifacts are unphysical (not seen in exoplanet spectra).
+#   • This loss penalizes FFT power above cutoff_freq bins.
+#   • Supports normalization and adaptive weighting.
+# ==============================================================================
+
+fft:
+  enabled: true
+
+  # Loss weight relative to other loss terms
+  weight: 0.1
+
+  # FFT parameters
+  cutoff_freq: 50        # frequency bin cutoff (0 = DC, Nyquist ~ N/2)
+  normalize: true        # normalize FFT magnitude before penalization
+  log_scale: true        # apply log-scaling to FFT power before loss
+
+  # Adaptive penalty scaling
+  adaptive:
+    enabled: true
+    method: "percentile"  # options: percentile | exponential | fixed
+    percentile: 95        # if percentile: penalize bins above 95th percentile
+    decay: 0.95           # if exponential: decay factor for penalty scaling
+
+  # Implementation notes
+  reduction: "mean"       # mean | sum | none (aggregation over batch/bins)
+  device: "auto"          # auto-select device for FFT (cuda if available)
+
+  notes: |
+    • FFT loss complements GLL by enforcing smoothness across bins.
+    • Helps prevent “ringing” or oscillations in μ predictions.
+    • Cutoff frequency should align with physical resolution (~5–10 bins).
+    • Percentile-based adaptive scaling is recommended for robustness.
