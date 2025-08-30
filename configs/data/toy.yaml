@@ -1,65 +1,191 @@
 # configs/data/toy.yaml
 # ==============================================================================
-# 🧸 SpectraMind V50 — Toy Dataset Config
+# 🧸 SpectraMind V50 — Toy Dataset Config (Upgraded)
 # ------------------------------------------------------------------------------
 # Purpose:
-#   Small synthetic dataset used for CI pipelines, quick dev loops, or
-#   debugging. Provides deterministic AIRS/FGS1 tensors with optional
-#   synthetic targets. Enables full pipeline smoke tests (< 2 min).
+#   Minimal synthetic dataset for CI, debugging, and dev loops.
+#   Provides deterministic AIRS/FGS1 cubes with synthetic μ/σ targets.
+#   Ensures full pipeline smoke test in < 2 min (calibrate → train → diagnose → submit).
 #
 # Usage:
-#   # Fast CI/dev loop
+#   # Fast CI/dev run
 #   spectramind train data=toy trainer=ci_fast
 #
 #   # Local quick test with debug profile
 #   spectramind train data=toy local=debug
 #
 # Notes:
-#   • Not for leaderboard submissions.
 #   • Deterministic: run hash + seed ensure reproducibility.
-#   • Complements trainer/ci_fast.yaml and local/debug.yaml.
+#   • DVC-tracked, Hydra-safe, Kaggle/CI guardrails applied.
+#   • Not for leaderboard submissions — debugging only.
 # ==============================================================================
 
-data:
-  name: "toy"
-  description: "Synthetic toy dataset for CI and debugging"
+# ----------------------------------------------------------------------
+# Hydra defaults (ensures clean composition)
+# ----------------------------------------------------------------------
+defaults:
+  - override hydra/job_logging: default
+  - override hydra/hydra_logging: default
 
-  root: "data/"
-  split: "toy"                 # synthetic generator (ArielToyDataset)
-  cache_dir: ".cache/data/toy" # allow DVC/cache consistency
+# ----------------------------------------------------------------------
+# Dataset metadata
+# ----------------------------------------------------------------------
+dataset:
+  name: "toy_v50"
+  description: "Synthetic toy dataset (FGS1 + AIRS) for CI/debug"
+  version: "1.0"
+  source: "synthetic-generator"
+  dvc_stage: "data/toy"
+  dvc_remote: "storage"
+  cache: "data/cache/toy"
+  hash: "${now:%Y%m%d}_${now:%H%M%S}"
 
-  # Shape controls
-  bins: 283                    # AIRS bins (full count; can be truncated)
-  fgs1_len: 128                # toy FGS1 time length
-  n_samples: 64                # dataset size
+provenance:
+  git_commit: null
+  dvc_rev: null
+  created_at: "${now:%Y-%m-%d %H:%M:%S}"
 
-  # Dataloader
+# ----------------------------------------------------------------------
+# File paths (DVC-tracked)
+# ----------------------------------------------------------------------
+paths:
+  raw_dir: "data/raw/toy"
+  processed_dir: "data/processed/toy"
+  fgs1_file: "${paths.raw_dir}/fgs1_toy.npy"   # shape (64, 128, 32)
+  airs_file: "${paths.raw_dir}/airs_toy.npy"   # shape (64, 32, 283)
+  labels_file: "${paths.raw_dir}/labels_toy.csv"
+  submission_template: "data/sample_submission.csv"
+
+# ----------------------------------------------------------------------
+# Shape & generation controls
+# ----------------------------------------------------------------------
+schema:
+  fgs1:
+    expected_rank: 3
+    expected_shape: [64, 128, 32]
+    dtype: "float32"
+  airs:
+    expected_rank: 3
+    expected_shape: [64, 32, 283]
+    dtype: "float32"
+  labels:
+    required_columns: ["planet_id", "target_mu[0:283]", "target_sigma[0:283]"]
+
+generation:
+  n_samples: 64
+  fgs1_len: 128
+  bins: 283
+  with_targets: true
+  seed: 1337
+
+# ----------------------------------------------------------------------
+# Loader parameters (CI-safe)
+# ----------------------------------------------------------------------
+loader:
   batch_size: 8
-  num_workers: 0               # 0 = CI-friendly; override locally
+  num_workers: 0
   pin_memory: false
   persistent_workers: false
   shuffle: true
 
-  # Targets
-  with_targets: true           # include synthetic targets for training/calibration
+# ----------------------------------------------------------------------
+# Calibration (synthetic placeholders)
+# ----------------------------------------------------------------------
+calibration:
+  enabled: false          # toy dataset bypasses heavy calibration
+  steps: []
+  save_intermediate: false
+  output_dir: "${paths.processed_dir}/calibrated"
 
-  # Determinism
-  seed: 1337                   # ensures reproducible samples + DataLoader order
+# ----------------------------------------------------------------------
+# Augmentations (lightweight only)
+# ----------------------------------------------------------------------
+augmentation:
+  jitter:
+    enabled: false
+  dropout:
+    enabled: false
+  mask:
+    enabled: false
+  snr_dropout:
+    enabled: false
+  temporal_shift:
+    enabled: false
 
-  # Diagnostics
-  log_samples: 2               # log a couple toy samples to audit log
-  save_preview: true           # save a preview PNG/JSON for CI artifacts
+# ----------------------------------------------------------------------
+# Symbolic / physics-aware toggles
+# ----------------------------------------------------------------------
+symbolic:
+  enforce_nonnegativity: true
+  smoothness_penalty: 0.0
+  fft_prior:
+    enabled: false
+  molecular_masking:
+    enabled: false
+  temporal_dropout:
+    enabled: false
+  region_masking:
+    enabled: false
+  corel_uncertainty:
+    enabled: false
 
-  notes: |
-    Toy config intentionally small:
-      • 64 samples total
-      • 128-length FGS1 sequences
-      • 283-bin AIRS spectra
-      • Batch size = 8
-    Enables full pipeline (calibrate → train → diagnose → submit) smoke in CI.
-    For reproducibility, this config + run hash = identical outputs.
-```
+# ----------------------------------------------------------------------
+# Splits (fixed for reproducibility)
+# ----------------------------------------------------------------------
+splits:
+  train_fraction: 0.8
+  val_fraction: 0.1
+  test_fraction: 0.1
+  stratify: false
+  seed: 1337
+  export_paths:
+    indices_dir: "${paths.processed_dir}/splits"
 
----
+# ----------------------------------------------------------------------
+# Validation & sanity checks
+# ----------------------------------------------------------------------
+validate:
+  enabled: true
+  checks:
+    - "paths_exist"
+    - "schema_match"
+    - "no_nan_inf"
+  fail_fast: true
+  sample_size_preview: 2
 
-✅ With this version:
+# ----------------------------------------------------------------------
+# Diagnostics (toy artifacts for CI)
+# ----------------------------------------------------------------------
+diagnostics:
+  save_plots: true
+  fft_analysis: false
+  symbolic_overlay: false
+  output_dir: "outputs/diagnostics/data_toy"
+  artifacts:
+    stats_json: "${diagnostics.output_dir}/stats.json"
+    preview_png: "${diagnostics.output_dir}/preview.png"
+
+# ----------------------------------------------------------------------
+# Runtime guardrails (CI/Kaggle safety)
+# ----------------------------------------------------------------------
+runtime:
+  kaggle_safe: true
+  max_hours: 0.05          # < 3 min runtime budget
+  write_intermediates: false
+
+# ----------------------------------------------------------------------
+# Interface hooks
+# ----------------------------------------------------------------------
+interface:
+  num_bins: 283
+  output_dir: "${hydra.run.dir}"
+
+# ----------------------------------------------------------------------
+# Notes
+# ----------------------------------------------------------------------
+notes: |
+  • Minimal synthetic dataset for CI pipelines.
+  • Shapes: (64, 128, 32) FGS1, (64, 32, 283) AIRS.
+  • Batch size = 8, deterministic seed = 1337.
+  • Disables calibration/augmentation for speed.
+  • Produces quick preview diagnostics for CI.
