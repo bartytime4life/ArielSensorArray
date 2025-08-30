@@ -1,0 +1,80 @@
+# configs/local/debug.yaml
+# ==============================================================================
+# 🐛 Local Debug Profile — SpectraMind V50
+#
+# Purpose
+#   Ultra-fast configuration for local debugging and sanity checks.
+#   Runs only a few batches/epochs with minimal overhead, while still
+#   enforcing Hydra-safe composition and reproducibility.
+#
+# Usage
+#   In train.yaml (or CLI):
+#     defaults:
+#       - local: debug
+#
+#   CLI examples:
+#     spectramind train local=debug
+#     spectramind train local=debug trainer.max_epochs=2
+#
+# Notes
+#   • Not for leaderboard or scientific runs — this is only to verify that
+#     the pipeline composes configs, runs forward/backward, and logs.
+#   • Great for catching shape mismatches, config errors, or runtime bugs.
+#   • Still logs to logs/v50_debug_log.md for reproducibility.
+# ==============================================================================
+
+local:
+  enabled: true
+
+  # Hardware
+  devices: cpu                   # Default CPU-only to ensure portability
+  precision: "32"                # Full precision for safety in debug mode
+  deterministic: true
+  seed: 1234                     # Fixed seed for reproducibility
+
+  # Paths
+  data_dir: "data/"
+  cache_dir: "~/.spectramind/cache"
+  output_dir: "outputs/debug/"
+  log_dir: "logs/"
+
+  # Runtime (debug-friendly defaults)
+  num_workers: 0                 # Disable multiprocessing for easier stacktraces
+  pin_memory: false
+  persistent_workers: false
+  max_epochs: 1                  # Just 1 epoch
+  accumulate_grad_batches: 1
+  grad_clip_norm: 0.0            # Disable gradient clipping
+
+  # Logging
+  logger: rich_console
+  log_every_n_steps: 1           # Log every step (verbose for debugging)
+  save_checkpoint_every_n_epochs: null   # No checkpoints in debug
+  keep_last_n_checkpoints: 0
+
+  # Debug / Dev toggles
+  fast_dev_run: true             # Run a single batch train+val+test
+  profiler: simple               # Enable PyTorch profiler (lightweight mode)
+  trace_config: true
+  trace_hash: true
+
+  # Extra integrations
+  dvc:
+    enabled: false               # Skip DVC tracking for debug runs
+    remote: "local"
+  mlflow:
+    enabled: false
+  wandb:
+    enabled: false
+
+  # Guardrails
+  time_limit_hours: 0.1          # Fail-safe: auto-kill if somehow runs >6 min
+  disk_quota_gb: 1               # Prevent runaway logs/artifacts
+  internet: false                # Keep offline in debug by default
+
+  notes: |
+    This debug profile is for sanity checks only:
+      • Runs a single batch across train/val/test.
+      • Disables heavy logging and checkpointing.
+      • CPU by default to simplify debugging, but can override to GPU.
+    Use before committing new configs/models to quickly verify runtime integrity.
