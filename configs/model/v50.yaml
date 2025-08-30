@@ -1,0 +1,144 @@
+# configs/model/v50.yaml
+# ==============================================================================
+# 🛰️ SpectraMind V50 — Canonical Model Architecture
+# NeurIPS 2025 Ariel Data Challenge
+#
+# Purpose:
+#   Defines the hybrid FGS1 (Mamba SSM) + AIRS (Graph Neural Network) architecture
+#   with multi-scale decoders, physics-aware uncertainty heads, and symbolic overlays.
+#
+# Hydra:
+#   This config is Hydra-composable (part of defaults in train.yaml).
+#   Override components via CLI, e.g.:
+#     spectramind train model=v50 model.encoder.fgs1.depth=12
+#
+# References:
+#   • SpectraMind V50 Technical Plan:contentReference[oaicite:3]{index=3}
+#   • Project Analysis & Gap Strategy:contentReference[oaicite:4]{index=4}:contentReference[oaicite:5]{index=5}
+#   • Kaggle Baseline Model Comparisons:contentReference[oaicite:6]{index=6}
+# ==============================================================================
+
+# ----------------------------------------------------------------------
+# Model metadata
+# ----------------------------------------------------------------------
+model:
+  name: "spectramind_v50"
+  version: "1.0"
+  description: "Hybrid FGS1-Mamba + AIRS-GNN model with symbolic/physics-informed decoders"
+  seed: 42
+  dvc_stage: "model/v50"
+  save_dir: "artifacts/models/v50"
+
+# ----------------------------------------------------------------------
+# Encoders
+# ----------------------------------------------------------------------
+encoder:
+  fgs1:                       # Fine Guidance Sensor — long time-series (135k frames)
+    type: "mamba"             # Structured State Space Model (SSM/Mamba)
+    input_shape: [135000, 32, 32]
+    d_model: 128
+    depth: 12
+    dropout: 0.1
+    layer_norm: true
+    residual: true
+    positional_encoding: "fourier"
+    notes: "Mamba SSM replaces ViT for efficient ultra-long sequence modeling:contentReference[oaicite:7]{index=7}"
+
+  airs:                       # AIRS infrared spectrometer — graph structured data
+    type: "gnn"
+    input_shape: [283]        # 283 wavelength bins
+    gnn_type: "gat"           # Graph Attention Network (supports edge features)
+    hidden_dim: 128
+    num_layers: 6
+    dropout: 0.1
+    edge_features:
+      wavelength_proximity: true
+      molecule_links: true
+      detector_region: true
+    notes: "Spectral bins as graph nodes; edges encode smoothness & molecular priors:contentReference[oaicite:8]{index=8}"
+
+# ----------------------------------------------------------------------
+# Fusion
+# ----------------------------------------------------------------------
+fusion:
+  method: "cross_attention"   # Options: concat | cross_attention | gated_sum
+  hidden_dim: 256
+  dropout: 0.1
+  normalize: true
+  notes: "FGS1 latent guides AIRS graph via attention fusion:contentReference[oaicite:9]{index=9}"
+
+# ----------------------------------------------------------------------
+# Decoders
+# ----------------------------------------------------------------------
+decoder:
+  mean_head:                  # Predict μ spectrum
+    type: "mlp"
+    hidden_dim: 256
+    layers: 3
+    activation: "gelu"
+    dropout: 0.1
+
+  sigma_head:                 # Predict σ (uncertainty)
+    type: "flow_uncertainty"
+    hidden_dim: 128
+    layers: 2
+    activation: "softplus"
+    dropout: 0.1
+    symbolic_overlay: true    # Integrate symbolic rule weighting:contentReference[oaicite:10]{index=10}
+
+  optional:
+    quantile: false
+    diffusion: false
+
+# ----------------------------------------------------------------------
+# Symbolic & Physics Constraints
+# ----------------------------------------------------------------------
+constraints:
+  enforce_nonnegativity: true
+  smoothness_weight: 0.01
+  asymmetry_weight: 0.001
+  fft_smoothness_weight: 0.002
+  molecular_fingerprint:
+    enabled: true
+    molecules: ["H2O", "CO2", "CH4"]
+  gravitational_lensing_overlay:
+    enabled: true
+    bins: [120, 160]          # AIRS lensing-affected region:contentReference[oaicite:11]{index=11}
+
+# ----------------------------------------------------------------------
+# Training hooks (diagnostics/aux losses)
+# ----------------------------------------------------------------------
+training_hooks:
+  spectral_smoothness: true
+  shap_overlay: true
+  symbolic_violation_loss: true
+  latent_umap_logging: true
+  diagnostics_html: true
+
+# ----------------------------------------------------------------------
+# Runtime & Export
+# ----------------------------------------------------------------------
+runtime:
+  jit: true
+  torchscript: true
+  kaggle_safe: true
+  max_params: 5e7            # Ensure ≤50M params for Kaggle GPU runtime
+  max_hours: 9
+
+export:
+  onnx: true
+  traced_model: "artifacts/models/v50_traced.pt"
+  hf_hub: false              # Optional HuggingFace integration:contentReference[oaicite:12]{index=12}
+
+# ----------------------------------------------------------------------
+# Notes
+# ----------------------------------------------------------------------
+notes: |
+  • Encoders:
+      – FGS1: Mamba SSM handles 100k+ timesteps efficiently:contentReference[oaicite:13]{index=13}
+      – AIRS: Graph Attention Network with molecule/region edges:contentReference[oaicite:14]{index=14}
+  • Fusion: cross-attention allows FGS1 latent to guide AIRS spectral graph:contentReference[oaicite:15]{index=15}
+  • Decoders: μ + σ heads, symbolic overlay applied on σ:contentReference[oaicite:16]{index=16}
+  • Constraints: enforce physics-aware rules at output stage (nonnegativity, smoothness, lensing):contentReference[oaicite:17]{index=17}
+  • Kaggle guardrails: runtime-safe, parameter count bounded, JIT export enabled:contentReference[oaicite:18]{index=18}
+  • Fully Hydra-composable: override encoder/decoder/fusion via CLI flags
