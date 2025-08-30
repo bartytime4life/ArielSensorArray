@@ -1,82 +1,128 @@
 ```yaml
 # configs/data/nominal.yaml
 # ==============================================================================
-# 🛰️ SpectraMind V50 — Nominal Data Configuration
+# 🛰️ SpectraMind V50 — Nominal Data Configuration (UPGRADED)
 # NeurIPS 2025 Ariel Data Challenge (ESA Ariel telescope simulation)
 #
-# Purpose:
-#   Define the nominal dataset + calibration setup for standard runs.
-#   Includes ESA Ariel–style photometer/spectrometer cubes, preprocessing,
-#   calibration kill chain, augmentations, symbolic-aware masking, and DVC tracking.
+# Role of this file
+# -----------------
+# • Single source of truth for the DATA SIDE of the V50 pipeline
+# • Drives ingestion, calibration kill-chain, preprocessing, splits, and loaders
+# • Hydra-composable; zero-code overrides from the CLI
+# • DVC/lakeFS traceability baked in; Kaggle-safe guardrails included
 #
-# Hydra:
-#   This config is Hydra-composable (part of defaults: in train.yaml).
-#   All fields can be overridden via CLI, e.g.:
-#     spectramind train data=nominal augmentation.jitter.amplitude_ppm=50
+# Usage (examples)
+# ----------------
+#   spectramind train data=nominal
+#   spectramind train data=nominal preprocessing.detrend.method=savgol
+#   spectramind train data=nominal augmentation.jitter.amplitude_ppm=50
+#   spectramind calibrate data=nominal calibration.save_intermediate=true
 #
-# DVC:
-#   Paths and outputs are DVC-tracked for reproducibility.
+# Notes
+# -----
+# • Keys and structure align with V50 readers in: ariel_datasets_v50.py,
+#   calibration_pipeline.py, and split_util.py
+# • Every path under `paths.*` is DVC-tracked; `dataset.hash` helps link runs,
+#   artifacts, and diagnostics to precise data versions
 # ==============================================================================
 
 # ----------------------------------------------------------------------
-# Hydra defaults (ensures clean composition)
+# Hydra defaults (ensures clean composition, reproducible logs)
 # ----------------------------------------------------------------------
 defaults:
   - override hydra/job_logging: default
   - override hydra/hydra_logging: default
 
+# Optional namespacing if your repo uses Hydra packages per group
+# (Uncomment if your loader expects `data.*` under a package)
+# _target_: spectramind.data.builders.make_dataset   # ← for structured configs
+# _convert_: all
+
 # ----------------------------------------------------------------------
-# Dataset metadata
+# Dataset metadata & provenance (recorded into run manifests)
 # ----------------------------------------------------------------------
 dataset:
   name: "nominal_v50"
-  description: "Default ESA Ariel Challenge dataset (FGS1 + AIRS) with calibration."
-  version: "1.1"
-  source: "neurips-2025-ariel"        # Kaggle competition slug
-  dvc_stage: "data/nominal"
-  dvc_remote: "storage"               # remote DVC target
-  cache: "data/cache"
-  hash: "${now:%Y%m%d}_${now:%H%M%S}" # run-level DVC hash for traceability
+  description: "Default ESA Ariel dataset (FGS1 + AIRS) with full calibration and diagnostics."
+  version: "1.2"                       # ← bumped for upgraded schema/guardrails
+  source: "neurips-2025-ariel"         # Kaggle competition slug / internal source ID
+  dvc_stage: "data/nominal"            # DVC pipeline stage name
+  dvc_remote: "storage"                # DVC/lakeFS remote name
+  cache: "data/cache"                  # local cache for prepared tensors
+  # A lightweight run hash for data lineage (log-only; not a cryptographic hash)
+  hash: "${now:%Y%m%d}_${now:%H%M%S}"
 
-# Optional provenance hooks (filled at runtime by CLI)
+# Populated at runtime by the CLI; recorded in run manifests and HTML dashboards
 provenance:
-  git_commit: null
-  dvc_rev: null
+  git_commit: null                     # filled by CLI
+  dvc_rev: null                        # filled by CLI
   created_at: "${now:%Y-%m-%d %H:%M:%S}"
+  kaggle_notebook: false               # set true when running on Kaggle
+  kaggle_run_id: null                  # optional external run identifier
 
 # ----------------------------------------------------------------------
-# File paths (DVC-tracked)
+# Paths (all DVC-tracked unless explicitly excluded)
 # ----------------------------------------------------------------------
 paths:
   raw_dir: "data/raw"
   processed_dir: "data/processed/nominal"
+  artifacts_dir: "outputs/diagnostics/data_nominal"
+  # Training inputs
   fgs1_file: "${paths.raw_dir}/fgs1_train.npy"     # shape (N_fgs1, 32, 32)
   airs_file: "${paths.raw_dir}/airs_train.npy"     # shape (N_airs, 32, 356)
   labels_file: "${paths.raw_dir}/labels.csv"       # metadata + targets
+  # Test inputs
   test_fgs1: "${paths.raw_dir}/fgs1_test.npy"
   test_airs: "${paths.raw_dir}/airs_test.npy"
   submission_template: "data/sample_submission.csv"
+  # Split indices export (reproducible)
+  split_indices_dir: "${paths.processed_dir}/splits"
+  # Calibrated output root (intermediates + final)
+  calibrated_dir: "${paths.processed_dir}/calibrated"
+  # Caches for speed
+  tensor_cache_dir: "${dataset.cache}/tensors"
+  preview_dir: "${paths.artifacts_dir}/previews"
 
 # ----------------------------------------------------------------------
-# Instrument & schema expectations (for validation)
+# Interface contract (shared across configs/modules)
+# ----------------------------------------------------------------------
+interface:
+  num_bins: 283                        # AIRS spectral bins used throughout V50
+  # Default hydra run dir fallback; modules can override their own outputs
+  output_dir: "${hydra.run.dir}"
+
+# ----------------------------------------------------------------------
+# Instrument & schema expectations (validated before training)
 # ----------------------------------------------------------------------
 schema:
   fgs1:
     expected_rank: 3
-    expected_shape: [-1, 32, 32]      # -1 = any (num frames)
+    expected_shape: [-1, 32, 32]      # -1 means any number of frames
     dtype: "float32"
+    allow_nan: false
+    allow_inf: false
   airs:
     expected_rank: 3
     expected_shape: [-1, 32, 356]
     dtype: "float32"
+    allow_nan: false
+    allow_inf: false
   labels:
-    required_columns: ["planet_id", "split", "target_mu[0:283]", "target_sigma[0:283]"]
+    required_columns:
+      - "planet_id"
+      - "split"
+      # Targets can be column-encoded or wide CSV; the loader supports both modes.
+      - "target_mu[0:283]"
+      - "target_sigma[0:283]"
+    allow_missing_targets: false
 
 # ----------------------------------------------------------------------
-# Calibration pipeline (kill chain)
+# Calibration pipeline (kill chain) — order matters
 # ----------------------------------------------------------------------
 calibration:
   enabled: true
+  # The specific method settings live in configs/calib/method/*.yaml too; this
+  # block mirrors the composite state so `data=nominal` works standalone.
   steps:
     - "adc_correction"
     - "nonlinearity_correction"
@@ -86,11 +132,60 @@ calibration:
     - "photometric_extraction"
     - "trace_normalization"
     - "phase_alignment"
+  # Save per-step intermediates for diagnostics & HTML dashboard embedding
   save_intermediate: true
-  output_dir: "${paths.processed_dir}/calibrated"
+  save_preview_png: true
+  preview_stride: 5                     # save every k-th preview to limit I/O
+  output_dir: "${paths.calibrated_dir}"
+  # Per-method knobs (kept concise; detailed knobs live in method YAMLs)
+  method:
+    adc_correction:
+      enabled: true
+      bit_depth: 16
+      gain_map: "calib_refs/adc/gain_map.npy"
+      offset_map: "calib_refs/adc/offset_map.npy"
+    nonlinearity_correction:
+      enabled: true
+      lut_path: "calib_refs/nlin/lut.npy"
+      saturation_dn: 65535
+    dark_subtraction:
+      enabled: true
+      master_dark_path: "calib_refs/dark/master_dark.npy"
+      scaling:
+        enabled: true
+        exposure_time_seconds: 10.0
+        temperature_compensation:
+          enabled: false
+          T0_C: -40.0
+          A: 1.0
+          B: 0.07
+          sensor_temperature_key: "SENSOR_TEMP_C"
+    flat_fielding:
+      enabled: true
+      master_flat_path: "calib_refs/flat/master_flat.npy"
+      epsilon: 1.0e-6
+    correlated_double_sampling:
+      enabled: true
+      reset_frame_path: "calib_refs/cds/reset_frame.npy"
+      strategy: "nearest"               # nearest|exact|interpolate
+      noise_threshold_dn: 50
+    photometric_extraction:
+      enabled: true
+      aperture: "circular"
+      radius_px: 6
+      bkg_annulus_px: [8, 12]
+      method: "sum"                     # sum|optimal
+    trace_normalization:
+      enabled: true
+      reference_window: [0.15, 0.35]    # phase window for normalization
+      epsilon: 1.0e-6
+    phase_alignment:
+      enabled: true
+      method: "xcorr"                   # xcorr|template
+      max_shift: 3
 
 # ----------------------------------------------------------------------
-# Preprocessing & normalization
+# Preprocessing & normalization (post-calibration)
 # ----------------------------------------------------------------------
 preprocessing:
   normalize_flux: true
@@ -99,53 +194,50 @@ preprocessing:
   outlier_sigma: 6.0
   detrend:
     enabled: true
-    method: "polyfit"                # "polyfit"|"savgol"|"none"
+    method: "polyfit"                  # polyfit|savgol|none
     degree: 2
+    savgol:
+      window_length: 7
+      polyorder: 2
+      mode: "interp"
   smoothing:
     enabled: true
+    method: "median"                   # median|gaussian
     window: 5
-    method: "median"                 # "median"|"gaussian"
-  resample_time: false               # preserve original cadence by default
+    gaussian_sigma: 1.0
+  resample_time:
+    enabled: false                     # preserve original cadence by default
+    target_len: 32                     # if enabled, resample to this many steps
+    method: "linear"                   # linear|cubic
 
 # ----------------------------------------------------------------------
-# Augmentation (training robustness)
-# ----------------------------------------------------------------------
-augmentation:
-  jitter:
-    enabled: true
-    amplitude_ppm: 100
-  dropout:
-    enabled: true
-    prob: 0.01
-  mask:
-    enabled: true
-    scheme: "block"                  # "block"|"random"
-    fraction: 0.15
-  snr_dropout:
-    enabled: true
-    snr_threshold: 5.0
-  temporal_shift:
-    enabled: false
-    max_phase_offset: 0.02
-
-# ----------------------------------------------------------------------
-# Symbolic & physics-aware constraints
+# Symbolic & physics-aware constraints (data-stage hooks)
 # ----------------------------------------------------------------------
 symbolic:
-  enforce_nonnegativity: true
-  smoothness_penalty: 0.01
-  asymmetry_penalty: 0.001
+  enforce_nonnegativity: true          # clamp <0 to 0 after calibration/preproc
+  smoothness_penalty: 0.01             # logged for diagnostics; model loss reads its own
+  asymmetry_penalty: 0.001             # likewise (asymmetry on μ profile when available)
   fft_prior:
     enabled: true
-    freq_cutoff: 0.25                # normalized frequency cutoff
+    freq_cutoff: 0.25                  # normalized frequency cutoff (0..0.5)
     weight: 0.002
+    log_fft_power: true
   molecular_masking:
     enabled: true
+    # Names align with molecule windows used elsewhere for overlays
     molecules: ["H2O", "CO2", "CH4"]
     apply_in_preprocessing: true
+    # Optional spectral windows for masking/overlay (bin indices)
+    windows:
+      H2O: [[25, 55], [180, 210]]
+      CO2: [[95, 125], [220, 245]]
+      CH4: [[135, 165], [250, 275]]
   temporal_dropout:
     enabled: true
-    fraction: 0.1
+    fraction: 0.10
+    mode: "random"                     # random|block
+    block:
+      max_len: 4
   region_masking:
     enabled: true
     regions:
@@ -155,21 +247,64 @@ symbolic:
   corel_uncertainty:
     enabled: true
     weight: 0.005
+    # When available, a calibration map can be injected here for σ pre-cal hints
+    preload_sigma_path: null
 
 # ----------------------------------------------------------------------
-# Splits
+# Augmentation (training robustness; applied on-the-fly by Dataset)
+# ----------------------------------------------------------------------
+augmentation:
+  jitter:
+    enabled: true
+    amplitude_ppm: 100                 # amplitude of phase/focus-like jitter
+    mode: "sinusoid"                   # sinusoid|random|mixed
+    max_hz: 0.35
+  dropout:
+    enabled: true
+    prob: 0.01                         # element-wise channel dropout
+  mask:
+    enabled: true
+    scheme: "block"                    # block|random
+    fraction: 0.15                     # fraction of bins/time masked
+    block:
+      max_bins: 12
+      max_steps: 6
+  snr_dropout:
+    enabled: true
+    snr_threshold: 5.0
+    invert: false                      # drop below threshold when false
+  temporal_shift:
+    enabled: false
+    max_phase_offset: 0.02
+  noise_injection:
+    enabled: true
+    sigma_ppm: 15.0
+    mode: "gaussian"                   # gaussian|laplace
+
+# ----------------------------------------------------------------------
+# Splits (deterministic & exportable)
 # ----------------------------------------------------------------------
 splits:
-  train_fraction: 0.8
-  val_fraction: 0.1
-  test_fraction: 0.1
-  stratify: true
+  strategy: "stratified"               # stratified|random|group
+  stratify_on: "planet_id"             # column used when stratified
+  group_on: null                       # optional grouping column
+  fractions:
+    train: 0.8
+    val:   0.1
+    test:  0.1
   seed: 42
-  export_paths:
-    indices_dir: "${paths.processed_dir}/splits"   # save split indices for reproducibility
+  export:
+    enabled: true
+    dir: "${paths.split_indices_dir}"
+    filenames:
+      train: "train_idx.npy"
+      val:   "val_idx.npy"
+      test:  "test_idx.npy"
+  # Integrity guard: allow a tiny float error in sums due to rounding
+  epsilon: 1.0e-6
 
 # ----------------------------------------------------------------------
-# Loader parameters
+# Loader parameters (PyTorch DataLoader knobs)
 # ----------------------------------------------------------------------
 loader:
   batch_size: 32
@@ -177,58 +312,78 @@ loader:
   pin_memory: true
   prefetch_factor: 2
   persistent_workers: true
+  drop_last: false
+  shuffle_train: true
+  shuffle_val: false
+  shuffle_test: false
 
 # ----------------------------------------------------------------------
-# Validation & sanity checks
+# Validation & sanity checks (fail-fast prevents wasted GPU time)
 # ----------------------------------------------------------------------
 validate:
   enabled: true
-  checks:
-    - "paths_exist"                  # raw_dir, labels_file present
-    - "schema_match"                 # shapes/dtypes align with schema
-    - "no_nan_inf"                   # basic numeric hygiene
-    - "split_sums_to_one"            # train+val+test fractions sum→1.0 (±1e-6)
-    - "stratify_ok"                  # class/planet distribution balanced if stratify
   fail_fast: true
   sample_size_preview: 8
+  checks:
+    - "paths_exist"                    # raw_dir, labels_file present
+    - "schema_match"                   # shapes/dtypes align with schema.*
+    - "no_nan_inf"                     # numeric hygiene
+    - "split_sums_to_one"              # train+val+test ≈ 1.0 within epsilon
+    - "stratify_ok"                    # balanced enough if stratified
+    - "calibration_order_ok"           # steps are in allowed order
+    - "bins_match_interface"           # num_bins consistent (283)
+    - "nonnegativity_after_preproc"    # clamp verified if enabled
 
 # ----------------------------------------------------------------------
-# Diagnostics
+# Diagnostics (saved for dashboards & CI artifacts)
 # ----------------------------------------------------------------------
 diagnostics:
+  enabled: true
+  output_dir: "${paths.artifacts_dir}"
   save_plots: true
   fft_analysis: true
   zscore_analysis: true
   symbolic_overlay: true
   shap_overlay: true
-  output_dir: "outputs/diagnostics/data_nominal"
+  per_step_previews: true
   artifacts:
     stats_json: "${diagnostics.output_dir}/stats.json"
     preview_png: "${diagnostics.output_dir}/preview.png"
+    fft_png: "${diagnostics.output_dir}/fft_preview.png"
+    z_png: "${diagnostics.output_dir}/zscore_preview.png"
+    sym_png: "${diagnostics.output_dir}/symbolic_overlay.png"
+    shap_png: "${diagnostics.output_dir}/shap_overlay.png"
 
 # ----------------------------------------------------------------------
-# Kaggle/runtime guardrails (data-side toggles)
+# Kaggle/runtime guardrails (lightweight I/O, bounded runtime)
 # ----------------------------------------------------------------------
 runtime:
-  kaggle_safe: true                  # prefer light-weight I/O & plots
+  kaggle_safe: true                    # keep plots/IO modest, avoid huge caches
   max_hours: 9
   write_intermediates: true
+  fast_preview_limit: 64               # cap number of preview tiles/frames saved
+  # When true, skips heavy optional diagnostics to save walltime
+  reduce_heavy_ops: false
 
 # ----------------------------------------------------------------------
-# Interface hooks (shared across configs)
+# Internal consistency guard (cheap checks run by the CLI before jobs)
 # ----------------------------------------------------------------------
-interface:
-  num_bins: 283                      # AIRS spectral bins (used by model/metrics)
-  output_dir: "${hydra.run.dir}"     # inherit hydra run dir unless overridden
+consistency_guard:
+  check_dvc_remote: true
+  check_paths_writable: true
+  check_gpu_memory: true
+  min_gpu_mem_gb: 12
+  warn_only: false                     # set true to warn instead of fail
 
 # ----------------------------------------------------------------------
-# Runtime notes
+# Runtime notes (logged into run manifest + v50_debug_log.md)
 # ----------------------------------------------------------------------
 notes: |
-  • This config defines the *nominal data pipeline* for SpectraMind V50.
-  • All paths are DVC-tracked; commit pointers ensure reproducibility.
-  • Symbolic rules applied at data stage enforce physical priors (nonnegativity, smoothness).
-  • Augmentations simulate spacecraft/system noise (jitter, dropout, SNR masking).
-  • FFT and molecular overlays provide early diagnostics of constraint compliance.
-  • Kaggle runtime guardrails: tuned for ≤9 hr execution with GPU-safe defaults.
+  • Nominal V50 data config with mission-grade calibration and diagnostics.
+  • Symbolic clips/overlays executed at data stage to catch issues early.
+  • FFT + molecular windows provide immediate physical sanity checks.
+  • Split indices are exported and reused to ensure apples-to-apples comparisons.
+  • Kaggle guardrails keep I/O bounded; previews are strided to reduce cost.
+  • Designed to interoperate with: selftest.py, generate_html_report.py,
+    spectramind diagnose dashboard, and COREL calibration evaluators.
 ```
