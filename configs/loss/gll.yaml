@@ -1,69 +1,145 @@
 # configs/loss/gll.yaml
 # ==============================================================================
-# 📉 Gaussian Log-Likelihood (GLL) Loss — Primary Challenge Metric
+# 📉 Gaussian Log-Likelihood (GLL) Loss — Primary Challenge Metric (UPGRADED)
 #
 # Purpose
-#   Implements the competition's official Gaussian log-likelihood loss:
+#   Implements the competition's Gaussian log-likelihood:
 #     L = 0.5 * Σ_bins [ log(2πσ²) + (y - μ)² / σ² ]
-#   where predictions are (μ, σ) for each wavelength bin.
-#   This loss penalizes both inaccurate μ and poorly calibrated σ.
+#   where predictions are (μ, σ) per wavelength bin. Penalizes both inaccurate μ
+#   and poorly calibrated σ, and serves as the anchor objective for training.
 #
-# Features
-#   • Supports per-bin weighting (e.g. symbolic priors, molecule-specific bins).
-#   • Optional clipping of σ to enforce positivity + stability.
-#   • Configurable reduction: mean | sum | none.
-#   • Symbolic integration hooks (smoothness, FFT, molecular priors).
-#   • Compatible with mixed-precision training (AMP-safe).
+# Highlights
+#   • AMP-safe numerics with global eps, σ clamping, and dtype control.
+#   • Flexible per-bin weighting (uniform/molecule/entropy/custom + masks).
+#   • Optional partial-σ gradient flow (detach) for ablations.
+#   • Scheduling/warmup to ramp GLL impact or couple with regularizers.
+#   • Symbolic hooks (smoothness/FFT/nonneg/molecule) for physics priors.
+#   • Calibration integration stubs (temperature scaling, COREL, per-bin scaling).
+#   • Rich diagnostics for dashboards and CI (per-bin, heatmap, JSON).
 #
 # Usage
 #   In train.yaml:
 #     defaults:
 #       - loss: gll
 #
-#   CLI override example:
+#   CLI examples:
 #     spectramind train loss.gll.sigma_min=1e-3 loss.gll.weighting=molecule
+#     spectramind train loss.gll.calibration.temperature.enabled=true \
+#                      loss.gll.calibration.temperature.T=1.15
+#     spectramind train loss.gll.weighting=custom \
+#                      loss.gll.custom_weights_path=weights/custom_bins.npy
 # ==============================================================================
 
 gll:
   enabled: true
 
-  # Reduction across bins/batch
-  reduction: "mean"     # options: mean | sum | none
+  # -----------------------------------------
+  # Numerics / Stability
+  # -----------------------------------------
+  reduction: "mean"            # mean | sum | none
+  sigma_min: 1.0e-4            # lower bound on σ for log/ratio stability
+  clamp_sigma: true            # clamp σ to [sigma_min, +inf)
+  detach_sigma_grad: false     # if true, stop ∂L/∂σ (useful for ablations)
+  eps: 1.0e-12                 # global small epsilon for AMP/log/ratio stability
+  dtype: "auto"                # auto | float32 | float64 (hint to implementation)
 
-  # Minimum σ to avoid log(0) or negative values
-  sigma_min: 1.0e-4
+  # -----------------------------------------
+  # Scheduling / Curriculum
+  # -----------------------------------------
+  schedule:
+    enabled: true
+    # Effective loss multiplier m(step) = warmup * anneal (both clamped in [floor, cap]).
+    warmup:
+      steps: 0                 # 0 disables warmup (starts at full strength)
+    anneal:
+      enabled: false
+      steps: 0
+    floor: 0.0
+    cap: 1.0
 
-  # Weighting scheme
-  weighting: "uniform"  # options:
-                        #   uniform   – equal weight per bin
-                        #   molecule  – weight by molecular fingerprint regions
-                        #   entropy   – weight bins with higher entropy more
-                        #   custom    – user-defined vector (see below)
+  # -----------------------------------------
+  # Weighting Strategy
+  # -----------------------------------------
+  weighting: "uniform"         # uniform | molecule | entropy | custom
+  custom_weights_path: null    # .npy/.csv, shape [BINS] or [B,BINS]
+  custom_weights_inline: []    # e.g., [1.0, 0.5, 0.5, ...]
+  # Optional region mask to modulate weights (post-mix), e.g., continuum/line masks
+  region_masking:
+    enabled: false
+    mask_path: null            # .npy/.csv in [0..1], broadcastable to per-bin shape
+    invert_mask: false
+    scale: 1.0
 
-  # Custom bin weights (optional, loaded from file or inline)
-  custom_weights_path: null
-  custom_weights_inline: []   # e.g. [1.0, 0.5, 0.5, ...]
+  # Optional molecule/entropy sources used when weighting=molecule/entropy
+  sources:
+    molecule_regions_path: null   # mask where molecule lines are present
+    entropy_scores_path: null     # per-bin entropy (higher => larger weight)
+    # Normalization of external weights
+    normalize_external: true
 
-  # Symbolic/physics-aware enhancements
+  # -----------------------------------------
+  # Calibration Integration (optional)
+  # -----------------------------------------
+  calibration:
+    # Global post-hoc temperature scaling on σ (σ' = T*σ); applied at loss time
+    temperature:
+      enabled: false
+      T: 1.0
+    # Per-bin scaling factors (e.g., from validation coverage analysis); multiplies σ
+    per_bin_scale:
+      enabled: false
+      path: null              # .npy/.csv shape [BINS] or [B,BINS]
+      normalize: false
+    # COREL/graphical conformal coverage (placeholder: implementation reads these)
+    corel:
+      enabled: false
+      # paths to learned coverage parameters/graph edges/etc.
+      params_path: null
+      graph_path: null
+
+  # -----------------------------------------
+  # Symbolic / Physics Hooks (optional)
+  # -----------------------------------------
   symbolic:
-    smoothness_penalty: 0.0     # L2 penalty on μ curvature (encourages smooth spectra)
-    nonnegativity: true         # enforce μ ≥ 0 with penalty
-    fft_suppression: 0.0        # weight for high-frequency FFT penalty
-    molecule_consistency: 0.0   # weight for enforcing molecular priors
+    smoothness_penalty: 0.0     # L2 curvature weight on μ (discrete Laplacian)
+    nonnegativity: true         # if true, add soft non-negativity penalty on μ
+    fft_suppression: 0.0        # weight on FFT-domain high-frequency penalty
+    molecule_consistency: 0.0   # encourage coherence with molecular bands
+    # Fine-grained knobs (consumed by the symbolic engine if present)
+    details:
+      smoothness_order: 2       # 1 | 2
+      fft_cutoff: 0.25          # fraction of Nyquist
+      nonneg_mode: "hinge"      # hinge | softplus | exp
+      nonneg_p: 2               # 1 or 2
 
-  # Stability parameters
-  clamp_sigma: true      # clamp σ to [sigma_min, inf) before loss calc
-  detach_sigma_grad: false  # option to stop ∂L/∂σ (debug/ablation)
+  # -----------------------------------------
+  # Diagnostics / Logging
+  # -----------------------------------------
+  log_per_bin: true             # record per-bin GLL terms during diagnostics
+  export_heatmap: true          # export heatmap of per-bin contributions
+  export_weights: false         # export effective per-bin weights after mixing/masking
+  export_sigma_stats: true      # export summary of σ distribution (min/median/max, % clamped)
+  save_json: true               # persist the effective loss config used at runtime
 
-  # Logging & diagnostics
-  log_per_bin: true      # output per-bin GLL during diagnostics
-  export_heatmap: true   # save heatmap of bin-wise GLL to diagnostics dashboard
-  save_json: true        # write per-run loss config to gll_loss_config.json
+  # -----------------------------------------
+  # Developer / Ablation Toggles
+  # -----------------------------------------
+  dev:
+    # When true, compute separate aggregates for data-fit vs. log-variance parts,
+    # enabling fine-grained dashboards (e.g., compare components over training).
+    split_terms: true
+    # If true, exclude bins with NaN/Inf target y from loss (mask them out)
+    ignore_invalid_targets: true
+    # Optional hard cap for individual per-bin contributions (outlier safety)
+    per_bin_clip: null         # e.g., 1.0e3 (null = disabled)
 
   notes: |
-    • GLL is the competition’s official metric:contentReference[oaicite:0]{index=0}.
-    • Penalizes both underestimation (σ too small) and overconfidence.
-    • With σ clipping and molecule-aware weighting, this loss balances accuracy
-      and uncertainty calibration.
-    • Symbolic hooks integrate physics priors: smoothness, FFT suppression,
-      non-negativity, and molecular fingerprints:contentReference[oaicite:1]{index=1}:contentReference[oaicite:2]{index=2}.
+    • GLL anchors training: it is sensitive to both μ error and σ calibration; σ too small yields
+      large residual terms, σ too large increases the log-variance term.
+    • Keep sigma_min > 0 with clamp_sigma=true to avoid numerical issues in AMP/mixed precision.
+    • Use weighting/masks to emphasize scientifically important bins (e.g., molecules) or entropy-rich
+      regions; enable export_weights to audit effective bin influence.
+    • Calibration stubs (temperature/per-bin/COREL) allow post-hoc uncertainty alignment without
+      changing model code: they multiply σ inside the loss flow so diagnostics reflect calibrated σ.
+    • Symbolic hooks allow additive physics priors; keep these moderate to avoid eclipsing GLL.
+    • Schedule can ramp GLL (or be used inversely to ramp regularizers in your trainer code).
