@@ -1,0 +1,44 @@
+# configs/calib/method/adc.yaml
+# ==============================================================================
+# ⚙️ ADC Correction — Method Config
+# Purpose
+#   Correct analog-to-digital conversion artifacts (offsets, gain nonuniformity,
+#   bit-depth clipping) before any other calibration step.
+# Usage
+#   Composed by calib/nominal.yaml in the calibration kill chain.
+#   Override example:
+#     spectramind calibrate calib.method.adc.enabled=false
+# ==============================================================================
+
+adc:
+  enabled: true
+
+  # Raw digitizer characteristics
+  bit_depth: 16                 # native ADC bit depth (e.g., 12, 14, 16)
+  full_well_electrons: 120000   # for saturation guard; used in sanity checks
+
+  # Per-channel gain/offset (DVC-tracked tables recommended)
+  gain_table_path: "calib_refs/adc/gain_table.npy"    # electrons / DN
+  offset_table_path: "calib_refs/adc/offset_table.npy" # DN
+
+  # Saturation & clipping handling
+  clip_guard:
+    enabled: true
+    high_dn_threshold: 0.99      # fraction of max DN treated as near-saturation
+    repair_strategy: "mask"      # "mask" | "interpolate" | "leave"
+    interpolate_window: 3        # if strategy=interpolate, odd window size
+
+  # Linearity LUT (optional): DN → electrons correction
+  linearity:
+    enabled: false
+    lut_path: "calib_refs/adc/linearity_lut.npy"       # shape [2, N] (dn, scale)
+
+  # Diagnostics & logging
+  diagnostics:
+    save_histograms: true
+    output_dir: "outputs/diagnostics/calib/adc"
+
+  notes: |
+    • Apply ADC offset removal, then gain normalization (DN→electrons).
+    • If linearity LUT is enabled, apply multiplicative scale per DN bin.
+    • Saturated/near-saturated pixels: prefer masking to avoid bias downstream.
