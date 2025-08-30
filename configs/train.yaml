@@ -1,11 +1,12 @@
+```yaml
 # configs/train.yaml
 # ==============================================================================
-# 🛰️ SpectraMind V50 — Training Configuration (Hydra-safe)
+# 🛰️ SpectraMind V50 — Training Configuration (Hydra-safe, Kaggle/CI-ready)
 # ------------------------------------------------------------------------------
 # Purpose
 #   Canonical training config for the V50 pipeline. Composes modular groups
-#   (data/model/optimizer/trainer/logger/loss/uncertainty) and sets sane,
-#   Kaggle/CI-safe defaults with full reproducibility (hashes, logs, artifacts).
+#   (data/model/optimizer/trainer/logger/loss) and sets Kaggle/CI-safe defaults
+#   with full reproducibility (hashes, logs, artifacts).
 #
 # Quickstart
 #   spectramind train --config-name train
@@ -13,39 +14,70 @@
 #   spectramind train --config-name train model=v50 data=kaggle loss.smoothness.weight=0.1
 #
 # Principles
-#   • CLI-first + Hydra composition for experiment control:contentReference[oaicite:0]{index=0}:contentReference[oaicite:1]{index=1}
-#   • Reproducible logs/artifacts; small deltas via overrides, not code edits:contentReference[oaicite:2]{index=2}:contentReference[oaicite:3]{index=3}
-#   • Kaggle runtime guardrails (≤9h), no internet, deterministic by default:contentReference[oaicite:4]{index=4}:contentReference[oaicite:5]{index=5}
+#   • CLI-first + Hydra composition for experiment control
+#   • Reproducible logs/artifacts; small deltas via overrides (not code edits)
+#   • Kaggle runtime guardrails (≤9h), no internet, deterministic when needed
 # ==============================================================================
 
 # ----------------------------------------------------------------------
 # Compose defaults from config groups (override any on the CLI)
 # ----------------------------------------------------------------------
 defaults:
-  - data: nominal            # data/{nominal|kaggle|debug}.yaml
-  - model: v50               # model architecture & heads
-  - optimizer: adamw         # optimizer/{adam|adamw|sgd}.yaml
-  - loss: gll                # loss weights: gll, smoothness, symbolic
-  - trainer: default         # device/precision/loop knobs
-  - logger: tensorboard      # lightweight logging by default
-  - uncertainty: corel       # COREL/temperature scaling (optional in train)
-  - augment: off             # augmentation pipeline (can switch to on)
+  - data: nominal              # data/{nominal|kaggle|debug}.yaml
+  - model: v50                 # model architecture & heads
+  - optimizer: adamw           # optimizer/{adam|adamw|sgd}.yaml
+  - loss: gll                  # loss stack; add smoothness/symbolic below
+  - loss: smoothness
+  - loss: symbolic
+  - trainer: kaggle_safe       # device/precision/loop knobs (Kaggle-safe baseline)
+  - logger: tensorboard        # lightweight logging by default
+  # - logger: mlflow           # enable if desired
+  # - logger: wandb            # enable if desired
+  - override hydra/job_logging: default
+  - override hydra/hydra_logging: default
   - _self_
+
+# ----------------------------------------------------------------------
+# Experiment metadata
+# ----------------------------------------------------------------------
+experiment:
+  name: "v50_train"
+  tag: "baseline"
+  description: "V50 baseline: FGS1-Mamba + AIRS-GNN, GLL loss + optional priors"
+  seed: 42
+  deterministic: false            # set true for CI/self-test reproducibility
+  cudnn_benchmark: true           # speed on Kaggle; switch off for strict determinism
+
+# ----------------------------------------------------------------------
+# Hydra run/sweep directories and behavior
+# ----------------------------------------------------------------------
+hydra:
+  run:
+    dir: "outputs/${experiment.name}/${now:%Y-%m-%d_%H-%M-%S}"
+  sweep:
+    dir: "outputs/${experiment.name}/multirun/${now:%Y-%m-%d_%H-%M-%S}"
+    subdir: "${hydra.job.num}"
+  job:
+    chdir: true
+  verbose: false
+  output_subdir: ".hydra"
 
 # ----------------------------------------------------------------------
 # High-level training controls
 # ----------------------------------------------------------------------
 training:
-  run_name: "v50_train"
-  seed: 42                                 # deterministic by default
-  epochs: 20                               # bump for leaderboard training
+  epochs: 20                         # bump for leaderboard training
   resume: false
+  resume_ckpt: null                  # path to checkpoint to resume
   gradient_accumulation_steps: 1
   grad_clip_norm: 1.0
-  precision: "bf16"                        # "fp32"|"fp16"|"bf16" (hardware dependent)
-  amp: true                                # enable mixed precision when supported
-  cudnn_benchmark: true
-  deterministic: false                     # set true for CI/self-test reproducibility
+  precision: "bf16"                  # "fp32"|"fp16"|"bf16" (hardware dependent)
+  amp: true                          # enable mixed precision when supported
+  # fast-dev toggles (for CI/smoke)
+  limit_train_batches: null          # e.g., 0.2 for 20% of the data
+  limit_val_batches: null
+  limit_test_batches: null
+  num_sanity_val_steps: 0
 
 # ----------------------------------------------------------------------
 # Data loader knobs (can be overridden by data/*.yaml)
@@ -57,10 +89,6 @@ data:
   pin_memory: true
   prefetch_factor: 2
   persistent_workers: true
-  # Optional fast-dev limits for smoke tests / CI
-  limit_train_batches: null
-  limit_val_batches: null
-  limit_test_batches: null
 
 # ----------------------------------------------------------------------
 # Optimizer/Scheduler quick knobs (base values in optimizer/*.yaml)
@@ -70,8 +98,9 @@ optimizer:
   weight_decay: 0.01
   betas: [0.9, 0.999]
   eps: 1.0e-8
+
 scheduler:
-  name: "cosine"             # "none"|"cosine"|"onecycle"
+  name: "cosine"                 # "none"|"cosine"|"onecycle"
   warmup_steps: 500
   min_lr: 1.0e-6
 
@@ -80,34 +109,46 @@ scheduler:
 # ----------------------------------------------------------------------
 loss:
   gll:
-    weight: 1.0              # primary task loss (μ,σ via Gaussian LL)
+    weight: 1.0                  # primary task loss (μ,σ via Gaussian LL)
   smoothness:
-    weight: 0.0              # set >0 to encourage spectral smoothness
+    weight: 0.0                  # set >0 to encourage spectral smoothness
     l2_lambda: 1.0
   symbolic:
-    weight: 0.0              # set >0 to enforce rule-based priors
-    mode: "soft"             # "soft"|"hard"
+    weight: 0.0                  # set >0 to enforce rule-based priors
+    mode: "soft"                 # "soft"|"hard"
 
 # ----------------------------------------------------------------------
-# Uncertainty (train-time hooks; full calibration may run post-train)
+# Uncertainty (train-time hooks; post-hoc calibration may run after train)
 # ----------------------------------------------------------------------
 uncertainty:
-  enable_sigma_head: true    # predict per-bin σ (aleatoric)
-  temp_scale:
-    enabled: false
-    T: 1.0
-  corel:
-    enabled: false           # enable for joint, graph-aware calibration post-train
+  enable_sigma_head: true        # predict per-bin σ (aleatoric)
+  epistemic:
+    mc_dropout:
+      enabled: false
+      passes: 8
+    ensemble:
+      enabled: false
+      members: 3
+  calibration:
+    temperature_scaling:
+      enabled: false
+      T: 1.0
+    corel:
+      enabled: false             # joint, graph-aware calibration post-train
+      coverage: 0.9
+      weight: 0.005
 
 # ----------------------------------------------------------------------
 # Checkpointing, early stopping, and artifacts
 # ----------------------------------------------------------------------
 checkpoint:
-  dir: "artifacts/checkpoints/${training.run_name}"
-  monitor: "val/gll"         # metric key to monitor
+  dir: "artifacts/checkpoints/${experiment.name}"
+  save_top_k: 2
+  monitor: "val/gll"
   mode: "min"
-  save_top_k: 1
   every_n_epochs: 1
+  save_last: true
+
 early_stopping:
   enabled: true
   monitor: "val/gll"
@@ -116,15 +157,34 @@ early_stopping:
   min_delta: 0.0
 
 # ----------------------------------------------------------------------
-# Diagnostics hooks (light by default; heavy plots off for Kaggle)
+# Evaluation & metrics
+# ----------------------------------------------------------------------
+eval:
+  frequency: 1                     # evaluate every N epochs
+  metrics:
+    - "gll"                        # Gaussian Log-Likelihood
+    - "rmse"
+    - "mae"
+    - "calibration/error_vs_sigma" # σ-vs-residual diagnostic
+  num_workers: ${data.num_workers}
+
+# ----------------------------------------------------------------------
+# Diagnostics hooks (lightweight by default; heavy viz off for Kaggle)
 # ----------------------------------------------------------------------
 diagnostics:
-  fft: false
-  shap_overlay: false
-  symbolic_overlay: false
-  save_png: true
-  save_html: false           # keep false on Kaggle to save time
-  log_confusion: false       # reserved if using discrete classifiers in aux tasks
+  output_dir: "outputs/diagnostics/train"
+  html_report: false               # keep false on Kaggle; enable locally
+  plots:
+    loss_curves: true
+    spectra_examples: true
+    fft_power: false
+    zscore_hist: true
+  explainability:
+    shap_overlay: false            # heavy on Kaggle; toggle as needed
+    symbolic_overlay: false
+    umap: false
+    tsne: false
+  save_artifacts: true
 
 # ----------------------------------------------------------------------
 # Logging backends
@@ -132,46 +192,63 @@ diagnostics:
 logger:
   tensorboard:
     enabled: true
-    log_dir: "logs/${training.run_name}"
+    log_dir: "logs/${experiment.name}"
   mlflow:
     enabled: false
     tracking_uri: null
+    experiment_name: "${experiment.name}"
   csv:
     enabled: true
-    dir: "logs/${training.run_name}/csv"
+    dir: "logs/${experiment.name}/csv"
 
 # ----------------------------------------------------------------------
 # Runtime guardrails (Kaggle/CI)
 # ----------------------------------------------------------------------
 runtime:
-  kaggle_safe: true          # disables heavy viz and I/O patterns automatically
+  kaggle_safe: true            # disables heavy viz and I/O patterns automatically
   max_hours: 9
-  fail_fast: false           # set true in CI to abort early on failure
+  device: "auto"               # "cuda"|"cpu"|"auto"
+  find_unused_parameters: false
+  cudnn_allow_tf32: true
+  torch_compile:
+    enabled: false             # enable if stable with current model/PyTorch version
+    mode: "default"
+  fail_fast: false             # set true in CI to abort early on failure
 
 # ----------------------------------------------------------------------
-# Output structure (Hydra-managed)
+# Inter-config hooks (shared values or convenience)
 # ----------------------------------------------------------------------
-outputs:
-  dir: "outputs/train/${now:%Y-%m-%d_%H-%M-%S}"
+data_interface:
+  num_classes: 283             # number of spectral bins (AIRS output)
+  output_dir: "${hydra.run.dir}"
 
 # ----------------------------------------------------------------------
-# Hydra run/sweep directories and behavior
+# Self-test / pre-flight checks
 # ----------------------------------------------------------------------
-hydra:
-  run:
-    dir: ${outputs.dir}
-  sweep:
-    dir: ${outputs.dir}/multirun
-    subdir: ${hydra.job.num}
-  job:
-    chdir: true
-  # Optional: log Hydra-composed config for auditability
-  output_subdir: ".hydra"
+selftest:
+  enabled: true
+  checks:
+    - "paths_exist"            # verify critical paths exist (raw/cals/templates)
+    - "dvc_tracked"            # verify DVC pointers for large artifacts
+    - "config_hash_log"        # write config hash to v50_debug_log.md
+    - "dry_run_ok"             # pipeline can initialize in dry-run
+
+# ----------------------------------------------------------------------
+# CLI-side quality-of-life (read by spectramind CLI)
+# ----------------------------------------------------------------------
+cli:
+  dry_run: false
+  confirm: true
+  log_to_markdown: "logs/v50_debug_log.md"
+  export_manifest: true
+  manifest_path: "outputs/${experiment.name}_manifest.json"
 
 # ----------------------------------------------------------------------
 # Notes:
-#  • Switch data/model/optimizer groups on the CLI for experiments.
-#  • Increase epochs and enable uncertainty.cores.enabled for leaderboard pushes.
+#  • Switch groups on the CLI, e.g. `model=fgs1_mamba` or `logger=mlflow`.
+#  • Increase epochs + enable uncertainty.calibration.corel for leaderboard pushes.
 #  • For smoke/CI runs, override:
-#      training.epochs=1 data.num_workers=0 trainer.fast_dev_run=true
+#      training.epochs=1 data.num_workers=0 training.limit_train_batches=0.1
+#      diagnostics.html_report=false
 # ----------------------------------------------------------------------
+```
