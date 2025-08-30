@@ -1,0 +1,98 @@
+# configs/loss/composite.yaml
+# ==============================================================================
+# 🧩 Composite Loss — Unified control for {GLL, Smoothness, Nonnegativity, FFT}
+#
+# Purpose
+#   Enable/disable and weight all physics-aware loss terms from one place.
+#   Internally composes the individual loss configs into namespaced fields via
+#   Hydra's field-path composition (no group collisions).
+#
+# Usage
+#   In train.yaml:
+#     defaults:
+#       - loss: composite
+#
+#   Examples:
+#     # Turn off FFT, bump smoothness, keep others:
+#     spectramind train loss.composite.fft.enabled=false \
+#       loss.composite.smoothness.weight=0.15
+#
+#     # Adjust cutoff & weight:
+#     spectramind train loss.composite.fft.cutoff_freq=40 \
+#       loss.composite.fft.weight=0.2
+#
+# Notes
+#   • "groups.*" holds the imported underlying loss configs.
+#   • "composite.*" holds master switches/weights you’ll read in the loss builder.
+#   • Trainer should read composite.* flags/weights and then combine groups.*
+# ==============================================================================
+
+# Import the four loss configs into a neutral namespace so we can bundle them.
+defaults:
+  - _self_
+  - loss@groups.gll: gll
+  - loss@groups.smoothness: smoothness
+  - loss@groups.nonnegativity: nonnegativity
+  - loss@groups.fft: fft
+
+# Master on/off + weights for each component the trainer will consume.
+composite:
+  enabled: true
+
+  # Gaussian Log-Likelihood (primary challenge metric)
+  gll:
+    enabled: true
+    weight: 1.0    # Typically the anchor; override only if you blend objectives
+
+  # Spectral smoothness in the time/wavelength domain (curvature penalty)
+  smoothness:
+    enabled: true
+    weight: 0.10   # Scales the already-configured smoothness.lambda internally
+    # Optional overrides (passed through to groups.smoothness at runtime if desired)
+    overrides:
+      order: null          # 1 | 2 | null (null = keep underlying file setting)
+      lambda: null         # e.g. 0.02
+      normalize: null      # true | false | null
+
+  # Physical non-negativity constraint on μ
+  nonnegativity:
+    enabled: true
+    weight: 0.02
+    overrides:
+      mode: null           # hinge | softplus | exp | null
+      p: null              # 1 or 2
+      temperature: null
+
+  # FFT-domain high-frequency suppression (physics-informed)
+  fft:
+    enabled: true
+    weight: 0.10
+    overrides:
+      cutoff_freq: null    # e.g. 40 or 50 bins (Nyquist ~ N/2)
+      normalize: null      # true | false | null
+      log_scale: null      # true | false | null
+      adaptive:
+        enabled: null
+        method: null       # percentile | exponential | fixed
+        percentile: null
+        decay: null
+    reduction: "mean"      # mean | sum | none (applies to the FFT term aggregation)
+
+# The underlying imported configs live here (do not edit in code; override via CLI).
+# Example override: loss.groups.fft.cutoff_freq=48
+groups:
+  gll:          ${oc.create:}   # populated by defaults above
+  smoothness:   ${oc.create:}
+  nonnegativity:${oc.create:}
+  fft:          ${oc.create:}
+
+notes: |
+  • The trainer’s loss builder should:
+      (1) Check composite.enabled.
+      (2) For each sub-loss in {gll, smoothness, nonnegativity, fft}:
+          - If composite.<name>.enabled == true, read its weight
+          - Optionally apply composite.<name>.overrides onto groups.<name>
+          - Instantiate/compute that loss component using groups.<name> settings
+      (3) Sum (weight_i * loss_i) with the chosen reductions.
+  • Keep GLL as the anchor term (weight≈1.0) and tune regularizers
+    (smoothness, fft, nonnegativity) cautiously to avoid over-smoothing.
