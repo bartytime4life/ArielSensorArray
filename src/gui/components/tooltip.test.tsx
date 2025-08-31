@@ -1,4 +1,3 @@
-// src/gui/components/tooltip.test.tsx
 // =============================================================================
 // 🧪 Tests — Tooltip Component (Upgraded)
 // -----------------------------------------------------------------------------
@@ -13,6 +12,7 @@
 //   • Controlled open: parent-driven close reflects in DOM and aria attributes
 //   • Positions are stable under jsdom via mocked getBoundingClientRect
 //   • Focus + blur semantics mirror hover + unhover timings
+//   • Multiple instances: unique tooltip ids and aria-describedby per trigger
 // =============================================================================
 
 import React from "react";
@@ -25,261 +25,311 @@ import Tooltip from "./Tooltip";
 
 // Helper: jsdom returns 0 rects; provide a reasonable bbox to elements
 const mockRect = (rect: Partial<DOMRect> = {}) =>
-  ({
-    x: 100,
-    y: 100,
-    top: 100,
-    left: 100,
-    bottom: 140,
-    right: 160,
-    width: 60,
-    height: 40,
-    toJSON: () => ({}),
-    ...rect,
-  } as DOMRect);
+({
+x: 100,
+y: 100,
+top: 100,
+left: 100,
+bottom: 140,
+right: 160,
+width: 60,
+height: 40,
+toJSON: () => ({}),
+...rect,
+} as DOMRect);
 
 let getBCRSpy: vi.SpyInstance;
 
 beforeEach(() => {
-  vi.useFakeTimers();
+vi.useFakeTimers();
 
-  // Mock getBoundingClientRect for all elements to stabilize positioning logic
-  getBCRSpy = vi
-    .spyOn(Element.prototype, "getBoundingClientRect")
-    .mockImplementation(function (this: Element) {
-      // Give tooltip panel a different rect (e.g., 120x40 at 60,60)
-      if ((this as HTMLElement).getAttribute("role") === "tooltip") {
-        return mockRect({ width: 120, height: 40, top: 60, left: 60 });
-      }
-      return mockRect();
-    });
+// Mock getBoundingClientRect for all elements to stabilize positioning logic
+getBCRSpy = vi
+.spyOn(Element.prototype, "getBoundingClientRect")
+.mockImplementation(function (this: Element) {
+// Give tooltip panel a different rect (e.g., 120x40 at 60,60)
+if ((this as HTMLElement).getAttribute("role") === "tooltip") {
+return mockRect({ width: 120, height: 40, top: 60, left: 60 });
+}
+return mockRect();
+});
 });
 
 afterEach(() => {
-  vi.runOnlyPendingTimers();
-  vi.useRealTimers();
-  getBCRSpy.mockRestore();
+// Flush any pending timers that could keep microtasks queued
+vi.runOnlyPendingTimers();
+vi.clearAllTimers();
+vi.useRealTimers();
+getBCRSpy.mockRestore();
 });
 
-const OPEN_DELAY = 90; // > default 80ms
-const CLOSE_DELAY = 70; // > default 60ms
+const OPEN\_DELAY = 90; // > default 80ms
+const CLOSE\_DELAY = 70; // > default 60ms
 
 describe("Tooltip (uncontrolled)", () => {
-  it("does not render by default (closed)", () => {
-    render(
-      <Tooltip content="Hello tip">
-        <button>Trigger</button>
-      </Tooltip>
-    );
-    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
-  });
+it("does not render by default (closed)", () => {
+render( <Tooltip content="Hello tip"> <button>Trigger</button> </Tooltip>
+);
+expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+});
 
-  it("opens on hover after delay and applies aria-describedby", async () => {
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+it("opens on hover after delay and applies aria-describedby", async () => {
+const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
 
-    render(
-      <Tooltip content="Open diagnostics">
-        <button>Open</button>
-      </Tooltip>
-    );
+```
+render(
+  <Tooltip content="Open diagnostics">
+    <button>Open</button>
+  </Tooltip>
+);
 
-    const trigger = screen.getByRole("button", { name: /open/i });
-    await user.hover(trigger);
+const trigger = screen.getByRole("button", { name: /open/i });
+await user.hover(trigger);
 
-    // Default open delay ~80ms; we go slightly over
-    vi.advanceTimersByTime(OPEN_DELAY);
+// Default open delay ~80ms; we go slightly over
+vi.advanceTimersByTime(OPEN_DELAY);
 
-    const tip = screen.getByRole("tooltip");
-    expect(tip).toBeInTheDocument();
-    expect(tip).toHaveTextContent("Open diagnostics");
+const tip = screen.getByRole("tooltip");
+expect(tip).toBeInTheDocument();
+expect(tip).toHaveTextContent("Open diagnostics");
 
-    // aria-describedby on trigger should reference tooltip id
-    const describedBy = trigger.getAttribute("aria-describedby");
-    expect(describedBy).toBeTruthy();
-    expect(tip).toHaveAttribute("id", describedBy!);
-  });
+// aria-describedby on trigger should reference tooltip id
+const describedBy = trigger.getAttribute("aria-describedby");
+expect(describedBy).toBeTruthy();
+expect(tip).toHaveAttribute("id", describedBy!);
+```
 
-  it("closes on mouse leave after a small delay and removes aria-describedby", async () => {
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    render(
-      <Tooltip content="Leaving soon">
-        <button>Hover me</button>
-      </Tooltip>
-    );
-    const trigger = screen.getByRole("button", { name: /hover me/i });
+});
 
-    await user.hover(trigger);
-    vi.advanceTimersByTime(OPEN_DELAY);
-    expect(screen.getByRole("tooltip")).toBeInTheDocument();
-    const describedBy = trigger.getAttribute("aria-describedby");
-    expect(describedBy).toBeTruthy();
+it("closes on mouse leave after a small delay and removes aria-describedby", async () => {
+const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+render( <Tooltip content="Leaving soon"> <button>Hover me</button> </Tooltip>
+);
+const trigger = screen.getByRole("button", { name: /hover me/i });
 
-    await user.unhover(trigger);
-    // hide delay ~60ms
-    vi.advanceTimersByTime(CLOSE_DELAY);
-    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
-    // aria-describedby should be removed when closed
-    expect(trigger).not.toHaveAttribute("aria-describedby");
-  });
+```
+await user.hover(trigger);
+vi.advanceTimersByTime(OPEN_DELAY);
+expect(screen.getByRole("tooltip")).toBeInTheDocument();
+const describedBy = trigger.getAttribute("aria-describedby");
+expect(describedBy).toBeTruthy();
 
-  it("opens on focus (keyboard) after delay and closes on ESC", async () => {
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    render(
-      <Tooltip content="Press ESC">
-        <button>Focus me</button>
-      </Tooltip>
-    );
-    const trigger = screen.getByRole("button", { name: /focus me/i });
-    trigger.focus();
-    vi.advanceTimersByTime(OPEN_DELAY);
-    expect(screen.getByRole("tooltip")).toBeInTheDocument();
+await user.unhover(trigger);
+// hide delay ~60ms
+vi.advanceTimersByTime(CLOSE_DELAY);
+expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+// aria-describedby should be removed when closed
+expect(trigger).not.toHaveAttribute("aria-describedby");
+```
 
-    await user.keyboard("{Escape}");
-    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
-  });
+});
 
-  it("hovering the panel keeps it open when disableHoverableContent=false (default)", async () => {
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    render(
-      <Tooltip content="Sticky">
-        <button>Stick</button>
-      </Tooltip>
-    );
-    const trigger = screen.getByRole("button", { name: /stick/i });
+it("opens on focus (keyboard) after delay and closes on ESC", async () => {
+const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+render( <Tooltip content="Press ESC"> <button>Focus me</button> </Tooltip>
+);
+const trigger = screen.getByRole("button", { name: /focus me/i });
+trigger.focus();
+vi.advanceTimersByTime(OPEN\_DELAY);
+expect(screen.getByRole("tooltip")).toBeInTheDocument();
 
-    await user.hover(trigger);
-    vi.advanceTimersByTime(OPEN_DELAY);
-    const panel = screen.getByRole("tooltip");
-    expect(panel).toBeInTheDocument();
+```
+await user.keyboard("{Escape}");
+expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+```
 
-    // Move cursor from trigger to panel: panel mouseenter should cancel hide timer
-    await user.unhover(trigger);
-    await user.hover(panel);
+});
 
-    // Even after hide delay, still open while panel hovered
-    vi.advanceTimersByTime(CLOSE_DELAY);
-    expect(screen.getByRole("tooltip")).toBeInTheDocument();
+it("hovering the panel keeps it open when disableHoverableContent=false (default)", async () => {
+const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+render( <Tooltip content="Sticky"> <button>Stick</button> </Tooltip>
+);
+const trigger = screen.getByRole("button", { name: /stick/i });
 
-    // Now leave the panel -> should close after delay
-    await user.unhover(panel);
-    vi.advanceTimersByTime(CLOSE_DELAY);
-    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
-  });
+```
+await user.hover(trigger);
+vi.advanceTimersByTime(OPEN_DELAY);
+const panel = screen.getByRole("tooltip");
+expect(panel).toBeInTheDocument();
 
-  it("does not keep open when disableHoverableContent=true and cursor is over panel", async () => {
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    render(
-      <Tooltip content="Non-sticky" disableHoverableContent>
-        <button>Stick?</button>
-      </Tooltip>
-    );
-    const trigger = screen.getByRole("button", { name: /stick\?/i });
+// Move cursor from trigger to panel: panel mouseenter should cancel hide timer
+await user.unhover(trigger);
+await user.hover(panel);
 
-    await user.hover(trigger);
-    vi.advanceTimersByTime(OPEN_DELAY);
-    const panel = screen.getByRole("tooltip");
-    expect(panel).toBeInTheDocument();
+// Even after hide delay, still open while panel hovered
+vi.advanceTimersByTime(CLOSE_DELAY);
+expect(screen.getByRole("tooltip")).toBeInTheDocument();
 
-    // Leave trigger and hover panel; since disableHoverableContent=true, panel hover should not keep it open
-    await user.unhover(trigger);
-    await user.hover(panel);
-    vi.advanceTimersByTime(CLOSE_DELAY);
-    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
-  });
+// Now leave the panel -> should close after delay
+await user.unhover(panel);
+vi.advanceTimersByTime(CLOSE_DELAY);
+expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+```
 
-  it("closes after blur similar to mouse leave timing", async () => {
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    render(
-      <Tooltip content="Blur closes">
-        <button>Focus target</button>
-      </Tooltip>
-    );
+});
 
-    const trigger = screen.getByRole("button", { name: /focus target/i });
-    trigger.focus();
-    vi.advanceTimersByTime(OPEN_DELAY);
-    expect(screen.getByRole("tooltip")).toBeInTheDocument();
+it("does not keep open when disableHoverableContent=true and cursor is over panel", async () => {
+const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+render( <Tooltip content="Non-sticky" disableHoverableContent> <button>Stick?</button> </Tooltip>
+);
+const trigger = screen.getByRole("button", { name: /stick?/i });
 
-    // Blur should start close timer
-    trigger.blur();
-    vi.advanceTimersByTime(CLOSE_DELAY);
-    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
-  });
+```
+await user.hover(trigger);
+vi.advanceTimersByTime(OPEN_DELAY);
+const panel = screen.getByRole("tooltip");
+expect(panel).toBeInTheDocument();
+
+// Leave trigger and hover panel; since disableHoverableContent=true, panel hover should not keep it open
+await user.unhover(trigger);
+await user.hover(panel);
+vi.advanceTimersByTime(CLOSE_DELAY);
+expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+```
+
+});
+
+it("closes after blur similar to mouse leave timing", async () => {
+const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+render( <Tooltip content="Blur closes"> <button>Focus target</button> </Tooltip>
+);
+
+```
+const trigger = screen.getByRole("button", { name: /focus target/i });
+trigger.focus();
+vi.advanceTimersByTime(OPEN_DELAY);
+expect(screen.getByRole("tooltip")).toBeInTheDocument();
+
+// Blur should start close timer
+trigger.blur();
+vi.advanceTimersByTime(CLOSE_DELAY);
+expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+```
+
+});
 });
 
 describe("Tooltip (controlled)", () => {
-  it("controlled: ESC attempts to close via onOpenChange(false)", async () => {
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    const onOpenChange = vi.fn();
-    render(
-      <Tooltip content="Details" open={true} onOpenChange={onOpenChange}>
-        <button>Ctrl</button>
-      </Tooltip>
-    );
-    expect(screen.getByRole("tooltip")).toBeInTheDocument();
-    await user.keyboard("{Escape}");
-    expect(onOpenChange).toHaveBeenCalledWith(false);
-  });
+it("controlled: ESC attempts to close via onOpenChange(false)", async () => {
+const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+const onOpenChange = vi.fn();
+render( <Tooltip content="Details" open={true} onOpenChange={onOpenChange}> <button>Ctrl</button> </Tooltip>
+);
+expect(screen.getByRole("tooltip")).toBeInTheDocument();
+await user.keyboard("{Escape}");
+expect(onOpenChange).toHaveBeenCalledWith(false);
+});
 
-  it("controlled: hover/focus should request open via onOpenChange(true)", async () => {
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    const onOpenChange = vi.fn();
-    render(
-      <Tooltip content="Need open" open={false} onOpenChange={onOpenChange}>
-        <button>Open me</button>
-      </Tooltip>
-    );
+it("controlled: hover/focus should request open via onOpenChange(true)", async () => {
+const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+const onOpenChange = vi.fn();
+render( <Tooltip content="Need open" open={false} onOpenChange={onOpenChange}> <button>Open me</button> </Tooltip>
+);
 
-    const trigger = screen.getByRole("button", { name: /open me/i });
-    await user.hover(trigger);
-    // opening is timer-based; we simulate enough delay then expect a request
-    vi.advanceTimersByTime(OPEN_DELAY);
-    expect(onOpenChange).toHaveBeenCalledWith(true);
+```
+const trigger = screen.getByRole("button", { name: /open me/i });
+await user.hover(trigger);
+// opening is timer-based; we simulate enough delay then expect a request
+vi.advanceTimersByTime(OPEN_DELAY);
+expect(onOpenChange).toHaveBeenCalledWith(true);
 
-    // Focus path should also request open
-    onOpenChange.mockClear();
-    trigger.focus();
-    vi.advanceTimersByTime(OPEN_DELAY);
-    expect(onOpenChange).toHaveBeenCalledWith(true);
-  });
+// Focus path should also request open
+onOpenChange.mockClear();
+trigger.focus();
+vi.advanceTimersByTime(OPEN_DELAY);
+expect(onOpenChange).toHaveBeenCalledWith(true);
+```
 
-  it("controlled: parent-driven open/close reflects in DOM and aria-describedby", async () => {
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    const onOpenChange = vi.fn();
+});
 
-    const { rerender } = render(
-      <Tooltip content="Parent control" open={false} onOpenChange={onOpenChange}>
-        <button>Parent</button>
-      </Tooltip>
-    );
-    const trigger = screen.getByRole("button", { name: /parent/i });
+it("controlled: parent-driven open/close reflects in DOM and aria-describedby", async () => {
+const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+const onOpenChange = vi.fn();
 
-    // Initially closed
-    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
-    expect(trigger).not.toHaveAttribute("aria-describedby");
+```
+const { rerender } = render(
+  <Tooltip content="Parent control" open={false} onOpenChange={onOpenChange}>
+    <button>Parent</button>
+  </Tooltip>
+);
+const trigger = screen.getByRole("button", { name: /parent/i });
 
-    // Parent opens
-    rerender(
-      <Tooltip content="Parent control" open={true} onOpenChange={onOpenChange}>
-        <button>Parent</button>
-      </Tooltip>
-    );
-    expect(screen.getByRole("tooltip")).toBeInTheDocument();
-    const tipId = trigger.getAttribute("aria-describedby");
-    expect(tipId).toBeTruthy();
+// Initially closed
+expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+expect(trigger).not.toHaveAttribute("aria-describedby");
 
-    // Parent closes
-    rerender(
-      <Tooltip content="Parent control" open={false} onOpenChange={onOpenChange}>
-        <button>Parent</button>
-      </Tooltip>
-    );
-    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
-    expect(trigger).not.toHaveAttribute("aria-describedby");
+// Parent opens
+rerender(
+  <Tooltip content="Parent control" open={true} onOpenChange={onOpenChange}>
+    <button>Parent</button>
+  </Tooltip>
+);
+expect(screen.getByRole("tooltip")).toBeInTheDocument();
+const tipId = trigger.getAttribute("aria-describedby");
+expect(tipId).toBeTruthy();
 
-    // User hover requests open again
-    await user.hover(trigger);
-    vi.advanceTimersByTime(OPEN_DELAY);
-    expect(onOpenChange).toHaveBeenCalledWith(true);
-  });
+// Parent closes
+rerender(
+  <Tooltip content="Parent control" open={false} onOpenChange={onOpenChange}>
+    <button>Parent</button>
+  </Tooltip>
+);
+expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+expect(trigger).not.toHaveAttribute("aria-describedby");
+
+// User hover requests open again
+await user.hover(trigger);
+vi.advanceTimersByTime(OPEN_DELAY);
+expect(onOpenChange).toHaveBeenCalledWith(true);
+```
+
+});
+});
+
+describe("Tooltip (multi-instance & id semantics)", () => {
+it("assigns unique ids and aria-describedby per trigger for multiple instances", async () => {
+const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+
+```
+render(
+  <>
+    <Tooltip content="One">
+      <button>First</button>
+    </Tooltip>
+    <Tooltip content="Two">
+      <button>Second</button>
+    </Tooltip>
+  </>
+);
+
+const first = screen.getByRole("button", { name: /first/i });
+const second = screen.getByRole("button", { name: /second/i });
+
+// Open first tooltip
+await user.hover(first);
+vi.advanceTimersByTime(OPEN_DELAY);
+const tip1 = screen.getAllByRole("tooltip")[0];
+const id1 = tip1.getAttribute("id");
+const describedBy1 = first.getAttribute("aria-describedby");
+expect(id1).toBeTruthy();
+expect(describedBy1).toBe(id1);
+
+// Open second tooltip
+await user.hover(second);
+vi.advanceTimersByTime(OPEN_DELAY);
+const tooltips = screen.getAllByRole("tooltip");
+expect(tooltips.length).toBeGreaterThanOrEqual(1); // depending on close-on-hover-out timing there may be 1–2
+const tip2 = screen.getByText("Two").closest('[role="tooltip"]') as HTMLElement;
+const id2 = tip2.getAttribute("id");
+const describedBy2 = second.getAttribute("aria-describedby");
+expect(id2).toBeTruthy();
+expect(describedBy2).toBe(id2);
+
+// Uniqueness
+if (id1 && id2) {
+  expect(id1).not.toBe(id2);
+}
+```
+
+});
 });
