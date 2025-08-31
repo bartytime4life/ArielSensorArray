@@ -2,17 +2,18 @@
 
 ## 0) Purpose & Scope
 
-This document defines the **architecture of the React component layer** under `src/gui/components/`.
-It maps atomic → structural → visualization → composite usage, explains integration with the **CLI-first pipeline**, and provides Mermaid diagrams for clarity.
+This document defines the **architecture of the React component layer** under `src/gui/components/`.  
+It maps **atomic → structural → visualization → composite** usage, explains integration with the **CLI-first pipeline**, and provides Mermaid diagrams for clarity.
 
-The GUI layer is **optional and thin**: all scientific functionality lives in CLI + Hydra configs.
-Components here **only render CLI-produced artifacts** (JSON, PNG, HTML) and provide ergonomic composition for dashboards, reports, and teaching.
+The GUI layer is **optional and thin**: all scientific functionality lives in CLI + Hydra configs:contentReference[oaicite:5]{index=5}.  
+Components here **only render CLI-produced artifacts** (JSON, PNG, HTML) and provide ergonomic composition for dashboards, reports, and teaching:contentReference[oaicite:6]{index=6}.
 
 ---
 
 ## 1) Directory Map
 
 ```
+
 src/gui/components/
 ├─ Button.tsx
 ├─ Input.tsx
@@ -26,18 +27,19 @@ src/gui/components/
 ├─ Chart.tsx
 ├─ Table.tsx
 ├─ index.ts
-├─ *.test.tsx               # Jest/RTL unit tests
+├─ \*.test.tsx               # Jest/RTL unit tests
 ├─ README.md
 └─ ARCHITECTURE.md          # ← you are here
-```
+
+````
 
 ---
 
 ## 2) Component Taxonomy
 
-* **Atomic primitives** — Button, Input, Select, Tooltip, Loader
-* **Structural primitives** — Tabs, Modal, Card, Panel
-* **Data visualization** — Chart, Table
+* **Atomic primitives** — Button, Input, Select, Tooltip, Loader  
+* **Structural primitives** — Tabs, Modal, Card, Panel  
+* **Data visualization** — Chart, Table  
 * **Composite usage** — Panels and Cards composed in app routes (`src/gui/app/diagnostics.tsx`, `reports.tsx`)
 
 ---
@@ -92,7 +94,7 @@ flowchart TD
   CARD --> REPT
   TABLE --> REPT
   TABS --> REPT
-```
+````
 
 ---
 
@@ -106,19 +108,21 @@ flowchart LR
   CHART --> UI[(Viewport)]
 ```
 
-This illustrates the **CLI-first contract**: GUI components never compute analytics.
-They only **render CLI artifacts** (plots, JSON summaries, HTML dashboards).
+**Principle:** The GUI **never computes analytics**.
+It only renders CLI artifacts (plots, JSON summaries, HTML dashboards).
 
 ---
 
 ## 5) Design Principles
 
-* **CLI-first, GUI-optional** — reproducibility enforced at the CLI layer.
-* **Declarative + retained mode React** — components map directly to CLI artifacts.
-* **Atomic → composite layering** — aligns with modern GUI engineering and MVVM patterns.
+* **CLI-first, GUI-optional** — reproducibility is enforced at the CLI layer.
+* **Declarative + retained-mode React** — components map directly to CLI artifacts.
+* **Atomic → composite layering** — aligns with modern GUI engineering (MVVM/MVC patterns).
 * **Reproducibility hooks** — components never bypass Hydra/DVC configs; all overrides must flow from CLI runs.
-* **Mermaid documentation** — all diagrams rendered natively on GitHub.
+* **Mermaid documentation** — diagrams are rendered natively on GitHub.
 
 ---
 
-✅ This makes `ARCHITECTURE.md` **self-contained**, GitHub-renderable, and fully aligned with SpectraMind’s CLI-first philosophy.
+✅ This `ARCHITECTURE.md` is **self-contained**, GitHub-renderable, and fully aligned with SpectraMind V50’s CLI-first philosophy.
+
+```
