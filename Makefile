@@ -30,6 +30,10 @@ DVC          ?= dvc
 GIT          ?= git
 JQ           ?= jq
 
+# GUI tools
+STREAMLIT    ?= streamlit
+UVICORN      ?= uvicorn
+
 # ========= Determinism / Seeds =========
 export PYTHONHASHSEED := 0
 SEED         ?= 42
@@ -81,6 +85,13 @@ DOC_PDF   ?= assets/AI_Design_and_Modeling.pdf
 DOC_TITLE ?= AI Design and Modeling — SpectraMind V50
 DOC_CSS   ?= https://cdn.jsdelivr.net/npm/water.css@2/out/water.css
 
+# ========= GUI demo suite locations =========
+GUI_DIR            ?= docs/gui/demo_suite
+STREAMLIT_APP      ?= $(GUI_DIR)/streamlit_demo.py
+FASTAPI_APP        ?= $(GUI_DIR)/fastapi_backend.py
+QT_APP             ?= $(GUI_DIR)/qt_diag_demo.py
+FASTAPI_PORT       ?= 8089
+
 # ========= Colors =========
 BOLD := \033[1m
 DIM  := \033[2m
@@ -112,7 +123,8 @@ RST  := \033[0m
         pyg-install kaggle-pyg-index \
         docker-print docker-build docker-buildx docker-run docker-shell docker-test docker-clean \
         repro-start repro-snapshot repro-verify repro-manifest \
-        ensure-exec
+        ensure-exec \
+        gui-demo gui-backend gui-backend-stop gui-qt gui-help
 
 # ========= Default Goal =========
 .DEFAULT_GOAL := help
@@ -142,6 +154,11 @@ help:
 	@echo "  $(CYN)kaggle-*(RST)             : Kaggle run/submit/dataset publish"
 	@echo "  $(CYN)diagrams*(RST)            : render Mermaid diagrams with mmdc"
 	@echo "  $(CYN)docker-build/run/shell$(RST) : Dockerized workflow (GPU autodetect)"
+	@echo "  $(CYN)gui-help$(RST)            : list GUI demo targets (Streamlit/FastAPI/Qt)"
+	@echo "  $(CYN)gui-demo$(RST)            : run Streamlit demo (thin wrapper → CLI + artifacts)"
+	@echo "  $(CYN)gui-backend$(RST)         : run FastAPI backend (contracts for React dashboard)"
+	@echo "  $(CYN)gui-backend-stop$(RST)    : try to stop FastAPI dev server (best-effort)"
+	@echo "  $(CYN)gui-qt$(RST)              : run PyQt demo (QProcess → spectramind; embed HTML)"
 	@echo ""
 
 # ========= Init / Env =========
@@ -714,6 +731,35 @@ repro-verify:
 	@ls -t "$(MANIFEST_DIR)"/run_manifest_*.json 2>/dev/null | head -n1 | xargs -I{} cat {}
 
 repro-manifest: repro-start repro-snapshot
+
+# ========= GUI demo suite targets =========
+gui-help:
+	@echo "$(BOLD)GUI Demo Targets$(RST)"
+	@echo "  $(CYN)gui-demo$(RST)           : Run Streamlit demo (thin wrapper around CLI & artifacts)"
+	@echo "  $(CYN)gui-backend$(RST)        : Run FastAPI backend (contracts for React dashboard) on port $(FASTAPI_PORT)"
+	@echo "  $(CYN)gui-backend-stop$(RST)   : Try to stop FastAPI dev server (best-effort)"
+	@echo "  $(CYN)gui-qt$(RST)             : Run PyQt demo (QProcess + embedded diagnostics HTML)"
+	@echo ""
+	@echo "Notes: demos live under $(GUI_DIR). They do not mutate the pipeline and only call $(CLI) + render artifacts."
+
+gui-demo: init
+	@command -v $(STREAMLIT) >/dev/null 2>&1 || { echo "$(YLW)streamlit not found — install via Poetry/pip$(RST)"; exit 1; }
+	@test -f "$(STREAMLIT_APP)" || { echo "$(RED)Missing $(STREAMLIT_APP)$(RST)"; exit 1; }
+	$(STREAMLIT) run "$(STREAMLIT_APP)"
+
+gui-backend: init
+	@command -v $(UVICORN) >/dev/null 2>&1 || { echo "$(YLW)uvicorn not found — install via Poetry/pip$(RST)"; exit 1; }
+	@test -f "$(FASTAPI_APP)" || { echo "$(RED)Missing $(FASTAPI_APP)$(RST)"; exit 1; }
+	$(UVICORN) "$(FASTAPI_APP:.py=):app" --reload --port $(FASTAPI_PORT)
+
+gui-backend-stop:
+	@pgrep -f "uvicorn.*$(FASTAPI_APP:.py=):app" >/dev/null 2>&1 && \
+		kill $$(pgrep -f "uvicorn.*$(FASTAPI_APP:.py=):app") || \
+		echo "::warning::No uvicorn process found"
+
+gui-qt: init
+	@test -f "$(QT_APP)" || { echo "$(RED)Missing $(QT_APP)$(RST)"; exit 1; }
+	$(PYTHON) "$(QT_APP)"
 
 # ========= Cleanup =========
 clean:
