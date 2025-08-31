@@ -1,4 +1,3 @@
-// src/gui/components/Panel.test.tsx
 // =============================================================================
 // ✅ Tests for src/gui/components/Panel.tsx (SpectraMind V50 GUI)
 // -----------------------------------------------------------------------------
@@ -51,6 +50,11 @@ function getRegion(): HTMLElement {
   return region as HTMLElement;
 }
 
+function getSectionFromRegion(): HTMLElement {
+  // region (motion.div) -> section (container)
+  return getRegion().parentElement!.parentElement as HTMLElement;
+}
+
 // -----------------------------------------------------------------------------
 // Tests
 // -----------------------------------------------------------------------------
@@ -87,11 +91,9 @@ describe("Panel component", () => {
       </Panel>
     );
 
-    const container = screen.getByRole("region").parentElement!.parentElement as HTMLElement;
-    // data attributes live on the motion.section (container)
-    const section = container.closest('[data-collapsible]') as HTMLElement;
+    // container section has data attributes for collapsible & collapsed state
+    const section = getSectionFromRegion().closest("[data-collapsible]") as HTMLElement;
     expect(section).toBeTruthy();
-    // Initially expanded
     expect(section.getAttribute("data-collapsed")).toBe("false");
 
     // Click the chevron button
@@ -99,37 +101,36 @@ describe("Panel component", () => {
     fireEvent.click(chevron);
 
     // Now collapsed (body region should no longer be present)
-    const sectionAfter = container.closest('[data-collapsible]') as HTMLElement;
+    const sectionAfter = getSectionFromRegion().closest("[data-collapsible]") as HTMLElement;
     expect(sectionAfter.getAttribute("data-collapsed")).toBe("true");
     expect(screen.queryByRole("region")).toBeNull();
   });
 
-  it("controlled collapsible: clicking chevron calls onCollapsedChange but does not auto-toggle without prop change", () => {
+  it("controlled collapsible: clicking chevron calls onCollapsedChange/onToggle but does not auto-toggle without prop change", () => {
     const onCollapsedChange = vi.fn();
+    const onToggle = vi.fn();
     const { rerender } = render(
       <Panel
         title="Controlled"
         collapsible
         collapsed={false}
         onCollapsedChange={onCollapsedChange}
+        onToggle={onToggle}
       >
         <div>Body</div>
       </Panel>
     );
 
-    const section = screen.getByRole("region").parentElement!.parentElement!.closest(
-      '[data-collapsible]'
-    ) as HTMLElement;
+    const section = getSectionFromRegion().closest("[data-collapsible]") as HTMLElement;
     expect(section?.getAttribute("data-collapsed")).toBe("false");
 
     const chevron = screen.getByLabelText("Collapse panel");
     fireEvent.click(chevron);
     expect(onCollapsedChange).toHaveBeenCalledWith(true);
+    expect(onToggle).toHaveBeenCalledWith(true);
 
     // Without updating prop, still expanded
-    const sectionStill = screen.getByRole("region").parentElement!.parentElement!.closest(
-      '[data-collapsible]'
-    ) as HTMLElement;
+    const sectionStill = getSectionFromRegion().closest("[data-collapsible]") as HTMLElement;
     expect(sectionStill?.getAttribute("data-collapsed")).toBe("false");
 
     // Now simulate parent controlling prop to collapsed
@@ -139,6 +140,7 @@ describe("Panel component", () => {
         collapsible
         collapsed={true}
         onCollapsedChange={onCollapsedChange}
+        onToggle={onToggle}
       >
         <div>Body</div>
       </Panel>
@@ -158,19 +160,15 @@ describe("Panel component", () => {
       </Panel>
     );
 
-    const sectionBefore = screen.getByRole("region").parentElement!.parentElement!.closest(
-      '[data-collapsible]'
-    ) as HTMLElement;
-    expect(sectionBefore?.getAttribute("data-collapsed")).toBe("false");
+    const before = getSectionFromRegion().closest("[data-collapsible]") as HTMLElement;
+    expect(before?.getAttribute("data-collapsed")).toBe("false");
 
     // Click inside actions
     fireEvent.click(screen.getByTestId("action"));
 
     // Should remain expanded
-    const sectionAfter = screen.getByRole("region").parentElement!.parentElement!.closest(
-      '[data-collapsible]'
-    ) as HTMLElement;
-    expect(sectionAfter?.getAttribute("data-collapsed")).toBe("false");
+    const after = getSectionFromRegion().closest("[data-collapsible]") as HTMLElement;
+    expect(after?.getAttribute("data-collapsed")).toBe("false");
   });
 
   it("scrollBody applies maxHeight style on the region container", () => {
@@ -180,7 +178,6 @@ describe("Panel component", () => {
       </Panel>
     );
     const region = getRegion();
-    // The motion.div with role=region receives style when scrollBody is true
     const style = (region as HTMLElement).getAttribute("style") || "";
     expect(style.replace(/\s/g, "")).toContain("max-height:400px");
   });
@@ -192,10 +189,11 @@ describe("Panel component", () => {
         <div data-testid="inner">Body</div>
       </Panel>
     );
-    const region = getRegion();
+    let region = getRegion();
     // First child of region is the padding wrapper
-    const wrapper = region.firstElementChild as HTMLElement;
-    expect(wrapper.className).toMatch(/pb-3|pt-2/); // default padded adds pb-3 pt-2
+    let wrapper = region.firstElementChild as HTMLElement;
+    expect(wrapper.className).toMatch(/pb-3/);
+    expect(wrapper.className).toMatch(/pt-2/);
 
     // Now unpadded
     rerender(
@@ -203,9 +201,9 @@ describe("Panel component", () => {
         <div data-testid="inner">Body</div>
       </Panel>
     );
-    const region2 = getRegion();
-    const wrapper2 = region2.firstElementChild as HTMLElement;
-    expect(wrapper2.className).toMatch(/py-2/);
+    region = getRegion();
+    wrapper = region.firstElementChild as HTMLElement;
+    expect(wrapper.className).toMatch(/py-2/);
   });
 
   it("renders footer when provided", () => {
@@ -217,15 +215,15 @@ describe("Panel component", () => {
     expect(screen.getByTestId("foot")).toBeInTheDocument();
   });
 
-  it("applies variant and highlight classes on container", () => {
+  it("applies variant and highlight classes (tone-aware)", () => {
     const { container, rerender } = render(
-      <Panel title="v" variant="default" highlight>
+      <Panel title="v" variant="default" highlight tone="info">
         <div />
       </Panel>
     );
 
-    const section = container.querySelector('[data-collapsible], section')?.closest("section, div") as HTMLElement;
-    // highlight adds border-blue-500
+    // highlight + tone=info adds border-blue-500
+    const section = container.querySelector("[data-collapsible], section")?.closest("section, div") as HTMLElement;
     expect(section.className).toMatch(/border-blue-500/);
 
     // ghost variant removes border/shadow
@@ -234,11 +232,11 @@ describe("Panel component", () => {
         <div />
       </Panel>
     );
-    const ghost = container.querySelector('[data-collapsible], section')?.closest("section, div") as HTMLElement;
+    const ghost = container.querySelector("[data-collapsible], section")?.closest("section, div") as HTMLElement;
     expect(ghost.className).toMatch(/shadow-none/);
   });
 
-  it("sets a11y attributes: aria-labelledby on section and region linkage", () => {
+  it("sets a11y attributes: section has aria-labelledby pointing at header; region linked via aria-labelledby", () => {
     render(
       <Panel title="a11y" collapsible>
         <div>Body</div>
@@ -246,16 +244,42 @@ describe("Panel component", () => {
     );
 
     // Section has aria-labelledby referencing the header id
-    const sections = screen.getAllByRole("region");
-    // The first region exists, and its parent section should have aria-labelledby
-    const region = sections[0];
-    const section = region.parentElement?.parentElement as HTMLElement;
+    const section = getSectionFromRegion();
     const labelledby = section.getAttribute("aria-labelledby");
     expect(labelledby).toBeTruthy();
 
-    // The region should reference that header via aria-labelledby (implicit via parent id + role=region)
-    // We ensure header element exists with that id
+    // The element with that id must exist (header)
     const headerEl = document.getElementById(labelledby!);
     expect(headerEl).toBeTruthy();
+
+    // Region references header via aria-labelledby implicitly by id linkage and role=region
+    const region = getRegion();
+    expect(region.getAttribute("aria-labelledby")).toBeTruthy();
+    // Should point to same header id
+    expect(region.getAttribute("aria-labelledby")).toBe(labelledby);
+  });
+
+  it("sticky header/footer and dividers render appropriate classes", () => {
+    render(
+      <Panel
+        title="Sticky"
+        stickyHeader
+        stickyFooter
+        dividers
+        footer={<div>F</div>}
+      >
+        <div>Body</div>
+      </Panel>
+    );
+
+    // Header should exist (sticky class applied)
+    const header = screen.getByTestId("PanelHeader");
+    expect(header.className).toMatch(/sticky/);
+    // Footer sticky
+    const footer = screen.getByTestId("PanelFooter");
+    expect(footer.className).toMatch(/sticky/);
+    // Dividers apply border on header/footer container (border-b / border-t)
+    expect(header.className).toMatch(/border-b|border/);
+    expect(footer.className).toMatch(/border-t|border/);
   });
 });
