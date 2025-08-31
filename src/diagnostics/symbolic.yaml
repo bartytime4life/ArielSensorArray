@@ -1,0 +1,32 @@
+# configs/diagnostics/symbolic.yaml
+# ==============================================================================
+# ∑ Symbolic constraints & violation analysis
+# Provides rule sets, weights, and influence/violation exports.
+# ==============================================================================
+
+symbolic:
+  enable: true
+  ruleset: "default"              # swap via CLI: symbolic.ruleset=aggressive
+  weights:
+    smoothness: 1.0
+    nonnegativity: 1.0
+    molecule_coherence: 0.8
+    asymmetry: 0.2
+  # Influence maps & masks
+  influence:
+    enable: true
+    aggregate: ["max", "sum", "weighted"]
+  export:
+    violations_mask_path: "symbolic/violations_mask.npy"
+    rule_rank_json: "symbolic/rule_rank.json"
+  plots:
+    violation_heatmap: true
+    top_rules_bar: true
+    dpi: 160
+    save_png: true
+  # Rule-specific parameters (interpreted in the engine)
+  params:
+    smoothness_l2_lambda: 0.05
+    nonnegativity_eps: 1.0e-8
+    molecule_regions: ["H2O", "CH4", "CO2"]
+    asymmetry_window: 7
