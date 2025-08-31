@@ -1,5 +1,3 @@
-here’s a GitHub-safe, upgraded version with Mermaid blocks that render cleanly (no inner quotes issues, no trailing semicolons, and `|` escaped where needed). replace your file with this:
-
 # 🧭 SpectraMind V50 — GUI Architecture (Upgraded)
 
 ## 0) Purpose
