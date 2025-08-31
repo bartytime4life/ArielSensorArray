@@ -1,0 +1,24 @@
+# configs/diagnostics/gll.yaml
+# ==============================================================================
+# 📈 Gaussian Log-Likelihood (GLL) evaluator
+# Controls per-bin & per-planet scoring and heatmap renders.
+# ==============================================================================
+
+gll:
+  enable: true
+  epsilon: 1.0e-8                     # numerical stability for log/var
+  clamp_sigma_min: 1.0e-6             # avoid zero variance
+  aggregate:
+    by_planet: true
+    by_bin: true
+    global: true
+  plots:
+    heatmap: true
+    per_planet_bar: true
+    cmap: "viridis"
+    save_png: true
+    dpi: 160
+  output:
+    json_path: "diagnostic_summary.json"   # merged by generate_diagnostic_summary.py
+    heatmap_path: "plots/gll_heatmap.png"
+    per_planet_path: "plots/gll_per_planet.png"
