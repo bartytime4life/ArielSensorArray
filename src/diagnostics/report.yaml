@@ -1,0 +1,26 @@
+# configs/diagnostics/report.yaml
+# ==============================================================================
+# 🖥️ Unified HTML dashboard (generate_html_report.py)
+# ==============================================================================
+
+report:
+  enable: true
+  versioning:
+    enable: true
+    prefix: "report_v"
+  sections:
+    include:
+      - "summary"
+      - "gll"
+      - "fft"
+      - "calibration"
+      - "symbolic"
+      - "explainability"
+      - "cli_log"
+  theme:
+    css: "light"            # "light" | "dark" | "auto"
+  assets:
+    embed_iframes: true     # embed UMAP/t-SNE html
+    copy_plots: true        # copy png assets into report bundle
+  output:
+    html_path: "report_v1.html"   # auto-bumped if versioning enabled
