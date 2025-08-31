@@ -19,9 +19,9 @@ flowchart LR
   end
 
   subgraph Server["Server (FastAPI)"]
-    A[/"/api/diagnostics/*"/]:::api
-    M[/"/api/authz/*"/]:::api
-    X[(Static "/artifacts")]:::static
+    A["/api/diagnostics/*"]:::api
+    M["/api/authz/*"]:::api
+    X[(Static /artifacts)]:::static
   end
 
   subgraph Pipeline["CLI & Pipeline"]
