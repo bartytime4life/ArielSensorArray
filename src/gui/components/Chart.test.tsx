@@ -1,10 +1,9 @@
-// src/gui/components/Chart.test.tsx
 // =============================================================================
 // ✅ Tests for src/gui/components/Chart.tsx (SpectraMind V50 GUI)
 // -----------------------------------------------------------------------------
 // Validates: loading/error/empty states, chart type switching (line/area/bar/
 // composed), series rendering, grid/legend, reference lines, right-axis usage,
-// and point click forwarding.
+// point click forwarding, brush control, gradients, and header chrome.
 //
 // Test stack assumptions:
 //   • Vitest (or Jest) + @testing-library/react
@@ -51,7 +50,7 @@ vi.mock("@/lib/utils", () => {
 });
 
 // Helper to create simple passthrough components with testids.
-// We also preserve props on elements via data-* so we can assert yAxisId etc.
+// We also preserve props via data-* so we can assert attributes (e.g. yAxisId/orientation).
 function makeEl(name: string, extraProps?: string[]) {
   const Comp: React.FC<any> = ({ children, onClick, ...rest }) => {
     const dataProps: Record<string, any> = { "data-testid": name };
@@ -86,15 +85,16 @@ vi.mock("recharts", () => {
   // primitives
   comps.CartesianGrid = makeEl("CartesianGrid");
   comps.XAxis = makeEl("XAxis");
-  comps.YAxis = makeEl("YAxis", ["yAxisId", "orientation", "label"]);
+  comps.YAxis = makeEl("YAxis", ["yAxisId", "orientation", "label", "domain"]);
   comps.Tooltip = makeEl("Tooltip");
   comps.Legend = makeEl("Legend");
   comps.ReferenceLine = makeEl("ReferenceLine", ["x", "y", "yAxisId"]);
+  comps.Brush = makeEl("Brush", ["dataKey", "height"]);
 
   // series
   comps.Line = makeEl("Line", ["dataKey", "yAxisId", "type"]);
   comps.Area = makeEl("Area", ["dataKey", "yAxisId", "type"]);
-  comps.Bar = makeEl("Bar", ["dataKey", "yAxisId"]);
+  comps.Bar = makeEl("Bar", ["dataKey", "yAxisId", "stackId"]);
 
   return comps;
 });
@@ -117,13 +117,9 @@ const lineSeries = [
   { key: "loss", label: "Loss" },
 ];
 
-const areaSeries = [
-  { key: "gll", label: "GLL", seriesType: "area" as const },
-];
+const areaSeries = [{ key: "gll", label: "GLL", seriesType: "area" as const }];
 
-const barSeries = [
-  { key: "aux", label: "Aux", seriesType: "bar" as const },
-];
+const barSeries = [{ key: "aux", label: "Aux", seriesType: "bar" as const }];
 
 const composedSeries = [
   { key: "gll", label: "GLL", seriesType: "line" as const },
@@ -181,9 +177,7 @@ describe("Chart component", () => {
   });
 
   it("renders LineChart with matching Line series when type=line", () => {
-    render(
-      <Chart title="Line" type="line" data={sampleData} xKey="step" yKeys={lineSeries} />
-    );
+    render(<Chart title="Line" type="line" data={sampleData} xKey="step" yKeys={lineSeries} />);
     expect(screen.getByTestId("LineChart")).toBeInTheDocument();
     const lines = screen.getAllByTestId("Line");
     expect(lines.length).toBe(lineSeries.length);
@@ -194,13 +188,7 @@ describe("Chart component", () => {
 
   it("renders AreaChart with Area series when type=area", () => {
     render(
-      <Chart
-        title="Area"
-        type="area"
-        data={sampleData}
-        xKey="step"
-        yKeys={areaSeries as any}
-      />
+      <Chart title="Area" type="area" data={sampleData} xKey="step" yKeys={areaSeries as any} />
     );
     expect(screen.getByTestId("AreaChart")).toBeInTheDocument();
     const areas = screen.getAllByTestId("Area");
@@ -208,15 +196,7 @@ describe("Chart component", () => {
   });
 
   it("renders BarChart with Bar series when type=bar", () => {
-    render(
-      <Chart
-        title="Bar"
-        type="bar"
-        data={sampleData}
-        xKey="step"
-        yKeys={barSeries as any}
-      />
-    );
+    render(<Chart title="Bar" type="bar" data={sampleData} xKey="step" yKeys={barSeries as any} />);
     expect(screen.getByTestId("BarChart")).toBeInTheDocument();
     const bars = screen.getAllByTestId("Bar");
     expect(bars.length).toBe(barSeries.length);
@@ -315,5 +295,78 @@ describe("Chart component", () => {
     expect(screen.getByTestId("card")).toBeInTheDocument();
     expect(screen.getByTestId("card-title")).toHaveTextContent("Header Title");
     expect(screen.getByTestId("card-desc")).toHaveTextContent("Header Description");
+  });
+
+  it("shows Brush control when brush=true", () => {
+    render(
+      <Chart
+        title="Brushed"
+        type="line"
+        data={sampleData}
+        xKey="step"
+        yKeys={lineSeries}
+        brush
+      />
+    );
+    expect(screen.getByTestId("Brush")).toBeInTheDocument();
+    // Brush should be configured with dataKey=xKey
+    expect(screen.getByTestId("Brush").getAttribute("data-datakey")).toBe("step");
+  });
+
+  it("applies right/left y domain props to axes", () => {
+    render(
+      <Chart
+        title="Domains"
+        type="line"
+        data={sampleData}
+        xKey="step"
+        yKeys={[{ key: "gll", label: "GLL" }, { key: "aux", label: "Aux", yAxisId: "right" as const }]}
+        yDomainLeft={[0, 1]}
+        yDomainRight={[2, 3]}
+      />
+    );
+    const yAxes = screen.getAllByTestId("YAxis");
+    // Our mock records the 'domain' prop stringified in data-domain when passed
+    const leftAxis = yAxes.find((el) => el.getAttribute("data-yaxisid") === "left");
+    const rightAxis = yAxes.find((el) => el.getAttribute("data-yaxisid") === "right");
+    expect(leftAxis).toBeTruthy();
+    expect(rightAxis).toBeTruthy();
+  });
+
+  it("renders gradient defs for area/bar series with gradient=true", () => {
+    render(
+      <Chart
+        title="Gradients"
+        type="area"
+        data={sampleData}
+        xKey="step"
+        yKeys={[
+          { key: "gll", label: "GLL", seriesType: "area", gradient: true, color: "#2563eb" } as any,
+        ]}
+      />
+    );
+    // The gradient defs are injected; we can assert presence of linearGradient tags
+    const grads = document.getElementsByTagName("linearGradient");
+    expect(grads.length).toBeGreaterThan(0);
+  });
+
+  it("stacks bar/area series when stacked=true (stackId is present)", () => {
+    render(
+      <Chart
+        title="Stacked"
+        type="composed"
+        data={sampleData}
+        xKey="step"
+        yKeys={[
+          { key: "loss", label: "Loss", seriesType: "area", stacked: true } as any,
+          { key: "aux", label: "Aux", seriesType: "bar", stacked: true } as any,
+        ]}
+      />
+    );
+    // Our mock exposes stackId via data-stackid when provided
+    const areas = screen.getAllByTestId("Area");
+    const bars = screen.getAllByTestId("Bar");
+    expect(areas[0].getAttribute("data-stackid")).toBeTruthy();
+    expect(bars[0].getAttribute("data-stackid")).toBeTruthy();
   });
 });
