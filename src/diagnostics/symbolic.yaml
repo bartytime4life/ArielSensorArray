@@ -1,76 +1,308 @@
-```yaml
 # configs/diagnostics/symbolic.yaml
+
 # ==============================================================================
-# ∑ Symbolic constraints & violation analysis
-# Provides rule sets, weights, and influence/violation exports.
-# NASA-grade reproducibility: all params override-able via Hydra CLI
+
+# ∑ Symbolic constraints & violation analysis — SpectraMind V50
+
+# NeurIPS 2025 Ariel Data Challenge — NASA-grade, Hydra-safe, CLI-first
+
+# ------------------------------------------------------------------------------
+
+# Purpose:
+
+# Centralizes configuration for the Symbolic Logic Engine and its diagnostics:
+
+# • Rule sets & weights
+
+# • Per-rule parameters (smoothness, nonnegativity, molecules, FFT, alignment)
+
+# • Influence/violation maps, exports, and plotting
+
+# • Dashboard/HTML integration and CI/CLI logging
+
+#
+
+# Usage (examples):
+
+# spectramind diagnose symbolic-rank symbolic.ruleset=aggressive
+
+# spectramind diagnose symbolic-rank symbolic.weights.smoothness=0.75 symbolic.influence.aggregate='\[max,sum,entropy]'
+
+# spectramind diagnose dashboard diagnostics.include\_symbolic=true
+
+# spectramind diagnose symbolic-rank symbolic.mode=soft symbolic.normalize.rule\_weights=true
+
+#
+
+# Conventions:
+
+# • Paths interpolate `${paths.*}` (define in configs/paths.yaml) for portability.
+
+# • Boolean toggles are explicit to support CI and Hydra overrides.
+
+# • Lists are YAML-safe for CLI override (quote as needed).
+
 # ==============================================================================
+
+# ------------------------------------------------------------------------------
+
+# Hydra defaults (kept minimal; logging handled by global configs)
+
+# ------------------------------------------------------------------------------
+
+defaults:
+
+* override hydra/job\_logging: default
+* override hydra/hydra\_logging: default
+
+# ------------------------------------------------------------------------------
+
+# Master toggle
+
+# ------------------------------------------------------------------------------
 
 symbolic:
-  enable: true
+enable: true
 
-  # Rule engine selection
-  ruleset: "default"                # swap via CLI: symbolic.ruleset=aggressive
-  available_rulesets: ["default", "aggressive", "lenient", "molecule_strict"]
+# --------------------------------------------------------------------------
 
-  # Rule weights (normalized in engine)
-  weights:
-    smoothness: 1.0
-    nonnegativity: 1.0
-    molecule_coherence: 0.8
-    asymmetry: 0.2
-    photonic_alignment: 0.5
-    fft_consistency: 0.3
+# Engine mode & normalization
 
-  # Influence maps & symbolic attribution
-  influence:
-    enable: true
-    aggregate: ["max", "sum", "weighted", "entropy"]
-    normalize: true
-    export_json: true
-    export_csv: true
+# --------------------------------------------------------------------------
 
-  # Exported artifacts
-  export:
-    violations_mask_path: "symbolic/violations_mask.npy"
-    rule_rank_json: "symbolic/rule_rank.json"
-    influence_map_json: "symbolic/influence_map.json"
-    summary_csv: "symbolic/violations_summary.csv"
+mode: "soft"                         # "soft" (differentiable) | "hard" (strict)
+normalize:
+rule\_weights: true                 # normalize provided weights internally
+per\_rule\_maps: true                # normalize per-rule violation/influence maps
+per\_planet: false                  # optional per-planet normalization
 
-  # Visualization settings
-  plots:
-    violation_heatmap: true
-    top_rules_bar: true
-    planet_rule_matrix: true
-    dpi: 160
-    figsize: [12, 8]
-    save_png: true
-    save_html: true
+# --------------------------------------------------------------------------
 
-  # Rule-specific parameters (interpreted in the engine)
-  params:
-    smoothness_l2_lambda: 0.05
-    smoothness_window: 5
-    nonnegativity_eps: 1.0e-8
-    molecule_regions: ["H2O", "CH4", "CO2", "CO", "NH3"]
-    asymmetry_window: 7
-    fft_cutoff_freq: 40
-    photonic_alignment_tolerance: 0.01
+# Rule engine selection
 
-  # Diagnostics integration
-  diagnostics:
-    log_json: true
-    log_md: true
-    include_in_html_report: true
-    enable_dashboard_overlay: true
-```
+# --------------------------------------------------------------------------
 
-This upgraded version includes:
+ruleset: "default"                   # swap via CLI: symbolic.ruleset=aggressive
+available\_rulesets: \["default", "aggressive", "lenient", "molecule\_strict"]
 
-* **`available_rulesets`** (so Hydra can swap configs cleanly)
-* Expanded **weights** (added `photonic_alignment`, `fft_consistency`)
-* Richer **influence aggregation** (entropy, weighted, normalize)
-* Structured **exports** (`.npy`, `.json`, `.csv`) for dashboards and CI
-* More granular **plot controls** (matrix, figsize, HTML export)
-* Expanded **params** for smoothness, molecule regions, FFT, photonic alignment
-* Diagnostics hooks (`log_json`, `log_md`, dashboard overlay).
+# Optional external rules file (Hydra path); if set, overrides builtin presets.
+
+rules\_yaml: null                     # e.g., configs/symbolic/rulesets/molecule\_strict.yaml
+
+# --------------------------------------------------------------------------
+
+# Rule weights (pre-normalization; engine normalizes if normalize.rule\_weights)
+
+# --------------------------------------------------------------------------
+
+weights:
+smoothness: 1.0
+nonnegativity: 1.0
+molecule\_coherence: 0.8
+asymmetry: 0.2
+photonic\_alignment: 0.5
+fft\_consistency: 0.3
+
+# --------------------------------------------------------------------------
+
+# Rule-specific parameters (interpreted by the engine)
+
+# --------------------------------------------------------------------------
+
+params:
+\# Smoothness
+smoothness\_l2\_lambda: 0.05         # L2 gradient penalty λ
+smoothness\_window: 5               # bins for local finite-difference window
+\# Nonnegativity
+nonnegativity\_eps: 1.0e-8          # tolerance near zero (μ ≥ -eps)
+\# Molecular coherence
+molecule\_regions: \["H2O", "CH4", "CO2", "CO", "NH3"]
+molecule\_region\_weighting: "uniform"  # "uniform" | "snr" | "prior"
+molecule\_min\_bins: 2               # min contiguous bins to count a violation
+\# Asymmetry (local left/right balance within a sliding window)
+asymmetry\_window: 7
+asymmetry\_power: 1.0               # emphasis on large asymmetries
+\# FFT consistency (limit high-frequency noise)
+fft\_cutoff\_freq: 40                # discrete freq index cutoff (0..N/2)
+fft\_taper: "hann"                  # "hann" | "hamming" | "none"
+fft\_energy\_max\_ratio: 0.25         # energy above cutoff must be ≤ ratio
+\# Photonic alignment (align features with photometric transit phases)
+photonic\_alignment\_tolerance: 0.01 # fraction of phase or normalized x-axis
+
+# --------------------------------------------------------------------------
+
+# Thresholds & gating for rule activation (optional)
+
+# --------------------------------------------------------------------------
+
+thresholds:
+min\_snr\_for\_molecule\_checks: 2.0   # skip molecule checks if SNR below this
+max\_allowed\_violation\_fraction: 0.5 # early cap for catastrophic cases
+ignore\_bins\_mask\_path: null         # optional .npy mask (1=ignore)
+
+# --------------------------------------------------------------------------
+
+# Influence maps & symbolic attribution
+
+# --------------------------------------------------------------------------
+
+influence:
+enable: true
+aggregate: \["max", "sum", "weighted", "entropy"]   # aggregation modes
+weighted\_strategy: "rule\_weight"   # "rule\_weight" | "snr" | "custom"
+entropy\_eps: 1.0e-12               # numerical stability for entropy calc
+normalize: true                    # normalize composite influence map
+export\_json: true
+export\_csv: true
+export\_numpy: true                 # export .npy arrays for fast reload
+
+# --------------------------------------------------------------------------
+
+# Exported artifacts (all relative to `${paths.artifacts}` unless absolute)
+
+# --------------------------------------------------------------------------
+
+export:
+base\_dir: "\${paths.artifacts}/symbolic"
+violations\_mask\_path: "\${symbolic.export.base\_dir}/violations\_mask.npy"
+rule\_rank\_json: "\${symbolic.export.base\_dir}/rule\_rank.json"
+influence\_map\_json: "\${symbolic.export.base\_dir}/influence\_map.json"
+influence\_map\_npy: "\${symbolic.export.base\_dir}/influence\_map.npy"
+per\_rule\_map\_npy\_dir: "\${symbolic.export.base\_dir}/per\_rule\_maps"   # one .npy per rule
+summary\_csv: "\${symbolic.export.base\_dir}/violations\_summary.csv"
+per\_planet\_jsonl: "\${symbolic.export.base\_dir}/per\_planet\_violations.jsonl"
+debug\_log: "\${symbolic.export.base\_dir}/symbolic\_debug.log"
+
+# --------------------------------------------------------------------------
+
+# Visualization settings
+
+# --------------------------------------------------------------------------
+
+plots:
+violation\_heatmap: true
+top\_rules\_bar: true
+planet\_rule\_matrix: true
+dpi: 160
+figsize: \[12, 8]
+save\_png: true
+save\_html: true
+html\_interactive: true             # enable Plotly/Altair interactive HTML
+color\_map: "viridis"               # engine may map to lib defaults if unavailable
+\# UMAP/t-SNE overlays (if available from diagnostics)
+embed\_umap\_overlay: true
+embed\_tsne\_overlay: true
+\# Link points to planet-level pages (if dashboard supports it)
+link\_planet\_pages: true
+
+# --------------------------------------------------------------------------
+
+# Diagnostics & logging integration
+
+# --------------------------------------------------------------------------
+
+diagnostics:
+log\_json: true
+log\_md: true
+include\_in\_html\_report: true
+enable\_dashboard\_overlay: true
+attach\_cli\_call: true              # record CLI argv in JSON/MD
+write\_constraint\_violation\_log: "\${paths.artifacts}/constraint\_violation\_log.json"
+append\_v50\_debug\_log: "\${paths.logs}/v50\_debug\_log.md"
+
+# --------------------------------------------------------------------------
+
+# HTML dashboard/report integration
+
+# --------------------------------------------------------------------------
+
+report:
+enable: true
+versioned\_html: true               # write v{n}.html with bumping index
+out\_dir: "\${paths.artifacts}/reports"
+base\_name: "symbolic\_diagnostics"
+open\_in\_browser: false
+include\_sections:
+\- "symbolic\_rule\_leaderboard"
+\- "planet\_rule\_matrix"
+\- "influence\_overlays"
+\- "fft\_consistency\_panel"
+\- "molecule\_regions\_panel"
+
+# --------------------------------------------------------------------------
+
+# CI/QA hooks (used by selftests and CI workflows)
+
+# --------------------------------------------------------------------------
+
+ci:
+require\_exports: true              # CI fails if expected exports missing
+require\_plots: true                # CI fails if required plots missing
+max\_html\_size\_mb: 50               # guard against runaway HTML bundles
+\# Simple sanity thresholds (can be tightened per repo policy)
+sanity:
+max\_violation\_rate: 0.95
+max\_nan\_fraction: 0.001
+max\_empty\_rule\_fraction: 0.75
+
+# --------------------------------------------------------------------------
+
+# Symbolic profile switcher (optional advanced routing)
+
+# --------------------------------------------------------------------------
+
+profiles:
+enable: false
+yaml: "\${paths.configs}/symbolic/profiles.yaml"    # loaded if enable=true
+\# Expose profile class to UMAP/t-SNE overlays
+expose\_to\_embeddings: true
+\# Diagnostics: profile × rule violation heatmap
+profile\_rule\_matrix: true
+
+# --------------------------------------------------------------------------
+
+# COREL / calibration-aware weighting (optional, if available downstream)
+
+# --------------------------------------------------------------------------
+
+calibration:
+use\_corel\_weights: false           # weight violations by COREL coverage deltas
+corel\_json: "\${paths.artifacts}/calibration/corel\_coverage.json"
+temperature\_scaling\_json: "\${paths.artifacts}/calibration/temperature\_scaling.json"
+
+# --------------------------------------------------------------------------
+
+# Engine safety & numerical settings
+
+# --------------------------------------------------------------------------
+
+numeric:
+eps: 1.0e-12
+clamp\_min: -1.0e6
+clamp\_max: 1.0e6
+dtype: "float32"                   # engine may cast as needed (CPU/GPU)
+
+# --------------------------------------------------------------------------
+
+# Performance knobs
+
+# --------------------------------------------------------------------------
+
+perf:
+num\_workers: 4
+batch\_size: 32
+device: "auto"                     # "auto" | "cpu" | "cuda:0" | "mps"
+torchscript: false                 # enable if model exports TorchScript paths
+
+# --------------------------------------------------------------------------
+
+# Cross-module bindings (file discovery for other tools)
+
+# --------------------------------------------------------------------------
+
+bindings:
+diagnostic\_summary\_json: "\${paths.artifacts}/diagnostics/diagnostic\_summary.json"
+shap\_overlay\_json: "\${paths.artifacts}/shap/shap\_overlay\_summary.json"
+fft\_analysis\_json: "\${paths.artifacts}/fft/fft\_analysis.json"
+umap\_html: "\${paths.artifacts}/embeddings/umap.html"
+tsne\_html: "\${paths.artifacts}/embeddings/tsne.html"
