@@ -175,7 +175,7 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-  T1[Tabs: FFT | GLL | UMAP | t-SNE | Dashboard];
+  T1["Tabs: FFT &#124; GLL &#124; UMAP &#124; t-SNE &#124; Dashboard"];
   C1[Card: Section];
   CH[Chart: PNG/HTML];
   TB[Table: diagnostic_summary.json];
