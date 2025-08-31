@@ -1,39 +1,100 @@
-# configs/diagnostics/default.yaml
+```yaml
+# configs/diagnostics/calibration.yaml
 # ==============================================================================
-# 🧪 Diagnostics — Master composition
-# This is the top-level config used by `spectramind diagnose ...`
-# It composes per-module configs below and sets global IO & run metadata.
+# 🎯 Uncertainty Calibration Diagnostics
+# SpectraMind V50 — NeurIPS 2025 Ariel Data Challenge
+# ------------------------------------------------------------------------------
+# Purpose:
+#   Evaluate predicted uncertainties (σ) against residuals (|μ - y|).
+#   Includes reliability diagrams, quantile coverage, z-score histograms,
+#   molecule-region calibration, and COREL evaluation hooks.
+#
+# Hydra:
+#   Hydra-safe; can be overridden at CLI, e.g.:
+#     spectramind diagnose calibration calibration.coverage.quantiles="[0.05,0.5,0.95]"
+#
+# Outputs:
+#   • Calibration plots (.png)
+#   • Coverage CSV/JSON summaries
+#   • Per-bin and per-molecule diagnostics
+#   • Reproducibility logs with config hash
 # ==============================================================================
 
+# ----------------------------------------------------------------------
+# Hydra defaults
+# ----------------------------------------------------------------------
 defaults:
-  - gll: gll
-  - fft: fft
-  - symbolic: symbolic
-  - calibration: calibration
-  - explain: explain
-  - report: report
-  - physics: physics
-  # Hydra logging (optional) — use your project defaults if present
   - override hydra/job_logging: default
   - override hydra/hydra_logging: default
 
-# Global diagnostics switches & IO
-diagnostics:
-  run_name: "${now:%Y%m%d-%H%M%S}-diag"
-  seed: 1337
-  device: "auto"         # "auto" | "cpu" | "cuda:0"
-  num_workers: 4
-  # Artifacts base; per-run subdir added by code or hydra.runtime.output_dir
-  artifacts_dir: "artifacts/diagnostics"
-  # Inputs produced by predict_v50 or pipeline
-  inputs:
-    mu_path: "artifacts/predict/mu.npy"     # [N_planets, 283]
-    sigma_path: "artifacts/predict/sigma.npy"
-    meta_path: "artifacts/predict/meta.csv" # planet_id, split, clusters, etc.
-    latents_path: "artifacts/predict/latents.npy" # optional for UMAP/t-SNE
+calibration:
+  enable: true
 
-# Logging / hashes appended by CLI wrapper
-logging:
-  save_markdown_log: true                 # append to v50_debug_log.md
-  print_config_at_start: true
-  print_summary_at_end: true
+  # ------------------------------------------------------------------
+  # Coverage analysis (empirical vs nominal)
+  # ------------------------------------------------------------------
+  coverage:
+    quantiles: [0.1, 0.2, 0.5, 0.8, 0.9]   # target coverage levels
+    per_bin: true                          # per spectral bin evaluation
+    per_molecule_region: true              # group bins by molecule bands (H₂O, CO₂, CH₄, etc.)
+    temporal_slices: false                 # optional: evaluate calibration vs. transit phase
+
+  # ------------------------------------------------------------------
+  # Reliability diagrams (expected calibration error)
+  # ------------------------------------------------------------------
+  reliability:
+    n_bins: 15
+    min_count_per_bin: 25
+    compute_ece: true                      # Expected Calibration Error
+    compute_mce: true                      # Maximum Calibration Error
+
+  # ------------------------------------------------------------------
+  # Z-score evaluation
+  # ------------------------------------------------------------------
+  zscore:
+    enable: true
+    clip: 6.0                              # clip extreme z-scores
+    per_bin: true
+    per_molecule_region: true
+
+  # ------------------------------------------------------------------
+  # COREL calibration integration (binwise conformal prediction)
+  # ------------------------------------------------------------------
+  corel:
+    enable: true
+    evaluate_coverage: true
+    export_heatmap: true                   # save COREL coverage heatmap
+    heatmap_png: "calibration/corel_heatmap.png"
+    summary_csv: "calibration/corel_summary.csv"
+
+  # ------------------------------------------------------------------
+  # Plotting options
+  # ------------------------------------------------------------------
+  plots:
+    reliability_diagram: true
+    z_histogram: true
+    per_bin_coverage: true
+    molecule_region_coverage: true
+    save_png: true
+    dpi: 160
+    figsize: [8, 6]
+
+  # ------------------------------------------------------------------
+  # Export artifacts
+  # ------------------------------------------------------------------
+  export:
+    coverage_csv: "calibration/coverage.csv"
+    coverage_json: "calibration/coverage.json"
+    reliability_png: "calibration/reliability.png"
+    z_hist_png: "calibration/z_hist.png"
+    per_bin_csv: "calibration/per_bin.csv"
+    molecule_csv: "calibration/molecule_region.csv"
+
+  # ------------------------------------------------------------------
+  # Reproducibility & logging
+  # ------------------------------------------------------------------
+  reproducibility:
+    log_hash: true                         # record config hash in v50_debug_log.md
+    snapshot_config: true                  # save calibration.yaml snapshot with results
+    run_manifest: "calibration/manifest.json"
+```
