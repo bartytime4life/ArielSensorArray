@@ -1,194 +1,401 @@
-```yaml
 # configs/diagnostics/report.yaml
-# ==============================================================================
-# 🖥️ Unified HTML dashboard (generate_html_report.py)
-# SpectraMind V50 — NeurIPS 2025 Ariel Data Challenge
-# ------------------------------------------------------------------------------
-# Purpose:
-#   Control the generation of a single, versioned HTML dashboard that bundles:
-#     • Summary KPIs
-#     • GLL metrics/heatmaps
-#     • FFT & smoothness diagnostics
-#     • Calibration (reliability/coverage/z-scores/COREL)
-#     • Symbolic violations & influence maps
-#     • Explainability (UMAP/t-SNE, SHAP overlays, attention fusion)
-#     • CLI logs & provenance (config hash, git/DVC metadata)
-#
-# Hydra:
-#   All fields override-able via CLI, e.g.:
-#     spectramind diagnose dashboard report.theme.css=dark report.output.open_browser=true
+
 # ==============================================================================
 
-# ----------------------------------------------------------------------
+# 🖥️ Unified HTML dashboard (generate\_html\_report.py)
+
+# SpectraMind V50 — NeurIPS 2025 Ariel Data Challenge
+
+# ------------------------------------------------------------------------------
+
+# Purpose:
+
+# Control generation of a single, versioned HTML dashboard that bundles:
+
+# • Summary KPIs
+
+# • GLL metrics/heatmaps
+
+# • FFT & smoothness diagnostics
+
+# • Calibration (reliability/coverage/z-scores/COREL)
+
+# • Symbolic violations & influence maps
+
+# • Explainability (UMAP/t-SNE, SHAP overlays, attention fusion)
+
+# • CLI logs & provenance (config hash, git/DVC metadata)
+
+#
+
+# CLI override examples:
+
+# spectramind diagnose dashboard report.theme.css=dark report.output.open\_browser=true
+
+# spectramind diagnose dashboard report.output.versioning.prefix=diag\_v report.layout.sticky\_nav=false
+
+# spectramind diagnose dashboard report.assets.embed\_iframes=false report.assets.copy\_plots=false
+
+#
+
+# Conventions:
+
+# • Paths interpolate `${paths.*}` (set in configs/paths.yaml) for portability.
+
+# • Dashboard is read-only: never performs analytics; only renders existing artifacts.
+
+# • All toggles explicit for CI/Hydra overrides. Missing assets tolerated if configured.
+
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+
 # Hydra defaults
-# ----------------------------------------------------------------------
+
+# ------------------------------------------------------------------------------
+
 defaults:
-  - override hydra/job_logging: default
-  - override hydra/hydra_logging: default
+
+* override hydra/job\_logging: default
+* override hydra/hydra\_logging: default
+
+# ------------------------------------------------------------------------------
+
+# Master block
+
+# ------------------------------------------------------------------------------
 
 report:
-  enable: true
+enable: true
 
-  # ------------------------------------------------------------------
-  # Versioning & output paths
-  # ------------------------------------------------------------------
-  versioning:
-    enable: true
-    prefix: "report_v"                 # final name becomes {prefix}{N}.html
-    bump_strategy: "auto"              # "auto" | "timestamp" | "manual"
-  output:
-    html_path: "report_v1.html"        # initial path; auto-bumped if versioning enabled
-    bundle_dir: "report_assets"        # copied plots/iframes/css/js
-    inline_css: false                  # set true to inline CSS into HTML
-    minify_html: true
-    gzip_bundle: false                 # also emit report.html.gz
-    open_browser: false                # auto-open after generation
-    write_checksum: true               # write SHA256s for all assets
-    manifest_json: "report_manifest.json"
+# ------------------------------------------------------------------
 
-  # ------------------------------------------------------------------
-  # Global metadata & provenance
-  # ------------------------------------------------------------------
-  metadata:
-    title: "SpectraMind V50 — Diagnostics Dashboard"
-    subtitle: "NeurIPS 2025 Ariel Data Challenge"
-    author: "SpectraMind V50"
-    show_timestamp: true
-    show_git_commit: true
-    show_config_hash: true
-    show_dvc_rev: true
-    show_runtime_env: true
+# Versioning & output paths
 
-  # ------------------------------------------------------------------
-  # Navigation / layout
-  # ------------------------------------------------------------------
-  layout:
-    toc: true                          # table of contents
-    toc_depth: 3
-    section_order:                     # explicit ordering in navbar & body
-      - summary
-      - gll
-      - fft
-      - smoothness
-      - calibration
-      - symbolic
-      - explainability
-      - cli_log
-      - artifacts
-    sticky_nav: true
-    dark_mode_toggle: true
+# ------------------------------------------------------------------
 
-  # ------------------------------------------------------------------
-  # Sections: enable/disable + per-section options
-  # ------------------------------------------------------------------
-  sections:
-    include:
-      - "summary"
-      - "gll"
-      - "fft"
-      - "smoothness"
-      - "calibration"
-      - "symbolic"
-      - "explainability"
-      - "cli_log"
-      - "artifacts"
+output:
+versioning:
+enable: true
+prefix: "report\_v"                     # final base → {prefix}{N}.html
+bump\_strategy: "auto"                  # "auto" | "timestamp" | "manual"
+manual\_index: null                     # used only if bump\_strategy="manual"
+html\_path: "\${paths.artifacts}/reports/report\_v1.html"   # initial; bumped if versioning enabled
+bundle\_dir: "\${paths.artifacts}/reports/report\_assets"    # copied plots/iframes/css/js
+inline\_css: false                        # true → inline CSS into HTML
+inline\_js: false                         # true → inline JS (small helper scripts)
+minify\_html: true
+gzip\_bundle: false                       # also emit {html}.gz
+open\_browser: false                      # auto-open after generation
+write\_checksum: true                     # write SHA256s for all assets
+checksum\_manifest: "\${paths.artifacts}/reports/report\_manifest.json"
+cdn:
+enable: false                          # serve libs via CDN for lighter bundles
+base\_url: "[https://cdn.jsdelivr.net/npm](https://cdn.jsdelivr.net/npm)"
+size\_limits:
+max\_html\_mb: 50                        # cap final HTML size (CI-guard)
+max\_asset\_mb: 100                      # warn if any single asset exceeds this
 
-    summary:
-      enable: true
-      show_kpis: ["gll_mean", "gll_p90", "coverage_0.5", "ece", "n_planets", "runtime_min"]
-      kpi_sources:
-        summary_json: "diagnostic_summary.json"
+# ------------------------------------------------------------------
 
-    gll:
-      enable: true
-      heatmap_png: "plots/gll_heatmap.png"
-      per_planet_png: "plots/gll_per_planet.png"
-      tables:
-        per_planet_csv: "gll_scores.csv"
+# Global metadata & provenance
 
-    fft:
-      enable: true
-      power_png: "plots/fft_power.png"
-      autocorr_png: "plots/autocorr.png"
-      clusters_png: "plots/fft_clusters.png"
-      features_json: "fft_features.json"
+# ------------------------------------------------------------------
 
-    smoothness:
-      enable: true
-      gradient_heatmap_png: "plots/smoothness/gradient_heatmap.png"
-      curvature_heatmap_png: "plots/smoothness/curvature_heatmap.png"
-      tv_map_png: "plots/smoothness/tv_map.png"
-      summary_csv: "smoothness/per_planet_metrics.csv"
+metadata:
+title: "SpectraMind V50 — Diagnostics Dashboard"
+subtitle: "NeurIPS 2025 Ariel Data Challenge"
+author: "SpectraMind V50"
+show\_timestamp: true
+show\_git\_commit: true
+show\_config\_hash: true
+show\_dvc\_rev: true
+show\_runtime\_env: true
+extra\_kv:
+kaggle\_mode: "\${runtime.kaggle\_mode}"   # optional; defined elsewhere
+cli\_version: "\${runtime.cli\_version}"
 
-    calibration:
-      enable: true
-      reliability_png: "calibration/reliability.png"
-      z_hist_png: "calibration/z_hist.png"
-      per_bin_csv: "calibration/per_bin.csv"
-      coverage_csv: "calibration/coverage.csv"
-      corel_heatmap_png: "calibration/corel_heatmap.png"
-      corel_summary_csv: "calibration/corel_summary.csv"
+# ------------------------------------------------------------------
 
-    symbolic:
-      enable: true
-      violation_heatmap_png: "symbolic/violation_heatmap.png"
-      top_rules_bar_png: "symbolic/top_rules_bar.png"
-      rule_rank_json: "symbolic/rule_rank.json"
-      influence_map_json: "symbolic/influence_map.json"
-      summary_csv: "symbolic/violations_summary.csv"
+# Navigation / layout
 
-    explainability:
-      enable: true
-      umap_html: "umap.html"
-      tsne_html: "tsne.html"
-      shap_overlay_png: "plots/shap_overlay.png"
-      shap_attention_png: "plots/shap_attention.png"
-      shap_symbolic_png: "plots/shap_symbolic.png"
+# ------------------------------------------------------------------
 
-    cli_log:
-      enable: true
-      v50_debug_log_md: "v50_debug_log.md"
-      events_jsonl: "events.jsonl"
-      show_recent_n: 50
+layout:
+toc: true                                 # table of contents
+toc\_depth: 3
+section\_order:                            # explicit ordering in navbar & body
+\- summary
+\- gll
+\- fft
+\- smoothness
+\- calibration
+\- symbolic
+\- explainability
+\- cli\_log
+\- artifacts
+\- provenance
+sticky\_nav: true
+dark\_mode\_toggle: true
+search\_box: true                          # client-side fuzzy search across section titles/cards
+filters:
+enable\_split\_filter: true               # train/val/test filter controls (if section supports it)
+enable\_cluster\_filter: true
+enable\_config\_hash\_filter: true
 
-    artifacts:
-      enable: true
-      glob_patterns:
-        - "plots/**/*.png"
-        - "calibration/*.png"
-        - "symbolic/*.png"
-        - "reports/*.html"
-      show_sizes: true
-      show_checksums: true
+# ------------------------------------------------------------------
 
-  # ------------------------------------------------------------------
-  # Theme / styling
-  # ------------------------------------------------------------------
-  theme:
-    css: "light"                       # "light" | "dark" | "auto"
-    brand_color: "#0b5fff"
-    accent_color: "#7c3aed"
-    code_theme: "github"               # code block theme in HTML
+# Sections: enable/disable + per-section options
 
-  # ------------------------------------------------------------------
-  # Asset handling
-  # ------------------------------------------------------------------
-  assets:
-    embed_iframes: true               # embed UMAP/t-SNE html inline (iframes)
-    iframe_height_px: 520
-    copy_plots: true                  # copy png/svg into bundle_dir
-    fail_on_missing: false            # continue even if some assets are missing
-    extra_static:
-      - "assets/logo.png"
-      - "assets/styles.css"
+# ------------------------------------------------------------------
 
-  # ------------------------------------------------------------------
-  # Reproducibility & checks
-  # ------------------------------------------------------------------
-  reproducibility:
-    verify_paths: true                # emit warnings for missing inputs
-    record_cli_invocation: true
-    record_hydra_config_snapshot: true
-    record_env: true                  # python version, packages, CUDA, etc.
-    sha256_all_assets: true
+sections:
+include:
+\- "summary"
+\- "gll"
+\- "fft"
+\- "smoothness"
+\- "calibration"
+\- "symbolic"
+\- "explainability"
+\- "cli\_log"
+\- "artifacts"
+\- "provenance"
+
 ```
+summary:
+  enable: true
+  show_kpis: ["gll_mean", "gll_p90", "coverage_0.5", "ece", "n_planets", "runtime_min"]
+  kpi_sources:
+    summary_json: "${paths.artifacts}/diagnostics/diagnostic_summary.json"
+  cards:
+    show_runtime_breakdown: true
+    show_dataset_counts: true
+  links:
+    open_detailed_json: true              # link to raw summary json
+
+gll:
+  enable: true
+  heatmap_png: "${paths.artifacts}/plots/gll_heatmap.png"
+  per_planet_png: "${paths.artifacts}/plots/gll_per_planet.png"
+  tables:
+    per_planet_csv: "${paths.artifacts}/metrics/gll_scores.csv"
+  options:
+    interactive_html: "${paths.artifacts}/plots/gll_heatmap.html"
+    show_bins_tooltips: true
+    show_distribution_cards: true
+
+fft:
+  enable: true
+  power_png: "${paths.artifacts}/plots/fft/fft_power.png"
+  autocorr_png: "${paths.artifacts}/plots/fft/autocorr.png"
+  clusters_png: "${paths.artifacts}/plots/fft/fft_clusters.png"
+  features_json: "${paths.artifacts}/fft/fft_features.json"
+  options:
+    overlay_symbolic_fingerprints: true
+    show_peak_table: true
+    peak_table_csv: "${paths.artifacts}/fft/peak_table.csv"
+
+smoothness:
+  enable: true
+  gradient_heatmap_png: "${paths.artifacts}/plots/smoothness/gradient_heatmap.png"
+  curvature_heatmap_png: "${paths.artifacts}/plots/smoothness/curvature_heatmap.png"
+  tv_map_png: "${paths.artifacts}/plots/smoothness/tv_map.png"
+  summary_csv: "${paths.artifacts}/smoothness/per_planet_metrics.csv"
+  per_bin_csv: "${paths.artifacts}/smoothness/per_bin_metrics.csv"
+  options:
+    entropy_map_png: "${paths.artifacts}/plots/smoothness/entropy_map.png"
+    show_region_bars: true
+    region_csv: "${paths.artifacts}/smoothness/per_region_metrics.csv"
+
+calibration:
+  enable: true
+  reliability_png: "${paths.artifacts}/calibration/reliability.png"
+  z_hist_png: "${paths.artifacts}/calibration/z_hist.png"
+  per_bin_csv: "${paths.artifacts}/calibration/per_bin.csv"
+  coverage_csv: "${paths.artifacts}/calibration/coverage.csv"
+  corel_heatmap_png: "${paths.artifacts}/calibration/corel_heatmap.png"
+  corel_summary_csv: "${paths.artifacts}/calibration/corel_summary.csv"
+  options:
+    quantile_cal_table_csv: "${paths.artifacts}/calibration/quantile_calibration.csv"
+    symbol_region_fail_csv: "${paths.artifacts}/calibration/symbolic_region_failures.csv"
+    show_calibration_cards: true
+
+symbolic:
+  enable: true
+  violation_heatmap_png: "${paths.artifacts}/symbolic/violation_heatmap.png"
+  top_rules_bar_png: "${paths.artifacts}/symbolic/top_rules_bar.png"
+  rule_rank_json: "${paths.artifacts}/symbolic/rule_rank.json"
+  influence_map_json: "${paths.artifacts}/symbolic/influence_map.json"
+  summary_csv: "${paths.artifacts}/symbolic/violations_summary.csv"
+  per_planet_jsonl: "${paths.artifacts}/symbolic/per_planet_violations.jsonl"
+  options:
+    show_programs_table: true
+    show_rule_masks_gallery: true
+    per_rule_maps_dir: "${paths.artifacts}/symbolic/per_rule_maps"
+    link_planet_pages: true
+
+explainability:
+  enable: true
+  umap_html: "${paths.artifacts}/embeddings/umap.html"
+  tsne_html: "${paths.artifacts}/embeddings/tsne.html"
+  shap_overlay_png: "${paths.artifacts}/plots/shap/shap_overlay.png"
+  shap_attention_png: "${paths.artifacts}/plots/shap/shap_attention.png"
+  shap_symbolic_png: "${paths.artifacts}/plots/shap/shap_symbolic.png"
+  extras:
+    latent_cluster_csv: "${paths.artifacts}/embeddings/latent_clusters.csv"
+    attention_trace_json: "${paths.artifacts}/explain/attention_trace.json"
+    enable_confidence_shading: true
+    enable_symbolic_links: true
+
+cli_log:
+  enable: true
+  v50_debug_log_md: "${paths.logs}/v50_debug_log.md"
+  events_jsonl: "${paths.artifacts}/logs/events.jsonl"
+  show_recent_n: 50
+  analyze_log:
+    enable: true
+    summary_csv: "${paths.artifacts}/logs/log_table.csv"
+    md_table: "${paths.artifacts}/logs/log_table.md"
+    dedupe: true
+    group_by: ["config_hash", "command"]
+
+artifacts:
+  enable: true
+  glob_patterns:
+    - "${paths.artifacts}/plots/**/*.png"
+    - "${paths.artifacts}/calibration/*.png"
+    - "${paths.artifacts}/symbolic/*.png"
+    - "${paths.artifacts}/reports/*.html"
+  show_sizes: true
+  show_checksums: true
+  allow_download_links: true
+
+provenance:
+  enable: true
+  config_snapshot_dir: "${paths.artifacts}/config_snapshots"
+  dvc_diff_txt: "${paths.artifacts}/dvc/diff.txt"
+  git_status_txt: "${paths.artifacts}/git/status.txt"
+  env_json: "${paths.artifacts}/env/runtime_env.json"
+  container_spec: "${paths.artifacts}/env/docker_image.txt"
+```
+
+# ------------------------------------------------------------------
+
+# Theme / styling
+
+# ------------------------------------------------------------------
+
+theme:
+css: "light"                          # "light" | "dark" | "auto"
+brand\_color: "#0b5fff"
+accent\_color: "#7c3aed"
+code\_theme: "github"                  # code block theme in HTML
+favicon\_png: "\${paths.assets}/logos/favicon.png"
+logo\_png: "\${paths.assets}/logos/spectramind.png"
+
+# ------------------------------------------------------------------
+
+# Asset handling
+
+# ------------------------------------------------------------------
+
+assets:
+embed\_iframes: true                   # embed UMAP/t-SNE html inline (iframes)
+iframe\_height\_px: 520
+iframe\_sandbox: "allow-scripts allow-same-origin"
+copy\_plots: true                      # copy png/svg into bundle\_dir
+copy\_interactive\_html: true           # copy .html embeds into bundle\_dir
+fail\_on\_missing: false                # continue even if some assets are missing
+extra\_static:
+\- "\${paths.assets}/logos/spectramind.svg"
+\- "\${paths.assets}/styles/report.css"
+hashing:
+enable: true                        # fingerprint copied assets (cache-busting)
+algorithm: "sha256"
+
+# ------------------------------------------------------------------
+
+# Reproducibility & checks
+
+# ------------------------------------------------------------------
+
+reproducibility:
+verify\_paths: true                    # emit warnings for missing inputs
+record\_cli\_invocation: true
+record\_hydra\_config\_snapshot: true
+record\_env: true                      # python version, packages, CUDA, etc.
+sha256\_all\_assets: true
+append\_v50\_debug\_log: "\${paths.logs}/v50\_debug\_log.md"
+
+# ------------------------------------------------------------------
+
+# Security & privacy (HTML output hardening)
+
+# ------------------------------------------------------------------
+
+security:
+sanitize\_html: true                   # strip unsafe tags/attrs from embedded fragments
+content\_security\_policy:
+enable: true
+policy: "default-src 'self'; img-src 'self' data:; script-src 'self'; style-src 'self' 'unsafe-inline'; frame-src 'self';"
+redact\_env\_keys:
+\- "AWS\_SECRET\_ACCESS\_KEY"
+\- "HF\_TOKEN"
+\- "WANDB\_API\_KEY"
+
+# ------------------------------------------------------------------
+
+# CI/QA hooks (used by selftests and CI workflows)
+
+# ------------------------------------------------------------------
+
+ci:
+require\_sections: \["summary", "gll"]  # CI fails if required sections disabled/missing
+require\_assets:
+\- "\${paths.artifacts}/diagnostics/diagnostic\_summary.json"
+max\_html\_size\_mb: 50
+max\_asset\_count: 2000
+tolerances:
+allow\_missing\_optional\_iframes: true
+allow\_missing\_noncritical\_plots: true
+
+# ------------------------------------------------------------------
+
+# Bindings (cross-module file discovery for the generator)
+
+# ------------------------------------------------------------------
+
+bindings:
+diagnostic\_summary\_json: "\${paths.artifacts}/diagnostics/diagnostic\_summary.json"
+gll\_heatmap\_png: "\${paths.artifacts}/plots/gll\_heatmap.png"
+smoothness\_summary\_csv: "\${paths.artifacts}/smoothness/per\_planet\_metrics.csv"
+umap\_html: "\${paths.artifacts}/embeddings/umap.html"
+tsne\_html: "\${paths.artifacts}/embeddings/tsne.html"
+symbolic\_rule\_rank\_json: "\${paths.artifacts}/symbolic/rule\_rank.json"
+corel\_summary\_csv: "\${paths.artifacts}/calibration/corel\_summary.csv"
+
+# ------------------------------------------------------------------
+
+# Performance & caching (for HTML build pipeline only)
+
+# ------------------------------------------------------------------
+
+perf:
+parallel\_copy\_workers: 8
+cache\_dir: "\${paths.cache}/report"
+reuse\_if\_hash\_matches: true
+compress\_images:
+enable: false
+quality: 90                        # if enabled, recompress copied PNG/JPEG
+
+# ------------------------------------------------------------------
+
+# Developer options (debug view)
+
+# ------------------------------------------------------------------
+
+debug:
+show\_missing\_asset\_placeholders: true
+emit\_build\_trace: true               # write step-by-step build JSONL
+build\_trace\_jsonl: "\${paths.artifacts}/reports/build\_trace.jsonl"
