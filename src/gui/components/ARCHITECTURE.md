@@ -89,7 +89,8 @@ flowchart LR
   C2 --> A12
 
   %% Artifacts -> Components
-  A1 --> U1 & U5
+  A1 --> U1
+  A1 --> U5
   A2 --> U2
   A3 --> U2
   A4 --> U2
@@ -123,17 +124,19 @@ flowchart LR
 
 ## 2) Crosswalk Table (CLI → Artifact → Component → Page)
 
-| CLI (Typer/Hydra)                    | Primary Artifacts (examples)                                                        | Component(s)         | Page(s)                    |                |
-| ------------------------------------ | ----------------------------------------------------------------------------------- | -------------------- | -------------------------- | -------------- |
-| `spectramind diagnose dashboard`     | `artifacts/reports/dashboard.html`                                                  | `Card`, `Tabs`       | `/diagnostics`             |                |
-| `spectramind diagnose fft`           | `artifacts/plots/fft/**/*.png`                                                      | `Chart`              | `/diagnostics`             |                |
-| `spectramind diagnose gll-heatmap`   | `artifacts/plots/gll_heatmap/**/*.png`                                              | `Chart`              | `/diagnostics`             |                |
-| `spectramind diagnose umap` / `tsne` | \`artifacts/embeddings/(umap                                                        | tsne)/\*\*/\*.html\` | `Chart`                    | `/diagnostics` |
-| `spectramind diagnose summary`       | `artifacts/**/diagnostic_summary.json`                                              | `Table`              | `/diagnostics`             |                |
-| `spectramind diagnose symbolic-rank` | `artifacts/symbolic/symbolic_rule_table.html`, `artifacts/symbolic/overlays/*.json` | `Table`, `Panel`     | `/diagnostics`             |                |
-| `spectramind submit`                 | `artifacts/reports/submission_report.html`                                          | `Modal`              | `/reports`                 |                |
-| `spectramind selftest`               | `artifacts/reports/selftest_report.html`                                            | `Modal`              | `/reports`                 |                |
-| any run                              | `artifacts/logs/events.jsonl`, `artifacts/logs/v50_debug_log.md`                    | `Loader`             | `/diagnostics`, `/reports` |                |
+> **Fixes applied:** corrected Markdown table columns; removed stray 5th column; escaped vertical bars by splitting UMAP/t-SNE artifacts onto separate lines to avoid pipe-breaking; ensured code formatting renders on GitHub tables.
+
+| CLI (Typer/Hydra)                    | Primary Artifacts (examples)                                                                           | Component(s)     | Page(s)                    |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------ | ---------------- | -------------------------- |
+| `spectramind diagnose dashboard`     | `artifacts/reports/dashboard.html`                                                                     | `Card`, `Tabs`   | `/diagnostics`             |
+| `spectramind diagnose fft`           | `artifacts/plots/fft/**/*.png`                                                                         | `Chart`          | `/diagnostics`             |
+| `spectramind diagnose gll-heatmap`   | `artifacts/plots/gll_heatmap/**/*.png`                                                                 | `Chart`          | `/diagnostics`             |
+| `spectramind diagnose umap` / `tsne` | <code>artifacts/embeddings/umap/**/\*.html</code><br><code>artifacts/embeddings/tsne/**/\*.html</code> | `Chart`          | `/diagnostics`             |
+| `spectramind diagnose summary`       | `artifacts/**/diagnostic_summary.json`                                                                 | `Table`          | `/diagnostics`             |
+| `spectramind diagnose symbolic-rank` | `artifacts/symbolic/symbolic_rule_table.html`, `artifacts/symbolic/overlays/*.json`                    | `Table`, `Panel` | `/diagnostics`             |
+| `spectramind submit`                 | `artifacts/reports/submission_report.html`                                                             | `Modal`          | `/reports`                 |
+| `spectramind selftest`               | `artifacts/reports/selftest_report.html`                                                               | `Modal`          | `/reports`                 |
+| any run                              | `artifacts/logs/events.jsonl`, `artifacts/logs/v50_debug_log.md`                                       | `Loader`         | `/diagnostics`, `/reports` |
 
 > Notes
 > • Tabs gate **what** the Card/Chart/Table render (switching UMAP vs t-SNE vs GLL) using available artifacts.
@@ -204,7 +207,7 @@ flowchart TD
 
 1. **CLI-First**: All analytics/artifacts come from `spectramind …` with **Hydra** configs and overrides; GUI never computes analytics in-browser.
 2. **Immutable Artifacts**: GUI only renders files under `artifacts/**` or streams logs from `artifacts/logs/**`; these can be versioned with DVC for full lineage.
-3. **Mermaid-in-Markdown**: Architecture diagrams render natively on GitHub, keeping design docs executable and always-up-to-date.
+3. **Mermaid-in-Markdown**: Architecture diagrams render natively on GitHub, keeping design docs executable and always up-to-date.
 4. **Auditability**: Every run writes `events.jsonl` and `v50_debug_log.md` with configs and hashes, enabling end-to-end traceability of GUI views back to CLI runs.
 
 ---
@@ -217,13 +220,5 @@ flowchart TD
 * **Dashboard** → `Card` + `Tabs` on `/diagnostics`
 * **Submission / Selftest Reports** → `Modal` on `/reports`
 * **Logs / Events** → `Loader` (both pages)
-
----
-
-### Sources
-
-* SpectraMind V50 CLI-first architecture, Hydra/DVC/CI integration, artifact & log model
-* Strategy extensions & CLI subcommand surface (diagnostics, explainability, simulate, tune)
-* Mermaid in GitHub Markdown (rendering guidance)
 
 ---
