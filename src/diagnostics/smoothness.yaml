@@ -9,6 +9,7 @@
 #     • L2 gradient / curvature (1st/2nd derivative magnitudes)
 #     • Total Variation (TV)
 #     • Optional Savitzky–Golay smoothing reference
+#     • Entropy / information density maps
 #   Export heatmaps, anomaly flags, and CSV/JSON summaries.
 #
 # CLI override examples:
@@ -30,92 +31,126 @@ smoothness:
   # Input handling
   # ------------------------------------------------------------------
   inputs:
-    mu_path: "artifacts/predict/mu.npy"          # [N_planets, 283]
-    meta_path: "artifacts/predict/meta.csv"      # planet_id, split, cluster, etc.
+    mu_path: "artifacts/predict/mu.npy"           # [N_planets, 283]
+    meta_path: "artifacts/predict/meta.csv"       # planet_id, split, cluster, etc.
+    mask_path: null                               # optional mask for valid bins (1=valid)
+
+  filter:
+    include_splits: ["train", "val", "test"]
+    exclude_planets: []
+    min_bins_for_eval: 50                         # skip planets with fewer bins (masked)
 
   # ------------------------------------------------------------------
   # Gradient / curvature settings
   # ------------------------------------------------------------------
   gradient:
-    compute_first_order: true                    # |∂μ/∂λ|
-    compute_second_order: true                   # |∂²μ/∂λ²|
-    kernel: "central"                            # "forward" | "backward" | "central"
-    eps: 1.0e-12                                 # numerical stability
-    normalize_by_range: true                     # divide by (max-min) per planet
+    compute_first_order: true                     # |∂μ/∂λ|
+    compute_second_order: true                    # |∂²μ/∂λ²|
+    kernel: "central"                             # "forward" | "backward" | "central"
+    eps: 1.0e-12                                  # numerical stability
+    normalize_by_range: true                      # divide by (max-min) per planet
+    aggregate: ["mean", "p95", "max"]
 
   # ------------------------------------------------------------------
   # Penalties / regularizers (analysis-time only; diagnostics do not mutate μ)
   # ------------------------------------------------------------------
   l2:
     enable: true
-    lambda: 0.05                                 # weight used for reporting / ranking
-    aggregate: ["mean", "p95", "max"]            # per-planet aggregations over bins
+    lambda: 0.05                                  # weight used for reporting / ranking
+    aggregate: ["mean", "p95", "max"]
 
   tv:
-    enable: true                                 # Total Variation = Σ |Δμ|
+    enable: true                                  # Total Variation = Σ |Δμ|
     lambda: 0.02
     aggregate: ["mean", "p95", "max"]
 
   savgol:
-    enable: false                                # optional reference smoother
-    window_length: 9                             # odd
+    enable: false                                 # optional reference smoother
+    window_length: 9                              # odd
     polyorder: 2
-    report_residuals: true                       # |μ - μ_savgol|
+    report_residuals: true                        # |μ - μ_savgol|
+    export_residuals: "smoothness/savgol_residuals.csv"
 
   # ------------------------------------------------------------------
-  # Entropy map (optional information density proxy per bin)
+  # Entropy map (information density proxy per bin)
   # ------------------------------------------------------------------
   entropy:
     enable: true
-    method: "shannon"                            # placeholder; implemented in code
+    method: "shannon"                             # placeholder; implemented in code
     window: 7
     normalize: true
+    aggregate: ["mean", "p95", "max"]
 
   # ------------------------------------------------------------------
   # Molecule / region overlays (symbolic-aware reporting)
   # ------------------------------------------------------------------
   molecule_regions:
     enable: true
-    labels: ["H2O", "CH4", "CO2"]                # used to group bins; resolved in code
+    labels: ["H2O", "CH4", "CO2", "CO", "NH3"]    # used to group bins; resolved in code
     per_region_aggregates: ["mean", "p95", "max"]
 
   # ------------------------------------------------------------------
   # Flagging heuristics (non-binding; for dashboards & CI)
   # ------------------------------------------------------------------
   flags:
-    grad_mag_p95: 1.50                           # flag planet if p95(|∂μ/∂λ|) > threshold
-    curvature_p95: 1.25                          # flag planet if p95(|∂²μ/∂λ²|) > threshold
-    tv_per_bin_max: 0.30                         # optional TV-based cap per bin (report only)
-    min_bins_for_eval: 50                        # skip planets with fewer bins (masked)
+    grad_mag_p95: 1.50                            # flag planet if p95(|∂μ/∂λ|) > threshold
+    curvature_p95: 1.25                           # flag planet if p95(|∂²μ/∂λ²|) > threshold
+    tv_per_bin_max: 0.30                          # optional TV-based cap per bin (report only)
+    entropy_p95: 0.75                             # flag if entropy exceeds threshold
+    min_bins_for_eval: 50
 
   # ------------------------------------------------------------------
   # Plots
   # ------------------------------------------------------------------
   plots:
-    gradient_heatmap: true                       # per-bin |∂μ/∂λ| heatmap
-    curvature_heatmap: true                      # per-bin |∂²μ/∂λ²| heatmap
-    tv_map: true                                 # per-bin TV contribution
+    gradient_heatmap: true                        # per-bin |∂μ/∂λ| heatmap
+    curvature_heatmap: true                       # per-bin |∂²μ/∂λ²| heatmap
+    tv_map: true                                  # per-bin TV contribution
     entropy_map: true
-    overlay_symbolic_violations: true            # if symbolic masks are available
+    overlay_symbolic_violations: true             # if symbolic masks are available
+    per_region_bar: true
     dpi: 160
     figsize: [10, 4]
     save_png: true
+    save_html: true
     out_dir: "plots/smoothness"
 
   # ------------------------------------------------------------------
   # Exports
   # ------------------------------------------------------------------
   export:
-    per_planet_csv: "smoothness/per_planet_metrics.csv"     # aggregates per planet
-    per_bin_csv: "smoothness/per_bin_metrics.csv"           # per-planet×bin values (long format or one file per planet)
-    flags_csv: "smoothness/flags.csv"                       # planets/bins exceeding thresholds
-    summary_json: "smoothness/summary.json"                 # global stats, thresholds, counts
+    per_planet_csv: "smoothness/per_planet_metrics.csv"   # aggregates per planet
+    per_bin_csv: "smoothness/per_bin_metrics.csv"         # per-planet×bin values (long format)
+    flags_csv: "smoothness/flags.csv"                     # planets/bins exceeding thresholds
+    summary_json: "smoothness/summary.json"               # global stats, thresholds, counts
+    jsonl_events: "smoothness/events.jsonl"               # stepwise log for CI
 
   # ------------------------------------------------------------------
   # Reproducibility
   # ------------------------------------------------------------------
   reproducibility:
-    log_hash: true                               # record config hash in v50_debug_log.md
-    snapshot_config: true                        # save smoothness.yaml snapshot with outputs
+    log_hash: true                                # record config hash in v50_debug_log.md
+    snapshot_config: true                         # save smoothness.yaml snapshot with outputs
     run_manifest: "smoothness/manifest.json"
+    record_cli_invocation: true
+    record_env: true                              # python/packages/cuda versions
+
+  # ------------------------------------------------------------------
+  # Performance & caching
+  # ------------------------------------------------------------------
+  cache:
+    enable: true
+    dir: ".cache/smoothness"
+    reuse_if_hash_matches: true
+  parallel:
+    workers: 8
+    backend: "thread"                             # thread | process
+
+  # ------------------------------------------------------------------
+  # Failure policy
+  # ------------------------------------------------------------------
+  policy:
+    fail_on_missing_inputs: false
+    warn_on_small_groups: true
+    continue_on_plot_errors: true
 ```
