@@ -1,11 +1,11 @@
 # 🎛️ SpectraMind V50 — GUI (Optional) Layer
 
-> docs/gui/readme.md
+> docs/gui/README.md
 
 ## 0) Purpose & Scope
 
 This document defines the **optional GUI layer** for SpectraMind V50 (NeurIPS 2025 Ariel Data Challenge).
-The GUI is a **thin, reproducible shell** over the CLI/API: it never bypasses hydra configs, logging, or run hashing.
+The GUI is a **thin, reproducible shell** over the CLI/API: it never bypasses Hydra configs, logging, or run hashing.
 It exists to:
 
 * Explore diagnostics (UMAP/t-SNE, GLL heatmaps, SHAP × Symbolic overlays, FFT, calibration checks)
@@ -23,13 +23,13 @@ It exists to:
   All scientific operations are defined by CLI + Hydra configs. GUI only **composes** them.
 
 * **Deterministic & auditable**
-  GUI actions serialize to: hydra overrides → CLI invocation → `v50_debug_log.md` → `run_hash_summary_v50.json`.
+  GUI actions serialize to: Hydra overrides → CLI invocation → `logs/v50_debug_log.md` → `run_hash_summary_v50.json`.
 
 * **Separation of concerns**
   FastAPI backend = command/asset orchestration. React frontend = views only.
 
 * **Accessibility & testability**
-  Keyboard shortcuts, high contrast, screen reader labels; unit + E2E tests; mockable API.
+  Keyboard shortcuts, high contrast, screen-reader labels; unit + E2E tests; mockable API.
 
 * **Privacy-respecting diagnostics**
   No implicit telemetry. Explicit toggle → local JSONL. No PII. Redaction filters by default.
@@ -58,7 +58,7 @@ src/server/               # FastAPI (Python) orchestration server
   ├─ authz.py             # Optional local-role authorization
   └─ main.py              # Uvicorn entrypoint
 assets/                   # Logos, color tokens, icons
-configs/gui/              # GUI presets → hydra override bundles
+configs/gui/              # GUI presets → Hydra override bundles
 tests/gui/                # Jest/RTL + Playwright E2E + server tests
 ```
 
@@ -179,7 +179,7 @@ The GUI always shows:
 **Copy Buttons**
 
 * “Copy CLI” – copies full `spectramind …` command
-* “Copy YAML” – serializes overrides to hydra-compatible `.yaml`
+* “Copy YAML” – serializes overrides to Hydra-compatible `.yaml`
 
 ---
 
@@ -201,7 +201,7 @@ The GUI always shows:
 * `WS /ws/logs/{run_id}`
   Live lines + structured events from the run.
 
-**Security note:** default is **local-host development**. For remote use, enable authz (reverse proxy + token).
+**Security note:** default is **localhost-only** dev. For remote use, enable authz (reverse proxy + token).
 
 ---
 
@@ -223,7 +223,7 @@ The GUI always shows:
 
 * **Frontend unit**: Jest + React Testing Library (component logic, a11y checks).
 * **E2E**: Playwright (route stubs for artifacts; live server for dev runs).
-* **Backend**: pytest (API contracts), subprocess mocks for CLI bridge.
+* **Backend**: pytest (API contracts), subprocess mocks for CLI bridge).
 * **Golden artifacts**: small fixture bundle for UMAP, GLL, SHAP, FFT panels.
 
 Run locally:
@@ -302,24 +302,17 @@ CMD ["uvicorn", "src.server.main:app", "--host", "0.0.0.0", "--port", "8089"]
 
 ## 14) Failure Modes & Troubleshooting
 
-* **Runs never start**
-  Check `src/server/cli_bridge.py` PATH to `spectramind` and Python env activation.
-
-* **Artifacts don’t render**
-  Confirm `SM_ARTIFACT_ROOT` and that diagnostics exist (`generate_html_report.py` outputs).
-
-* **Plots blank on Kaggle**
-  In Kaggle-safe mode, heavy compute buttons are disabled; open existing HTML in **view** only.
-
-* **Config diff empty**
-  Ensure at least one override changed from baseline; verify hydra defaults resolution.
+* **Runs never start** — check `src/server/cli_bridge.py` PATH to `spectramind` and Python env activation.
+* **Artifacts don’t render** — confirm `SM_ARTIFACT_ROOT` and that diagnostics exist (`generate_html_report.py` outputs).
+* **Plots blank on Kaggle** — Kaggle-safe mode disables heavy compute; open existing HTML in **view** only.
+* **Config diff empty** — ensure at least one override changed; verify Hydra defaults resolution.
 
 ---
 
 ## 15) Extending the GUI
 
 * Add a feature module in `src/gui/features/<feature>/`
-* Define **Schema** → **Loader** → **Panel** pattern
+* Define **Schema → Loader → Panel** pattern
 
   * Schema via Zod/TypeScript
   * Loader hits `/api/artifacts` or parses JSON
@@ -328,14 +321,7 @@ CMD ["uvicorn", "src.server.main:app", "--host", "0.0.0.0", "--port", "8089"]
 * Optional backend helper in `src/server/artifacts.py`
 
 **Widget Catalog (starter set)**
-
-* `Umappanel`: interactive UMAP with symbol links, opacity = confidence
-* `TsnePanel`: interactive t-SNE mirrored options
-* `GllHeatmap`: bin-wise heat with tooltips and CSV export
-* `ShapSymbolicPanel`: fusion overlays, top-K bins, histogram
-* `FftPanel`: power spectrum, autocorr, molecule regions overlay
-* `CorelCoveragePanel`: coverage %, calibration residual histograms
-* `CalibrationZPanel`: σ vs residual scatter + per-bin hist
+`Umappanel`, `TsnePanel`, `GllHeatmap`, `ShapSymbolicPanel`, `FftPanel`, `CorelCoveragePanel`, `CalibrationZPanel`.
 
 ---
 
@@ -344,7 +330,7 @@ CMD ["uvicorn", "src.server.main:app", "--host", "0.0.0.0", "--port", "8089"]
 1. Choose preset: **`configs/gui/presets/dashboard.yaml`**
 2. Select projections: UMAP + t-SNE; enable `--no-tsne` if needed
 3. Symbolic overlays: `symbolic.show=true`, `symbolic.top_k=5`
-4. Click **“Run”** → GUI shows:
+4. Click **Run** → GUI shows:
 
 ```
 spectramind diagnose dashboard \
