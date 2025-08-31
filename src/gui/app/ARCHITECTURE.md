@@ -1,3 +1,5 @@
+here’s a GitHub-safe, upgraded version with Mermaid blocks that render cleanly (no inner quotes issues, no trailing semicolons, and `|` escaped where needed). replace your file with this:
+
 # 🧭 SpectraMind V50 — GUI Architecture (Upgraded)
 
 ## 0) Purpose
@@ -19,8 +21,8 @@ flowchart LR
   end
 
   subgraph Server["Server (FastAPI)"]
-    A["/api/diagnostics/*"]:::api
-    M["/api/authz/*"]:::api
+    A[/ /api/diagnostics/* /]:::api
+    M[/ /api/authz/* /]:::api
     X[(Static /artifacts)]:::static
   end
 
@@ -143,7 +145,7 @@ flowchart LR
 **Mermaid hardening tips (GitHub):**
 
 * Don’t add trailing semicolons to lines.
-* Prefer quoted labels for paths and commands (e.g., `["/api/diagnostics/*"]`).
+* Avoid inner quotes in labels unless necessary; prefer plain paths like `/api/diagnostics/*`.
 * Escape vertical bars as `&#124;` (or use `<br/>`).
 * Create separate edges (avoid `A --> B & C`; write two lines).
 * Comments start with `%%`.
