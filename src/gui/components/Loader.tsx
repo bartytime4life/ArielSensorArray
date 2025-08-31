@@ -1,4 +1,3 @@
-// src/gui/components/Loader.tsx
 // ============================================================================
 // ⏳ Loader Components — SpectraMind V50 GUI (CLI-first, GUI-optional)
 // ----------------------------------------------------------------------------
@@ -12,8 +11,10 @@
 // Accessibility:
 //   • Spinner/Dots use role="status" + aria-live="polite" with optional label
 //   • Progress bar uses role="progressbar" and proper aria-* attributes
+//   • Respect reduced motion via prefers-reduced-motion
 //
 // Styling: Tailwind + dark-mode aware, shadcn/ui-like tokens, focus-safe
+// Determinism: No random IDs; predictable animations, stable markup
 // ============================================================================
 
 import * as React from "react";
@@ -37,6 +38,20 @@ const toneToClass: Record<Tone, string> = {
   danger: "text-red-600 dark:text-red-400",
 };
 
+// Reduced-motion detection (memoized per mount)
+function usePrefersReducedMotion() {
+  const [reduced, setReduced] = React.useState(false);
+  React.useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const m = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const onChange = () => setReduced(!!m.matches);
+    onChange();
+    m.addEventListener?.("change", onChange);
+    return () => m.removeEventListener?.("change", onChange);
+  }, []);
+  return reduced;
+}
+
 // Invisible but readable text for screen readers
 const SrOnly: React.FC<React.HTMLAttributes<HTMLSpanElement>> = ({
   className,
@@ -45,7 +60,7 @@ const SrOnly: React.FC<React.HTMLAttributes<HTMLSpanElement>> = ({
   <span
     className={clsx(
       "sr-only",
-      // For environments without Tailwind sr-only, provide a fallback:
+      // Fallback if project doesn't include Tailwind sr-only preset:
       "absolute -m-px h-px w-px overflow-hidden whitespace-nowrap border-0 p-0",
       className
     )}
@@ -65,6 +80,8 @@ export interface SpinnerProps extends React.HTMLAttributes<HTMLDivElement> {
   withTrack?: boolean;
   /** If true, centers label beneath spinner with small gap */
   showLabel?: boolean;
+  /** Render as block (stackable) instead of inline */
+  block?: boolean;
 }
 
 const Spinner: React.FC<SpinnerProps> = ({
@@ -73,20 +90,27 @@ const Spinner: React.FC<SpinnerProps> = ({
   label = "Loading…",
   withTrack = true,
   showLabel = false,
+  block = false,
   className,
   ...rest
 }) => {
   const px = sizeToPx[size];
   const strokeWidth = Math.max(2, Math.round(px / 10));
+  const reduced = usePrefersReducedMotion();
   return (
     <div
       role="status"
       aria-live="polite"
-      className={clsx("inline-flex items-center", showLabel && "flex-col gap-2", className)}
+      className={clsx(
+        block ? "flex" : "inline-flex",
+        "items-center",
+        showLabel && "flex-col gap-2",
+        className
+      )}
       {...rest}
     >
       <svg
-        className={clsx("animate-spin", toneToClass[tone])}
+        className={clsx(!reduced && "animate-spin", toneToClass[tone])}
         width={px}
         height={px}
         viewBox="0 0 24 24"
@@ -103,13 +127,18 @@ const Spinner: React.FC<SpinnerProps> = ({
             fill="none"
           />
         )}
+        {/* Arc wedge */}
         <path
           className="opacity-90"
           fill="currentColor"
           d="M12 2a10 10 0 0 1 10 10h-4a6 6 0 1 0-6-6V2z"
         />
       </svg>
-      {showLabel ? <div className="text-xs text-gray-600 dark:text-gray-300">{label}</div> : <SrOnly>{label}</SrOnly>}
+      {showLabel ? (
+        <div className="text-xs text-gray-600 dark:text-gray-300">{label}</div>
+      ) : (
+        <SrOnly>{label}</SrOnly>
+      )}
     </div>
   );
 };
@@ -124,6 +153,8 @@ export interface DotsProps extends React.HTMLAttributes<HTMLDivElement> {
   label?: string;
   /** If true, shows the label inline next to dots */
   inlineLabel?: boolean;
+  /** Render as block instead of inline */
+  block?: boolean;
 }
 
 const Dots: React.FC<DotsProps> = ({
@@ -131,30 +162,31 @@ const Dots: React.FC<DotsProps> = ({
   tone = "default",
   label = "Loading…",
   inlineLabel = false,
+  block = false,
   className,
   ...rest
 }) => {
+  const reduced = usePrefersReducedMotion();
   const dotSize = Math.round(sizeToPx[size] / 4);
   const style = { width: dotSize, height: dotSize, borderRadius: dotSize / 2 };
+  const anim = reduced ? "" : "animate-bounce";
+
   return (
     <div
       role="status"
       aria-live="polite"
-      className={clsx("inline-flex items-center gap-1", className)}
+      className={clsx(block ? "flex" : "inline-flex", "items-center gap-1", className)}
       {...rest}
     >
       <span
         style={style}
-        className={clsx(
-          "animate-bounce [animation-delay:-0.2s] bg-current",
-          toneToClass[tone]
-        )}
+        className={clsx(anim, "[animation-delay:-0.2s] bg-current", toneToClass[tone])}
       />
       <span
         style={style}
-        className={clsx("animate-bounce [animation-delay:-0.1s] bg-current", toneToClass[tone])}
+        className={clsx(anim, "[animation-delay:-0.1s] bg-current", toneToClass[tone])}
       />
-      <span style={style} className={clsx("animate-bounce bg-current", toneToClass[tone])} />
+      <span style={style} className={clsx(anim, "bg-current", toneToClass[tone])} />
       {inlineLabel ? (
         <span className="ms-2 text-xs text-gray-600 dark:text-gray-300">{label}</span>
       ) : (
@@ -180,6 +212,8 @@ export interface BarProps extends React.HTMLAttributes<HTMLDivElement> {
   heightClass?: string;
   /** Rounded corners (default true) */
   rounded?: boolean;
+  /** Show value as text inside the bar when determinate */
+  showValueInside?: boolean;
 }
 
 const Bar: React.FC<BarProps> = ({
@@ -191,18 +225,22 @@ const Bar: React.FC<BarProps> = ({
   showLabel = false,
   heightClass = "h-2",
   rounded = true,
+  showValueInside = false,
   className,
   ...rest
 }) => {
+  const reduced = usePrefersReducedMotion();
   const isDeterminate = typeof value === "number";
-  const pct = isDeterminate ? Math.max(min, Math.min(max, value)) : undefined;
-  const widthStyle = isDeterminate ? { width: `${((pct! - min) / (max - min)) * 100}%` } : undefined;
+  const clamp = (v: number) => Math.max(min, Math.min(max, v));
+  const pct = isDeterminate ? clamp(value!) : undefined;
+  const ratio = isDeterminate ? (pct! - min) / (max - min || 1) : 0;
+  const widthStyle = isDeterminate ? { width: `${Math.round(ratio * 100)}%` } : undefined;
 
   return (
     <div className={clsx("w-full", className)} {...rest}>
       {showLabel && (
         <div className="mb-1 text-xs text-gray-600 dark:text-gray-300">
-          {label} {isDeterminate ? `(${Math.round(((pct! - min) / (max - min)) * 100)}%)` : null}
+          {label} {isDeterminate ? `(${Math.round(ratio * 100)}%)` : null}
         </div>
       )}
       <div
@@ -220,18 +258,24 @@ const Bar: React.FC<BarProps> = ({
         {isDeterminate ? (
           <div
             className={clsx(
-              "h-full transition-all duration-300 ease-out",
+              "relative h-full transition-all duration-300 ease-out",
               rounded && "rounded-full",
               toneToClass[tone],
-              // Use background currentColor
               "bg-current"
             )}
             style={widthStyle}
-          />
+          >
+            {showValueInside && (
+              <span className="absolute inset-0 flex items-center justify-center text-[10px] font-medium text-gray-900 dark:text-gray-100">
+                {Math.round(ratio * 100)}%
+              </span>
+            )}
+          </div>
         ) : (
           <div
             className={clsx(
-              "h-full w-1/3 animate-[progress-indeterminate_1.2s_ease-in-out_infinite]",
+              "h-full w-1/3",
+              !reduced && "animate-[progress-indeterminate_1.2s_ease-in-out_infinite]",
               "bg-current",
               toneToClass[tone],
               rounded && "rounded-full"
@@ -239,7 +283,7 @@ const Bar: React.FC<BarProps> = ({
           />
         )}
       </div>
-      {/* Keyframes (scoped via arbitrary utilities if Tailwind config includes) */}
+      {/* Keyframes (fallbacks if Tailwind config doesn't include) */}
       <style>{`
         @keyframes progress-indeterminate {
           0% { transform: translateX(-100%); }
@@ -258,6 +302,8 @@ const Bar: React.FC<BarProps> = ({
 export interface SkeletonProps extends React.HTMLAttributes<HTMLDivElement> {
   rounded?: boolean | "full" | "lg" | "md" | "sm" | "none";
   shimmer?: boolean;
+  /** Allow children to render inside the skeleton (useful for masking layout) */
+  asChild?: boolean;
 }
 
 const roundedToClass = (rounded: SkeletonProps["rounded"]) =>
@@ -278,9 +324,17 @@ const Skeleton: React.FC<SkeletonProps> = ({
   rounded = "md",
   shimmer = true,
   style,
+  asChild = false,
+  children,
   ...rest
 }) => {
-  return (
+  const reduced = usePrefersReducedMotion();
+  const shimmerCls =
+    shimmer && !reduced
+      ? "pointer-events-none absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/60 to-transparent dark:via-white/10 animate-[skeleton_1.2s_ease-in-out_infinite]"
+      : "hidden";
+
+  const content = (
     <div
       className={clsx(
         "relative overflow-hidden bg-gray-200 dark:bg-gray-800",
@@ -290,19 +344,21 @@ const Skeleton: React.FC<SkeletonProps> = ({
       style={style}
       {...rest}
     >
-      {shimmer && (
-        <span
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/60 to-transparent dark:via-white/10 animate-[skeleton_1.2s_ease-in-out_infinite]"
-        />
-      )}
+      <span aria-hidden="true" className={shimmerCls} />
+      {children}
+    </div>
+  );
+
+  return (
+    <>
+      {asChild ? children : content}
       <style>{`
         @keyframes skeleton {
           0% { transform: translateX(-100%); }
           100% { transform: translateX(100%); }
         }
       `}</style>
-    </div>
+    </>
   );
 };
 
@@ -315,27 +371,47 @@ export interface OverlayProps extends React.HTMLAttributes<HTMLDivElement> {
   SpinnerProps?: Partial<SpinnerProps>;
   /** If true, covers the entire screen; else fills the parent container */
   fullScreen?: boolean;
-  /** Optional child content is ignored; overlay provides its own layout */
+  /** Optional: dim level for backdrop */
+  backdropOpacity?: "sm" | "md" | "lg";
+  /** Optional: show label below spinner */
+  showLabel?: boolean;
 }
+
+const backdropMap = {
+  sm: "bg-black/20",
+  md: "bg-black/40",
+  lg: "bg-black/60",
+};
 
 const Overlay: React.FC<OverlayProps> = ({
   label = "Loading…",
   SpinnerProps,
   fullScreen = false,
+  backdropOpacity = "md",
+  showLabel = true,
   className,
   ...rest
 }) => {
   return (
     <div
       className={clsx(
-        "inset-0 z-40 flex items-center justify-center bg-black/40 backdrop-blur-[1px]",
+        "inset-0 z-40 flex items-center justify-center backdrop-blur-[1px]",
+        backdropMap[backdropOpacity],
         fullScreen ? "fixed" : "absolute",
         className
       )}
+      role="status"
+      aria-live="polite"
       {...rest}
     >
       <div className="flex flex-col items-center gap-3 rounded-2xl bg-white/80 p-4 shadow-lg dark:bg-gray-900/80">
-        <Spinner tone="primary" size="lg" showLabel={true} label={label} {...SpinnerProps} />
+        <Spinner
+          tone="primary"
+          size="lg"
+          showLabel={showLabel}
+          label={label}
+          {...SpinnerProps}
+        />
       </div>
     </div>
   );
