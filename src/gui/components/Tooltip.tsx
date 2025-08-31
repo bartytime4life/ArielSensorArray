@@ -54,6 +54,8 @@ export interface TooltipProps {
   id?: string;
   /** Extra classes for the tooltip panel */
   className?: string;
+  /** Optional aria-labelledby id if the label is external */
+  ariaLabelledby?: string;
 }
 
 const DEFAULT_OFFSET = 8;
@@ -88,6 +90,7 @@ export const Tooltip: React.FC<TooltipProps> = ({
   arrow = true,
   id,
   className,
+  ariaLabelledby,
 }) => {
   const isControlled = controlledOpen !== undefined;
   const [uncontrolledOpen, setUncontrolledOpen] = React.useState(defaultOpen);
@@ -253,7 +256,6 @@ export const Tooltip: React.FC<TooltipProps> = ({
 
   useIsomorphicLayoutEffect(() => {
     if (open) {
-      // next frame to ensure panelRef has layout
       const id = window.requestAnimationFrame(computeAndSetPosition);
       return () => window.cancelAnimationFrame(id);
     }
@@ -284,7 +286,8 @@ export const Tooltip: React.FC<TooltipProps> = ({
     onMouseLeave: mergeHandlers(child.props.onMouseLeave, scheduleClose),
     onFocus: mergeHandlers(child.props.onFocus, scheduleOpen),
     onBlur: mergeHandlers(child.props.onBlur, scheduleClose),
-    "aria-describedby": open ? computedId : child.props["aria-describedby"],
+    "aria-describedby": open ? computedId : undefined,
+    "aria-labelledby": ariaLabelledby,
   };
 
   const panel = open ? (
@@ -300,7 +303,7 @@ export const Tooltip: React.FC<TooltipProps> = ({
         className
       )}
       style={{
-        position: portal ? "absolute" : "fixed", // We'll override below based on portal usage
+        position: "absolute",
         top: coords.top,
         left: coords.left,
       }}
@@ -312,43 +315,4 @@ export const Tooltip: React.FC<TooltipProps> = ({
           aria-hidden="true"
           className={clsx(
             "absolute block h-2 w-2 rotate-45 border",
-            "border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900"
-          )}
-          style={{
-            // Position arrow opposite to actual placement
-            top:
-              coords.actualPlacement === "bottom"
-                ? -4
-                : coords.actualPlacement === "top"
-                ? undefined
-                : "50%",
-            bottom: coords.actualPlacement === "top" ? -4 : undefined,
-            left:
-              coords.actualPlacement === "right"
-                ? -4
-                : coords.actualPlacement === "left"
-                ? undefined
-                : "50%",
-            right: coords.actualPlacement === "left" ? -4 : undefined,
-            transform:
-              coords.actualPlacement === "top" || coords.actualPlacement === "bottom"
-                ? "translateX(-50%) rotate(45deg)"
-                : "translateY(-50%) rotate(45deg)",
-          }}
-        />
-      )}
-      <div className="relative z-10">{content}</div>
-    </div>
-  ) : null;
-
-  const panelNode = panel && portal && mounted ? createPortal(panel, document.body) : panel;
-
-  return (
-    <>
-      {React.cloneElement(child, childProps)}
-      {panelNode}
-    </>
-  );
-};
-
-export default Tooltip;
+            "border-gray-2
