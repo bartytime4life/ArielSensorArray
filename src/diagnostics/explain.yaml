@@ -1,0 +1,40 @@
+# configs/diagnostics/explain.yaml
+# ==============================================================================
+# 🔍 Explainability — UMAP/t-SNE & SHAP overlays
+# ==============================================================================
+
+explain:
+  enable: true
+  umap:
+    enable: true
+    n_neighbors: 30
+    min_dist: 0.05
+    n_components: 2           # 2 or 3; 3D saved as HTML
+    metric: "euclidean"
+    color_by: "symbolic_top_rule"   # planet metadata key or computed label
+    size_by: "confidence"           # optional: scales marker size by confidence
+    dedupe: true
+    link_symbols: true
+    html_out: "umap.html"
+  tsne:
+    enable: true
+    n_components: 2
+    perplexity: 35
+    learning_rate: 200
+    n_iter: 1500
+    html_out: "tsne.html"
+  shap:
+    enable: true
+    overlay_bins_topk: 20
+    save_png: true
+    png_path: "plots/shap_overlay.png"
+  attention:
+    enable: true
+    # decoder head attention fusion in shap_attention_overlay.py
+    heads_topk: 4
+    save_png: true
+    png_path: "plots/shap_attention.png"
+  shap_symbolic_fusion:
+    enable: true
+    save_png: true
+    png_path: "plots/shap_symbolic.png"
