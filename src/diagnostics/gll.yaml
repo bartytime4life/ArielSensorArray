@@ -1,24 +1,78 @@
+```yaml
 # configs/diagnostics/gll.yaml
 # ==============================================================================
-# 📈 Gaussian Log-Likelihood (GLL) evaluator
-# Controls per-bin & per-planet scoring and heatmap renders.
+# 📈 Gaussian Log-Likelihood (GLL) Evaluator
+# SpectraMind V50 — NeurIPS 2025 Ariel Data Challenge
+# ------------------------------------------------------------------------------
+# Purpose:
+#   • Compute per-bin and per-planet Gaussian log-likelihood diagnostics
+#   • Provide global metrics, heatmaps, and CI-ready JSON summaries
+#   • Support symbolic-aware overlays and dashboard export
+#
+# Hydra-safe: All fields override-able via CLI, e.g.:
+#   spectramind diagnose gll gll.aggregate.by_molecule=true gll.plots.cmap=plasma
 # ==============================================================================
+
+# ----------------------------------------------------------------------
+# Hydra defaults
+# ----------------------------------------------------------------------
+defaults:
+  - override hydra/job_logging: default
+  - override hydra/hydra_logging: default
 
 gll:
   enable: true
-  epsilon: 1.0e-8                     # numerical stability for log/var
-  clamp_sigma_min: 1.0e-6             # avoid zero variance
+
+  # ------------------------------------------------------------------
+  # Numerical stability parameters
+  # ------------------------------------------------------------------
+  epsilon: 1.0e-8                     # numerical stability for log(σ²)
+  clamp_sigma_min: 1.0e-6             # minimum σ to avoid -inf log terms
+  clamp_sigma_max: null               # optional upper bound for σ (None = disabled)
+
+  # ------------------------------------------------------------------
+  # Aggregation controls
+  # ------------------------------------------------------------------
   aggregate:
-    by_planet: true
-    by_bin: true
-    global: true
+    by_planet: true                   # compute <GLL> per planet
+    by_bin: true                      # compute <GLL> per bin across planets
+    by_molecule: true                 # group bins by molecular regions
+    global: true                      # single scalar across all planets & bins
+    weighted: true                    # weight bins by SNR or metadata if available
+    export_quantiles: [0.1, 0.5, 0.9] # report quantile scores per planet/bin
+
+  # ------------------------------------------------------------------
+  # Plotting configuration
+  # ------------------------------------------------------------------
   plots:
     heatmap: true
     per_planet_bar: true
-    cmap: "viridis"
-    save_png: true
+    per_bin_violin: true              # violin plot for per-bin distributions
+    molecule_region_bar: true         # aggregated bars per molecule group
+    cmap: "viridis"                   # matplotlib colormap
+    figsize: [12, 6]
     dpi: 160
+    save_png: true
+    save_html: true                   # interactive plotly heatmap if supported
+    overlay_symbolic_violations: true # mark bins failing symbolic rules
+    overlay_confidence: true          # modulate opacity by calibration confidence
+
+  # ------------------------------------------------------------------
+  # Export paths
+  # ------------------------------------------------------------------
   output:
-    json_path: "diagnostic_summary.json"   # merged by generate_diagnostic_summary.py
+    json_path: "diagnostics/gll_summary.json"       # merged by generate_diagnostic_summary.py
     heatmap_path: "plots/gll_heatmap.png"
     per_planet_path: "plots/gll_per_planet.png"
+    per_bin_path: "plots/gll_per_bin.png"
+    molecule_path: "plots/gll_molecule.png"
+    quantiles_csv: "diagnostics/gll_quantiles.csv"
+
+  # ------------------------------------------------------------------
+  # Reproducibility and logging
+  # ------------------------------------------------------------------
+  reproducibility:
+    log_hash: true                    # append config hash to v50_debug_log.md
+    snapshot_config: true             # save a copy of gll.yaml with results
+    manifest_json: "diagnostics/gll_manifest.json"
+```
