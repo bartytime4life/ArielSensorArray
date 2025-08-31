@@ -1,6 +1,3 @@
-Here’s the updated and fixed `src/gui/app/readme.md` with a GitHub-safe Mermaid **Routing Overview** (proper code fences + quoted labels) and the rest of the document intact.
-
-````markdown
 # 📂 `src/gui/app/` — GUI App Layer
 
 ## 🎯 Purpose & Scope
@@ -28,17 +25,17 @@ the GUI simply loads those **CLI-generated artifacts** (`.json`, `.html`, `.png`
 
 ## 🖼️ Design Principles
 
-* **CLI-first, GUI-optional**  
-  Every GUI action corresponds to a CLI command (e.g., `spectramind diagnose dashboard`).  
+* **CLI-first, GUI-optional**
+  Every GUI action corresponds to a CLI command (e.g., `spectramind diagnose dashboard`).
   GUI never bypasses Hydra configs, run hashes, or DVC lineage.
 
-* **Reproducibility by construction**  
+* **Reproducibility by construction**
   GUI renders artifacts under `/artifacts/` that were produced by versioned CLI runs.
 
-* **Lightweight & air-gapped friendly**  
+* **Lightweight & air-gapped friendly**
   Built with **React + Vite + Tailwind + shadcn/ui**; no telemetry; works offline with the local FastAPI + static mount.
 
-* **Stateless analytics**  
+* **Stateless analytics**
   Components do not perform ML or calibration in the browser; they only *display* precomputed outputs.
 
 ---
@@ -78,7 +75,7 @@ flowchart LR
     A --> H
     A --> I
     A --> J
-````
+```
 
 ---
 
@@ -86,11 +83,11 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    GUI[GUI: diagnostics.tsx] -->|fetch| API[/api/diagnostics/summary/]
-    GUI -->|open| ART[Static /artifacts/umap.html]
-    GUI -->|trigger| CLI[spectramind diagnose dashboard]
+    GUI["GUI: diagnostics.tsx"] -->|fetch| API["/api/diagnostics/summary"]
+    GUI -->|open| ART["Static /artifacts/umap.html"]
+    GUI -->|trigger| CLI["spectramind diagnose dashboard"]
     CLI --> ART
-    CLI --> LOG[v50_debug_log.md]
+    CLI --> LOG["v50_debug_log.md"]
 ```
 
 1. User clicks **Run Diagnostics** → server invokes `spectramind diagnose dashboard`.
@@ -178,21 +175,21 @@ npm run dev   # Vite dev server (hot reload)
 ```mermaid
 flowchart LR
     subgraph Client ["Client (React/Vite)"]
-        R[Routes: /diagnostics, /reports]
-        S[State: filters & view]
-        V[Views: tables, charts, iframes]
+        R["Routes: /diagnostics, /reports"]
+        S["State: filters & view"]
+        V["Views: tables, charts, iframes"]
     end
 
     subgraph Server ["Server (FastAPI)"]
-        A[/api/diagnostics/*/]
-        X[(Static /artifacts)]
+        A["/api/diagnostics/*"]
+        X["Static /artifacts"]
     end
 
     subgraph Pipeline ["CLI & Pipeline"]
-        C[spectramind diagnose dashboard]
-        H[(Hydra configs)]
-        D[(DVC data/models)]
-        L[v50_debug_log.md]
+        C["spectramind diagnose dashboard"]
+        H["Hydra configs"]
+        D["DVC data/models"]
+        L["v50_debug_log.md"]
     end
 
     R --> A
@@ -208,6 +205,3 @@ flowchart LR
 
 ✅ In short: **`src/gui/app/` is presentation-only.**
 It visualizes CLI results and never generates them — keeping **SpectraMind V50 reproducible, auditable, and Kaggle-safe**.
-
-```
-```
