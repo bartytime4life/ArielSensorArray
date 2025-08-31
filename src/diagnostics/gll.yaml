@@ -1,78 +1,253 @@
-```yaml
 # configs/diagnostics/gll.yaml
-# ==============================================================================
-# 📈 Gaussian Log-Likelihood (GLL) Evaluator
-# SpectraMind V50 — NeurIPS 2025 Ariel Data Challenge
-# ------------------------------------------------------------------------------
-# Purpose:
-#   • Compute per-bin and per-planet Gaussian log-likelihood diagnostics
-#   • Provide global metrics, heatmaps, and CI-ready JSON summaries
-#   • Support symbolic-aware overlays and dashboard export
-#
-# Hydra-safe: All fields override-able via CLI, e.g.:
-#   spectramind diagnose gll gll.aggregate.by_molecule=true gll.plots.cmap=plasma
+
 # ==============================================================================
 
-# ----------------------------------------------------------------------
+# 📈 Gaussian Log-Likelihood (GLL) Evaluator
+
+# SpectraMind V50 — NeurIPS 2025 Ariel Data Challenge
+
+# ------------------------------------------------------------------------------
+
+# Purpose:
+
+# • Compute per-bin and per-planet Gaussian log-likelihood diagnostics
+
+# • Provide global metrics, heatmaps, and CI-ready JSON summaries
+
+# • Support symbolic-aware & calibration-aware overlays; export dashboard assets
+
+#
+
+# Hydra-safe: All fields override-able via CLI, e.g.:
+
+# spectramind diagnose gll gll.aggregate.by\_molecule=true gll.plots.cmap=plasma
+
+# spectramind diagnose gll gll.inputs.mu\_path='\${paths.artifacts}/predict/mu.npy'
+
+# spectramind diagnose gll gll.overlays.use\_corel\_weights=true
+
+#
+
+# Conventions:
+
+# • Paths interpolate `${paths.*}` from configs/paths.yaml.
+
+# • Read-only diagnostics: never mutates μ/σ/targets; only computes metrics/plots.
+
+# • Outputs go under `${paths.artifacts}` by default; CI checks can enforce presence.
+
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+
 # Hydra defaults
-# ----------------------------------------------------------------------
+
+# ------------------------------------------------------------------------------
+
 defaults:
-  - override hydra/job_logging: default
-  - override hydra/hydra_logging: default
+
+* override hydra/job\_logging: default
+* override hydra/hydra\_logging: default
+
+# ------------------------------------------------------------------------------
+
+# Master block
+
+# ------------------------------------------------------------------------------
 
 gll:
-  enable: true
+enable: true
 
-  # ------------------------------------------------------------------
-  # Numerical stability parameters
-  # ------------------------------------------------------------------
-  epsilon: 1.0e-8                     # numerical stability for log(σ²)
-  clamp_sigma_min: 1.0e-6             # minimum σ to avoid -inf log terms
-  clamp_sigma_max: null               # optional upper bound for σ (None = disabled)
+# ------------------------------------------------------------------
 
-  # ------------------------------------------------------------------
-  # Aggregation controls
-  # ------------------------------------------------------------------
-  aggregate:
-    by_planet: true                   # compute <GLL> per planet
-    by_bin: true                      # compute <GLL> per bin across planets
-    by_molecule: true                 # group bins by molecular regions
-    global: true                      # single scalar across all planets & bins
-    weighted: true                    # weight bins by SNR or metadata if available
-    export_quantiles: [0.1, 0.5, 0.9] # report quantile scores per planet/bin
+# Inputs
 
-  # ------------------------------------------------------------------
-  # Plotting configuration
-  # ------------------------------------------------------------------
-  plots:
-    heatmap: true
-    per_planet_bar: true
-    per_bin_violin: true              # violin plot for per-bin distributions
-    molecule_region_bar: true         # aggregated bars per molecule group
-    cmap: "viridis"                   # matplotlib colormap
-    figsize: [12, 6]
-    dpi: 160
-    save_png: true
-    save_html: true                   # interactive plotly heatmap if supported
-    overlay_symbolic_violations: true # mark bins failing symbolic rules
-    overlay_confidence: true          # modulate opacity by calibration confidence
+# ------------------------------------------------------------------
 
-  # ------------------------------------------------------------------
-  # Export paths
-  # ------------------------------------------------------------------
-  output:
-    json_path: "diagnostics/gll_summary.json"       # merged by generate_diagnostic_summary.py
-    heatmap_path: "plots/gll_heatmap.png"
-    per_planet_path: "plots/gll_per_planet.png"
-    per_bin_path: "plots/gll_per_bin.png"
-    molecule_path: "plots/gll_molecule.png"
-    quantiles_csv: "diagnostics/gll_quantiles.csv"
+inputs:
+mu\_path: "\${paths.artifacts}/predict/mu.npy"          # \[N\_planets, 283]
+sigma\_path: "\${paths.artifacts}/predict/sigma.npy"    # \[N\_planets, 283], σ > 0
+target\_path: "\${paths.artifacts}/predict/target.npy"  # \[N\_planets, 283] ground truth y
+meta\_path: "\${paths.artifacts}/predict/meta.csv"      # planet\_id, split, cluster, etc.
+mask\_path: null                                       # optional \[N, 283] mask (1=valid)
+bin\_weight\_path: null                                 # optional length-283 weights (e.g., SNR/coverage)
 
-  # ------------------------------------------------------------------
-  # Reproducibility and logging
-  # ------------------------------------------------------------------
-  reproducibility:
-    log_hash: true                    # append config hash to v50_debug_log.md
-    snapshot_config: true             # save a copy of gll.yaml with results
-    manifest_json: "diagnostics/gll_manifest.json"
-```
+filter:
+include\_splits: \["train", "val", "test"]
+exclude\_planets: \[]
+min\_bins\_for\_eval: 50                                  # skip planet if valid bins < this
+drop\_nan\_rows: true
+
+# ------------------------------------------------------------------
+
+# Numerical stability parameters
+
+# ------------------------------------------------------------------
+
+epsilon: 1.0e-8                     # numerical stability for log(σ²)
+clamp\_sigma\_min: 1.0e-6             # minimum σ to avoid -inf log terms
+clamp\_sigma\_max: null               # optional upper bound for σ (null = disabled)
+zscore\_clip: 10.0                   # optional |z| clip for robustness in summaries (null=off)
+
+# ------------------------------------------------------------------
+
+# Aggregation controls
+
+# ------------------------------------------------------------------
+
+aggregate:
+by\_planet: true                   # compute <GLL> per planet
+by\_bin: true                      # compute <GLL> per bin across planets
+by\_molecule: true                 # group bins by molecular regions
+global: true                      # single scalar across all planets & bins
+weighted: true                    # weight bins by SNR/coverage/meta if available
+weight\_strategy: "bin\_weight"     # "bin\_weight" | "snr" | "uniform"
+export\_quantiles: \[0.1, 0.5, 0.9] # report quantile scores per planet/bin
+export\_std: true
+export\_mean: true
+
+# ------------------------------------------------------------------
+
+# Molecule / region mapping (for by\_molecule aggregates)
+
+# ------------------------------------------------------------------
+
+molecules:
+enable: true
+labels: \["H2O", "CH4", "CO2", "CO", "NH3"]
+wavelength\_map\_csv: "\${paths.assets}/spectral/wavelength\_map\_283.csv"  # optional helper
+region\_weighting: "uniform"                    # "uniform" | "snr" | "prior"
+
+# ------------------------------------------------------------------
+
+# Calibration & symbolic overlays (read-only fusion)
+
+# ------------------------------------------------------------------
+
+overlays:
+symbolic\_mask\_path: "\${paths.artifacts}/symbolic/violations\_mask.npy"   # optional \[N, 283] mask (1=violation)
+show\_symbolic\_overlay: true
+use\_corel\_weights: false
+corel\_coverage\_json: "\${paths.artifacts}/calibration/corel\_coverage.json"
+temperature\_scaling\_json: "\${paths.artifacts}/calibration/temperature\_scaling.json"
+overlay\_confidence: true                        # modulate alpha by confidence/calibration
+overlay\_bins\_heatmap: true
+
+# ------------------------------------------------------------------
+
+# Plotting configuration
+
+# ------------------------------------------------------------------
+
+plots:
+heatmap: true
+per\_planet\_bar: true
+per\_bin\_violin: true               # violin plot for per-bin distributions
+molecule\_region\_bar: true          # aggregated bars per molecule group
+cmap: "viridis"                    # matplotlib colormap
+figsize: \[12, 6]
+dpi: 160
+save\_png: true
+save\_html: true                    # interactive Plotly heatmap if supported
+html\_interactive: true
+overlay\_symbolic\_violations: true  # mark bins failing symbolic rules
+overlay\_confidence: true           # modulate opacity by calibration confidence
+link\_planet\_pages: true            # if dashboard supports planet-level pages
+embed\_umap\_overlay: true
+embed\_tsne\_overlay: true
+out\_dir: "\${paths.artifacts}/plots"
+
+# ------------------------------------------------------------------
+
+# Export paths
+
+# ------------------------------------------------------------------
+
+output:
+base\_dir: "\${paths.artifacts}/diagnostics"
+json\_path: "\${gll.output.base\_dir}/gll\_summary.json"      # merged by generate\_diagnostic\_summary.py
+heatmap\_path: "\${paths.artifacts}/plots/gll\_heatmap.png"
+heatmap\_html: "\${paths.artifacts}/plots/gll\_heatmap.html"
+per\_planet\_path: "\${paths.artifacts}/plots/gll\_per\_planet.png"
+per\_bin\_path: "\${paths.artifacts}/plots/gll\_per\_bin.png"
+molecule\_path: "\${paths.artifacts}/plots/gll\_molecule.png"
+quantiles\_csv: "\${gll.output.base\_dir}/gll\_quantiles.csv"
+per\_planet\_csv: "\${gll.output.base\_dir}/gll\_per\_planet.csv"
+per\_bin\_csv: "\${gll.output.base\_dir}/gll\_per\_bin.csv"
+by\_molecule\_csv: "\${gll.output.base\_dir}/gll\_by\_molecule.csv"
+zscores\_npy: "\${gll.output.base\_dir}/zscores.npy"         # \[N, 283] z = (y-μ)/σ (clamped)
+gll\_per\_entry\_npy: "\${gll.output.base\_dir}/gll\_per\_entry.npy" # \[N, 283] entry-wise GLL
+events\_jsonl: "\${gll.output.base\_dir}/events.jsonl"
+
+# ------------------------------------------------------------------
+
+# Reproducibility and logging
+
+# ------------------------------------------------------------------
+
+reproducibility:
+log\_hash: true                                 # append config hash to v50\_debug\_log.md
+snapshot\_config: true                          # save a copy of gll.yaml with results
+manifest\_json: "\${gll.output.base\_dir}/gll\_manifest.json"
+record\_cli\_invocation: true
+record\_env: true
+append\_v50\_debug\_log: "\${paths.logs}/v50\_debug\_log.md"
+
+# ------------------------------------------------------------------
+
+# CI/QA hooks
+
+# ------------------------------------------------------------------
+
+ci:
+require\_exports: true
+require\_plots: true
+max\_html\_size\_mb: 30
+sanity:
+max\_nan\_fraction: 0.001
+max\_empty\_rows\_fraction: 0.10
+\# Optional guardrails on σ pathologies (informational; non-fatal by default)
+max\_small\_sigma\_fraction: 0.20        # σ < clamp\_sigma\_min
+warn\_if\_global\_gll\_worse\_than: -450.0 # warn if global GLL < threshold
+
+# ------------------------------------------------------------------
+
+# Performance & caching
+
+# ------------------------------------------------------------------
+
+perf:
+device: "auto"                               # "auto" | "cpu" | "cuda:0" | "mps"
+dtype: "float32"
+chunk\_size\_planets: 256
+cache:
+enable: true
+dir: "\${paths.cache}/gll"
+reuse\_if\_hash\_matches: true
+parallel:
+workers: 8
+backend: "thread"                            # "thread" | "process"
+
+# ------------------------------------------------------------------
+
+# Report & dashboard integration
+
+# ------------------------------------------------------------------
+
+report:
+include\_in\_html\_report: true
+section\_key: "gll"
+open\_in\_browser: false
+
+# ------------------------------------------------------------------
+
+# Cross-module bindings (file discovery for other tools)
+
+# ------------------------------------------------------------------
+
+bindings:
+diagnostic\_summary\_json: "\${paths.artifacts}/diagnostics/diagnostic\_summary.json"
+symbolic\_rule\_rank\_json: "\${paths.artifacts}/symbolic/rule\_rank.json"
+symbolic\_mask\_npy: "\${paths.artifacts}/symbolic/violations\_mask.npy"
+umap\_html: "\${paths.artifacts}/embeddings/umap.html"
+tsne\_html: "\${paths.artifacts}/embeddings/tsne.html"
