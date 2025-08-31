@@ -2,9 +2,9 @@
 
 ## 🎯 Purpose & Scope
 
-This folder contains the **React-based GUI routes and layout** for **SpectraMind V50**.  
-It is a **thin, optional visualization layer** that sits **on top of the CLI-first pipeline**.  
-All analytics, training, and diagnostics are executed by the `spectramind …` CLI and FastAPI server;  
+This folder contains the **React-based GUI routes and layout** for **SpectraMind V50**.
+It is a **thin, optional visualization layer** that sits **on top of the CLI-first pipeline**.
+All analytics, training, and diagnostics are executed by the `spectramind …` CLI and FastAPI server;
 the GUI simply loads those **CLI-generated artifacts** (`.json`, `.html`, `.png`) and presents them interactively.
 
 > Golden rule: **No hidden logic here** — the GUI must only reflect outputs produced by the CLI, ensuring **NASA-grade reproducibility** and zero drift between GUI and CLI workflows.
@@ -13,10 +13,10 @@ the GUI simply loads those **CLI-generated artifacts** (`.json`, `.html`, `.png`
 
 ## 📁 Files (key pages)
 
-* **`index.tsx`** — App entrypoint (router, theming, toasts, lazy routes).  
-* **`layout.tsx`** — Global shell (sidebar + topbar + content, command palette, theme toggle).  
-* **`dashboard.tsx`** — One-screen overview; embeds CLI artifacts (UMAP/t-SNE HTML, PNG plots).  
-* **`diagnostics.tsx`** — Artifact browser + summary JSON viewer + quick-look charts.  
+* **`index.tsx`** — App entrypoint (router, theming, toasts, lazy routes).
+* **`layout.tsx`** — Global shell (sidebar + topbar + content, command palette, theme toggle).
+* **`dashboard.tsx`** — One-screen overview; embeds CLI artifacts (UMAP/t-SNE HTML, PNG plots).
+* **`diagnostics.tsx`** — Artifact browser + summary JSON viewer + quick-look charts.
 * **`reports.tsx`** — Saved HTML/MD report browser for files under `/artifacts/`.
 
 > Feature pages live in `../features/*` (UMAP, t-SNE, SHAP, Symbolic, FFT, Calibration).
@@ -25,26 +25,26 @@ the GUI simply loads those **CLI-generated artifacts** (`.json`, `.html`, `.png`
 
 ## 🖼️ Design Principles
 
-* **CLI-first, GUI-optional**  
-  Every GUI action corresponds to a CLI command (e.g., `spectramind diagnose dashboard`).  
+* **CLI-first, GUI-optional**
+  Every GUI action corresponds to a CLI command (e.g., `spectramind diagnose dashboard`).
   GUI never bypasses Hydra configs, run hashes, or DVC lineage.
 
-* **Reproducibility by construction**  
+* **Reproducibility by construction**
   GUI renders artifacts under `/artifacts/` that were produced by versioned CLI runs.
 
-* **Lightweight & air-gapped friendly**  
+* **Lightweight & air-gapped friendly**
   Built with **React + Vite + Tailwind + shadcn/ui**; no telemetry; works offline with the local FastAPI + static mount.
 
-* **Stateless analytics**  
+* **Stateless analytics**
   Components do not perform ML or calibration in the browser; they only *display* precomputed outputs.
 
 ---
 
 ## 🔗 API Integration (contract)
 
-* `GET /api/diagnostics/summary` → summary JSON for **Diagnostics** and **Dashboard**.  
-* `GET /api/diagnostics/health` → quick connection check.  
-* `POST /api/diagnostics/run` → (optional) trigger `spectramind diagnose dashboard`.  
+* `GET /api/diagnostics/summary` → summary JSON for **Diagnostics** and **Dashboard**.
+* `GET /api/diagnostics/health` → quick connection check.
+* `POST /api/diagnostics/run` → (optional) trigger `spectramind diagnose dashboard`.
 * Static mount `/artifacts/*` → the CLI’s HTML/PNG/JSON outputs.
 
 If auth is enabled, use request headers like `X-API-Key` or `Authorization: Bearer …`.
@@ -75,7 +75,7 @@ flowchart LR
     A --> H
     A --> I
     A --> J
-````
+```
 
 ---
 
@@ -152,7 +152,7 @@ npm run dev   # Vite dev server (hot reload)
 * **Mermaid diagrams not rendering on GitHub**
 
   * Use fenced blocks with \`\`\`mermaid and no trailing semicolons.
-  * Avoid unsupported syntax; declare nodes, then edges.
+  * Avoid unsupported syntax; declare nodes before edges.
   * Escape pipes as `&#124;` if needed.
 
 * **Artifacts show as “Missing”**
@@ -206,5 +206,4 @@ flowchart LR
 ✅ In short: **`src/gui/app/` is presentation-only.**
 It visualizes CLI results and never generates them — keeping **SpectraMind V50 reproducible, auditable, and Kaggle-safe**.
 
-```
-```
+---
