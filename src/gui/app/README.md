@@ -2,21 +2,21 @@
 
 ## 🎯 Purpose & Scope
 
-This folder contains the **React-based GUI routes and layout** for **SpectraMind V50**.
-It is a **thin, optional visualization layer** that sits **on top of the CLI-first pipeline**.
-All analytics, training, and diagnostics are executed by the `spectramind …` CLI and FastAPI server;
+This folder contains the **React-based GUI routes and layout** for **SpectraMind V50**.  
+It is a **thin, optional visualization layer** that sits **on top of the CLI-first pipeline**.  
+All analytics, training, and diagnostics are executed by the `spectramind …` CLI and FastAPI server;  
 the GUI simply loads those **CLI-generated artifacts** (`.json`, `.html`, `.png`) and presents them interactively.
 
-> Golden rule: **No hidden logic here** — the GUI must only reflect outputs produced by the CLI, ensuring **NASA-grade reproducibility** and zero drift between GUI and CLI workflows.
+> Golden rule: **No hidden logic here** — the GUI must only reflect outputs produced by the CLI, ensuring **NASA-grade reproducibility** and zero drift between GUI and CLI workflows:contentReference[oaicite:3]{index=3}.
 
 ---
 
 ## 📁 Files (key pages)
 
-* **`index.tsx`** — App entrypoint (router, theming, toasts, lazy routes).
-* **`layout.tsx`** — Global shell (sidebar + topbar + content, command palette, theme toggle).
-* **`dashboard.tsx`** — One-screen overview; embeds CLI artifacts (UMAP/t-SNE HTML, PNG plots).
-* **`diagnostics.tsx`** — Artifact browser + summary JSON viewer + quick-look charts.
+* **`index.tsx`** — App entrypoint (router, theming, toasts, lazy routes).  
+* **`layout.tsx`** — Global shell (sidebar + topbar + content, command palette, theme toggle).  
+* **`dashboard.tsx`** — One-screen overview; embeds CLI artifacts (UMAP/t-SNE HTML, PNG plots).  
+* **`diagnostics.tsx`** — Artifact browser + summary JSON viewer + quick-look charts.  
 * **`reports.tsx`** — Saved HTML/MD report browser for files under `/artifacts/`.
 
 > Feature pages live in `../features/*` (UMAP, t-SNE, SHAP, Symbolic, FFT, Calibration).
@@ -25,26 +25,26 @@ the GUI simply loads those **CLI-generated artifacts** (`.json`, `.html`, `.png`
 
 ## 🖼️ Design Principles
 
-* **CLI-first, GUI-optional**
-  Every GUI action corresponds to a CLI command (e.g., `spectramind diagnose dashboard`).
-  GUI never bypasses Hydra configs, run hashes, or DVC lineage.
+* **CLI-first, GUI-optional**  
+  Every GUI action corresponds to a CLI command (e.g., `spectramind diagnose dashboard`).  
+  GUI never bypasses Hydra configs, run hashes, or DVC lineage:contentReference[oaicite:4]{index=4}.
 
-* **Reproducibility by construction**
+* **Reproducibility by construction**  
   GUI renders artifacts under `/artifacts/` that were produced by versioned CLI runs.
 
-* **Lightweight & air-gapped friendly**
-  Built with **React + Vite + Tailwind + shadcn/ui**; no external telemetry; works offline with the local FastAPI + static mount.
+* **Lightweight & air-gapped friendly**  
+  Built with **React + Vite + Tailwind + shadcn/ui**; no telemetry; works offline with the local FastAPI + static mount.
 
-* **Stateless analytics**
+* **Stateless analytics**  
   Components do not perform ML or calibration in the browser; they only *display* precomputed outputs.
 
 ---
 
 ## 🔗 API Integration (contract)
 
-* `GET /api/diagnostics/summary` → summary JSON for **Diagnostics** and **Dashboard**.
-* `GET /api/diagnostics/health` → quick connection check.
-* `POST /api/diagnostics/run` → (optional) trigger `spectramind diagnose dashboard`.
+* `GET /api/diagnostics/summary` → summary JSON for **Diagnostics** and **Dashboard**.  
+* `GET /api/diagnostics/health` → quick connection check.  
+* `POST /api/diagnostics/run` → (optional) trigger `spectramind diagnose dashboard`.  
 * Static mount `/artifacts/*` → the CLI’s HTML/PNG/JSON outputs.
 
 If auth is enabled, use request headers like `X-API-Key` or `Authorization: Bearer …`.
@@ -55,16 +55,17 @@ If auth is enabled, use request headers like `X-API-Key` or `Authorization: Bear
 
 ```mermaid
 flowchart LR
-  A[App Router] --> B[Dashboard (/dashboard)]
-  A --> C[Diagnostics (/diagnostics)]
-  A --> D[Reports (/reports)]
-  A --> E[UMAP (/umap)]
-  A --> F[t-SNE (/tsne)]
-  A --> G[SHAP (/shap)]
-  A --> H[Symbolic (/symbolic)]
-  A --> I[FFT (/fft)]
-  A --> J[Calibration (/calibration)]
-```
+    A[App Router]
+    A --> B[Dashboard (/dashboard)]
+    A --> C[Diagnostics (/diagnostics)]
+    A --> D[Reports (/reports)]
+    A --> E[UMAP (/umap)]
+    A --> F[t-SNE (/tsne)]
+    A --> G[SHAP (/shap)]
+    A --> H[Symbolic (/symbolic)]
+    A --> I[FFT (/fft)]
+    A --> J[Calibration (/calibration)]
+````
 
 ---
 
@@ -72,11 +73,11 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-  GUI[GUI: diagnostics.tsx] -->|fetch| API[/api/diagnostics/summary]
-  GUI -->|open| ART[Static /artifacts/umap.html]
-  GUI -->|trigger| CLI[spectramind diagnose dashboard]
-  CLI --> ART
-  CLI --> LOG[v50_debug_log.md]
+    GUI[GUI: diagnostics.tsx] -->|fetch| API[/api/diagnostics/summary/]
+    GUI -->|open| ART[Static /artifacts/umap.html]
+    GUI -->|trigger| CLI[spectramind diagnose dashboard]
+    CLI --> ART
+    CLI --> LOG[v50_debug_log.md]
 ```
 
 1. User clicks **Run Diagnostics** → server invokes `spectramind diagnose dashboard`.
@@ -87,8 +88,6 @@ flowchart LR
 ---
 
 ## ⚙️ Environment Variables
-
-These are read in the GUI (via Vite) to avoid hard-coding paths:
 
 * `VITE_API_BASE` — e.g., `""` (same origin) or `/api-gateway`
 * `VITE_ARTIFACTS_BASE` — default `/artifacts`
@@ -142,18 +141,17 @@ npm run dev   # Vite dev server (hot reload)
 
 * **Mermaid diagrams not rendering on GitHub**
 
-  * Avoid inner quotes and trailing semicolons.
-  * Escape pipes as `&#124;`.
-  * Don’t do fan-out like `A --> B & C`; write two edges.
+  * Use fenced blocks with \`\`\`mermaid and no trailing semicolons.
+  * Avoid inner quotes and ensure supported syntax.
+  * Escape pipes as `&#124;` if needed.
 
 * **Artifacts show as “Missing”**
 
-  * Run:
+  ```bash
+  spectramind diagnose dashboard
+  ```
 
-    ```bash
-    spectramind diagnose dashboard
-    ```
-  * Ensure the server mounts the artifact directory at `/artifacts`.
+  Ensure the server mounts the artifact directory at `/artifacts`.
 
 * **CORS or 404 on `/api/*`**
 
@@ -166,35 +164,36 @@ npm run dev   # Vite dev server (hot reload)
 
 ```mermaid
 flowchart LR
-  subgraph Client[Client (React/Vite)]
-    R[Routes: /diagnostics, /reports]
-    S[State: filters & view]
-    V[Views: tables, charts, iframes]
-  end
+    subgraph Client[Client (React/Vite)]
+        R[Routes: /diagnostics, /reports]
+        S[State: filters & view]
+        V[Views: tables, charts, iframes]
+    end
 
-  subgraph Server[Server (FastAPI)]
-    A[/ /api/diagnostics/* /]
-    X[(Static /artifacts)]
-  end
+    subgraph Server[Server (FastAPI)]
+        A[/api/diagnostics/*/]
+        X[(Static /artifacts)]
+    end
 
-  subgraph Pipeline[CLI & Pipeline]
-    C[spectramind diagnose dashboard]
-    H[(Hydra configs)]
-    D[(DVC data/models)]
-    L[v50_debug_log.md]
-  end
+    subgraph Pipeline[CLI & Pipeline]
+        C[spectramind diagnose dashboard]
+        H[(Hydra configs)]
+        D[(DVC data/models)]
+        L[v50_debug_log.md]
+    end
 
-  R --> A
-  V --> X
-  A --> C
-
-  C --> X
-  C --> L
-  C --> H
-  C --> D
+    R --> A
+    V --> X
+    A --> C
+    C --> X
+    C --> L
+    C --> H
+    C --> D
 ```
 
 ---
 
 ✅ In short: **`src/gui/app/` is presentation-only.**
 It visualizes CLI results and never generates them — keeping **SpectraMind V50 reproducible, auditable, and Kaggle-safe**.
+
+```
