@@ -209,5 +209,3 @@ flowchart TD
 **Artifact readiness contract:** server sets component props `{ available, url, reason? }`; GUI shows a **Placeholder** with the exact CLI command to produce missing artifacts and a **Retry** button that calls `/api/diagnostics/run`.
 
 ---
-
-*This upgraded doc removes rendering pitfalls (escaped pipes, quoted labels, semicolons) and codifies the CLI-first, artifact-rendering contract end-to-end.*
