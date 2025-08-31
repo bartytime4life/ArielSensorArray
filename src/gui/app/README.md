@@ -53,18 +53,17 @@ If auth is enabled, use request headers like `X-API-Key` or `Authorization: Bear
 
 ## 🗺️ Routing Overview
 
-```mermaid
 flowchart LR
-    A[App Router]
-    B[Dashboard (/dashboard)]
-    C[Diagnostics (/diagnostics)]
-    D[Reports (/reports)]
-    E[UMAP (/umap)]
-    F[t-SNE (/tsne)]
-    G[SHAP (/shap)]
-    H[Symbolic (/symbolic)]
-    I[FFT (/fft)]
-    J[Calibration (/calibration)]
+    A["App Router"]
+    B["Dashboard (/dashboard)"]
+    C["Diagnostics (/diagnostics)"]
+    D["Reports (/reports)"]
+    E["UMAP (/umap)"]
+    F["t-SNE (/tsne)"]
+    G["SHAP (/shap)"]
+    H["Symbolic (/symbolic)"]
+    I["FFT (/fft)"]
+    J["Calibration (/calibration)"]
 
     A --> B
     A --> C
@@ -75,6 +74,7 @@ flowchart LR
     A --> H
     A --> I
     A --> J
+
 ```
 
 ---
