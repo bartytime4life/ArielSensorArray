@@ -1,4 +1,3 @@
-// src/gui/components/Chart.tsx
 // =============================================================================
 // 📈 SpectraMind V50 — Reusable Chart Component (React + Recharts + Tailwind)
 // -----------------------------------------------------------------------------
@@ -16,6 +15,7 @@
 //   • Sensible defaults; non-intrusive styling with Tailwind
 //   • Dark-mode friendly (inherits Tailwind dark vars)
 //   • No color hardcoding required; supports per-series color override
+//   • Reduced-motion aware; deterministic rendering
 //
 // Example
 //   <Chart
@@ -34,7 +34,6 @@
 //   • "framer-motion"
 //   • TailwindCSS
 //   • Local Card component (src/gui/components/card.tsx)
-//
 // =============================================================================
 
 import * as React from "react";
@@ -55,6 +54,7 @@ import {
   Tooltip,
   Legend,
   ReferenceLine,
+  Brush,
 } from "recharts";
 import { Card } from "./card";
 
@@ -62,16 +62,18 @@ type SeriesType = "line" | "area" | "bar";
 type ChartType = "line" | "area" | "bar" | "composed";
 
 export interface ChartSeries {
-  key: string;                 // data key
-  label?: string;              // legend label
-  color?: string;              // override color (stroke/fill)
-  strokeWidth?: number;        // line/bar stroke width
-  dot?: boolean;               // show dots for line series
-  yAxisId?: "left" | "right";  // attach to left/right axis
-  type?: "linear" | "monotone"; // Recharts curve type (for line/area)
-  seriesType?: SeriesType;     // only used for composed charts
-  fillOpacity?: number;        // for area/bar
-  barSize?: number;            // for bar
+  key: string;                   // data key
+  label?: string;                // legend label
+  color?: string;                // override color (stroke/fill)
+  strokeWidth?: number;          // line/bar stroke width
+  dot?: boolean;                 // show dots for line series
+  yAxisId?: "left" | "right";    // attach to left/right axis
+  type?: "linear" | "monotone";  // Recharts curve type (for line/area)
+  seriesType?: SeriesType;       // only used for composed charts
+  fillOpacity?: number;          // for area/bar
+  barSize?: number;              // for bar
+  stacked?: boolean;             // stackId auto-assigned when true
+  gradient?: boolean;            // add gradient fill (area/bar)
 }
 
 export interface ReferenceMark {
@@ -97,10 +99,12 @@ export interface ChartProps extends React.HTMLAttributes<HTMLDivElement> {
   xKey: string;
   yKeys: ChartSeries[];
 
-  height?: number;            // pixel height (default 280)
-  grid?: boolean;             // show cartesian grid
-  legend?: boolean;           // show legend
+  height?: number;             // pixel height (default 280)
+  grid?: boolean;              // show cartesian grid
+  legend?: boolean;            // show legend
   referenceLines?: ReferenceMark[];
+  brush?: boolean;             // show Brush control (zooming window)
+  syncId?: string;             // sync multiple charts
 
   // Axes & formatting
   leftAxisLabel?: string;
@@ -109,6 +113,9 @@ export interface ChartProps extends React.HTMLAttributes<HTMLDivElement> {
   yTickFormatterLeft?: (val: any) => string;
   yTickFormatterRight?: (val: any) => string;
   tooltipFormatter?: (value: any, name: string, entry: any) => any;
+  tooltipLabelFormatter?: (label: any) => any;
+  yDomainLeft?: [number | "auto" | "dataMin" | "dataMax", number | "auto" | "dataMin" | "dataMax"];
+  yDomainRight?: [number | "auto" | "dataMin" | "dataMax", number | "auto" | "dataMin" | "dataMax"];
 
   // States
   loading?: boolean;
@@ -117,6 +124,10 @@ export interface ChartProps extends React.HTMLAttributes<HTMLDivElement> {
 
   // Events
   onPointClick?: (payload: any) => void;
+
+  // A11y / test hooks
+  "aria-label"?: string;
+  "data-testid"?: string;
 }
 
 /** Lightweight empty state */
@@ -177,8 +188,26 @@ function ReferenceLineEl({ mark }: { mark: ReferenceMark }) {
   return null;
 }
 
+/** Reduced-motion detection */
+function usePrefersReducedMotion() {
+  const [reduced, setReduced] = React.useState(false);
+  React.useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const m = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const onChange = () => setReduced(!!m.matches);
+    onChange();
+    m.addEventListener?.("change", onChange);
+    return () => m.removeEventListener?.("change", onChange);
+  }, []);
+  return reduced;
+}
+
 /** Series renderers for composed charts */
-function renderSeriesForComposed(s: ChartSeries, idx: number, onPointClick?: (p: any) => void) {
+function renderSeriesForComposed(
+  s: ChartSeries,
+  idx: number,
+  onPointClick?: (p: any) => void
+) {
   const { stroke, fill } = seriesColors(s.color);
   const common = {
     key: `${s.key}-${idx}`,
@@ -186,8 +215,8 @@ function renderSeriesForComposed(s: ChartSeries, idx: number, onPointClick?: (p:
     name: s.label ?? s.key,
     yAxisId: s.yAxisId ?? "left",
   };
-
   const handleClick = onPointClick ? { onClick: onPointClick } : {};
+  const stackId = s.stacked ? "stack-0" : undefined;
 
   switch (s.seriesType ?? "line") {
     case "bar":
@@ -197,6 +226,7 @@ function renderSeriesForComposed(s: ChartSeries, idx: number, onPointClick?: (p:
           fill={fill}
           barSize={s.barSize ?? 12}
           fillOpacity={s.fillOpacity ?? 0.9}
+          stackId={stackId}
           {...handleClick}
         />
       );
@@ -211,6 +241,7 @@ function renderSeriesForComposed(s: ChartSeries, idx: number, onPointClick?: (p:
           fillOpacity={s.fillOpacity ?? 0.15}
           dot={s.dot ?? false}
           activeDot={{ r: 4 }}
+          stackId={stackId}
           {...handleClick}
         />
       );
@@ -228,6 +259,22 @@ function renderSeriesForComposed(s: ChartSeries, idx: number, onPointClick?: (p:
         />
       );
   }
+}
+
+/** Optional gradient defs for series that request gradient fill */
+function Gradients({ yKeys }: { yKeys: ChartSeries[] }) {
+  return (
+    <defs>
+      {yKeys.map((s, i) =>
+        s.gradient ? (
+          <linearGradient key={`grad-${s.key}-${i}`} id={`grad-${s.key}-${i}`} x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopColor={s.color ?? "hsl(var(--primary))"} stopOpacity={0.6} />
+            <stop offset="100%" stopColor={s.color ?? "hsl(var(--primary))"} stopOpacity={0.05} />
+          </linearGradient>
+        ) : null
+      )}
+    </defs>
+  );
 }
 
 /**
@@ -252,6 +299,8 @@ export const Chart: React.FC<ChartProps> = ({
   grid = true,
   legend = true,
   referenceLines,
+  brush = false,
+  syncId,
 
   // formatting
   leftAxisLabel,
@@ -260,6 +309,9 @@ export const Chart: React.FC<ChartProps> = ({
   yTickFormatterLeft,
   yTickFormatterRight,
   tooltipFormatter,
+  tooltipLabelFormatter,
+  yDomainLeft = ["auto", "auto"],
+  yDomainRight = ["auto", "auto"],
 
   // states
   loading,
@@ -269,9 +321,14 @@ export const Chart: React.FC<ChartProps> = ({
   // events
   onPointClick,
 
+  // a11y/test
+  "aria-label": ariaLabel,
+  "data-testid": testId,
+
   ...rest
 }) => {
   const hasData = Array.isArray(data) && data.length > 0;
+  const reducedMotion = usePrefersReducedMotion();
 
   // Choose base chart by type
   const isComposed = type === "composed";
@@ -283,7 +340,7 @@ export const Chart: React.FC<ChartProps> = ({
   const YTickLeftFmt = yTickFormatterLeft ?? identityFormat;
   const YTickRightFmt = yTickFormatterRight ?? identityFormat;
 
-  // Basic, consistent tooltip formatter if none provided
+  // Tooltip formatters
   const tooltipFmt =
     tooltipFormatter ??
     ((value: any, name: string) => {
@@ -297,7 +354,7 @@ export const Chart: React.FC<ChartProps> = ({
     [yKeys]
   );
 
-  // Inner chart element: separated for clarity
+  // Inner chart element
   const ChartInner = React.useMemo(() => {
     if (loading) return <LoadingState />;
     if (error) return <ErrorState message={error} />;
@@ -314,6 +371,7 @@ export const Chart: React.FC<ChartProps> = ({
           yAxisId="left"
           tickFormatter={YTickLeftFmt}
           stroke="hsl(var(--muted-foreground))"
+          domain={yDomainLeft as any}
           label={
             leftAxisLabel
               ? {
@@ -331,6 +389,7 @@ export const Chart: React.FC<ChartProps> = ({
             orientation="right"
             tickFormatter={YTickRightFmt}
             stroke="hsl(var(--muted-foreground))"
+            domain={yDomainRight as any}
             label={
               rightAxisLabel
                 ? {
@@ -352,6 +411,7 @@ export const Chart: React.FC<ChartProps> = ({
         )}
         <Tooltip
           formatter={tooltipFmt}
+          labelFormatter={tooltipLabelFormatter}
           contentStyle={{
             background: "hsl(var(--popover))",
             border: "1px solid hsl(var(--border))",
@@ -359,6 +419,7 @@ export const Chart: React.FC<ChartProps> = ({
             color: "hsl(var(--foreground))",
           }}
           labelStyle={{ color: "hsl(var(--muted-foreground))" }}
+          isAnimationActive={!reducedMotion}
         />
         {legend && <Legend />}
         {referenceLines?.map((mark, i) => (
@@ -371,9 +432,11 @@ export const Chart: React.FC<ChartProps> = ({
     if (isComposed) {
       return (
         <ResponsiveContainer width="100%" height={height}>
-          <ComposedChart data={data}>
+          <ComposedChart data={data} syncId={syncId}>
+            <Gradients yKeys={yKeys} />
             {commonAxes}
             {yKeys.map((s, i) => renderSeriesForComposed(s, i, onPointClick))}
+            {brush && <Brush dataKey={xKey} height={20} stroke="hsl(var(--muted-foreground))" />}
           </ComposedChart>
         </ResponsiveContainer>
       );
@@ -382,7 +445,7 @@ export const Chart: React.FC<ChartProps> = ({
     if (isLine) {
       return (
         <ResponsiveContainer width="100%" height={height}>
-          <LineChart data={data}>
+          <LineChart data={data} syncId={syncId}>
             {commonAxes}
             {yKeys.map((s, i) => {
               const { stroke } = seriesColors(s.color);
@@ -398,9 +461,11 @@ export const Chart: React.FC<ChartProps> = ({
                   activeDot={{ r: 4 }}
                   yAxisId={s.yAxisId ?? "left"}
                   onClick={onPointClick}
+                  isAnimationActive={!reducedMotion}
                 />
               );
             })}
+            {brush && <Brush dataKey={xKey} height={20} stroke="hsl(var(--muted-foreground))" />}
           </LineChart>
         </ResponsiveContainer>
       );
@@ -409,10 +474,12 @@ export const Chart: React.FC<ChartProps> = ({
     if (isArea) {
       return (
         <ResponsiveContainer width="100%" height={height}>
-          <AreaChart data={data}>
+          <AreaChart data={data} syncId={syncId}>
+            <Gradients yKeys={yKeys} />
             {commonAxes}
             {yKeys.map((s, i) => {
               const { stroke, fill } = seriesColors(s.color);
+              const fillRef = s.gradient ? `url(#grad-${s.key}-${i})` : fill;
               return (
                 <Area
                   key={`${s.key}-${i}`}
@@ -420,15 +487,17 @@ export const Chart: React.FC<ChartProps> = ({
                   dataKey={s.key}
                   name={s.label ?? s.key}
                   stroke={stroke}
-                  fill={fill}
+                  fill={fillRef}
                   strokeWidth={s.strokeWidth ?? 2}
-                  fillOpacity={s.fillOpacity ?? 0.15}
+                  fillOpacity={s.fillOpacity ?? (s.gradient ? 1 : 0.15)}
                   dot={s.dot ?? false}
                   yAxisId={s.yAxisId ?? "left"}
                   onClick={onPointClick}
+                  isAnimationActive={!reducedMotion}
                 />
               );
             })}
+            {brush && <Brush dataKey={xKey} height={20} stroke="hsl(var(--muted-foreground))" />}
           </AreaChart>
         </ResponsiveContainer>
       );
@@ -437,23 +506,29 @@ export const Chart: React.FC<ChartProps> = ({
     // default: bar
     return (
       <ResponsiveContainer width="100%" height={height}>
-        <BarChart data={data}>
+        <BarChart data={data} syncId={syncId}>
+          <Gradients yKeys={yKeys} />
           {commonAxes}
           {yKeys.map((s, i) => {
             const { fill } = seriesColors(s.color);
+            const fillRef = s.gradient ? `url(#grad-${s.key}-${i})` : fill;
+            const stackId = s.stacked ? "stack-0" : undefined;
             return (
               <Bar
                 key={`${s.key}-${i}`}
                 dataKey={s.key}
                 name={s.label ?? s.key}
-                fill={fill}
+                fill={fillRef}
                 yAxisId={s.yAxisId ?? "left"}
                 barSize={s.barSize ?? 12}
-                fillOpacity={s.fillOpacity ?? 0.9}
+                fillOpacity={s.fillOpacity ?? (s.gradient ? 1 : 0.9)}
                 onClick={onPointClick}
+                stackId={stackId}
+                isAnimationActive={!reducedMotion}
               />
             );
           })}
+          {brush && <Brush dataKey={xKey} height={20} stroke="hsl(var(--muted-foreground))" />}
         </BarChart>
       </ResponsiveContainer>
     );
@@ -477,9 +552,15 @@ export const Chart: React.FC<ChartProps> = ({
     leftAxisLabel,
     rightAxisLabel,
     tooltipFmt,
+    tooltipLabelFormatter,
     referenceLines,
     useRightAxis,
     onPointClick,
+    yDomainLeft,
+    yDomainRight,
+    brush,
+    syncId,
+    reducedMotion,
   ]);
 
   return (
@@ -488,6 +569,8 @@ export const Chart: React.FC<ChartProps> = ({
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.2 }}
       className={cn(className)}
+      aria-label={ariaLabel ?? title ?? "Chart"}
+      data-testid={testId ?? "Chart"}
       {...rest}
     >
       <Card
@@ -497,9 +580,7 @@ export const Chart: React.FC<ChartProps> = ({
         actions={actions}
         className="overflow-hidden"
       >
-        <div className="w-full">
-          {ChartInner}
-        </div>
+        <div className="w-full">{ChartInner}</div>
       </Card>
     </motion.div>
   );
