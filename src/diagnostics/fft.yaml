@@ -1,0 +1,32 @@
+# configs/diagnostics/fft.yaml
+# ==============================================================================
+# 🔊 FFT & autocorrelation analysis of μ spectra
+# Detects periodic systematics and validates smoothness in spectral domain.
+# ==============================================================================
+
+fft:
+  enable: true
+  detrend: "linear"                # "none" | "linear" | "poly2"
+  window: "hann"                   # e.g., "hann", "hamming", "blackman"
+  normalize: true
+  cutoff: 40                       # frequency bin cutoff for smoothness scoring
+  topk_peaks: 5
+  autocorr:
+    enable: true
+    max_lag: 60
+  molecules:
+    enable: true
+    # molecular bands (bin indices or wavelength ranges resolved downstream)
+    templates: ["H2O", "CH4", "CO2"]
+    flag_violations: true
+  plots:
+    power_spectrum: true
+    autocorr_plot: true
+    cluster_map: false
+    save_png: true
+    dpi: 160
+  output:
+    power_path: "plots/fft_power.png"
+    autocorr_path: "plots/autocorr.png"
+    clusters_path: "plots/fft_clusters.png"
+    features_json: "fft_features.json"
