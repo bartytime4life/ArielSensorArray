@@ -1,40 +1,169 @@
 # configs/diagnostics/explain.yaml
 # ==============================================================================
 # 🔍 Explainability — UMAP/t-SNE & SHAP overlays
+# SpectraMind V50 — NeurIPS 2025 Ariel Data Challenge
+# ------------------------------------------------------------------------------
+# Purpose:
+#   • Build interactive latent projections (UMAP/t-SNE) with symbolic/shap overlays
+#   • Export HTML for dashboard embedding + static PNGs for CI artifacts
+#   • Generate SHAP, attention, and SHAP×symbolic fusion visualizations
+#
+# Hydra-safe: override any field, e.g.:
+#   spectramind diagnose explain explain.umap.n_components=3 explain.tsne.perplexity=50
 # ==============================================================================
+
+# ----------------------------------------------------------------------
+# Hydra defaults
+# ----------------------------------------------------------------------
+defaults:
+  - override hydra/job_logging: default
+  - override hydra/hydra_logging: default
 
 explain:
   enable: true
+
+  # ------------------------------------------------------------------
+  # Inputs & caching
+  # ------------------------------------------------------------------
+  inputs:
+    latents_path: "artifacts/predict/latents.npy"    # [N, D] planet-level embeddings (optional)
+    meta_csv: "artifacts/predict/meta.csv"           # planet_id, split, labels, etc.
+    shap_json: "diagnostics/shap_values.json"        # optional per-bin SHAP for overlays
+    attention_json: "diagnostics/attention_maps.json"# optional decoder/head attentions
+  filter:
+    include_splits: ["train", "val", "test"]         # filter rows by split
+    exclude_planets: []                              # explicit exclusions by planet_id
+  cache:
+    enable: true
+    dir: ".cache/explain"
+    reuse_if_hash_matches: true
+
+  # ------------------------------------------------------------------
+  # UMAP configuration (scikit/umap-learn)
+  # ------------------------------------------------------------------
   umap:
     enable: true
     n_neighbors: 30
     min_dist: 0.05
-    n_components: 2           # 2 or 3; 3D saved as HTML
-    metric: "euclidean"
-    color_by: "symbolic_top_rule"   # planet metadata key or computed label
+    spread: 1.0
+    n_components: 2                 # 2 or 3; 3D saved as HTML
+    metric: "euclidean"             # euclidean | cosine | manhattan | precomputed
+    densmap: false                  # use densMAP variant
+    random_state: 1337
+    supervised:
+      enable: false                 # if true, use meta column as y
+      label_key: "symbolic_top_rule"
+    color_by: "symbolic_top_rule"   # meta key or computed label (e.g., "split"|"cluster"|"symbolic_top_rule")
     size_by: "confidence"           # optional: scales marker size by confidence
+    hover_cols: ["planet_id", "split", "symbolic_top_rule", "gll", "coverage_0.5"]
+    legend: "right"
     dedupe: true
-    link_symbols: true
+    link_symbols: true              # inject symbolic rule hyperlinks in tooltips
+    link_planet_pages:
+      enable: true
+      base_url: "artifacts/planets" # expects per-planet page: {base_url}/{planet_id}.html
+    cluster:
+      enable: true
+      method: "hdbscan"             # hdbscan | kmeans
+      k: 12                         # used if method=kmeans
+      min_cluster_size: 10          # used if method=hdbscan
     html_out: "umap.html"
+    png_out: "plots/umap.png"
+
+  # ------------------------------------------------------------------
+  # t-SNE configuration (openTSNE/ sklearn TSNE)
+  # ------------------------------------------------------------------
   tsne:
     enable: true
     n_components: 2
     perplexity: 35
     learning_rate: 200
     n_iter: 1500
+    early_exaggeration: 12.0
+    exaggeration: 1.0
+    init: "pca"                     # pca | random
+    metric: "euclidean"
+    random_state: 1337
+    color_by: "symbolic_top_rule"
+    size_by: "confidence"
+    hover_cols: ["planet_id", "split", "symbolic_top_rule", "gll"]
+    legend: "right"
     html_out: "tsne.html"
+    png_out: "plots/tsne.png"
+
+  # ------------------------------------------------------------------
+  # SHAP overlays for spectra
+  # ------------------------------------------------------------------
   shap:
     enable: true
-    overlay_bins_topk: 20
+    mode: "airs"                    # airs | fgs1 | both
+    overlay_bins_topk: 20           # highlight top-|SHAP| bins per planet
+    normalize_abs: true             # normalize by |SHAP| max per planet
+    aggregate:
+      per_planet: true
+      global_mean: true
+      per_molecule: true            # aggregate within molecule bands if available
+    color_map: "RdBu_r"
     save_png: true
     png_path: "plots/shap_overlay.png"
+    save_html: true
+    html_path: "shap_overlay.html"
+
+  # ------------------------------------------------------------------
+  # Attention fusion (decoder heads)
+  # ------------------------------------------------------------------
   attention:
     enable: true
     # decoder head attention fusion in shap_attention_overlay.py
     heads_topk: 4
+    layers: "all"                   # "all" or list of layer indices
+    normalize: true
     save_png: true
     png_path: "plots/shap_attention.png"
+    save_html: true
+    html_path: "shap_attention.html"
+
+  # ------------------------------------------------------------------
+  # SHAP × Symbolic fusion overlays
+  # ------------------------------------------------------------------
   shap_symbolic_fusion:
     enable: true
+    # marks bins with large |SHAP| that coincide with symbolic violations
+    violation_threshold: 0.5         # 0..1 mask threshold for symbolic violation intensity
+    shap_topk: 20
+    highlight_mode: "intersection"   # intersection | union | difference
     save_png: true
     png_path: "plots/shap_symbolic.png"
+    save_html: true
+    html_path: "shap_symbolic.html"
+
+  # ------------------------------------------------------------------
+  # Exports & diagnostics
+  # ------------------------------------------------------------------
+  export:
+    umap_csv: "diagnostics/umap_points.csv"         # x,y,(z), labels & hover cols
+    tsne_csv: "diagnostics/tsne_points.csv"
+    clusters_csv: "diagnostics/projection_clusters.csv"
+    summary_json: "diagnostics/explain_summary.json"
+  reproducibility:
+    log_hash: true
+    snapshot_config: true
+    manifest_json: "diagnostics/explain_manifest.json"
+
+  # ------------------------------------------------------------------
+  # Rendering/Theme
+  # ------------------------------------------------------------------
+  theme:
+    palette: "astro"                 # astro | colorblind_safe | grayscale
+    background: "white"              # white | dark
+    point_alpha: 0.9
+    point_size_px: 6
+    cmap_continuous: "viridis"
+    cmap_diverging: "coolwarm"
+
+  # ------------------------------------------------------------------
+  # Failure policy
+  # ------------------------------------------------------------------
+  policy:
+    fail_on_missing_inputs: false    # continue with partial outputs if some sources are missing
+    warn_on_empty_projection: true
