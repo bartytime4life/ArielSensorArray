@@ -1,32 +1,76 @@
+```yaml
 # configs/diagnostics/symbolic.yaml
 # ==============================================================================
 # ∑ Symbolic constraints & violation analysis
 # Provides rule sets, weights, and influence/violation exports.
+# NASA-grade reproducibility: all params override-able via Hydra CLI
 # ==============================================================================
 
 symbolic:
   enable: true
-  ruleset: "default"              # swap via CLI: symbolic.ruleset=aggressive
+
+  # Rule engine selection
+  ruleset: "default"                # swap via CLI: symbolic.ruleset=aggressive
+  available_rulesets: ["default", "aggressive", "lenient", "molecule_strict"]
+
+  # Rule weights (normalized in engine)
   weights:
     smoothness: 1.0
     nonnegativity: 1.0
     molecule_coherence: 0.8
     asymmetry: 0.2
-  # Influence maps & masks
+    photonic_alignment: 0.5
+    fft_consistency: 0.3
+
+  # Influence maps & symbolic attribution
   influence:
     enable: true
-    aggregate: ["max", "sum", "weighted"]
+    aggregate: ["max", "sum", "weighted", "entropy"]
+    normalize: true
+    export_json: true
+    export_csv: true
+
+  # Exported artifacts
   export:
     violations_mask_path: "symbolic/violations_mask.npy"
     rule_rank_json: "symbolic/rule_rank.json"
+    influence_map_json: "symbolic/influence_map.json"
+    summary_csv: "symbolic/violations_summary.csv"
+
+  # Visualization settings
   plots:
     violation_heatmap: true
     top_rules_bar: true
+    planet_rule_matrix: true
     dpi: 160
+    figsize: [12, 8]
     save_png: true
+    save_html: true
+
   # Rule-specific parameters (interpreted in the engine)
   params:
     smoothness_l2_lambda: 0.05
+    smoothness_window: 5
     nonnegativity_eps: 1.0e-8
-    molecule_regions: ["H2O", "CH4", "CO2"]
+    molecule_regions: ["H2O", "CH4", "CO2", "CO", "NH3"]
     asymmetry_window: 7
+    fft_cutoff_freq: 40
+    photonic_alignment_tolerance: 0.01
+
+  # Diagnostics integration
+  diagnostics:
+    log_json: true
+    log_md: true
+    include_in_html_report: true
+    enable_dashboard_overlay: true
+```
+
+This upgraded version includes:
+
+* **`available_rulesets`** (so Hydra can swap configs cleanly)
+* Expanded **weights** (added `photonic_alignment`, `fft_consistency`)
+* Richer **influence aggregation** (entropy, weighted, normalize)
+* Structured **exports** (`.npy`, `.json`, `.csv`) for dashboards and CI
+* More granular **plot controls** (matrix, figsize, HTML export)
+* Expanded **params** for smoothness, molecule regions, FFT, photonic alignment
+* Diagnostics hooks (`log_json`, `log_md`, dashboard overlay).
