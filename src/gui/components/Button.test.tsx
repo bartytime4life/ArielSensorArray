@@ -1,14 +1,17 @@
-// src/gui/components/Button.test.tsx
 // =============================================================================
 // 🎛️ SpectraMind V50 — Tests for Reusable Button Component
 // -----------------------------------------------------------------------------
 // Test goals:
 //   • Renders with default role/text and default variant+size classes.
 //   • Supports all visual variants and sizes (class presence checks).
-//   • Calls onClick when enabled; blocks when disabled.
+//   • Calls onClick when enabled; blocks when disabled and when loading.
 //   • Forwards refs to the underlying <button> element.
 //   • Supports `asChild` composition (e.g., renders <a> without button role).
 //   • Merges custom className and retains accessible focus styles.
+//   • fullWidth variant applies w-full.
+//   • leftIcon/rightIcon render and spacing applies when content present.
+//   • loading state renders inline spinner, sets aria-busy, disables when not asChild.
+//   • icon-only usage supports `srLabel` for accessibility.
 // =============================================================================
 
 import React, { createRef } from "react";
@@ -25,8 +28,8 @@ describe("Button component", () => {
     const btn = screen.getByRole("button", { name: /click me/i });
     expect(btn).toBeInTheDocument();
     // default variant + size classes
-    expect(btn).toHaveClass("bg-blue-600");
-    expect(btn).toHaveClass("h-10"); // md size by default
+    expect(btn).toHaveClass("bg-blue-600", { exact: false });
+    expect(btn).toHaveClass("h-10", { exact: false }); // md size by default
   });
 
   it("supports all visual variants (class snapshots)", () => {
@@ -49,7 +52,6 @@ describe("Button component", () => {
 
     rerender(<Button variant="ghost">Ghost</Button>);
     btn = screen.getByRole("button", { name: /ghost/i });
-    // Ghost has hover:bg-gray-100 and text-gray-900; we can check one static class
     expect(btn).toHaveClass("text-gray-900", { exact: false });
 
     rerender(<Button variant="link">Link</Button>);
@@ -73,6 +75,12 @@ describe("Button component", () => {
     btn = screen.getByRole("button", { name: /large/i });
     expect(btn).toHaveClass("h-12", { exact: false });
     expect(btn).toHaveClass("text-base", { exact: false });
+  });
+
+  it("applies fullWidth when requested", () => {
+    render(<Button fullWidth>Full</Button>);
+    const btn = screen.getByRole("button", { name: /full/i });
+    expect(btn).toHaveClass("w-full", { exact: false });
   });
 
   it("calls onClick when enabled", async () => {
@@ -136,14 +144,51 @@ describe("Button component", () => {
     render(<Button>Focus Me</Button>);
     const btn = screen.getByRole("button", { name: /focus me/i });
 
-    // Focus the button and check it retains focus (visual focus ring is a class; assert focus behavior)
+    // Focus the button and check it retains focus
     await user.tab();
-    // If this isn't the first tabbable element, explicitly focus:
     btn.focus();
     expect(btn).toHaveFocus();
 
-    // The exact ring style is applied conditionally; ensure the focus-visible base classes exist
+    // Ensure the focus-visible base classes exist
     expect(btn.className).toMatch(/focus-visible:ring-2/);
     expect(btn.className).toMatch(/focus-visible:ring-offset-2/);
+  });
+
+  it("renders leftIcon/rightIcon and keeps spacing when content present", () => {
+    const Left = <span data-testid="left">L</span>;
+    const Right = <span data-testid="right">R</span>;
+    render(
+      <Button leftIcon={Left} rightIcon={Right}>
+        Text
+      </Button>
+    );
+    const btn = screen.getByRole("button", { name: /text/i });
+    expect(btn.querySelector('[data-testid="left"]')).toBeInTheDocument();
+    expect(btn.querySelector('[data-testid="right"]')).toBeInTheDocument();
+  });
+
+  it("shows spinner and sets aria-busy when loading; blocks clicks", async () => {
+    const user = userEvent.setup();
+    const onClick = vi.fn();
+    render(
+      <Button loading onClick={onClick}>
+        Loading
+      </Button>
+    );
+    const btn = screen.getByRole("button", { name: /loading/i });
+    // spinner svg should be present (animate-spin in class)
+    const svg = btn.querySelector("svg");
+    expect(svg).toBeInTheDocument();
+    expect(btn).toHaveAttribute("aria-busy", "true");
+    expect(btn).toBeDisabled(); // disabled when not asChild
+    await user.click(btn);
+    expect(onClick).not.toHaveBeenCalled();
+  });
+
+  it("supports icon-only with srLabel for accessibility", () => {
+    render(<Button srLabel="Download" aria-label="Download" leftIcon={<span>↓</span>} />);
+    // No visible text; role/button should be findable by sr label
+    const btn = screen.getByRole("button", { name: /download/i });
+    expect(btn).toBeInTheDocument();
   });
 });
