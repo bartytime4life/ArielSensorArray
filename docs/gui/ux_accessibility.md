@@ -1,149 +1,267 @@
-# ♿ UX & Accessibility — SpectraMind V50 (GUI-Optional Layer)
+# ♿ UX & Accessibility — SpectraMind V50 (GUI-Optional Layer) — Upgraded
 
-> Goal: ensure our **thin GUIs** (Streamlit/React/Qt) are **usable, accessible, and audit-safe** while preserving the **CLI-first, Hydra-safe** pipeline.  
-> Scope: visual design, interaction, accessibility (A11y), i18n/l10n, error messaging, progress, and testing.
+> Ensure our **thin GUIs** (Streamlit / React / Qt) are **usable, accessible, and audit-safe** while preserving the **CLI-first, Hydra-safe** pipeline.
+> Scope: visual design, interaction, accessibility (A11y), i18n/l10n, error messaging, progress, testing, and CI enforcement.
 
 ---
 
 ## 0) First Principles
 
-1) **CLI-first, GUI-thin**  
-   - All operations must be reproducible via `spectramind …`; the GUI **only** invokes CLI and renders artifacts (JSON/HTML/plots/logs).  
-   - No hidden state; all parameters live in **Hydra configs** or explicit CLI overrides:contentReference[oaicite:0]{index=0}:contentReference[oaicite:1]{index=1}.
+1. **CLI-first, GUI-thin**
+   • All operations must be reproducible via `spectramind …`.
+   • GUIs **only** invoke the CLI and render artifacts (JSON/HTML/plots/logs).
+   • No hidden state: parameters live in **Hydra configs** or explicit CLI overrides.
 
-2) **Declarative UI & Event-Driven**  
-   - Treat UI as a function of state (diagnostics JSON, run status).  
-   - Event loop (clicks/timers/file updates) → invoke CLI → render outputs (state binding):contentReference[oaicite:2]{index=2}:contentReference[oaicite:3]{index=3}.
+2. **Declarative + Event-Driven**
+   • UI is a function of state (diagnostic JSON, run status).
+   • Event → invoke CLI → render outputs (bind state to views).
 
-3) **Accessible by default**  
-   - Follow industry patterns (MVC/MVVM), event-driven models, and accessibility guidelines to reduce coupling and improve testability:contentReference[oaicite:4]{index=4}:contentReference[oaicite:5]{index=5}.
+3. **Accessible by Default**
+   • Follow WCAG 2.2 AA, platform A11y APIs, and pattern libraries (MVC/MVVM).
+   • Test with keyboard + screen reader; ship high-contrast and reduced-motion options.
 
-4) **Human-friendly CLI UX**  
-   - GUI surfaces **clear help**, **progress**, **actionable errors**, and **reaction for every action**, reflecting elite CLI UX standards:contentReference[oaicite:6]{index=6}.
+4. **Human-friendly CLI UX surfaced in the GUI**
+   • Show help/affordances, progress, actionable errors, and a visible reaction for every action.
 
 ---
 
-## 1) A11y Checklist (WCAG-inspired, pragmatic)
+## 1) A11y Acceptance Criteria (WCAG-inspired, pragmatic)
 
 ### 1.1 Perceivable
-- **Contrast** ≥ 4.5:1 for text/UI chrome; 3:1 for large text. Prefer neutral/high-contrast themes in charts and UIs.  
-- **Color-independence**: never encode meaning with color alone; add shapes, patterns, or labels.  
-- **Alt text** for images/plots; **captions** for embedded HTML reports.  
-- Avoid tiny fonts; ensure responsive scaling (desktop ≥14–16 px base).
+
+* **Contrast**: text/UI ≥ 4.5:1; large text ≥ 3:1. Charts follow the theme (see §6 tokens).
+* **Color-independence**: never encode meaning with color alone; add shapes, patterns, labels.
+* **Alt text** for images/plots; **captions** for embedded HTML reports.
+* **Type & scale**: base 16px with responsive scaling (min 14px at dense breakpoints).
+* **Media**: no auto-playing audio; videos require captions.
 
 ### 1.2 Operable
-- **Keyboard first**: every action reachable via keyboard (see §4 map).  
-- **Focus management** with visible focus rings; logical tab order; skip links for long pages.  
-- **Avoid seizure/motion**: no flashing; prefer subtle transitions; respect reduced-motion settings.  
-- Provide **pause/stop** or throttling for auto-refreshing logs/plots.
+
+* **Keyboard first**: all actions reachable; no key traps; visible focus rings.
+* **Focus management**: send focus to results panel after Run; provide “Skip to content” link.
+* **Motion**: respect `prefers-reduced-motion`; no flashing (≤ 3/sec).
+* **Auto-refresh**: user-controlled (pause/resume/throttle) for logs and galleries.
 
 ### 1.3 Understandable
-- **Plain-language labels/help**; tooltips for advanced toggles.  
-- Consistent layout (grid), consistent components (buttons/links), consistent icons.  
-- Clear affordances (primary vs secondary actions).
+
+* **Plain-language labels**; tooltips for advanced flags.
+* **Consistency**: same components for same concepts (buttons, links, toasts).
+* **Validation**: inline, descriptive errors; preserve user input.
 
 ### 1.4 Robust
-- **ARIA roles / labels** on custom components; native elements where possible.  
-- Accessible forms with programmatic labels; error states with role=alert; announce changes politely (live regions).
 
-Reference architectures, rendering modes, and pattern guidance are captured in our GUI references:contentReference[oaicite:7]{index=7}:contentReference[oaicite:8]{index=8}.
+* **Semantics**: proper HTML/ARIA roles; use native controls where possible.
+* **Live regions**: announce progress/errors politely (`aria-live="polite|assertive"`).
+* **Forms**: programmatic labels; inputs associated with `<label for=…>`.
 
 ---
 
-## 2) SpectraMind-Specific UX: Reproducibility & Auditability
+## 2) SpectraMind-Specific UX for Reproducibility & Auditability
 
-### 2.1 Provenance UI
-- Surface the **exact CLI command** the GUI will run (copy-as-CLI).  
-- Show **Hydra overrides** and the **composed config hash**.  
-- Render **run id**, **git SHA**, **timestamps**, and link to `logs/v50_debug_log.md` for each action:contentReference[oaicite:9]{index=9}.
+### 2.1 Provenance & Traceability
+
+* Echo the **exact CLI command** the GUI will run (copy-as-CLI button).
+* Show **Hydra overrides**, **composed config hash**, **git SHA**, timestamp, and **run id**.
+* Link each action to `logs/v50_debug_log.md` and render a best-effort “Recent Runs” table.
 
 ### 2.2 Error Design (Actionable)
-- Map common failures to **plain-language** messages with remediation; include a “copy error context” button.  
-- Preserve raw stderr in an expandable panel.  
-- Follow CLI UX best practices: never fail silently; always explain **what happened** & **how to recover**:contentReference[oaicite:10]{index=10}.
+
+* Map common failures → **plain-language** messages + remediation steps.
+* Keep raw `stderr` in a collapsible panel; “Copy error context” button.
+* Never fail silently: always show **what happened** and **how to recover**.
 
 ### 2.3 Progress & Feedback
-- Never leave users staring at a blank screen:  
-  - Show **spinners/progress bars** within 100 ms;  
-  - Periodic status updates for long operations (log tail);  
-  - Success/failure toasts on completion:contentReference[oaicite:11]{index=11}.
+
+* Show a spinner or progress bar within **100 ms** of run initiation.
+* Stream stdout/stderr line-by-line; show periodic status headings.
+* On completion, surface a toast with **status**, **duration**, and **artifact links**.
 
 ---
 
-## 3) Layout, Grids & Visualization
+## 3) Layout, Grids, and Visualization
 
-- Use **grid-based** layouts to avoid clutter and maintain visual rhythm across panels (dashboards, tables, detail views).  
-- Encode scientific **patterns** (temporal series, spectral bins, symbolic overlays) with consistent axes, units, and legends.  
-- Prefer declarative renderers (React/Plotly) and accessible chart practices (aria-describedby, alt text, keyboard navigation).  
-- Keep a visual hierarchy: page > section > card > content; minimize cognitive load:contentReference[oaicite:12]{index=12}:contentReference[oaicite:13]{index=13}.
+* **Grid design**: page → section → card → content. Use a 12-col grid; avoid nested scroll containers.
+* **Scientific visuals**: consistent axes/units/legends; keep Y ranges comparable across runs when meaningful.
+* **Chart A11y**: label datasets; add data tables or “download CSV” alternatives; use `aria-describedby` and captions.
+* **Density controls**: “Compact” vs “Comfortable” spacing toggles for large tables.
 
 ---
 
-## 4) Keyboard & Shortcuts (default map)
+## 4) Keyboard Map (defaults)
 
-| Action | Keys |
-|---|---|
-| Run current form | **Shift + R** |
-| Open log panel | **g l** |
-| Dashboard home | **g d** |
-| Run launcher | **g r** |
-| Focus CLI preview | **.** |
-| Copy CLI command | **c** |
-| Toggle auto-refresh | **t** |
-| Next/Prev run | **]** / **[** |
+| Action                      | Keys           |
+| --------------------------- | -------------- |
+| Run current form            | **Shift + R**  |
+| Open logs panel             | **g l**        |
+| Dashboard home              | **g d**        |
+| Run launcher                | **g r**        |
+| Focus CLI preview           | **.** (period) |
+| Copy CLI command            | **c**          |
+| Toggle auto-refresh         | **t**          |
+| Next / Prev run             | **]** / **\[** |
+| Open help/shortcuts overlay | **?**          |
 
-> Provide a **“?” shortcuts** overlay accessible via keyboard. Ensure shortcuts don’t shadow native screen-reader keys.
+> Ship an in-app “Shortcuts (?)” overlay; avoid conflicting with screen-reader commands.
 
 ---
 
 ## 5) Internationalization (i18n) & Localization (l10n)
 
-- Externalize all user strings; load via locale files; default to **en** with fallback.  
-- Support **LTR/RTL** text directions if applicable; date/time/number formatting via locale.  
-- Avoid concatenated string building; prefer format placeholders.  
-- Keep labels concise to prevent overflow in localized UIs:contentReference[oaicite:14]{index=14}.
+* Externalize all UI strings; default `en`, allow locale switch.
+* Date/number formatting respects locale; avoid string concatenation (use placeholders).
+* Plan for **RTL** support (logical properties, `dir="auto"` where applicable).
+* Keep labels concise to prevent overflow in translated UIs.
 
 ---
 
-## 6) Components & Patterns
+## 6) Design Tokens (A11y-safe theme)
 
-### 6.1 Run Launcher (form)
-- Labeled inputs bound to Hydra fields; validation with programmatic hints; **Run** button + CLI preview; optional dry-run.  
-- Live **diff** view vs baseline config.
-
-### 6.2 Artifact Viewers
-- **HTML report**: embed in sandboxed frame with caption + “open in new tab.”  
-- **JSON**: table for `metrics`, `per_planet`; raw JSON in a collapsible region.  
-- **Plots**: responsive images/canvases; alt text; zoom/pan with keyboard equivalents.
-
-### 6.3 Logs
-- Tail `logs/v50_debug_log.md` with adjustable interval; pause/resume; search filter.  
-- Copy block button; download log.
-
----
-
-## 7) Performance & Reliability
-
-- Progressive rendering: show shell containers immediately, then hydrate with data.  
-- Debounce rapid toggles; throttle auto-refresh.  
-- Avoid blocking the UI thread (Qt: QProcess; React: workers/async).  
-- Offline-friendly: cache last diagnostics; handle missing artifacts gracefully (info banners).  
-- Low-bandwidth mode: fetch only metadata first, lazy-load heavy assets.
-
----
-
-## 8) QA & Accessibility Testing
-
-- **Automated**:  
-  - Lint ARIA roles; unit tests for ViewModels; Playwright for keyboard flows.  
-  - Axe/Pa11y for web A11y scans; snapshot tests for focus order.  
-- **Manual**:  
-  - Screen-reader pass (NVDA/VoiceOver); keyboard-only navigation; high-contrast theme check; reduced-motion toggle.  
-- **Regression**: log rendering, artifact embedding, and CLI preview must not regress.
+```yaml
+# docs/gui/tokens.yaml (excerpt)
+color:
+  fg:            "#0b0f14"   # foreground
+  fg-muted:      "#2d3748"
+  bg:            "#ffffff"
+  bg-elev:       "#f7f9fc"
+  primary:       "#0b67ff"   # ≥ 4.5:1 on bg
+  success:       "#0e8a16"
+  warning:       "#b7791f"
+  danger:        "#b00020"
+  border:        "#d8dee9"
+  focus:         "#ffb703"   # visible focus ring
+chart:
+  # Palette chosen for contrast on light & dark backgrounds
+  seq: ["#264653", "#2a9d8f", "#e9c46a", "#f4a261", "#e76f51", "#8ab17d", "#5a189a"]
+radius:
+  card: 12
+  button: 10
+space:
+  xs: 4
+  sm: 8
+  md: 12
+  lg: 16
+  xl: 24
+type:
+  base: 16    # px
+  scale: 1.125
+```
 
 ---
 
-## 9) Diagram: Thin Integration (for docs)
+## 7) Component Patterns (specs)
+
+### 7.1 Run Launcher (Form)
+
+* Fields map 1:1 to Hydra paths (e.g., `--outputs.dir`, `--no-umap`).
+* **CLI Preview** shows the exact composed command; **Copy** button.
+* **Dry-run** toggle to validate and preview without execution.
+* On submit: disable button, show spinner, stream logs.
+
+### 7.2 Artifact Viewers
+
+* **HTML** reports: sandboxed embed + filename + timestamp + “Open in new tab” + “Download”.
+* **JSON**: render `metrics` table and `per_planet` table if present; collapsible raw JSON.
+* **Plots**: responsive images, alt text like “UMAP of latent space, colored by symbolic rule class.”
+* **Empty state**: clearly indicate when no artifacts are present; link to a run action.
+
+### 7.3 Logs
+
+* Tail `logs/v50_debug_log.md` with adjustable byte limit & interval; **Pause/Resume**.
+* Search filter; “Download log” and “Copy selection”.
+* Highlight error lines (`rc != 0`, keywords like “Traceback”, “ERROR”).
+
+---
+
+## 8) Performance & Reliability
+
+* **Non-blocking**: subprocess streaming (Qt `QProcess`, React via WebSocket/child-process service, Streamlit `Popen` line-buffered).
+* **Debounce/throttle** frequent toggles; guard against double-submits.
+* **Offline-friendly**: cache the last successful diagnostics; show banners when sources are missing.
+* **Low-bandwidth**: lazy-load heavy plots; thumbnail grids; progressive JSON loading.
+
+---
+
+## 9) QA & A11y Testing Matrix
+
+| Layer          | What to test                           | Tooling                                   |
+| -------------- | -------------------------------------- | ----------------------------------------- |
+| Semantics      | Roles, labels, headings, landmarks     | axe-core / Pa11y / eslint-plugin-jsx-a11y |
+| Keyboard       | Tab order, focus rings, skip links     | Playwright/Cypress scripts                |
+| Screen readers | NVDA (Win), VoiceOver (macOS)          | Manual pass checklist                     |
+| Color/Contrast | Token contrast ≥ AA                    | Storybook A11y addon / figma plugin       |
+| Motion         | `prefers-reduced-motion` respected     | CSS audit + manual                        |
+| Logs/Streaming | No UI lock; consistent updates         | E2E with fake CLI writer                  |
+| i18n           | Locale switch, overflow handling       | Pseudolocalization                        |
+| Regression     | Artifact embedding, CLI preview stable | Snapshot tests / golden files             |
+
+---
+
+## 10) Reference Snippets
+
+### 10.1 React — Polite live region for progress
+
+```tsx
+<div role="status" aria-live="polite" aria-atomic="true">
+  {running ? `Running… ${progressMsg}` : 'Idle'}
+</div>
+```
+
+### 10.2 Streamlit — Accessible caption & download
+
+```python
+st.components.v1.html(html_text, height=900, scrolling=True)
+st.caption(f"Report: {report_path.name} — {report_path.stat().st_mtime_ns}")
+with open(report_path, "rb") as f:
+    st.download_button("Download HTML report", f, file_name=report_path.name, mime="text/html")
+```
+
+### 10.3 Qt — Non-blocking CLI runner
+
+```python
+proc = QProcess(self)
+proc.setProgram("spectramind")
+proc.setArguments(["diagnose", "dashboard", "--outputs.dir", outputs_dir])
+proc.readyReadStandardOutput.connect(lambda: self.append(proc.readAllStandardOutput().data().decode()))
+proc.start()
+```
+
+---
+
+## 11) Failure Taxonomy → Messages
+
+| Symptom           | Likely Cause          | User Message (short)            | Remediation                                          |
+| ----------------- | --------------------- | ------------------------------- | ---------------------------------------------------- |
+| CLI not found     | PATH/env not active   | “`spectramind` not found.”      | “Activate your env or set the CLI path in Settings.” |
+| Permission denied | Outputs dir RW issues | “Cannot write outputs.”         | “Choose a writable directory or fix permissions.”    |
+| Bad override      | Hydra key typo        | “Unknown config key `foo.bar`.” | “Check `configs/**` or remove the override.”         |
+| Long stall        | Heavy job, no output  | “Still running…”                | “Streaming last 20 lines. You can pause logs.”       |
+| HTML embed fails  | Corrupted file        | “Couldn’t embed report.”        | “Open in new tab or regenerate via Diagnose.”        |
+
+---
+
+## 12) DO / DON’T
+
+**DO**
+
+* Echo exact CLI commands; keep GUI state minimal; prefer native controls; label everything; fail usefully; throttle refresh.
+
+**DON’T**
+
+* Compute pipeline logic in the GUI; hide overrides; auto-refresh without a pause; rely on color alone; trap focus; swallow errors.
+
+---
+
+## 13) CI Hooks (recommended)
+
+* **A11y lint** (web): `yarn test:a11y` running axe on key routes.
+* **Unit**: mock subprocess/IPC; assert command lines and parsing.
+* **E2E**: fake CLI writer that emits stdout, creates fixture artifacts, and exits with `rc=0/1`.
+* **Snapshots**: artifact table & image gallery (fixed fixtures).
+* **Contrast**: automated check on token pairs (`fg`, `bg`, `primary` over `bg`).
+
+---
+
+## 14) Diagram — Thin Integration (for docs)
 
 ```mermaid
 flowchart LR
@@ -155,19 +273,19 @@ flowchart LR
   O --> G
   L --> G
   G -->|Render| V[Accessible Views]
-````
-
-> Use Mermaid in docs and READMEs; GitHub renders it natively — helpful for onboarding and reviews.
+```
 
 ---
 
-## 10) Reference Patterns
+## 15) References (internal)
 
-* **GUI architecture & patterns** (MVC/MVP/MVVM, declarative UIs, event-driven loops)
-* **CLI UX principles** (discoverability, progress, errors, scripting) inform GUI strings and flows
-* **CLI-first, artifact-driven integration** for SpectraMind V50 (Hydra configs, logs, diagnostics)
+* `docs/gui/README.md` — GUI layer goals & rules
+* `gui/streamlit_app.py` — reference Streamlit implementation
+* `logs/v50_debug_log.md` — authoritative run history
+* `configs/**` — Hydra groups & overrides (GUI forms/shortcuts map to these)
 
 ---
 
-```
-```
+### ✅ TL;DR
+
+Build GUIs that **call the CLI** and **render its artifacts**. Keep state thin, provenance visible, keyboard paths clear, contrast high, motion optional, and every failure **actionable**.
