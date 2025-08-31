@@ -59,6 +59,9 @@ trainer:
   checkpoint_interval: 5
   resume: false
   device: "cuda"
+  num_workers: 4
+  pin_memory: true
+  deterministic: true
 
 # ----------------------------------------------------------------------
 # Optimizer & Scheduler
@@ -67,9 +70,12 @@ optimizer:
   name: "AdamW"
   lr: 5e-4
   weight_decay: 0.01
+  betas: [0.9, 0.999]
+  eps: 1e-8
   scheduler:
     type: "cosine"
     warmup_steps: 1000
+    min_lr: 1e-6
 
 # ----------------------------------------------------------------------
 # Loss configuration (composite)
@@ -81,17 +87,20 @@ loss:
       weight: 1.0
     smoothness:
       enabled: true
-      weight: 0.1
-      cutoff: 50         # frequency cutoff for L2 penalty in FFT domain
+      weight: 0.10
+      cutoff: 50               # frequency cutoff for L2 penalty in FFT domain
+      lambda_l2: 1.0
     nonnegativity:
       enabled: true
       weight: 0.05
+      clamp_min: 0.0
     fft:
       enabled: true
-      weight: 0.1
+      weight: 0.10
       cutoff_freq: 40
+      taper: "hann"
     asymmetry:
-      enabled: false     # toggled in some ablation runs
+      enabled: false           # toggled in some ablation runs
       weight: 0.05
 
 # ----------------------------------------------------------------------
@@ -102,38 +111,125 @@ symbolic:
   rules:
     - name: "molecular_fingerprint"
       enabled: true
-      weight: 0.1
+      weight: 0.10
+      region: "H2O_CO2_CH4"    # example tag used by diagnostics
     - name: "gravitational_lensing"
       enabled: false
       weight: 0.05
     - name: "photonic_alignment"
       enabled: true
-      weight: 0.1
+      weight: 0.10
     - name: "entropy_minimization"
       enabled: true
       weight: 0.05
+
+# ----------------------------------------------------------------------
+# Data & calibration quick toggles (safe for ablations)
+# ----------------------------------------------------------------------
+data:
+  loader:
+    shuffle: true
+    drop_last: true
+  splits:
+    train_ratio: 0.9
+    val_ratio: 0.1
+  calibration_cache: true
+  cache_dir: ".cache/calib"
 
 # ----------------------------------------------------------------------
 # Diagnostics & Logging
 # ----------------------------------------------------------------------
 logging:
   rich_console: true
+  level: "INFO"
   jsonl_stream: "logs/events.jsonl"
   markdown_log: "logs/v50_debug_log.md"
+  save_config_yaml: true
+  save_config_path: "outputs/ablation_resolved_config.yaml"
   html_report: true
-  leaderboard:
-    markdown: "outputs/ablation_leaderboard.md"
-    html: "outputs/ablation_leaderboard.html"
-    export_top_n: 5
+
+diagnostics:
+  enabled: true
+  save_plots: true
+  out_dir: "outputs/diagnostics/ablation"
+  metrics:
+    - "gll"
+    - "rmse"
+    - "entropy"
+    - "symbolic_violation_norm"
+  html:
+    embed_plots: true
     open_browser: false
+
+# ----------------------------------------------------------------------
+# Leaderboard Export
+# ----------------------------------------------------------------------
+leaderboard:
+  markdown: "outputs/ablation_leaderboard.md"
+  html: "outputs/ablation_leaderboard.html"
+  export_top_n: 5
+  sort_by: "gll"
+  ascending: true
+  open_browser: false
 
 # ----------------------------------------------------------------------
 # Ablation-specific options
 # ----------------------------------------------------------------------
 ablation:
+  grid:
+    # Example knobs the ablation engine may expand; CLI -m can override too.
+    smoothness_weight: [0.0, 0.05, 0.10, 0.20]
+    fft_enabled: [true, false]
+    nonneg_enabled: [true]
+    asymmetry_enabled: [false, true]
+    mol_fingerprint_enabled: [true, false]
   top_n: 10                   # keep top-N configs per metric
   metrics: ["gll", "rmse", "entropy", "symbolic_violation_norm"]
   retry_failed: true
   parallel_runs: 2
+  max_runs: 64
   dry_run: false
-  ci_mode: false              # set true in GitHub CI ablation job
+  ci_mode: false              # set true in CI ablation job
+  randomize_order: true
+
+# ----------------------------------------------------------------------
+# Checkpointing & Artifacts
+# ----------------------------------------------------------------------
+artifacts:
+  base_dir: "outputs/ablation_runs"
+  save_checkpoints: true
+  keep_last_k: 2
+  save_every_n_epochs: 5
+  summaries:
+    enable_json: true
+    path: "outputs/ablation_summaries"
+
+# ----------------------------------------------------------------------
+# Optional experiment tracking (disabled by default for Kaggle-safe)
+# ----------------------------------------------------------------------
+tracking:
+  mlflow:
+    enabled: false
+    uri: "file:mlruns"
+    experiment: "spectramind_v50_ablation"
+  wandb:
+    enabled: false
+    project: "spectramind-v50"
+    group: "ablation"
+
+# ----------------------------------------------------------------------
+# Repro/Hashing
+# ----------------------------------------------------------------------
+repro:
+  write_run_hash: true
+  run_hash_path: "outputs/run_hash_summary_v50.json"
+  include_git_commit: true
+  include_config_digest: true
+
+# ----------------------------------------------------------------------
+# Safety & Guards
+# ----------------------------------------------------------------------
+guards:
+  fail_on_nan: true
+  grad_check_interval: 0       # 0 = disabled; set >0 to check every N steps
+  timeout_minutes: 480         # Kaggle 9h safety budget
