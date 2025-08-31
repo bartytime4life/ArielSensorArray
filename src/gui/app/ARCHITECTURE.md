@@ -12,41 +12,41 @@ It never computes analytics itself; it **renders CLI-produced artifacts** and **
 ```mermaid
 flowchart LR
   %% ---------- LAYERS ----------
-  subgraph Client (React/Vite)
-    R[Routes: /diagnostics, /reports];
-    S[State: run meta & filters];
-    V[Views: tables, charts, iframes];
+  subgraph Client["Client (React/Vite)"]
+    R[Routes: /diagnostics, /reports]
+    S[State: run meta & filters]
+    V[Views: tables, charts, iframes]
   end
 
-  subgraph Server (FastAPI)
-    A[/api/diagnostics/*/]:::api;
-    M[/api/authz/*/]:::api;
-    X[(Static /artifacts)]:::static;
+  subgraph Server["Server (FastAPI)"]
+    A[/"/api/diagnostics/*"/]:::api
+    M[/"/api/authz/*"/]:::api
+    X[(Static "/artifacts")]:::static
   end
 
-  subgraph CLI & Pipeline
-    C[spectramind diagnose dashboard]:::cli;
-    H[(Hydra configs)]:::cfg;
-    D[(DVC data/models)]:::cfg;
-    L[v50_debug_log.md]:::log;
+  subgraph Pipeline["CLI & Pipeline"]
+    C["spectramind diagnose dashboard"]:::cli
+    H[(Hydra configs)]:::cfg
+    D[(DVC data/models)]:::cfg
+    L["v50_debug_log.md"]:::log
   end
 
   %% ---------- FLOWS ----------
-  R --> A;
-  V --> X;
-  A --> C;
+  R --> A
+  V --> X
+  A --> C
 
-  C --> X;
-  C --> L;
-  C --> H;
-  C --> D;
+  C --> X
+  C --> L
+  C --> H
+  C --> D
 
   %% ---------- STYLES ----------
-  classDef api fill:#e8f4ff,stroke:#2a7bd3,color:#0b4080;
-  classDef static fill:#f9f7e8,stroke:#bb9b0b,color:#6e5800;
-  classDef cli fill:#f3e8ff,stroke:#7f3fbf,color:#3e1f63;
-  classDef cfg fill:#eefaf0,stroke:#2f9e44,color:#125c2b;
-  classDef log fill:#fbe9e9,stroke:#c73636,color:#5a1c1c;
+  classDef api fill:#e8f4ff,stroke:#2a7bd3,color:#0b4080
+  classDef static fill:#f9f7e8,stroke:#bb9b0b,color:#6e5800
+  classDef cli fill:#f3e8ff,stroke:#7f3fbf,color:#3e1f63
+  classDef cfg fill:#eefaf0,stroke:#2f9e44,color:#125c2b
+  classDef log fill:#fbe9e9,stroke:#c73636,color:#5a1c1c
 ```
 
 **Key properties**
@@ -136,16 +136,16 @@ All diagrams are **Mermaid** blocks rendered by GitHub automatically.
 
 ```mermaid
 flowchart LR
-  A[GUI] -->|GET /summary| B(API);
-  B --> C[(Artifacts)];
+  A[GUI] -->|"GET /summary"| B(API)
+  B --> C[(Artifacts)]
 ```
 
 **Mermaid hardening tips (GitHub):**
 
-* End each node/edge with `;`.
-* Use `[/text/]` or quotes for labels that look like tags/paths.
-* Escape pipes in labels as `&#124;` or use `<br/>` in quoted labels.
-* No fan-out like `A --> B & C` (write two edges).
+* Don’t add trailing semicolons to lines.
+* Prefer quoted labels for paths and commands (e.g., `["/api/diagnostics/*"]`).
+* Escape vertical bars as `&#124;` (or use `<br/>`).
+* Create separate edges (avoid `A --> B & C`; write two lines).
 * Comments start with `%%`.
 
 ---
@@ -171,30 +171,30 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-  T1["Tabs: FFT &#124; GLL &#124; UMAP &#124; t-SNE &#124; Dashboard"];
-  C1[Card: Section];
-  CH[Chart: PNG/HTML];
-  TB[Table: diagnostic_summary.json];
-  PL[Panel: symbolic overlays];
-  L1[Loader: events.jsonl];
+  T1["Tabs: FFT &#124; GLL &#124; UMAP &#124; t-SNE &#124; Dashboard"]
+  C1[Card: Section]
+  CH[Chart: PNG/HTML]
+  TB[Table: diagnostic_summary.json]
+  PL[Panel: symbolic overlays]
+  L1[Loader: events.jsonl]
 
-  T1 --> C1;
-  C1 --> CH;
-  C1 --> TB;
-  C1 --> PL;
-  L1 --> C1;
+  T1 --> C1
+  C1 --> CH
+  C1 --> TB
+  C1 --> PL
+  L1 --> C1
 ```
 
 ### Reports page wiring
 
 ```mermaid
 flowchart TD
-  M1[Modal: submission_report.html];
-  M2[Modal: selftest_report.html];
-  L2[Loader: events.jsonl, v50_debug_log.md];
+  M1[Modal: submission_report.html]
+  M2[Modal: selftest_report.html]
+  L2[Loader: events.jsonl, v50_debug_log.md]
 
-  M1 --> L2;
-  M2 --> L2;
+  M1 --> L2
+  M2 --> L2
 ```
 
 ---
@@ -207,5 +207,3 @@ flowchart TD
 * `GET /api/artifacts/file?path=...` → streams artifact (allow-listed path under `/artifacts`)
 
 **Artifact readiness contract:** server sets component props `{ available, url, reason? }`; GUI shows a **Placeholder** with the exact CLI command to produce missing artifacts and a **Retry** button that calls `/api/diagnostics/run`.
-
----
