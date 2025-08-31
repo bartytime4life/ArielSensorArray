@@ -1,133 +1,216 @@
-# 🖥️ GUI Frameworks — SpectraMind V50
+# 🖥️ GUI Frameworks — SpectraMind V50 (Upgraded)
 
 ## 0) Purpose & Scope
 
-This document surveys **major GUI frameworks** relevant to optional extensions of the **SpectraMind V50** pipeline.  
-The philosophy remains: **CLI-first, GUI-thin**. Frameworks are only wrappers around CLI commands, configs, and diagnostic artifacts — never replacements:contentReference[oaicite:0]{index=0}:contentReference[oaicite:1]{index=1}.
-
-We evaluate frameworks across **desktop, web, and notebook** contexts for compatibility, reproducibility, and scientific visualization.
+Survey the **desktop, web, and notebook** GUI options that can wrap the SpectraMind V50 pipeline. The doctrine is unchanged: **CLI-first, GUI-thin.** GUIs **invoke** `spectramind …` and **render** its artifacts (HTML, JSON, PNG) — never replace or fork pipeline logic.
 
 ---
 
 ## 1) Desktop Frameworks
 
-### 1.1 Qt (C++ / Python: PyQt, PySide)
-- **Strengths**: Mature, cross-platform, native performance, strong widget library, support for OpenGL/Vulkan GPU rendering:contentReference[oaicite:2]{index=2}.
-- **Patterns**: MVC/MVVM supported; signal/slot = Observer pattern.  
-- **Use Cases in V50**:
-  - Native “mission control” panel for local dev.
-  - Scientific plotting via Qt Charts + Matplotlib integration.
-- **Trade-offs**: Steeper learning curve, larger binaries.
+### 1.1 Qt (PySide6 / PyQt, C++/Python)
 
-### 1.2 GTK / WxWidgets
-- **Strengths**: Open-source, Linux-friendly, stable.  
-- **Use Cases**: lightweight dashboards in scientific environments.  
-- **Trade-offs**: less modern ecosystem, limited mobile/web portability.
+* **Strengths:** Mature, cross-platform, native feel, excellent widget set; QML for MVVM; OpenGL/Vulkan rendering; great for “mission control” panels.
+* **V50 fits:**
 
-### 1.3 WPF / WinUI (Windows) & Cocoa (macOS)
-- **Strengths**: Native integration, strong MVVM support.  
-- **Use Cases**: Institution-specific deployments (labs running Windows clusters).  
-- **Trade-offs**: OS-locked; not ideal for portable V50 dashboards.
+  * Local offline dashboard for labs.
+  * Multi-panel diagnostics (UMAP, t-SNE, FFT, SHAP × Symbolic).
+  * Stream `v50_debug_log.md` and surface exact CLI commands.
+* **Trade-offs:** Packaging size/complexity (PyInstaller), steeper learning curve.
+
+### 1.2 GTK / wxWidgets
+
+* **Strengths:** Lightweight, Linux-centric, stable.
+* **V50 fits:** Minimal admin consoles on Linux workstations.
+* **Trade-offs:** Smaller ecosystem; less modern theming and extensibility.
+
+### 1.3 Native Stacks (WPF/WinUI on Windows; Cocoa on macOS)
+
+* **Strengths:** Deep OS integration; strong MVVM (WPF).
+* **V50 fits:** Institution-locked environments (IT policies, domain join).
+* **Trade-offs:** OS-bound; not ideal for cross-platform contributors.
 
 ---
 
 ## 2) Web Frameworks
 
-### 2.1 React + FastAPI
-- **Strengths**: Rich ecosystem, declarative UI (MVVM), integrates with CLI backend via REST/WebSockets:contentReference[oaicite:3]{index=3}.
-- **Patterns**: Component-based, event-driven; fits well with diagnostics JSON binding.  
-- **Use Cases in V50**:
-  - Interactive UMAP/t-SNE dashboards.  
-  - Symbolic violation overlays.  
-  - CLI log streaming (`v50_debug_log.md` → WebSocket).  
-- **Trade-offs**: Requires frontend build system; heavier deployment than desktop.
+### 2.1 React (+ FastAPI backend)
 
-### 2.2 Electron
-- **Strengths**: Package web UIs as cross-platform desktop apps. Used by VS Code, Slack.  
-- **Use Cases**: turn React dashboard into installable lab tool.  
-- **Trade-offs**: Large binaries, memory overhead:contentReference[oaicite:4]{index=4}.
+* **Strengths:** Rich ecosystem, component model, MVVM-style state; Plotly/ECharts; WebSocket log streaming.
+* **V50 fits:**
+
+  * Production diagnostics portal.
+  * Multi-run compare views; artifact browser; UMAP/t-SNE explorers with planet-level links.
+  * “Hydra override” forms that serialize **exact** CLI args.
+* **Trade-offs:** Separate build/deploy; more moving parts than Streamlit.
+
+### 2.2 Electron (desktop wrapper for web UI)
+
+* **Strengths:** Ship the React dashboard as an installable desktop app (Win/macOS/Linux). Offline-friendly.
+* **V50 fits:** Lab desktop tooling when a browser isn’t viable.
+* **Trade-offs:** Large binaries; memory overhead.
 
 ### 2.3 Streamlit / Gradio
-- **Strengths**: Python-native, rapid prototyping, notebook-friendly.  
-- **Use Cases in V50**:
-  - Fast exploratory dashboards for Kaggle or CI.  
-  - Minimal wrappers for `spectramind diagnose dashboard`.  
-- **Trade-offs**: Less customizable, less production-ready than React/Qt.
+
+* **Strengths:** Python-native, fast prototyping, zero build step, notebook-friendly.
+* **V50 fits:**
+
+  * Rapid internal dashboards and CI/Kaggle introspection.
+  * Thin wrappers around `spectramind diagnose dashboard`.
+* **Trade-offs:** Limited component control; less “product-grade” than React/Qt.
 
 ---
 
 ## 3) Mobile Frameworks
 
 ### 3.1 Flutter
-- **Strengths**: Single codebase → Android/iOS/web. GPU-accelerated rendering.  
-- **Use Cases in V50**:
-  - Quick mobile dashboards for monitoring training runs remotely.  
-- **Trade-offs**: Overhead for scientific repos; not a priority unless mobile mission control is desired.
+
+* **Strengths:** One codebase for Android/iOS/desktop/web; GPU-accelerated rendering.
+* **V50 fits:** Read-only “mission status” (metrics, log tail, run list).
+* **Trade-offs:** Extra toolchain; lower priority vs. web/desktop.
 
 ### 3.2 React Native
-- **Strengths**: Leverage React ecosystem, integrates with web dashboards.  
-- **Use Cases**: companion mobile app for log viewing.  
-- **Trade-offs**: Still secondary to CLI/web.
+
+* **Strengths:** Leverages React ecosystem; code sharing with web.
+* **V50 fits:** Companion app for notifications/logs.
+* **Trade-offs:** Secondary to the web dashboard.
 
 ---
 
-## 4) Notebook / Hybrid Frameworks
+## 4) Notebook / Hybrid
 
-### 4.1 Jupyter Widgets (ipywidgets, bqplot, Plotly)
-- **Strengths**: Ideal for research and teaching.  
-- **Use Cases in V50**:
-  - Inline symbolic violation maps.  
-  - Interactive FFT/UMAP visualization in research notebooks.  
-- **Trade-offs**: Not Kaggle competition-safe (execution time, GPU quotas).
+### 4.1 Jupyter widgets (ipywidgets, Plotly, bqplot)
 
-### 4.2 Kaggle Integration
-- Kaggle notebooks support lightweight GUIs via **Streamlit, Gradio, Voila**:contentReference[oaicite:5]{index=5}.  
-- ✅ Important for Ariel Challenge submissions (visual reports, interactive diagnostics).
+* **Strengths:** Great for research/teaching; inline visualization.
+* **V50 fits:** Tutorial notebooks; symbolic/FFT exploration, small datasets.
+* **Trade-offs:** Not ideal for competition-time constraints or long jobs.
+
+### 4.2 Kaggle
+
+* **Fits:** Streamlit/Gradio/Voila mini-apps embedded in notebooks for **interactive reports** that stay within runtime limits.
+* **Note:** Still **invoke CLI** where possible and cache artifacts.
 
 ---
 
-## 5) Selection Guidelines for SpectraMind V50
+## 5) Selection Guidelines (V50-specific)
 
-- **Prototyping**: Streamlit (fast, simple).  
-- **Production Dashboard**: React + FastAPI (scalable, integrates with CLI).  
-- **Native Desktop**: PyQt5/PySide (mission-grade reliability, offline).  
-- **Mobile/Remote**: Flutter/React Native (optional, Phase 3 roadmap).  
-- **Notebooks/Kaggle**: Streamlit/Gradio inline apps.
+| Goal                     | Best Choice                | Why                                                                    |
+| ------------------------ | -------------------------- | ---------------------------------------------------------------------- |
+| Prototype quickly        | **Streamlit**              | Python-native; trivial artifact embedding; already implemented in repo |
+| Production web dashboard | **React + FastAPI**        | Full control, scalable, WebSocket log streaming, auth ready            |
+| Offline desktop control  | **PySide6 (Qt)**           | Robust native shell; MVVM; pack once for lab machines                  |
+| Mobile companion         | **Flutter / React Native** | Optional “status only” surfaces                                        |
+| Notebook demos/teaching  | **Jupyter + widgets**      | Lowest friction for tutorials                                          |
 
 ---
 
 ## 6) Patterns & Principles
 
-- **CLI Binding**: All GUI events → CLI invocations (`spectramind …`):contentReference[oaicite:6]{index=6}.  
-- **Thin State**: GUI holds no “truth”; only mirrors Hydra configs + diagnostic JSON.  
-- **MVVM Preferred**: Bind diagnostics → GUI controls automatically:contentReference[oaicite:7]{index=7}.  
-- **Pattern-Aware Visuals**: Use grids, fractals, temporal charts to highlight scientific patterns:contentReference[oaicite:8]{index=8}.  
-- **Accessibility**: High contrast, keyboard shortcuts, screen reader support:contentReference[oaicite:9]{index=9}.
+* **CLI Binding:** All user actions map to **verbatim** `spectramind` commands. Always show the exact command string executed.
+* **Thin State:** The GUI mirrors Hydra configs and reads **files** from `outputs/**` and `logs/**`. It does **not** compute or persist alternate truth.
+* **MVVM Preferred:** ViewModel exposes observables (`status`, `stdout`, `stderr`, `artifacts`, `runHash`). Views are dumb.
+* **Artifact-First:** New visualizations **must** originate from CLI artifacts (e.g., `diagnostic_summary.json`, `*_dashboard.html`, `plots/*.png`).
+* **Accessibility:** Keyboard nav, contrast ≥ 4.5:1, screen reader labels, reduced motion options, proper roles/landmarks.
 
 ---
 
-## 7) Example Flow
+## 7) Example Flow (end-to-end)
 
 ```mermaid
 flowchart LR
-  U[User Action] -->|Click "Diagnose"| G[GUI Layer]
-  G -->|REST/CLI Call| C[spectramind diagnose dashboard]
-  C --> O[outputs/diagnostic_summary.json]
-  O --> G
-  G --> V[Charts, Plots, HTML Embeds]
-````
+  U[User Clicks Run] --> G[GUI Layer]
+  G -->|Serialize Args| CMD["spectramind diagnose dashboard\n--outputs.dir outputs/diag\n--no-tsne"]
+  CMD -->|Writes| A[outputs/** HTML/JSON/plots]
+  CMD -->|Appends| L[logs/v50_debug_log.md]
+  A --> G
+  L --> G
+  G --> V[Embeds HTML + Tables + Gallery]
+```
+
+---
+
+## 8) Engineering Checklists
+
+### 8.1 Reproducibility
+
+* [ ] GUI **prints** and **logs** the exact CLI command (including Hydra overrides).
+* [ ] Artifacts rendered are **read-only** from `outputs/**`.
+* [ ] GUI dispatches include a “GUI” tag/line in `v50_debug_log.md` (in addition to CLI logging).
+
+### 8.2 Security & Packaging
+
+* [ ] Never embed secrets in GUI code/state; rely on env vars.
+* [ ] Sanitize/iframe local HTML only; do not fetch remote HTML.
+* [ ] For Electron/Qt, sign binaries where applicable; sandbox renderer.
+
+### 8.3 Performance & UX
+
+* [ ] Non-blocking process execution; line-buffered streaming of stdout/stderr.
+* [ ] Pagination/virtualization for large tables; lazy image loading.
+* [ ] “Rescan Artifacts” control with cache invalidation.
+
+### 8.4 Testing
+
+* **Unit:** Mock `subprocess`/IPC; test glob scanners, tail readers, argument serializers.
+* **E2E:** Playwright/Cypress (web) or `pytest-qt` (Qt) with a **fake CLI** writing fixture artifacts.
+* **A11y:** Axe (web) and manual keyboard traversal.
+
+---
+
+## 9) V50 Reference Implementations
+
+* **Streamlit app:** `gui/streamlit_app.py`
+
+  * Live stdout/stderr streaming, artifact selection, log tail slider, recent runs table.
+* **Qt shell (optional):** `gui/qt_shell.py` (template)
+
+  * MVC/MVVM hybrid with threaded runner and command echo.
+* **Electron shell (optional):** `gui/electron/` (template)
+
+  * IPC contract: `spectramind:run` → `{ code, out, err }`.
+
+> Extend scanners when the CLI emits new artifacts; never embed business logic in the GUI.
+
+---
+
+## 10) Deployment Recipes (quick)
+
+* **Streamlit (dev):**
+
+  ```bash
+  streamlit run gui/streamlit_app.py
+  ```
+* **React + FastAPI (prod):**
+
+  * Build React → `dist/`
+  * Serve with FastAPI/uvicorn; reverse-proxy via Nginx; enable WebSocket for logs.
+* **Electron:**
+
+  * Wrap the React `dist/` and package via `electron-builder` (targets: win/mac/linux).
+* **PySide6:**
+
+  * PyInstaller spec with data files (`outputs/**` read-only); add CLI presence checks.
+
+---
+
+## 11) Risk Register (GUI-specific)
+
+| Risk                           | Avoidance                                                                        |
+| ------------------------------ | -------------------------------------------------------------------------------- |
+| GUI diverges from CLI features | File-driven visuals; CI test asserts a minimum set of artifacts exist and render |
+| Hidden logic introduced        | PR checklist: “No business logic” gate + codeowner review                        |
+| Large artifacts freeze UI      | Stream readers, chunked tables, lazy image loading                               |
+| OS packaging breaks            | Keep a “run from source” path; docs for env setup                                |
 
 ---
 
 ## ✅ Summary
 
-SpectraMind V50 GUI frameworks must remain **optional explorers**:
+Choose the **lightest tool** that cleanly **wraps the CLI** and **renders artifacts**:
 
-* **Streamlit/Gradio** → rapid prototyping.
-* **React/FastAPI** → production dashboards.
-* **Qt/PySide** → offline mission-grade control.
-* **Notebook widgets** → education & Kaggle integration.
+* **Streamlit** for rapid internal dashboards and CI/Kaggle inspection.
+* **React + FastAPI** for production web portals with log streaming and run comparisons.
+* **Qt (PySide6)** for offline, lab-grade native shells.
+* **Notebook widgets** for teaching and quick research demos.
 
-Each framework is chosen to **wrap and visualize CLI outputs** — never replace the reproducible pipeline.
-
-```
+Across all choices: **echo the exact CLI command, read artifacts from disk, keep state thin, and prioritize accessibility.**
