@@ -1,3 +1,6 @@
+Here’s the updated and fixed `src/gui/app/readme.md` with a GitHub-safe Mermaid **Routing Overview** (proper code fences + quoted labels) and the rest of the document intact.
+
+````markdown
 # 📂 `src/gui/app/` — GUI App Layer
 
 ## 🎯 Purpose & Scope
@@ -25,17 +28,17 @@ the GUI simply loads those **CLI-generated artifacts** (`.json`, `.html`, `.png`
 
 ## 🖼️ Design Principles
 
-* **CLI-first, GUI-optional**
-  Every GUI action corresponds to a CLI command (e.g., `spectramind diagnose dashboard`).
+* **CLI-first, GUI-optional**  
+  Every GUI action corresponds to a CLI command (e.g., `spectramind diagnose dashboard`).  
   GUI never bypasses Hydra configs, run hashes, or DVC lineage.
 
-* **Reproducibility by construction**
+* **Reproducibility by construction**  
   GUI renders artifacts under `/artifacts/` that were produced by versioned CLI runs.
 
-* **Lightweight & air-gapped friendly**
+* **Lightweight & air-gapped friendly**  
   Built with **React + Vite + Tailwind + shadcn/ui**; no telemetry; works offline with the local FastAPI + static mount.
 
-* **Stateless analytics**
+* **Stateless analytics**  
   Components do not perform ML or calibration in the browser; they only *display* precomputed outputs.
 
 ---
@@ -53,6 +56,7 @@ If auth is enabled, use request headers like `X-API-Key` or `Authorization: Bear
 
 ## 🗺️ Routing Overview
 
+```mermaid
 flowchart LR
     A["App Router"]
     B["Dashboard (/dashboard)"]
@@ -74,8 +78,7 @@ flowchart LR
     A --> H
     A --> I
     A --> J
-
-```
+````
 
 ---
 
@@ -206,4 +209,5 @@ flowchart LR
 ✅ In short: **`src/gui/app/` is presentation-only.**
 It visualizes CLI results and never generates them — keeping **SpectraMind V50 reproducible, auditable, and Kaggle-safe**.
 
----
+```
+```
