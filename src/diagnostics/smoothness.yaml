@@ -1,156 +1,313 @@
-```yaml
 # configs/diagnostics/smoothness.yaml
-# ==============================================================================
-# 🧵 Spectral Smoothness Diagnostics (μ spectra)
-# SpectraMind V50 — NeurIPS 2025 Ariel Data Challenge
-# ------------------------------------------------------------------------------
-# Purpose:
-#   Compute per-bin smoothness diagnostics on μ spectra:
-#     • L2 gradient / curvature (1st/2nd derivative magnitudes)
-#     • Total Variation (TV)
-#     • Optional Savitzky–Golay smoothing reference
-#     • Entropy / information density maps
-#   Export heatmaps, anomaly flags, and CSV/JSON summaries.
-#
-# CLI override examples:
-#   spectramind diagnose smoothness smoothness.l2.lambda=0.05
-#   spectramind diagnose smoothness smoothness.tv.lambda=0.02 smoothness.flags.grad_mag_p95=1.75
+
 # ==============================================================================
 
-# ----------------------------------------------------------------------
+# 🧵 Spectral Smoothness Diagnostics (μ spectra)
+
+# SpectraMind V50 — NeurIPS 2025 Ariel Data Challenge
+
+# ------------------------------------------------------------------------------
+
+# Purpose:
+
+# Compute per-bin smoothness diagnostics on μ spectra:
+
+# • L2 gradient / curvature (1st/2nd derivative magnitudes)
+
+# • Total Variation (TV)
+
+# • Optional Savitzky–Golay smoothing reference
+
+# • Entropy / information-density maps
+
+# Export heatmaps, anomaly flags, and CSV/JSON summaries.
+
+#
+
+# CLI override examples:
+
+# spectramind diagnose smoothness smoothness.l2.lambda=0.05
+
+# spectramind diagnose smoothness smoothness.tv.lambda=0.02 smoothness.flags.grad\_mag\_p95=1.75
+
+# spectramind diagnose smoothness smoothness.plots.overlay\_symbolic\_violations=true
+
+# spectramind diagnose smoothness smoothness.export.out\_base="\${paths.artifacts}/diagnostics/smoothness"
+
+#
+
+# Conventions:
+
+# • Paths interpolate `${paths.*}` (set in configs/paths.yaml) for portability.
+
+# • Never mutates μ; diagnostics are read-only.
+
+# • All toggles explicit for CI + Hydra overrides.
+
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+
 # Hydra defaults
-# ----------------------------------------------------------------------
+
+# ------------------------------------------------------------------------------
+
 defaults:
-  - override hydra/job_logging: default
-  - override hydra/hydra_logging: default
+
+* override hydra/job\_logging: default
+* override hydra/hydra\_logging: default
+
+# ------------------------------------------------------------------------------
+
+# Master block
+
+# ------------------------------------------------------------------------------
 
 smoothness:
-  enable: true
+enable: true
 
-  # ------------------------------------------------------------------
-  # Input handling
-  # ------------------------------------------------------------------
-  inputs:
-    mu_path: "artifacts/predict/mu.npy"           # [N_planets, 283]
-    meta_path: "artifacts/predict/meta.csv"       # planet_id, split, cluster, etc.
-    mask_path: null                               # optional mask for valid bins (1=valid)
+# ------------------------------------------------------------------
 
-  filter:
-    include_splits: ["train", "val", "test"]
-    exclude_planets: []
-    min_bins_for_eval: 50                         # skip planets with fewer bins (masked)
+# Input handling
 
-  # ------------------------------------------------------------------
-  # Gradient / curvature settings
-  # ------------------------------------------------------------------
-  gradient:
-    compute_first_order: true                     # |∂μ/∂λ|
-    compute_second_order: true                    # |∂²μ/∂λ²|
-    kernel: "central"                             # "forward" | "backward" | "central"
-    eps: 1.0e-12                                  # numerical stability
-    normalize_by_range: true                      # divide by (max-min) per planet
-    aggregate: ["mean", "p95", "max"]
+# ------------------------------------------------------------------
 
-  # ------------------------------------------------------------------
-  # Penalties / regularizers (analysis-time only; diagnostics do not mutate μ)
-  # ------------------------------------------------------------------
-  l2:
-    enable: true
-    lambda: 0.05                                  # weight used for reporting / ranking
-    aggregate: ["mean", "p95", "max"]
+inputs:
+mu\_path: "\${paths.artifacts}/predict/mu.npy"         # \[N\_planets, 283]
+meta\_path: "\${paths.artifacts}/predict/meta.csv"     # planet\_id, split, cluster, etc.
+mask\_path: null                                      # optional mask for valid bins (1=valid)
+\# Optional external per-bin weights (e.g., SNR or coverage); matched to μ shape
+bin\_weight\_path: null                                 # .npy or .csv (length 283) for weighting aggregates
 
-  tv:
-    enable: true                                  # Total Variation = Σ |Δμ|
-    lambda: 0.02
-    aggregate: ["mean", "p95", "max"]
+filter:
+include\_splits: \["train", "val", "test"]
+exclude\_planets: \[]
+min\_bins\_for\_eval: 50                                 # skip planets with fewer bins (masked)
 
-  savgol:
-    enable: false                                 # optional reference smoother
-    window_length: 9                              # odd
-    polyorder: 2
-    report_residuals: true                        # |μ - μ_savgol|
-    export_residuals: "smoothness/savgol_residuals.csv"
+# ------------------------------------------------------------------
 
-  # ------------------------------------------------------------------
-  # Entropy map (information density proxy per bin)
-  # ------------------------------------------------------------------
-  entropy:
-    enable: true
-    method: "shannon"                             # placeholder; implemented in code
-    window: 7
-    normalize: true
-    aggregate: ["mean", "p95", "max"]
+# Gradient / curvature settings
 
-  # ------------------------------------------------------------------
-  # Molecule / region overlays (symbolic-aware reporting)
-  # ------------------------------------------------------------------
-  molecule_regions:
-    enable: true
-    labels: ["H2O", "CH4", "CO2", "CO", "NH3"]    # used to group bins; resolved in code
-    per_region_aggregates: ["mean", "p95", "max"]
+# ------------------------------------------------------------------
 
-  # ------------------------------------------------------------------
-  # Flagging heuristics (non-binding; for dashboards & CI)
-  # ------------------------------------------------------------------
-  flags:
-    grad_mag_p95: 1.50                            # flag planet if p95(|∂μ/∂λ|) > threshold
-    curvature_p95: 1.25                           # flag planet if p95(|∂²μ/∂λ²|) > threshold
-    tv_per_bin_max: 0.30                          # optional TV-based cap per bin (report only)
-    entropy_p95: 0.75                             # flag if entropy exceeds threshold
-    min_bins_for_eval: 50
+gradient:
+compute\_first\_order: true                             # |∂μ/∂λ|
+compute\_second\_order: true                            # |∂²μ/∂λ²|
+kernel: "central"                                     # "forward" | "backward" | "central"
+eps: 1.0e-12                                          # numerical stability
+normalize\_by\_range: true                              # divide by (max-min) per planet
+per\_bin\_zscore: false                                 # optional z-scoring across planets for each bin
+aggregate: \["mean", "p95", "max"]
 
-  # ------------------------------------------------------------------
-  # Plots
-  # ------------------------------------------------------------------
-  plots:
-    gradient_heatmap: true                        # per-bin |∂μ/∂λ| heatmap
-    curvature_heatmap: true                       # per-bin |∂²μ/∂λ²| heatmap
-    tv_map: true                                  # per-bin TV contribution
-    entropy_map: true
-    overlay_symbolic_violations: true             # if symbolic masks are available
-    per_region_bar: true
-    dpi: 160
-    figsize: [10, 4]
-    save_png: true
-    save_html: true
-    out_dir: "plots/smoothness"
+# ------------------------------------------------------------------
 
-  # ------------------------------------------------------------------
-  # Exports
-  # ------------------------------------------------------------------
-  export:
-    per_planet_csv: "smoothness/per_planet_metrics.csv"   # aggregates per planet
-    per_bin_csv: "smoothness/per_bin_metrics.csv"         # per-planet×bin values (long format)
-    flags_csv: "smoothness/flags.csv"                     # planets/bins exceeding thresholds
-    summary_json: "smoothness/summary.json"               # global stats, thresholds, counts
-    jsonl_events: "smoothness/events.jsonl"               # stepwise log for CI
+# Penalties / regularizers (analysis-time only; diagnostics do not mutate μ)
 
-  # ------------------------------------------------------------------
-  # Reproducibility
-  # ------------------------------------------------------------------
-  reproducibility:
-    log_hash: true                                # record config hash in v50_debug_log.md
-    snapshot_config: true                         # save smoothness.yaml snapshot with outputs
-    run_manifest: "smoothness/manifest.json"
-    record_cli_invocation: true
-    record_env: true                              # python/packages/cuda versions
+# ------------------------------------------------------------------
 
-  # ------------------------------------------------------------------
-  # Performance & caching
-  # ------------------------------------------------------------------
-  cache:
-    enable: true
-    dir: ".cache/smoothness"
-    reuse_if_hash_matches: true
-  parallel:
-    workers: 8
-    backend: "thread"                             # thread | process
+l2:
+enable: true
+lambda: 0.05                                          # weight used for reporting / ranking
+aggregate: \["mean", "p95", "max"]
 
-  # ------------------------------------------------------------------
-  # Failure policy
-  # ------------------------------------------------------------------
-  policy:
-    fail_on_missing_inputs: false
-    warn_on_small_groups: true
-    continue_on_plot_errors: true
-```
+tv:
+enable: true                                          # Total Variation = Σ |Δμ|
+lambda: 0.02
+per\_bin: true                                         # export per-bin TV contributions
+aggregate: \["mean", "p95", "max"]
+
+savgol:
+enable: false                                         # optional reference smoother
+window\_length: 9                                      # odd
+polyorder: 2
+mode: "interp"                                        # scipy-compatible mode
+report\_residuals: true                                # |μ − μ\_savgol|
+export\_residuals: "\${paths.artifacts}/smoothness/savgol\_residuals.csv"
+
+# ------------------------------------------------------------------
+
+# Entropy map (information density proxy per bin)
+
+# ------------------------------------------------------------------
+
+entropy:
+enable: true
+method: "shannon"                                     # implemented in code
+window: 7
+normalize: true
+aggregate: \["mean", "p95", "max"]
+eps: 1.0e-12
+
+# ------------------------------------------------------------------
+
+# Molecule / region overlays (symbolic-aware reporting)
+
+# ------------------------------------------------------------------
+
+molecule\_regions:
+enable: true
+labels: \["H2O", "CH4", "CO2", "CO", "NH3"]            # resolved in code via wavelength map
+per\_region\_aggregates: \["mean", "p95", "max"]
+\# Optional: treat regions differently in summaries (e.g., SNR-weighted)
+region\_weighting: "uniform"                           # "uniform" | "snr" | "prior"
+
+# ------------------------------------------------------------------
+
+# Symbolic / calibration overlays (read-only fusion)
+
+# ------------------------------------------------------------------
+
+overlays:
+symbolic\_mask\_path: "\${paths.artifacts}/symbolic/violations\_mask.npy"   # optional
+corel\_coverage\_json: "\${paths.artifacts}/calibration/corel\_coverage.json"
+temperature\_scaling\_json: "\${paths.artifacts}/calibration/temperature\_scaling.json"
+use\_corel\_weights: false                               # weight aggregates by COREL coverage deltas if available
+
+# ------------------------------------------------------------------
+
+# Flagging heuristics (non-binding; for dashboards & CI)
+
+# ------------------------------------------------------------------
+
+flags:
+grad\_mag\_p95: 1.50                                    # flag planet if p95(|∂μ/∂λ|) > threshold
+curvature\_p95: 1.25                                   # flag planet if p95(|∂²μ/∂λ²|) > threshold
+tv\_per\_bin\_max: 0.30                                  # optional TV-based cap per bin (report only)
+entropy\_p95: 0.75                                     # flag if entropy exceeds threshold
+min\_bins\_for\_eval: 50
+
+# ------------------------------------------------------------------
+
+# Plots
+
+# ------------------------------------------------------------------
+
+plots:
+gradient\_heatmap: true                                # per-bin |∂μ/∂λ| heatmap
+curvature\_heatmap: true                               # per-bin |∂²μ/∂λ²| heatmap
+tv\_map: true                                          # per-bin TV contribution
+entropy\_map: true
+overlay\_symbolic\_violations: true                     # if symbolic masks are available
+per\_region\_bar: true
+dpi: 160
+figsize: \[12, 4]
+save\_png: true
+save\_html: true
+html\_interactive: true                                # enable Plotly/Altair interactive HTML
+color\_map: "viridis"
+out\_dir: "\${paths.artifacts}/plots/smoothness"
+\# Embedding overlays (if HTML artifacts exist)
+embed\_umap\_overlay: true
+embed\_tsne\_overlay: true
+link\_planet\_pages: true                                # if dashboard supports planet pages
+
+# ------------------------------------------------------------------
+
+# Exports
+
+# ------------------------------------------------------------------
+
+export:
+out\_base: "\${paths.artifacts}/smoothness"
+per\_planet\_csv: "\${smoothness.export.out\_base}/per\_planet\_metrics.csv"   # aggregates per planet
+per\_bin\_csv: "\${smoothness.export.out\_base}/per\_bin\_metrics.csv"         # per-planet×bin values (long format)
+flags\_csv: "\${smoothness.export.out\_base}/flags.csv"                     # planets/bins exceeding thresholds
+summary\_json: "\${smoothness.export.out\_base}/summary.json"               # global stats, thresholds, counts
+jsonl\_events: "\${smoothness.export.out\_base}/events.jsonl"               # stepwise log for CI
+first\_derivative\_npy: "\${smoothness.export.out\_base}/grad\_first.npy"     # \[N, 283]
+second\_derivative\_npy: "\${smoothness.export.out\_base}/grad\_second.npy"   # \[N, 283]
+tv\_npy: "\${smoothness.export.out\_base}/tv.npy"                            # \[N, 283]
+entropy\_npy: "\${smoothness.export.out\_base}/entropy.npy"                  # \[N, 283]
+per\_region\_csv: "\${smoothness.export.out\_base}/per\_region\_metrics.csv"    # region-aggregated metrics
+
+# ------------------------------------------------------------------
+
+# Reproducibility
+
+# ------------------------------------------------------------------
+
+reproducibility:
+log\_hash: true                                        # record config hash in v50\_debug\_log.md
+snapshot\_config: true                                 # save smoothness.yaml snapshot with outputs
+run\_manifest: "\${smoothness.export.out\_base}/manifest.json"
+record\_cli\_invocation: true
+record\_env: true                                      # python/packages/cuda versions
+append\_v50\_debug\_log: "\${paths.logs}/v50\_debug\_log.md"
+
+# ------------------------------------------------------------------
+
+# Performance & caching
+
+# ------------------------------------------------------------------
+
+cache:
+enable: true
+dir: "\${paths.cache}/smoothness"
+reuse\_if\_hash\_matches: true
+parallel:
+workers: 8
+backend: "thread"                                     # "thread" | "process"
+perf:
+device: "auto"                                        # "auto" | "cpu" | "cuda:0" | "mps"
+dtype: "float32"
+chunk\_size\_planets: 256                               # batch size for planet-wise ops
+
+# ------------------------------------------------------------------
+
+# Failure policy
+
+# ------------------------------------------------------------------
+
+policy:
+fail\_on\_missing\_inputs: false
+warn\_on\_small\_groups: true
+continue\_on\_plot\_errors: true
+
+# ------------------------------------------------------------------
+
+# Report & dashboard integration
+
+# ------------------------------------------------------------------
+
+report:
+enable: true
+versioned\_html: true                                   # write v{n}.html with bumping index
+out\_dir: "\${paths.artifacts}/reports"
+base\_name: "smoothness\_diagnostics"
+open\_in\_browser: false
+include\_sections:
+\- "summary\_cards"
+\- "gradient\_heatmap"
+\- "curvature\_heatmap"
+\- "tv\_entropy\_panels"
+\- "molecule\_region\_bars"
+\- "flags\_table"
+\- "symbolic\_overlay\_panel"
+
+# ------------------------------------------------------------------
+
+# CI/QA hooks (used by selftests and CI workflows)
+
+# ------------------------------------------------------------------
+
+ci:
+require\_exports: true                                  # CI fails if expected exports missing
+require\_plots: true                                    # CI fails if required plots missing
+max\_html\_size\_mb: 40
+sanity:
+max\_nan\_fraction: 0.001
+max\_empty\_rows\_fraction: 0.10
+max\_flagged\_planet\_fraction: 0.95
+
+# ------------------------------------------------------------------
+
+# Cross-module bindings (file discovery for other tools)
+
+# ------------------------------------------------------------------
+
+bindings:
+diagnostic\_summary\_json: "\${paths.artifacts}/diagnostics/diagnostic\_summary.json"
+symbolic\_rule\_rank\_json: "\${paths.artifacts}/symbolic/rule\_rank.json"
+symbolic\_mask\_npy: "\${paths.artifacts}/symbolic/violations\_mask.npy"
+umap\_html: "\${paths.artifacts}/embeddings/umap.html"
+tsne\_html: "\${paths.artifacts}/embeddings/tsne.html"
