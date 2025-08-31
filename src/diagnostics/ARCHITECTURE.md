@@ -8,8 +8,8 @@ The **diagnostics subsystem** in SpectraMind V50 provides the **auditable bridge
 * and **scientific validation** (GLL, FFT, symbolic overlays, calibration checks).
 
 It ensures **NASA-grade reproducibility**:
-* Every diagnostic run is driven via the `spectramind diagnose …` CLI:contentReference[oaicite:9]{index=9}.
-* Configs are Hydra-safe, logged, and DVC-tracked:contentReference[oaicite:10]{index=10}:contentReference[oaicite:11]{index=11}.
+* Every diagnostic run is driven via the `spectramind diagnose …` CLI:contentReference[oaicite:0]{index=0}.
+* Configs are Hydra-safe, logged, and DVC-tracked:contentReference[oaicite:1]{index=1}.
 * Outputs are stored as versioned artifacts (`diagnostic_summary.json`, plots, HTML dashboards).
 
 > Golden rule: **Diagnostics never mutate core science data.** They *only read, analyze, and log*.
@@ -60,30 +60,30 @@ flowchart TD
     R1 --> R4
     R2 --> R4
     A --> R5
-```
+````
 
 ---
 
 ## 2) Design Principles
 
-* **CLI-first, GUI-optional** — all runs must be reproducible from CLI:contentReference[oaicite:12]{index=12}.
-* **Hydra configs** govern diagnostics: symbolic weights, FFT cutoffs, calibration bins:contentReference[oaicite:13]{index=13}.
-* **DVC lineage**: diagnostic outputs tracked alongside model/data commits:contentReference[oaicite:14]{index=14}.
-* **Separation of concerns**: no analytics inside GUI — only renders artifacts:contentReference[oaicite:15]{index=15}.
-* **Mission-grade rigor**: symbolic + physics checks (smoothness, non-negativity, radiation priors:contentReference[oaicite:16]{index=16}, lensing overlays:contentReference[oaicite:17]{index=17}) validate scientific plausibility.
+* **CLI-first, GUI-optional** — all runs must be reproducible from CLI.
+* **Hydra configs** govern diagnostics: symbolic weights, FFT cutoffs, calibration bins.
+* **DVC lineage**: diagnostic outputs tracked alongside model/data commits.
+* **Separation of concerns**: no analytics inside GUI — only renders artifacts.
+* **Mission-grade rigor**: symbolic + physics checks (smoothness, non-negativity, radiation priors, lensing overlays) validate scientific plausibility.
 
 ---
 
 ## 3) Diagnostic Components
 
-| Module | Role | Config Keys | Outputs |
-|--------|------|-------------|---------|
-| **GLL Evaluator** | Compute Gaussian log-likelihood, per-bin & global:contentReference[oaicite:18]{index=18} | `loss.gll.*` | gll_heatmap.png, gll_scores.json |
-| **FFT Analyzer** | Spectral smoothness, autocorr, molecule fingerprints:contentReference[oaicite:19]{index=19}:contentReference[oaicite:20]{index=20} | `fft.cutoff`, `fft.window` | fft_power.png, fft_clusters.json |
-| **Symbolic Engine** | Rule-based violations, influence maps:contentReference[oaicite:21]{index=21}:contentReference[oaicite:22]{index=22} | `symbolic.*` | symbolic_masks.npy, rule_rank.json |
-| **Calibration Checker** | σ vs residuals, quantile coverage:contentReference[oaicite:23]{index=23} | `calibration.*` | calibration_plots/, coverage.csv |
-| **Explainability (SHAP/UMAP/t-SNE)** | Latent projection + feature importances:contentReference[oaicite:24]{index=24} | `explain.*` | umap.html, tsne.html, shap_overlay.png |
-| **Radiation/Lensing Overlays** | Physical priors from astrophysics:contentReference[oaicite:25]{index=25}:contentReference[oaicite:26]{index=26} | `physics.lensing.*`, `physics.radiation.*` | overlay_plots/, anomaly_flags.json |
+| Module                               | Role                                                 | Config Keys                                | Outputs                                 |
+| ------------------------------------ | ---------------------------------------------------- | ------------------------------------------ | --------------------------------------- |
+| **GLL Evaluator**                    | Compute Gaussian log-likelihood, per-bin & global    | `loss.gll.*`                               | gll\_heatmap.png, gll\_scores.json      |
+| **FFT Analyzer**                     | Spectral smoothness, autocorr, molecule fingerprints | `fft.cutoff`, `fft.window`                 | fft\_power.png, fft\_clusters.json      |
+| **Symbolic Engine**                  | Rule-based violations, influence maps                | `symbolic.*`                               | symbolic\_masks.npy, rule\_rank.json    |
+| **Calibration Checker**              | σ vs residuals, quantile coverage                    | `calibration.*`                            | calibration\_plots/, coverage.csv       |
+| **Explainability (SHAP/UMAP/t-SNE)** | Latent projection + feature importances              | `explain.*`                                | umap.html, tsne.html, shap\_overlay.png |
+| **Radiation/Lensing Overlays**       | Physical priors from astrophysics                    | `physics.lensing.*`, `physics.radiation.*` | overlay\_plots/, anomaly\_flags.json    |
 
 ---
 
@@ -107,6 +107,7 @@ spectramind diagnose fft molecules="[H2O, CH4, CO2]"
 ```
 
 All runs:
+
 1. Compose Hydra config (`configs/diagnostics/*.yaml`).
 2. Hash + log run (`v50_debug_log.md`).
 3. Save artifacts into `/artifacts/diagnostics/<timestamp>/`.
@@ -115,24 +116,25 @@ All runs:
 
 ## 5) Reproducibility & Audit Trail
 
-* **Hydra snapshot** of config saved with every run:contentReference[oaicite:27]{index=27}.
-* **DVC lock** ensures outputs are tied to code+data commits:contentReference[oaicite:28]{index=28}.
+* **Hydra snapshot** of config saved with every run.
+* **DVC lock** ensures outputs are tied to code+data commits.
 * **Logs**: `v50_debug_log.md` records CLI call + config hash.
-* **HTML dashboard**: embeds UMAP, SHAP, symbolic tables, FFT plots for visual audit:contentReference[oaicite:29]{index=29}.
-* **CI integration**: diagnostics run as part of GitHub Actions pre-merge check:contentReference[oaicite:30]{index=30}.
+* **HTML dashboard**: embeds UMAP, SHAP, symbolic tables, FFT plots for visual audit.
+* **CI integration**: diagnostics run as part of GitHub Actions pre-merge check.
 
 ---
 
 ## 6) Future Extensions
 
-* **Cycle consistency**: forward simulate spectra & compare against predictions:contentReference[oaicite:31]{index=31}.
-* **Expanded symbolic libraries**: add gravitational lensing and radiative priors:contentReference[oaicite:32]{index=32}:contentReference[oaicite:33]{index=33}.
-* **MLflow/experiment tracking**: log diagnostics metrics centrally:contentReference[oaicite:34]{index=34}.
-* **GUI hooks**: thin React layer rendering dashboard if desired (never bypass CLI):contentReference[oaicite:35]{index=35}.
+* **Cycle consistency**: forward simulate spectra & compare against predictions.
+* **Expanded symbolic libraries**: add gravitational lensing and radiative priors.
+* **MLflow/experiment tracking**: log diagnostics metrics centrally.
+* **GUI hooks**: thin React layer rendering dashboard if desired (never bypass CLI).
 
 ---
 
-✅ In summary, `crc/diagnostics/` is the **scientific conscience** of SpectraMind V50.  
+✅ In summary, `crc/diagnostics/` is the **scientific conscience** of SpectraMind V50.
 It enforces symbolic + physical validity, guarantees reproducibility, and produces artifacts auditable from CLI, GUI, or Kaggle.
 
-````
+```
+```
