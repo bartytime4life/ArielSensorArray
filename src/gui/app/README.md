@@ -7,7 +7,7 @@ It is a **thin, optional visualization layer** that sits **on top of the CLI-fir
 All analytics, training, and diagnostics are executed by the `spectramind …` CLI and FastAPI server;  
 the GUI simply loads those **CLI-generated artifacts** (`.json`, `.html`, `.png`) and presents them interactively.
 
-> Golden rule: **No hidden logic here** — the GUI must only reflect outputs produced by the CLI, ensuring **NASA-grade reproducibility** and zero drift between GUI and CLI workflows:contentReference[oaicite:3]{index=3}.
+> Golden rule: **No hidden logic here** — the GUI must only reflect outputs produced by the CLI, ensuring **NASA-grade reproducibility** and zero drift between GUI and CLI workflows.
 
 ---
 
@@ -27,7 +27,7 @@ the GUI simply loads those **CLI-generated artifacts** (`.json`, `.html`, `.png`
 
 * **CLI-first, GUI-optional**  
   Every GUI action corresponds to a CLI command (e.g., `spectramind diagnose dashboard`).  
-  GUI never bypasses Hydra configs, run hashes, or DVC lineage:contentReference[oaicite:4]{index=4}.
+  GUI never bypasses Hydra configs, run hashes, or DVC lineage.
 
 * **Reproducibility by construction**  
   GUI renders artifacts under `/artifacts/` that were produced by versioned CLI runs.
@@ -56,15 +56,25 @@ If auth is enabled, use request headers like `X-API-Key` or `Authorization: Bear
 ```mermaid
 flowchart LR
     A[App Router]
-    A --> B[Dashboard (/dashboard)]
-    A --> C[Diagnostics (/diagnostics)]
-    A --> D[Reports (/reports)]
-    A --> E[UMAP (/umap)]
-    A --> F[t-SNE (/tsne)]
-    A --> G[SHAP (/shap)]
-    A --> H[Symbolic (/symbolic)]
-    A --> I[FFT (/fft)]
-    A --> J[Calibration (/calibration)]
+    B[Dashboard (/dashboard)]
+    C[Diagnostics (/diagnostics)]
+    D[Reports (/reports)]
+    E[UMAP (/umap)]
+    F[t-SNE (/tsne)]
+    G[SHAP (/shap)]
+    H[Symbolic (/symbolic)]
+    I[FFT (/fft)]
+    J[Calibration (/calibration)]
+
+    A --> B
+    A --> C
+    A --> D
+    A --> E
+    A --> F
+    A --> G
+    A --> H
+    A --> I
+    A --> J
 ````
 
 ---
@@ -142,7 +152,7 @@ npm run dev   # Vite dev server (hot reload)
 * **Mermaid diagrams not rendering on GitHub**
 
   * Use fenced blocks with \`\`\`mermaid and no trailing semicolons.
-  * Avoid inner quotes and ensure supported syntax.
+  * Avoid unsupported syntax; declare nodes, then edges.
   * Escape pipes as `&#124;` if needed.
 
 * **Artifacts show as “Missing”**
@@ -164,18 +174,18 @@ npm run dev   # Vite dev server (hot reload)
 
 ```mermaid
 flowchart LR
-    subgraph Client[Client (React/Vite)]
+    subgraph Client ["Client (React/Vite)"]
         R[Routes: /diagnostics, /reports]
         S[State: filters & view]
         V[Views: tables, charts, iframes]
     end
 
-    subgraph Server[Server (FastAPI)]
+    subgraph Server ["Server (FastAPI)"]
         A[/api/diagnostics/*/]
         X[(Static /artifacts)]
     end
 
-    subgraph Pipeline[CLI & Pipeline]
+    subgraph Pipeline ["CLI & Pipeline"]
         C[spectramind diagnose dashboard]
         H[(Hydra configs)]
         D[(DVC data/models)]
@@ -196,4 +206,5 @@ flowchart LR
 ✅ In short: **`src/gui/app/` is presentation-only.**
 It visualizes CLI results and never generates them — keeping **SpectraMind V50 reproducible, auditable, and Kaggle-safe**.
 
+```
 ```
