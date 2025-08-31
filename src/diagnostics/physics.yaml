@@ -1,61 +1,243 @@
-```yaml
 # configs/diagnostics/physics.yaml
+
 # ==============================================================================
-# 🌌 Physical priors — lensing and radiation-informed overlays (optional)
-# These flags allow diagnostics to render helper overlays; they do NOT mutate data.
-# NASA-grade reproducibility: all overlays are deterministic, optional, and logged.
+
+# 🌌 Physical Priors — Lensing & Radiation-Informed Overlays (Optional)
+
+# SpectraMind V50 — NeurIPS 2025 Ariel Data Challenge
+
+# ------------------------------------------------------------------------------
+
+# Purpose:
+
+# Provide purely-visual, physics-aware overlays for diagnostics dashboards:
+
+# • Gravitational lensing helpers (Einstein radius, multiple-image geometry)
+
+# • Radiation references (Planck/blackbody, ionization edges, molecular bands)
+
+# • Stellar/solar Fraunhofer line annotations, extinction curves, Rayleigh slope
+
+# Overlays are **deterministic, read-only, and logged**. They never mutate μ/σ.
+
+#
+
+# CLI examples:
+
+# spectramind diagnose dashboard physics.lensing.enable=true
+
+# spectramind diagnose dashboard physics.radiation.enable=true physics.radiation.show\_blackbody\_fit=true
+
+# spectramind diagnose dashboard physics.extinction.enable=true physics.extinction.model="CCM89"
+
+#
+
+# Conventions:
+
+# • Paths interpolate `${paths.*}` (see configs/paths.yaml).
+
+# • All toggles are explicit for Hydra/CI overrides.
+
+# • Units documented inline; conversions handled by the overlay code.
+
 # ==============================================================================
+
+# ------------------------------------------------------------------------------
+
+# Hydra defaults
+
+# ------------------------------------------------------------------------------
+
+defaults:
+
+* override hydra/job\_logging: default
+* override hydra/hydra\_logging: default
+
+# ------------------------------------------------------------------------------
+
+# Master block
+
+# ------------------------------------------------------------------------------
 
 physics:
-  enable: true   # master switch for all physics overlays
+enable: true   # master switch for all physics overlays
 
-  lensing:
-    enable: false
-    show_einstein_radius: true         # plot Einstein ring radius if lens mass + distances provided
-    annotate_multiple_images: true     # label lensed image positions
-    overlay_mass_model: false          # show fitted mass distribution contours
-    params:
-      default_lens_mass: 1.0e12        # [M_sun] if not provided by metadata
-      default_distances:               # [Mpc] observer-lens, observer-source
-        Dl: 1000.0
-        Ds: 3000.0
+# --------------------------------------------------------------------------
 
-  radiation:
-    enable: false
-    # Used only for interpretive overlays; no effect on model outputs
-    show_blackbody_fit: false          # fit T_eff and overlay Planck curve
-    show_ionization_bands: false       # highlight H, He, metal ionization edges
-    show_molecular_bands: true         # shade CH4, H2O, CO2 regions from priors
-    annotate_fraunhofer_lines: false   # optional solar/stellar reference lines
-    params:
-      default_temperature: 5000        # [K] for blackbody overlay if not fit
-      molecules: ["H2O", "CH4", "CO2", "CO", "NH3"]
+# Cosmology & units (for derived quantities used by overlays only)
 
-  plots:
-    dpi: 160
-    figsize: [12, 8]
-    save_png: true
-    save_html: true
-    out_dir: "plots/physics_overlays"
-    color_palette: "astro"             # astro | grayscale | colorblind_safe
-    overlay_alpha: 0.3                 # transparency of shaded regions
+# --------------------------------------------------------------------------
 
-  export:
-    json_summary: "physics/overlays_summary.json"
-    csv_table: "physics/overlays_table.csv"
-    bundle_html: "physics/physics_overlays.html"
+constants:
+G\_SI: 6.67430e-11                     # m^3 kg^-1 s^-2
+c\_SI: 2.99792458e8                    # m s^-1
+M\_sun\_kg: 1.98847e30
+pc\_m: 3.085677581e16
+cosmology:
+H0\_km\_s\_Mpc: 70.0                     # used only if redshift→distance conversion needed
+Omega\_m: 0.3
+Omega\_L: 0.7
+use\_flat\_LCDM: true
 
-  diagnostics:
-    log_json: true
-    log_md: true
-    include_in_html_report: true
-    dashboard_overlay: true
-```
+# --------------------------------------------------------------------------
 
-### 🔑 Upgrades included:
+# Gravitational lensing overlays
 
-* **`params` blocks**: default astrophysical constants for reproducibility (lens mass, distances, blackbody T\_eff, molecule list).
-* **Extended radiation overlays**: molecular bands + Fraunhofer lines alongside blackbody/ionization.
-* **Export bundle**: JSON, CSV, and standalone HTML bundle for dashboard.
-* **Plot controls**: theme, figsize, alpha transparency, color palettes (astro-friendly or colorblind-safe).
-* **Diagnostics hooks**: integration flags for JSON/Markdown logs + HTML dashboard overlay.
+# --------------------------------------------------------------------------
+
+lensing:
+enable: false
+show\_einstein\_radius: true            # draw θ\_E if lens mass & distances available
+annotate\_multiple\_images: true        # label expected image positions (toy models)
+overlay\_mass\_model: false             # draw simple mass contours (SIS/NFW toy)
+show\_critical\_caustic\_curves: false   # render idealized critical/caustic curves
+\# Model/assumptions (diagnostic-only; **not** used by modeling)
+model: "SIS"                          # "SIS" | "NFW" (toy, for visualization)
+params:
+\# If distances not provided in metadata, use these comoving/angular-diameter
+\# defaults (Mpc). If z provided, code may convert using cosmology above.
+default\_distances\_Mpc:
+Dl: 1000.0                        # observer → lens
+Ds: 3000.0                        # observer → source
+Dls: null                         # lens → source (computed if null)
+default\_lens\_mass\_Msun: 1.0e12      # total enclosed mass for SIS θ\_E estimate
+redshifts:                          # optional (if provided, overrides distances via cosmology)
+zl: null
+zs: null
+units:
+theta\_arcsec: true                # display θ\_E and image separations in arcsec
+annotate:
+fontsize: 10
+box\_alpha: 0.65
+
+# --------------------------------------------------------------------------
+
+# Radiation / spectral-reference overlays
+
+# --------------------------------------------------------------------------
+
+radiation:
+enable: false
+\# Display options (purely interpretive; no effect on μ/σ)
+show\_blackbody\_fit: false             # estimate T\_eff and overlay Planck curve
+show\_ionization\_bands: false          # highlight edges (H, He, metals)
+show\_molecular\_bands: true            # shade CH4, H2O, CO2, CO, NH3 bands
+annotate\_fraunhofer\_lines: false      # solar/stellar reference lines
+show\_rayleigh\_slope: false            # λ^-4 trend line overlay (normalized)
+show\_wien\_peak\_marker: true           # vertical line at λ\_peak (Wien’s law)
+params:
+default\_temperature\_K: 5000         # fallback T\_eff if fit disabled/failed
+molecules: \["H2O", "CH4", "CO2", "CO", "NH3"]
+ionization\_edges: \["H\_I", "He\_I", "He\_II", "Na\_I", "K\_I"]
+fraunhofer\_set: "solar\_minimal"     # "solar\_minimal" | "solar\_extended" | "none"
+rayleigh\_ref\_wavelength\_um: 0.8     # reference λ for slope normalization
+planck\_units: "relative"            # "relative" | "physical" (scaled to plot)
+labeling:
+band\_alpha: 0.25
+line\_alpha: 0.8
+linewidth: 1.0
+fontsize: 10
+
+# --------------------------------------------------------------------------
+
+# Extinction / attenuation overlays (optional helpers)
+
+# --------------------------------------------------------------------------
+
+extinction:
+enable: false
+model: "CCM89"                        # "CCM89" | "OD94" | "F99" (approximate curves)
+RV: 3.1                               # total-to-selective extinction ratio
+E\_BV: 0.05                            # color excess; visualization scaling only
+show\_curve: true
+show\_dereddened\_hint: false           # overlay hint arrows; no data mutation
+
+# --------------------------------------------------------------------------
+
+# Plot styling & output
+
+# --------------------------------------------------------------------------
+
+plots:
+dpi: 160
+figsize: \[12, 8]
+save\_png: true
+save\_html: true
+html\_interactive: true                # enable Plotly/Altair interactive overlays
+out\_dir: "\${paths.artifacts}/plots/physics\_overlays"
+color\_palette: "astro"                # "astro" | "grayscale" | "colorblind\_safe"
+overlay\_alpha: 0.30                   # shaded-region transparency
+color\_map\_mass: "magma"
+color\_map\_bands: "viridis"
+link\_planet\_pages: true               # if dashboard supports planet pages
+embed\_umap\_overlay: true
+embed\_tsne\_overlay: true
+
+# --------------------------------------------------------------------------
+
+# Exports (summary tables for dashboard/CI)
+
+# --------------------------------------------------------------------------
+
+export:
+base\_dir: "\${paths.artifacts}/physics"
+json\_summary: "\${physics.export.base\_dir}/overlays\_summary.json"
+csv\_table: "\${physics.export.base\_dir}/overlays\_table.csv"
+bundle\_html: "\${physics.export.base\_dir}/physics\_overlays.html"
+per\_planet\_jsonl: "\${physics.export.base\_dir}/per\_planet\_overlays.jsonl"
+
+# --------------------------------------------------------------------------
+
+# Reproducibility & diagnostics logging
+
+# --------------------------------------------------------------------------
+
+reproducibility:
+record\_cli\_invocation: true
+record\_env: true
+snapshot\_config: true
+append\_v50\_debug\_log: "\${paths.logs}/v50\_debug\_log.md"
+
+diagnostics:
+log\_json: true
+log\_md: true
+include\_in\_html\_report: true
+dashboard\_overlay: true
+
+# --------------------------------------------------------------------------
+
+# CI/QA hooks (non-fatal if overlays missing; fatal if required by policy)
+
+# --------------------------------------------------------------------------
+
+ci:
+allow\_missing: true
+max\_html\_size\_mb: 20
+sanity:
+max\_nan\_fraction: 0.001
+require\_if\_enabled\_sections: \["plots", "export"]
+
+# --------------------------------------------------------------------------
+
+# Performance knobs (overlay computation only; lightweight by design)
+
+# --------------------------------------------------------------------------
+
+perf:
+device: "auto"                        # "auto" | "cpu" | "cuda:0" | "mps"
+parallel\_workers: 4
+cache\_dir: "\${paths.cache}/physics\_overlays"
+reuse\_if\_hash\_matches: true
+
+# --------------------------------------------------------------------------
+
+# Cross-module bindings (so report generator can discover assets)
+
+# --------------------------------------------------------------------------
+
+bindings:
+diagnostic\_summary\_json: "\${paths.artifacts}/diagnostics/diagnostic\_summary.json"
+umap\_html: "\${paths.artifacts}/embeddings/umap.html"
+tsne\_html: "\${paths.artifacts}/embeddings/tsne.html"
+symbolic\_rule\_rank\_json: "\${paths.artifacts}/symbolic/rule\_rank.json"
+wavelength\_map\_csv: "\${paths.assets}/spectral/wavelength\_map\_283.csv"   # optional helper for band edges
