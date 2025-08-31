@@ -1,0 +1,20 @@
+# configs/diagnostics/physics.yaml
+# ==============================================================================
+# 🌌 Physical priors — lensing and radiation-informed overlays (optional)
+# These flags allow diagnostics to render helper overlays; they do NOT mutate data.
+# ==============================================================================
+
+physics:
+  lensing:
+    enable: false
+    show_einstein_radius: true
+    annotate_multiple_images: true
+  radiation:
+    enable: false
+    # Used only for interpretive overlays; no effect on model outputs
+    show_blackbody_fit: false
+    show_ionization_bands: false
+  plots:
+    dpi: 160
+    save_png: true
+    out_dir: "plots/physics_overlays"
