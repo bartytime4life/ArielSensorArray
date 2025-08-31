@@ -1,0 +1,39 @@
+# configs/diagnostics/default.yaml
+# ==============================================================================
+# 🧪 Diagnostics — Master composition
+# This is the top-level config used by `spectramind diagnose ...`
+# It composes per-module configs below and sets global IO & run metadata.
+# ==============================================================================
+
+defaults:
+  - gll: gll
+  - fft: fft
+  - symbolic: symbolic
+  - calibration: calibration
+  - explain: explain
+  - report: report
+  - physics: physics
+  # Hydra logging (optional) — use your project defaults if present
+  - override hydra/job_logging: default
+  - override hydra/hydra_logging: default
+
+# Global diagnostics switches & IO
+diagnostics:
+  run_name: "${now:%Y%m%d-%H%M%S}-diag"
+  seed: 1337
+  device: "auto"         # "auto" | "cpu" | "cuda:0"
+  num_workers: 4
+  # Artifacts base; per-run subdir added by code or hydra.runtime.output_dir
+  artifacts_dir: "artifacts/diagnostics"
+  # Inputs produced by predict_v50 or pipeline
+  inputs:
+    mu_path: "artifacts/predict/mu.npy"     # [N_planets, 283]
+    sigma_path: "artifacts/predict/sigma.npy"
+    meta_path: "artifacts/predict/meta.csv" # planet_id, split, clusters, etc.
+    latents_path: "artifacts/predict/latents.npy" # optional for UMAP/t-SNE
+
+# Logging / hashes appended by CLI wrapper
+logging:
+  save_markdown_log: true                 # append to v50_debug_log.md
+  print_config_at_start: true
+  print_summary_at_end: true
