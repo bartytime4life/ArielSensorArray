@@ -7,17 +7,19 @@
 # Purpose:
 #   Evaluate predicted uncertainties (σ) against residuals (|μ - y|).
 #   Includes reliability diagrams, quantile coverage, z-score histograms,
-#   molecule-region calibration, and COREL evaluation hooks.
+#   molecule-region calibration, per-split/per-planet summaries, and COREL hooks.
 #
 # Hydra:
-#   Hydra-safe; can be overridden at CLI, e.g.:
-#     spectramind diagnose calibration calibration.coverage.quantiles="[0.05,0.5,0.95]"
+#   Hydra-safe; override via CLI, e.g.:
+#     spectramind diagnose calibration \
+#       calibration.coverage.quantiles="[0.05,0.5,0.95]" \
+#       calibration.temp_scale.enable=true
 #
 # Outputs:
-#   • Calibration plots (.png)
-#   • Coverage CSV/JSON summaries
-#   • Per-bin and per-molecule diagnostics
-#   • Reproducibility logs with config hash
+#   • Calibration plots (PNG/HTML)
+#   • Coverage CSV/JSON summaries (per-bin / per-molecule / per-split / per-planet)
+#   • Bootstrap CIs & statistical tests (optional)
+#   • Reproducibility logs with config hash and manifest
 # ==============================================================================
 
 # ----------------------------------------------------------------------
@@ -31,13 +33,36 @@ calibration:
   enable: true
 
   # ------------------------------------------------------------------
+  # Inputs & data filters
+  # ------------------------------------------------------------------
+  inputs:
+    mu_path: "artifacts/predict/mu.npy"            # [N_planets, 283]
+    sigma_path: "artifacts/predict/sigma.npy"      # same shape as mu
+    y_path: "artifacts/labels/y.npy"               # ground truth (if available)
+    meta_csv: "artifacts/predict/meta.csv"         # planet_id, split, molecules, etc.
+    mask_path: null                                # optional mask for valid bins (1=valid)
+  filter:
+    include_splits: ["train", "val", "test"]
+    exclude_planets: []                            # explicit planet_ids to drop
+    valid_sigma_range: [1.0e-6, null]              # clamp σ to this range before eval
+
+  # ------------------------------------------------------------------
   # Coverage analysis (empirical vs nominal)
   # ------------------------------------------------------------------
   coverage:
-    quantiles: [0.1, 0.2, 0.5, 0.8, 0.9]   # target coverage levels
-    per_bin: true                          # per spectral bin evaluation
-    per_molecule_region: true              # group bins by molecule bands (H₂O, CO₂, CH₄, etc.)
-    temporal_slices: false                 # optional: evaluate calibration vs. transit phase
+    quantiles: [0.1, 0.2, 0.5, 0.8, 0.9]           # target coverage levels
+    per_bin: true                                  # per spectral bin evaluation
+    per_molecule_region: true                      # group bins by molecule bands (H2O, CO2, CH4, etc.)
+    per_split: true                                # report per dataset split
+    per_planet: true                               # planet-level coverage table
+    temporal_slices: false                         # evaluate vs transit phase (if meta available)
+    stratify_by:
+      - "snr_bucket"                               # optional columns in meta.csv
+      - "molecule_region"
+    bootstrap:
+      enable: true
+      n_resamples: 500
+      ci: 0.95                                     # two-sided CI for coverage estimates
 
   # ------------------------------------------------------------------
   # Reliability diagrams (expected calibration error)
@@ -45,17 +70,38 @@ calibration:
   reliability:
     n_bins: 15
     min_count_per_bin: 25
-    compute_ece: true                      # Expected Calibration Error
-    compute_mce: true                      # Maximum Calibration Error
+    compute_ece: true                              # Expected Calibration Error
+    compute_mce: true                              # Maximum Calibration Error
+    per_split: true
+    per_molecule_region: true
+    weighted: true                                 # weight by bin precision / snr if available
 
   # ------------------------------------------------------------------
   # Z-score evaluation
   # ------------------------------------------------------------------
   zscore:
     enable: true
-    clip: 6.0                              # clip extreme z-scores
+    clip: 6.0                                      # clip extreme z-scores
     per_bin: true
     per_molecule_region: true
+    normality_tests:
+      enable: true
+      tests: ["shapiro", "anderson"]               # run on aggregated z-scores per group
+
+  # ------------------------------------------------------------------
+  # Temperature scaling & per-bin scaling hooks (post-hoc calibration)
+  # ------------------------------------------------------------------
+  temp_scale:
+    enable: false
+    mode: "global"                                 # global | per_bin | per_molecule
+    optimizer: "lbfgs"                             # lbfgs | adam
+    max_iter: 200
+    tol: 1.0e-6
+    export_json: "calibration/temp_scale.json"
+  per_bin_scale:
+    enable: false
+    l2_reg: 1.0e-3                                 # regularize per-bin scaling to avoid overfit
+    export_json: "calibration/per_bin_scale.json"
 
   # ------------------------------------------------------------------
   # COREL calibration integration (binwise conformal prediction)
@@ -63,7 +109,9 @@ calibration:
   corel:
     enable: true
     evaluate_coverage: true
-    export_heatmap: true                   # save COREL coverage heatmap
+    alpha: 0.1                                     # 1 - desired marginal coverage
+    use_graph_edges: true                          # leverage spectral/molecule adjacency
+    export_heatmap: true                           # save COREL coverage heatmap
     heatmap_png: "calibration/corel_heatmap.png"
     summary_csv: "calibration/corel_summary.csv"
 
@@ -72,29 +120,62 @@ calibration:
   # ------------------------------------------------------------------
   plots:
     reliability_diagram: true
+    reliability_per_split: true
     z_histogram: true
     per_bin_coverage: true
     molecule_region_coverage: true
+    coverage_violin_by_split: true
     save_png: true
+    save_html: true
     dpi: 160
-    figsize: [8, 6]
+    figsize: [9, 6]
+    theme:
+      background: "white"                          # white | dark
+      palette: "astro"                             # astro | colorblind_safe | grayscale
 
   # ------------------------------------------------------------------
   # Export artifacts
   # ------------------------------------------------------------------
   export:
-    coverage_csv: "calibration/coverage.csv"
+    coverage_csv: "calibration/coverage.csv"       # wide table with groups×quantiles
     coverage_json: "calibration/coverage.json"
-    reliability_png: "calibration/reliability.png"
-    z_hist_png: "calibration/z_hist.png"
+    per_split_csv: "calibration/coverage_by_split.csv"
+    per_planet_csv: "calibration/coverage_by_planet.csv"
     per_bin_csv: "calibration/per_bin.csv"
     molecule_csv: "calibration/molecule_region.csv"
+    reliability_png: "calibration/reliability.png"
+    reliability_split_png: "calibration/reliability_by_split.png"
+    z_hist_png: "calibration/z_hist.png"
+    violin_split_png: "calibration/coverage_violin_by_split.png"
+    summary_json: "calibration/summary.json"       # roll-up metrics + ECE/MCE
+    jsonl_events: "calibration/events.jsonl"       # stepwise logging for CI
 
   # ------------------------------------------------------------------
   # Reproducibility & logging
   # ------------------------------------------------------------------
   reproducibility:
-    log_hash: true                         # record config hash in v50_debug_log.md
-    snapshot_config: true                  # save calibration.yaml snapshot with results
+    log_hash: true                                 # record config hash in v50_debug_log.md
+    snapshot_config: true                          # save calibration.yaml snapshot with results
     run_manifest: "calibration/manifest.json"
+    record_cli_invocation: true
+    record_env: true                               # python/packages/cuda versions
+
+  # ------------------------------------------------------------------
+  # Performance hints & caching
+  # ------------------------------------------------------------------
+  cache:
+    enable: true
+    dir: ".cache/calibration"
+    reuse_if_hash_matches: true
+  parallel:
+    workers: 8                                     # for groupwise computations / bootstraps
+    backend: "thread"                              # thread | process
+
+  # ------------------------------------------------------------------
+  # Failure policy
+  # ------------------------------------------------------------------
+  policy:
+    fail_on_missing_labels: false                  # allow unlabeled sets; skip label-dependent evals
+    warn_on_small_groups: true                     # warn if group size < min_count_per_bin
+    continue_on_plot_errors: true                  # still export CSVs if plotting fails
 ```
