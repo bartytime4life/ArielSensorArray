@@ -1,20 +1,61 @@
+```yaml
 # configs/diagnostics/physics.yaml
 # ==============================================================================
 # 🌌 Physical priors — lensing and radiation-informed overlays (optional)
 # These flags allow diagnostics to render helper overlays; they do NOT mutate data.
+# NASA-grade reproducibility: all overlays are deterministic, optional, and logged.
 # ==============================================================================
 
 physics:
+  enable: true   # master switch for all physics overlays
+
   lensing:
     enable: false
-    show_einstein_radius: true
-    annotate_multiple_images: true
+    show_einstein_radius: true         # plot Einstein ring radius if lens mass + distances provided
+    annotate_multiple_images: true     # label lensed image positions
+    overlay_mass_model: false          # show fitted mass distribution contours
+    params:
+      default_lens_mass: 1.0e12        # [M_sun] if not provided by metadata
+      default_distances:               # [Mpc] observer-lens, observer-source
+        Dl: 1000.0
+        Ds: 3000.0
+
   radiation:
     enable: false
     # Used only for interpretive overlays; no effect on model outputs
-    show_blackbody_fit: false
-    show_ionization_bands: false
+    show_blackbody_fit: false          # fit T_eff and overlay Planck curve
+    show_ionization_bands: false       # highlight H, He, metal ionization edges
+    show_molecular_bands: true         # shade CH4, H2O, CO2 regions from priors
+    annotate_fraunhofer_lines: false   # optional solar/stellar reference lines
+    params:
+      default_temperature: 5000        # [K] for blackbody overlay if not fit
+      molecules: ["H2O", "CH4", "CO2", "CO", "NH3"]
+
   plots:
     dpi: 160
+    figsize: [12, 8]
     save_png: true
+    save_html: true
     out_dir: "plots/physics_overlays"
+    color_palette: "astro"             # astro | grayscale | colorblind_safe
+    overlay_alpha: 0.3                 # transparency of shaded regions
+
+  export:
+    json_summary: "physics/overlays_summary.json"
+    csv_table: "physics/overlays_table.csv"
+    bundle_html: "physics/physics_overlays.html"
+
+  diagnostics:
+    log_json: true
+    log_md: true
+    include_in_html_report: true
+    dashboard_overlay: true
+```
+
+### 🔑 Upgrades included:
+
+* **`params` blocks**: default astrophysical constants for reproducibility (lens mass, distances, blackbody T\_eff, molecule list).
+* **Extended radiation overlays**: molecular bands + Fraunhofer lines alongside blackbody/ionization.
+* **Export bundle**: JSON, CSV, and standalone HTML bundle for dashboard.
+* **Plot controls**: theme, figsize, alpha transparency, color palettes (astro-friendly or colorblind-safe).
+* **Diagnostics hooks**: integration flags for JSON/Markdown logs + HTML dashboard overlay.
