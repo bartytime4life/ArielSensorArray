@@ -1,22 +1,24 @@
-// src/gui/components/Table.tsx
 // =============================================================================
 // 🧬 SpectraMind V50 — Reusable Data Table (React + Tailwind + shadcn/ui)
 // -----------------------------------------------------------------------------
 // Purpose
 //   A fast, declarative table for diagnostics dashboards and reports. Supports:
 //   • Column definitions with optional custom cell renderers
+//   • Accessors and formatters for flexible value mapping
 //   • Client-side sorting (per-column, ASC/DESC)
 //   • Optional pagination (controlled or internal)
-//   • Optional row selection via checkboxes
+//   • Optional row selection via checkboxes (page-aware or full-table)
 //   • Optional global text filtering over selected fields
-//   • Loading / empty / error states
+//   • Loading / empty / error states with a11y live regions
 //   • Optional row actions and row click handler
+//   • Deterministic behavior in SSR/CSR
 //
 // Design Notes
 //   • No heavy table libs to keep bundle small; shadcn/ui primitives only.
 //   • Tailwind for styling. Dark-mode friendly via Tailwind tokens.
-//   • Deterministic behavior in SSR/CSR.
 //   • Composable and safe defaults; everything optional.
+//   • A11y: aria-sort on headers, aria-live for state regions, keyboard support.
+//   • Reproducible: no random IDs, stable keys; optional caller-provided rowId.
 //
 // Example
 //   <Table
@@ -26,7 +28,7 @@
 //     columns={[
 //       { key: "planet_id", header: "Planet", sortable: true },
 //       { key: "gll", header: "GLL", sortable: true, align: "right",
-//         format: (v) => v.toFixed(4) },
+//         format: (v) => v?.toFixed?.(4) },
 //       { key: "violations", header: "Violations", align: "right" },
 //     ]}
 //     selectable
@@ -51,7 +53,16 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ArrowUp, ArrowDown, ArrowUpDown, MoreVertical } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
+  ArrowUp,
+  ArrowDown,
+  ArrowUpDown,
+  MoreVertical,
+} from "lucide-react";
 import { motion } from "framer-motion";
 
 // -----------------------------------------------------------------------------
@@ -61,18 +72,29 @@ import { motion } from "framer-motion";
 type Align = "left" | "center" | "right";
 
 export interface ColumnDef<T extends Record<string, any>> {
+  /** Property key for the column, used for sorting and default cell content */
   key: keyof T | string;
+  /** Optional header content; defaults to `key` string */
   header?: React.ReactNode;
+  /** Whether column can sort */
   sortable?: boolean;
+  /** Horizontal alignment for cell content */
   align?: Align;
-  // Cell formatting or custom renderer
-  format?: (value: any, row: T, rowIndex: number) => React.ReactNode;
-  render?: (row: T, rowIndex: number) => React.ReactNode;
+  /** Width constraint (px or CSS width) */
   width?: string | number;
-  className?: string;
+  /** Header cell class */
   headerClassName?: string;
-  // For accessibility/testing
+  /** Body cell class */
+  className?: string;
+  /** A11y label for cells in this column */
   ariaLabel?: string;
+
+  /** Accessor to compute the raw value for this column from the row */
+  accessor?: (row: T, rowIndex: number) => any;
+  /** Formatter for a value to display */
+  format?: (value: any, row: T, rowIndex: number) => React.ReactNode;
+  /** Full custom cell renderer (bypasses accessor/format) */
+  render?: (row: T, rowIndex: number) => React.ReactNode;
 }
 
 export interface Pagination {
@@ -87,69 +109,112 @@ export interface GlobalFilter {
   keys?: (string | keyof any)[];
 }
 
-export interface TableProps<T extends Record<string, any>> extends React.HTMLAttributes<HTMLDivElement> {
+export interface TableProps<T extends Record<string, any>>
+  extends React.HTMLAttributes<HTMLDivElement> {
   // Chrome
   title?: string;
   description?: string;
   className?: string;
+
   // Data model
   data: T[];
   columns: ColumnDef<T>[];
-  rowId?: (row: T) => string; // default: index-based
+  /** Generate stable IDs; default: index-based string (page-aware) */
+  rowId?: (row: T) => string;
+
   // Sorting (controlled or internal)
   defaultSortBy?: { key: string; direction: "asc" | "desc" };
   sortBy?: { key: string; direction: "asc" | "desc" } | null;
   onSortChange?: (sort: { key: string; direction: "asc" | "desc" } | null) => void;
+
   // Selection
   selectable?: boolean;
   defaultSelectedIds?: string[];
   selectedIds?: string[];
   onSelectionChange?: (ids: string[]) => void;
+
   // Global filter (simple contains across keys)
   globalFilter?: GlobalFilter;
   onGlobalFilterChange?: (value: string) => void;
+
   // Pagination (controlled or internal)
   defaultPageSize?: number;
   pageSizeOptions?: number[];
   pagination?: Pagination;
   onPageChange?: (pageIndex: number) => void;
   onPageSizeChange?: (pageSize: number) => void;
+
   // Row interactions
   rowActions?: (row: T, rowIndex: number) => React.ReactNode;
   onRowClick?: (row: T, rowIndex: number, id: string) => void;
+
   // States
   loading?: boolean;
   emptyMessage?: string;
   error?: string | null;
+
+  // Misc
+  /** Customize selection scope: 'page' (default) applies select-all to visible page; 'all' applies to all filtered rows */
+  selectionScope?: "page" | "all";
 }
 
 // -----------------------------------------------------------------------------
 // Helpers
 // -----------------------------------------------------------------------------
 
+/** Skeleton loading block (kept deterministic) */
 const LoadingState: React.FC = () => (
-  <div className="h-40 w-full animate-pulse rounded-xl bg-muted/50" />
+  <div
+    role="status"
+    aria-live="polite"
+    className="h-40 w-full animate-pulse rounded-xl bg-muted/50"
+    data-testid="table-loading"
+  />
 );
 
+/** Error region */
 const ErrorState: React.FC<{ message?: string }> = ({ message }) => (
-  <div className="flex h-40 items-center justify-center text-sm text-red-600 dark:text-red-400">
+  <div
+    className="flex h-40 items-center justify-center text-sm text-red-600 dark:text-red-400"
+    role="alert"
+    aria-live="assertive"
+    data-testid="table-error"
+  >
     {message ?? "Failed to load data."}
   </div>
 );
 
+/** Empty region */
 const EmptyState: React.FC<{ message?: string }> = ({ message }) => (
-  <div className="flex h-40 items-center justify-center text-sm text-muted-foreground">
+  <div
+    className="flex h-40 items-center justify-center text-sm text-muted-foreground"
+    role="status"
+    aria-live="polite"
+    data-testid="table-empty"
+  >
     {message ?? "No rows to display."}
   </div>
 );
 
-function getRowId<T extends Record<string, any>>(row: T, idx: number, rowId?: (r: T) => string) {
+/** Safe row ID derivation with caller override; deterministic and stable */
+function getRowId<T extends Record<string, any>>(
+  row: T,
+  zeroBasedAbsoluteIndex: number,
+  rowId?: (r: T) => string
+) {
   try {
-    if (rowId) return rowId(row);
-  } catch (_) {}
-  return String(idx);
+    if (rowId) {
+      const v = rowId(row);
+      if (typeof v === "string" && v.length) return v;
+    }
+  } catch {
+    // ignore and fallback
+  }
+  // deterministic fallback: prefix + index
+  return `row-${zeroBasedAbsoluteIndex}`;
 }
 
+/** Basic comparator with null safety + stable tiebreaker */
 function cmp(a: any, b: any) {
   if (a == null && b == null) return 0;
   if (a == null) return -1;
@@ -158,6 +223,7 @@ function cmp(a: any, b: any) {
   return String(a).localeCompare(String(b));
 }
 
+/** Convert alignment to Tailwind classes */
 function getCellAlignClass(align?: Align) {
   switch (align) {
     case "center":
@@ -169,50 +235,80 @@ function getCellAlignClass(align?: Align) {
   }
 }
 
+/** Resolve column width style */
+function widthStyleOf(width?: string | number) {
+  if (width === undefined) return undefined;
+  return typeof width === "number" ? { width: `${width}px` } : { width };
+}
+
+/** Read column value via accessor/key */
+function getColumnValue<T extends Record<string, any>>(
+  col: ColumnDef<T>,
+  row: T,
+  absoluteIndex: number
+) {
+  if (typeof col.render === "function") return undefined; // render bypasses value
+  if (typeof col.accessor === "function") return col.accessor(row, absoluteIndex);
+  return (row as any)[col.key as any];
+}
+
 // -----------------------------------------------------------------------------
 // Component
 // -----------------------------------------------------------------------------
 
 export function Table<T extends Record<string, any>>(props: TableProps<T>) {
   const {
+    // Chrome
     title,
     description,
     className,
+
+    // Data
     data,
     columns,
     rowId,
+
     // Sorting
     defaultSortBy,
     sortBy: sortByProp,
     onSortChange,
+
     // Selection
     selectable,
     defaultSelectedIds,
     selectedIds: selectedIdsProp,
     onSelectionChange,
-    // Filtering
+    selectionScope = "page",
+
+    // Global filter
     globalFilter,
     onGlobalFilterChange,
+
     // Pagination
     defaultPageSize = 20,
     pageSizeOptions = [10, 20, 50, 100],
     pagination: paginationProp,
     onPageChange,
     onPageSizeChange,
+
     // Row interactions
     rowActions,
     onRowClick,
+
     // States
     loading,
     emptyMessage,
     error,
+
+    // div props
     ...rest
   } = props;
 
-  // ----- Sorting (controlled / uncontrolled)
-  const [sortByInternal, setSortByInternal] = React.useState<{ key: string; direction: "asc" | "desc" } | null>(
-    defaultSortBy ?? null
-  );
+  // ----- Sorting (controlled / uncontrolled) -----
+  const [sortByInternal, setSortByInternal] = React.useState<
+    { key: string; direction: "asc" | "desc" } | null
+  >(defaultSortBy ?? null);
+
   const sortBy = sortByProp !== undefined ? sortByProp : sortByInternal;
 
   const setSort = React.useCallback(
@@ -223,9 +319,13 @@ export function Table<T extends Record<string, any>>(props: TableProps<T>) {
     [onSortChange]
   );
 
-  // ----- Selection (controlled / uncontrolled)
-  const [selectedIdsInternal, setSelectedIdsInternal] = React.useState<string[]>(defaultSelectedIds ?? []);
-  const selectedIds = selectedIdsProp !== undefined ? selectedIdsProp : selectedIdsInternal;
+  // ----- Selection (controlled / uncontrolled) -----
+  const [selectedIdsInternal, setSelectedIdsInternal] = React.useState<string[]>(
+    defaultSelectedIds ?? []
+  );
+  const selectedIds =
+    selectedIdsProp !== undefined ? selectedIdsProp : selectedIdsInternal;
+
   const setSelected = React.useCallback(
     (ids: string[]) => {
       if (onSelectionChange) onSelectionChange(ids);
@@ -234,9 +334,13 @@ export function Table<T extends Record<string, any>>(props: TableProps<T>) {
     [onSelectionChange]
   );
 
-  // ----- Filter (controlled / uncontrolled)
-  const [filterValueInternal, setFilterValueInternal] = React.useState(globalFilter?.value ?? "");
-  const filterValue = globalFilter?.value !== undefined ? globalFilter.value : filterValueInternal;
+  // ----- Filter (controlled / uncontrolled) -----
+  const [filterValueInternal, setFilterValueInternal] = React.useState(
+    globalFilter?.value ?? ""
+  );
+  const filterValue =
+    globalFilter?.value !== undefined ? globalFilter.value : filterValueInternal;
+
   const changeFilter = React.useCallback(
     (v: string) => {
       if (onGlobalFilterChange) onGlobalFilterChange(v);
@@ -245,14 +349,12 @@ export function Table<T extends Record<string, any>>(props: TableProps<T>) {
     [onGlobalFilterChange]
   );
 
-  // ----- Pagination (controlled / uncontrolled)
+  // ----- Pagination (controlled / uncontrolled) -----
   const [pageIndexInternal, setPageIndexInternal] = React.useState(0);
   const [pageSizeInternal, setPageSizeInternal] = React.useState(defaultPageSize);
 
-  const pageIndex =
-    paginationProp?.pageIndex ?? pageIndexInternal;
-  const pageSize =
-    paginationProp?.pageSize ?? pageSizeInternal;
+  const pageIndex = paginationProp?.pageIndex ?? pageIndexInternal;
+  const pageSize = paginationProp?.pageSize ?? pageSizeInternal;
   const totalExternal = paginationProp?.total;
 
   const setPageIndex = React.useCallback(
@@ -262,6 +364,7 @@ export function Table<T extends Record<string, any>>(props: TableProps<T>) {
     },
     [onPageChange]
   );
+
   const setPageSize = React.useCallback(
     (size: number) => {
       if (onPageSizeChange) onPageSizeChange(size);
@@ -273,17 +376,17 @@ export function Table<T extends Record<string, any>>(props: TableProps<T>) {
     [onPageChange, onPageSizeChange]
   );
 
-  // ----- Derived rows (filter + sort)
+  // ----- Derived: filter → sort → paginate -----
+
   const filtered = React.useMemo(() => {
     const keys = globalFilter?.keys?.map(String) ?? [];
-    const query = (filterValue ?? "").trim().toLowerCase();
-    if (!query) return data;
-    if (keys.length === 0) return data;
+    const q = (filterValue ?? "").trim().toLowerCase();
+    if (!q || keys.length === 0) return data;
     return data.filter((row) =>
       keys.some((k) => {
         const val = (row as any)[k];
         if (val == null) return false;
-        return String(val).toLowerCase().includes(query);
+        return String(val).toLowerCase().includes(q);
       })
     );
   }, [data, globalFilter?.keys, filterValue]);
@@ -292,66 +395,103 @@ export function Table<T extends Record<string, any>>(props: TableProps<T>) {
     if (!sortBy) return filtered;
     const { key, direction } = sortBy;
     const arr = [...filtered];
+    // Stable sort with tiebreaker on derived id to keep determinism
     arr.sort((a, b) => {
+      const ia = getRowId(a, data.indexOf(a), rowId);
+      const ib = getRowId(b, data.indexOf(b), rowId);
       const va = (a as any)[key];
       const vb = (b as any)[key];
       const c = cmp(va, vb);
-      return direction === "asc" ? c : -c;
+      if (c !== 0) return direction === "asc" ? c : -c;
+      return ia.localeCompare(ib);
     });
     return arr;
-  }, [filtered, sortBy]);
+  }, [filtered, sortBy, data, rowId]);
 
   const total = totalExternal ?? sorted.length;
 
-  // Page slicing only if not controlled via external pagination total (still show slice locally)
   const paged = React.useMemo(() => {
     const start = pageIndex * pageSize;
     return sorted.slice(start, start + pageSize);
   }, [sorted, pageIndex, pageSize]);
 
-  // Reset page when data/filter/sort changes and current page is out-of-bounds
+  // Keep current page in range when deps change
   React.useEffect(() => {
     const maxIndex = Math.max(0, Math.ceil(total / pageSize) - 1);
     if (pageIndex > maxIndex) setPageIndex(0);
   }, [total, pageSize, pageIndex, setPageIndex]);
 
-  // Select-all checkbox state (based on visible page)
-  const visibleIds = React.useMemo(
-    () => paged.map((row, idx) => getRowId(row, idx + pageIndex * pageSize, rowId)),
-    [paged, pageIndex, pageSize, rowId]
-  );
-  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.includes(id));
-  const someVisibleSelected = visibleIds.some((id) => selectedIds.includes(id));
+  // ----- Visible IDs + selection meta -----
+  const visibleIds = React.useMemo(() => {
+    const base = pageIndex * pageSize;
+    return paged.map((row, i) => getRowId(row, base + i, rowId));
+  }, [paged, pageIndex, pageSize, rowId]);
 
-  const toggleAllVisible = React.useCallback(
+  const allSelectableIds = React.useMemo(() => {
+    if (selectionScope === "all") {
+      // Apply to all *filtered* rows, in keeping with user expectations
+      return filtered.map((row, i) => getRowId(row, i, rowId));
+    }
+    return visibleIds;
+  }, [selectionScope, filtered, visibleIds, rowId]);
+
+  const allSelected =
+    allSelectableIds.length > 0 &&
+    allSelectableIds.every((id) => selectedIds.includes(id));
+  const someSelected = allSelectableIds.some((id) => selectedIds.includes(id));
+
+  const toggleBulk = React.useCallback(
     (checked: boolean | "indeterminate") => {
       if (checked === true) {
-        const union = Array.from(new Set([...selectedIds, ...visibleIds]));
+        const union = Array.from(new Set([...selectedIds, ...allSelectableIds]));
         setSelected(union);
       } else {
-        const remaining = selectedIds.filter((id) => !visibleIds.includes(id));
+        const remaining = selectedIds.filter((id) => !allSelectableIds.includes(id));
         setSelected(remaining);
       }
     },
-    [selectedIds, setSelected, visibleIds]
+    [selectedIds, setSelected, allSelectableIds]
   );
 
-  // Sorting toggler
+  // ----- Sorting toggler -----
   const toggleSort = React.useCallback(
     (key: string, sortable?: boolean) => {
       if (!sortable) return;
+      // cycle: none → asc → desc → none
       if (!sortBy || sortBy.key !== key) return setSort({ key, direction: "asc" });
       if (sortBy.direction === "asc") return setSort({ key, direction: "desc" });
-      return setSort(null); // third click clears sorting
+      return setSort(null);
     },
     [sortBy, setSort]
   );
 
-  // Render
+  // ----- Derived state flags -----
   const hasData = data && data.length > 0;
-  const showLoading = loading;
+  const showLoading = !!loading;
   const showError = !!error;
   const showEmpty = !showLoading && !showError && (!hasData || paged.length === 0);
+
+  // ----- Keyboard helpers for row activation (Enter/Space) -----
+  const onRowKeyDown = React.useCallback(
+    (
+      e: React.KeyboardEvent<HTMLTableRowElement>,
+      row: T,
+      absoluteIndex: number,
+      id: string
+    ) => {
+      if (!onRowClick) return;
+      const k = e.key;
+      if (k === "Enter" || k === " ") {
+        e.preventDefault();
+        onRowClick(row, absoluteIndex, id);
+      }
+    },
+    [onRowClick]
+  );
+
+  // ---------------------------------------------------------------------------
+  // Render
+  // ---------------------------------------------------------------------------
 
   return (
     <motion.div
@@ -365,12 +505,22 @@ export function Table<T extends Record<string, any>>(props: TableProps<T>) {
       {(title || description || globalFilter) && (
         <div className="mb-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
           <div className="min-w-0">
-            {title && <h3 className="truncate text-base font-semibold">{title}</h3>}
-            {description && <p className="text-sm text-muted-foreground">{description}</p>}
+            {title && (
+              <h3 className="truncate text-base font-semibold" data-testid="table-title">
+                {title}
+              </h3>
+            )}
+            {description && (
+              <p className="text-sm text-muted-foreground" data-testid="table-description">
+                {description}
+              </p>
+            )}
           </div>
+
           {globalFilter && (
             <div className="w-full max-w-xs">
               <Input
+                data-testid="table-filter"
                 aria-label={globalFilter.placeholder ?? "Filter"}
                 placeholder={globalFilter.placeholder ?? "Filter…"}
                 value={filterValue}
@@ -388,29 +538,35 @@ export function Table<T extends Record<string, any>>(props: TableProps<T>) {
 
       {/* Table */}
       {!showLoading && !showError && !showEmpty && (
-        <div className="w-full overflow-x-auto rounded-xl border">
+        <div className="w-full overflow-x-auto rounded-xl border" role="region" aria-label={title ?? "Table"}>
           <UiTable>
             <TableHeader>
               <TableRow>
                 {selectable && (
                   <TableHead className="w-[44px]">
                     <Checkbox
-                      aria-label="Select all"
-                      checked={allVisibleSelected ? true : someVisibleSelected ? "indeterminate" : false}
-                      onCheckedChange={toggleAllVisible}
+                      aria-label={selectionScope === "all" ? "Select all filtered" : "Select all visible"}
+                      checked={allSelected ? true : someSelected ? "indeterminate" : false}
+                      onCheckedChange={toggleBulk}
+                      data-testid="table-select-all"
                     />
                   </TableHead>
                 )}
+
                 {columns.map((col, ci) => {
                   const isSorted = sortBy?.key === String(col.key);
                   const sortDir = isSorted ? sortBy?.direction : undefined;
                   const alignClass = getCellAlignClass(col.align);
-                  const widthStyle =
-                    col.width !== undefined
-                      ? typeof col.width === "number"
-                        ? { width: `${col.width}px` }
-                        : { width: col.width }
-                      : undefined;
+                  const widthStyle = widthStyleOf(col.width);
+
+                  // aria-sort states: "none" | "ascending" | "descending" | "other"
+                  const ariaSort: React.AriaAttributes["aria-sort"] = col.sortable
+                    ? isSorted
+                      ? sortDir === "asc"
+                        ? "ascending"
+                        : "descending"
+                      : "none"
+                    : undefined;
 
                   return (
                     <TableHead
@@ -423,27 +579,40 @@ export function Table<T extends Record<string, any>>(props: TableProps<T>) {
                         alignClass
                       )}
                       onClick={() => toggleSort(String(col.key), col.sortable)}
+                      aria-sort={ariaSort}
+                      scope="col"
+                      role="columnheader"
+                      tabIndex={col.sortable ? 0 : -1}
+                      onKeyDown={(e) => {
+                        if (!col.sortable) return;
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          toggleSort(String(col.key), col.sortable);
+                        }
+                      }}
                     >
                       <div className="flex items-center gap-1">
                         <span className="truncate">{col.header ?? String(col.key)}</span>
                         {col.sortable && (
                           <>
-                            {!isSorted && <ArrowUpDown className="h-3.5 w-3.5 opacity-60" />}
-                            {isSorted && sortDir === "asc" && <ArrowUp className="h-3.5 w-3.5" />}
-                            {isSorted && sortDir === "desc" && <ArrowDown className="h-3.5 w-3.5" />}
+                            {!isSorted && <ArrowUpDown className="h-3.5 w-3.5 opacity-60" aria-hidden />}
+                            {isSorted && sortDir === "asc" && <ArrowUp className="h-3.5 w-3.5" aria-hidden />}
+                            {isSorted && sortDir === "desc" && <ArrowDown className="h-3.5 w-3.5" aria-hidden />}
                           </>
                         )}
                       </div>
                     </TableHead>
                   );
                 })}
-                {rowActions && <TableHead className="w-[44px] text-right"></TableHead>}
+
+                {rowActions && <TableHead className="w-[44px] text-right" />}
               </TableRow>
             </TableHeader>
 
             <TableBody>
               {paged.map((row, ri) => {
-                const id = getRowId(row, ri + pageIndex * pageSize, rowId);
+                const absoluteIndex = pageIndex * pageSize + ri;
+                const id = getRowId(row, absoluteIndex, rowId);
                 const selected = selectedIds.includes(id);
 
                 return (
@@ -453,9 +622,14 @@ export function Table<T extends Record<string, any>>(props: TableProps<T>) {
                     onClick={(e) => {
                       // prevent row click when clicking interactive elements
                       const target = e.target as HTMLElement;
-                      if (target.closest("button, a, input, label")) return;
-                      onRowClick?.(row, ri + pageIndex * pageSize, id);
+                      if (target.closest("button, a, input, label, [role='menu'], [role='menuitem']")) return;
+                      onRowClick?.(row, absoluteIndex, id);
                     }}
+                    onKeyDown={(e) => onRowKeyDown(e, row, absoluteIndex, id)}
+                    tabIndex={onRowClick ? 0 : -1}
+                    role="row"
+                    aria-selected={selectable ? selected : undefined}
+                    data-testid={`table-row-${id}`}
                   >
                     {selectable && (
                       <TableCell className="w-[44px]">
@@ -467,26 +641,25 @@ export function Table<T extends Record<string, any>>(props: TableProps<T>) {
                             else setSelected(selectedIds.filter((x) => x !== id));
                           }}
                           onClick={(e) => e.stopPropagation()}
+                          data-testid={`table-select-${id}`}
                         />
                       </TableCell>
                     )}
+
                     {columns.map((col, ci) => {
-                      const raw = (row as any)[col.key as any];
+                      // Resolve raw value through accessor/key
+                      const raw = getColumnValue(col, row, absoluteIndex);
+
+                      // Resolve final display: render > format > raw
                       const content =
                         typeof col.render === "function"
-                          ? col.render(row, ri + pageIndex * pageSize)
+                          ? col.render(row, absoluteIndex)
                           : typeof col.format === "function"
-                          ? col.format(raw, row, ri + pageIndex * pageSize)
+                          ? col.format(raw, row, absoluteIndex)
                           : raw;
 
                       const alignClass = getCellAlignClass(col.align);
-
-                      const widthStyle =
-                        col.width !== undefined
-                          ? typeof col.width === "number"
-                            ? { width: `${col.width}px` }
-                            : { width: col.width }
-                          : undefined;
+                      const widthStyle = widthStyleOf(col.width);
 
                       return (
                         <TableCell
@@ -494,11 +667,13 @@ export function Table<T extends Record<string, any>>(props: TableProps<T>) {
                           style={widthStyle}
                           className={cn("whitespace-nowrap", alignClass, col.className)}
                           aria-label={col.ariaLabel}
+                          role="cell"
                         >
                           {content}
                         </TableCell>
                       );
                     })}
+
                     {rowActions && (
                       <TableCell className="w-[44px] text-right">
                         <div className="flex items-center justify-end">
@@ -508,14 +683,10 @@ export function Table<T extends Record<string, any>>(props: TableProps<T>) {
                             onClick={(e) => e.stopPropagation()}
                             aria-label={`Row actions for ${id}`}
                           >
-                            <MoreVertical className="h-4 w-4" />
+                            <MoreVertical className="h-4 w-4" aria-hidden />
                           </Button>
-                          {/* Action portal */}
-                          <div className="sr-only" aria-hidden>
-                            {/* screen-reader hidden; consumers render menus/popovers elsewhere */}
-                          </div>
-                          {/* Inline actions (optional) */}
-                          <div onClick={(e) => e.stopPropagation()}>{rowActions(row, ri + pageIndex * pageSize)}</div>
+                          {/* Inline actions (consumer-provided) */}
+                          <div onClick={(e) => e.stopPropagation()}>{rowActions(row, absoluteIndex)}</div>
                         </div>
                       </TableCell>
                     )}
@@ -530,7 +701,7 @@ export function Table<T extends Record<string, any>>(props: TableProps<T>) {
       {/* Footer / Pagination */}
       {!showLoading && !showError && !showEmpty && (
         <div className="mt-3 flex flex-col items-center justify-between gap-2 sm:flex-row">
-          <div className="text-xs text-muted-foreground">
+          <div className="text-xs text-muted-foreground" aria-live="polite">
             Showing{" "}
             <span className="font-medium">
               {Math.min(pageIndex * pageSize + 1, total)}–{Math.min((pageIndex + 1) * pageSize, total)}
@@ -539,13 +710,18 @@ export function Table<T extends Record<string, any>>(props: TableProps<T>) {
           </div>
 
           <div className="flex items-center gap-2">
+            {/* Rows per page (hidden on very small screens) */}
             <div className="hidden items-center gap-2 sm:flex">
-              <span className="text-xs text-muted-foreground">Rows per page</span>
+              <label htmlFor="rows-per-page" className="text-xs text-muted-foreground">
+                Rows per page
+              </label>
               <select
+                id="rows-per-page"
                 className="h-8 rounded-md border bg-background px-2 text-sm"
                 value={pageSize}
                 onChange={(e) => setPageSize(Number(e.target.value))}
                 aria-label="Rows per page"
+                data-testid="table-rows-per-page"
               >
                 {pageSizeOptions.map((opt) => (
                   <option key={opt} value={opt}>
@@ -555,6 +731,7 @@ export function Table<T extends Record<string, any>>(props: TableProps<T>) {
               </select>
             </div>
 
+            {/* Pager */}
             <div className="flex items-center gap-1">
               <Button
                 variant="ghost"
@@ -562,8 +739,9 @@ export function Table<T extends Record<string, any>>(props: TableProps<T>) {
                 aria-label="First page"
                 onClick={() => setPageIndex(0)}
                 disabled={pageIndex === 0}
+                data-testid="table-page-first"
               >
-                <ChevronsLeft className="h-4 w-4" />
+                <ChevronsLeft className="h-4 w-4" aria-hidden />
               </Button>
               <Button
                 variant="ghost"
@@ -571,17 +749,21 @@ export function Table<T extends Record<string, any>>(props: TableProps<T>) {
                 aria-label="Previous page"
                 onClick={() => setPageIndex(Math.max(0, pageIndex - 1))}
                 disabled={pageIndex === 0}
+                data-testid="table-page-prev"
               >
-                <ChevronLeft className="h-4 w-4" />
+                <ChevronLeft className="h-4 w-4" aria-hidden />
               </Button>
               <Button
                 variant="ghost"
                 size="icon"
                 aria-label="Next page"
-                onClick={() => setPageIndex(Math.min(Math.ceil(total / pageSize) - 1, pageIndex + 1))}
+                onClick={() =>
+                  setPageIndex(Math.min(Math.ceil(total / pageSize) - 1, pageIndex + 1))
+                }
                 disabled={pageIndex >= Math.ceil(total / pageSize) - 1}
+                data-testid="table-page-next"
               >
-                <ChevronRight className="h-4 w-4" />
+                <ChevronRight className="h-4 w-4" aria-hidden />
               </Button>
               <Button
                 variant="ghost"
@@ -589,8 +771,9 @@ export function Table<T extends Record<string, any>>(props: TableProps<T>) {
                 aria-label="Last page"
                 onClick={() => setPageIndex(Math.max(0, Math.ceil(total / pageSize) - 1))}
                 disabled={pageIndex >= Math.ceil(total / pageSize) - 1}
+                data-testid="table-page-last"
               >
-                <ChevronsRight className="h-4 w-4" />
+                <ChevronsRight className="h-4 w-4" aria-hidden />
               </Button>
             </div>
           </div>
