@@ -1,26 +1,194 @@
+```yaml
 # configs/diagnostics/report.yaml
 # ==============================================================================
 # 🖥️ Unified HTML dashboard (generate_html_report.py)
+# SpectraMind V50 — NeurIPS 2025 Ariel Data Challenge
+# ------------------------------------------------------------------------------
+# Purpose:
+#   Control the generation of a single, versioned HTML dashboard that bundles:
+#     • Summary KPIs
+#     • GLL metrics/heatmaps
+#     • FFT & smoothness diagnostics
+#     • Calibration (reliability/coverage/z-scores/COREL)
+#     • Symbolic violations & influence maps
+#     • Explainability (UMAP/t-SNE, SHAP overlays, attention fusion)
+#     • CLI logs & provenance (config hash, git/DVC metadata)
+#
+# Hydra:
+#   All fields override-able via CLI, e.g.:
+#     spectramind diagnose dashboard report.theme.css=dark report.output.open_browser=true
 # ==============================================================================
+
+# ----------------------------------------------------------------------
+# Hydra defaults
+# ----------------------------------------------------------------------
+defaults:
+  - override hydra/job_logging: default
+  - override hydra/hydra_logging: default
 
 report:
   enable: true
+
+  # ------------------------------------------------------------------
+  # Versioning & output paths
+  # ------------------------------------------------------------------
   versioning:
     enable: true
-    prefix: "report_v"
+    prefix: "report_v"                 # final name becomes {prefix}{N}.html
+    bump_strategy: "auto"              # "auto" | "timestamp" | "manual"
+  output:
+    html_path: "report_v1.html"        # initial path; auto-bumped if versioning enabled
+    bundle_dir: "report_assets"        # copied plots/iframes/css/js
+    inline_css: false                  # set true to inline CSS into HTML
+    minify_html: true
+    gzip_bundle: false                 # also emit report.html.gz
+    open_browser: false                # auto-open after generation
+    write_checksum: true               # write SHA256s for all assets
+    manifest_json: "report_manifest.json"
+
+  # ------------------------------------------------------------------
+  # Global metadata & provenance
+  # ------------------------------------------------------------------
+  metadata:
+    title: "SpectraMind V50 — Diagnostics Dashboard"
+    subtitle: "NeurIPS 2025 Ariel Data Challenge"
+    author: "SpectraMind V50"
+    show_timestamp: true
+    show_git_commit: true
+    show_config_hash: true
+    show_dvc_rev: true
+    show_runtime_env: true
+
+  # ------------------------------------------------------------------
+  # Navigation / layout
+  # ------------------------------------------------------------------
+  layout:
+    toc: true                          # table of contents
+    toc_depth: 3
+    section_order:                     # explicit ordering in navbar & body
+      - summary
+      - gll
+      - fft
+      - smoothness
+      - calibration
+      - symbolic
+      - explainability
+      - cli_log
+      - artifacts
+    sticky_nav: true
+    dark_mode_toggle: true
+
+  # ------------------------------------------------------------------
+  # Sections: enable/disable + per-section options
+  # ------------------------------------------------------------------
   sections:
     include:
       - "summary"
       - "gll"
       - "fft"
+      - "smoothness"
       - "calibration"
       - "symbolic"
       - "explainability"
       - "cli_log"
+      - "artifacts"
+
+    summary:
+      enable: true
+      show_kpis: ["gll_mean", "gll_p90", "coverage_0.5", "ece", "n_planets", "runtime_min"]
+      kpi_sources:
+        summary_json: "diagnostic_summary.json"
+
+    gll:
+      enable: true
+      heatmap_png: "plots/gll_heatmap.png"
+      per_planet_png: "plots/gll_per_planet.png"
+      tables:
+        per_planet_csv: "gll_scores.csv"
+
+    fft:
+      enable: true
+      power_png: "plots/fft_power.png"
+      autocorr_png: "plots/autocorr.png"
+      clusters_png: "plots/fft_clusters.png"
+      features_json: "fft_features.json"
+
+    smoothness:
+      enable: true
+      gradient_heatmap_png: "plots/smoothness/gradient_heatmap.png"
+      curvature_heatmap_png: "plots/smoothness/curvature_heatmap.png"
+      tv_map_png: "plots/smoothness/tv_map.png"
+      summary_csv: "smoothness/per_planet_metrics.csv"
+
+    calibration:
+      enable: true
+      reliability_png: "calibration/reliability.png"
+      z_hist_png: "calibration/z_hist.png"
+      per_bin_csv: "calibration/per_bin.csv"
+      coverage_csv: "calibration/coverage.csv"
+      corel_heatmap_png: "calibration/corel_heatmap.png"
+      corel_summary_csv: "calibration/corel_summary.csv"
+
+    symbolic:
+      enable: true
+      violation_heatmap_png: "symbolic/violation_heatmap.png"
+      top_rules_bar_png: "symbolic/top_rules_bar.png"
+      rule_rank_json: "symbolic/rule_rank.json"
+      influence_map_json: "symbolic/influence_map.json"
+      summary_csv: "symbolic/violations_summary.csv"
+
+    explainability:
+      enable: true
+      umap_html: "umap.html"
+      tsne_html: "tsne.html"
+      shap_overlay_png: "plots/shap_overlay.png"
+      shap_attention_png: "plots/shap_attention.png"
+      shap_symbolic_png: "plots/shap_symbolic.png"
+
+    cli_log:
+      enable: true
+      v50_debug_log_md: "v50_debug_log.md"
+      events_jsonl: "events.jsonl"
+      show_recent_n: 50
+
+    artifacts:
+      enable: true
+      glob_patterns:
+        - "plots/**/*.png"
+        - "calibration/*.png"
+        - "symbolic/*.png"
+        - "reports/*.html"
+      show_sizes: true
+      show_checksums: true
+
+  # ------------------------------------------------------------------
+  # Theme / styling
+  # ------------------------------------------------------------------
   theme:
-    css: "light"            # "light" | "dark" | "auto"
+    css: "light"                       # "light" | "dark" | "auto"
+    brand_color: "#0b5fff"
+    accent_color: "#7c3aed"
+    code_theme: "github"               # code block theme in HTML
+
+  # ------------------------------------------------------------------
+  # Asset handling
+  # ------------------------------------------------------------------
   assets:
-    embed_iframes: true     # embed UMAP/t-SNE html
-    copy_plots: true        # copy png assets into report bundle
-  output:
-    html_path: "report_v1.html"   # auto-bumped if versioning enabled
+    embed_iframes: true               # embed UMAP/t-SNE html inline (iframes)
+    iframe_height_px: 520
+    copy_plots: true                  # copy png/svg into bundle_dir
+    fail_on_missing: false            # continue even if some assets are missing
+    extra_static:
+      - "assets/logo.png"
+      - "assets/styles.css"
+
+  # ------------------------------------------------------------------
+  # Reproducibility & checks
+  # ------------------------------------------------------------------
+  reproducibility:
+    verify_paths: true                # emit warnings for missing inputs
+    record_cli_invocation: true
+    record_hydra_config_snapshot: true
+    record_env: true                  # python version, packages, CUDA, etc.
+    sha256_all_assets: true
+```
