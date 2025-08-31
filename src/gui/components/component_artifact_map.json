@@ -1,0 +1,289 @@
+```json
+{
+  "$schema": "https://json.schemastore.org/json-schema",
+  "$id": "https://spectramind.v50/gui/component_artifact_map.schema.json",
+  "title": "SpectraMind V50 GUI Component ↔ Artifact Crosswalk",
+  "description": "Declarative mapping from GUI components to CLI commands and artifact files they render. The server bridge uses this to resolve artifacts for each component.",
+  "version": "1.1.0",
+  "schemaVersion": "2025-08-31",
+  "variables": {
+    "artifactsRoot": "artifacts",
+    "logsRoot": "artifacts/logs",
+    "reportsRoot": "artifacts/reports",
+    "plotsRoot": "artifacts/plots",
+    "embeddingsRoot": "artifacts/embeddings",
+    "symbolicRoot": "artifacts/symbolic",
+    "metricsRoot": "artifacts/metrics",
+    "submissionRoot": "artifacts/submission",
+    "calibrationRoot": "artifacts/calibration",
+    "runId": "${env.RUN_ID:-${date:YYYYMMDD-HHmmss}}",
+    "planetId": "${params.planetId:-all}",
+    "configPath": "${params.configPath:-configs/train.yaml}",
+    "htmlViewer": "${env.HTML_VIEWER:-default}",
+    "openCmd": {
+      "linux": "xdg-open",
+      "darwin": "open",
+      "win32": "cmd /c start \"\""
+    }
+  },
+
+  "exec": {
+    "shell": false,
+    "timeoutMs": 7200000,
+    "retries": 1,
+    "retryBackoffMs": 5000,
+    "concurrency": 2,
+    "cwd": ".",
+    "env": {
+      "HYDRA_FULL_ERROR": "1",
+      "PYTHONUNBUFFERED": "1"
+    },
+    "exitCodes": {
+      "success": [0],
+      "retryable": [2, 130],
+      "fatal": [1, 126, 127, 137]
+    }
+  },
+
+  "freshness": {
+    "maxAgeSeconds": 86400,
+    "regenerateIfMissing": true,
+    "cacheBustParam": "v=${variables.runId}",
+    "safeExtensions": [".json", ".png", ".html", ".csv", ".svg"]
+  },
+
+  "security": {
+    "allowlistCmdPrefixes": ["spectramind", "python spectramind.py"],
+    "denyFlags": ["--danger", "--rm", "--force-delete"],
+    "sanitizePaths": true,
+    "resolveSymlinks": true,
+    "maxArtifactBytes": 104857600
+  },
+
+  "templating": {
+    "engine": "simple",
+    "syntax": {
+      "varStart": "${",
+      "varEnd": "}"
+    },
+    "sources": ["variables", "params", "env"]
+  },
+
+  "streams": {
+    "eventlog": "${logsRoot}/events.jsonl",
+    "auditlog": "${logsRoot}/v50_debug_log.md",
+    "websocket": "/ws/logs"
+  },
+
+  "hydra": {
+    "applyOverrides": true,
+    "overrideSeparator": " ",
+    "cliFormat": "key=value",
+    "quoteValues": true,
+    "safeKeys": [
+      "trainer.epochs",
+      "trainer.batch_size",
+      "optimizer.lr",
+      "optimizer.weight_decay",
+      "model",
+      "data",
+      "diagnostics.max_planets",
+      "diagnostics.filters.profile"
+    ],
+    "groupListCommands": {
+      "model": "spectramind --list model",
+      "data": "spectramind --list data",
+      "optimizer": "spectramind --list optimizer"
+    }
+  },
+
+  "components": {
+    "Card": {
+      "renders": [
+        { "type": "html", "pattern": "${reportsRoot}/**/*.html" },
+        { "type": "png",  "pattern": "${plotsRoot}/**/*.png" },
+        { "type": "json", "pattern": "${artifactsRoot}/**/diagnostic_summary.json" }
+      ],
+      "commands": [
+        { "cmd": "spectramind diagnose dashboard --html-out ${reportsRoot}/dashboard.html?${freshness.cacheBustParam}" },
+        { "cmd": "spectramind diagnose summary --out ${artifactsRoot}/diagnostic_summary.json" }
+      ]
+    },
+
+    "Chart": {
+      "renders": [
+        { "type": "png",  "pattern": "${plotsRoot}/fft/**/*.png",                 "label": "FFT" },
+        { "type": "png",  "pattern": "${plotsRoot}/gll_heatmap/**/*.png",         "label": "GLL Heatmap" },
+        { "type": "png",  "pattern": "${plotsRoot}/calibration/**/*.png",         "label": "Calibration" },
+        { "type": "html", "pattern": "${embeddingsRoot}/umap/**/*.html",          "label": "UMAP" },
+        { "type": "html", "pattern": "${embeddingsRoot}/tsne/**/*.html",          "label": "t-SNE" },
+        { "type": "png",  "pattern": "${plotsRoot}/corel_coverage/**/*.png",      "label": "COREL Coverage" }
+      ],
+      "commands": [
+        { "cmd": "spectramind diagnose fft --out ${plotsRoot}/fft/fft_plot_${planetId}.png" },
+        { "cmd": "spectramind diagnose gll-heatmap --out ${plotsRoot}/gll_heatmap/gll_heatmap_${planetId}.png" },
+        { "cmd": "spectramind diagnose umap --html-out ${embeddingsRoot}/umap/umap_plot.html?${freshness.cacheBustParam}" },
+        { "cmd": "spectramind diagnose tsne --html-out ${embeddingsRoot}/tsne/tsne_plot.html?${freshness.cacheBustParam}" },
+        { "cmd": "spectramind diagnose corel-coverage --out ${plotsRoot}/corel_coverage/coverage_${planetId}.png" }
+      ]
+    },
+
+    "Table": {
+      "renders": [
+        { "type": "json", "pattern": "${artifactsRoot}/**/diagnostic_summary.json",          "label": "Diagnostics Summary" },
+        { "type": "html", "pattern": "${symbolicRoot}/symbolic_rule_table.html",            "label": "Symbolic Rules" },
+        { "type": "csv",  "pattern": "${metricsRoot}/*.csv",                                "label": "Metric CSVs" }
+      ],
+      "commands": [
+        { "cmd": "spectramind diagnose summary --out ${artifactsRoot}/diagnostic_summary.json" },
+        { "cmd": "spectramind diagnose symbolic-rank --table ${symbolicRoot}/symbolic_rule_table.html" },
+        { "cmd": "spectramind diagnose export-metrics --out-dir ${metricsRoot}" }
+      ]
+    },
+
+    "Panel": {
+      "renders": [
+        { "type": "json", "pattern": "${symbolicRoot}/overlays/*.json",                  "label": "Symbolic Overlays" },
+        { "type": "png",  "pattern": "${plotsRoot}/cluster_overlay/*.png",               "label": "Cluster Overlay" },
+        { "type": "json", "pattern": "${artifactsRoot}/corel/intervals/*.json",          "label": "COREL Intervals" }
+      ],
+      "commands": [
+        { "cmd": "spectramind diagnose symbolic-rank --overlays-out ${symbolicRoot}/overlays/overlays_${planetId}.json" },
+        { "cmd": "spectramind diagnose cluster-overlay --out ${plotsRoot}/cluster_overlay/overlay_${planetId}.png" },
+        { "cmd": "spectramind diagnose corel-intervals --out ${artifactsRoot}/corel/intervals/intervals_${planetId}.json" }
+      ]
+    },
+
+    "Tabs": {
+      "renders": [
+        { "type": "html", "pattern": "${reportsRoot}/dashboard.html",                      "label": "Dashboard" },
+        { "type": "html", "pattern": "${embeddingsRoot}/umap/umap_plot.html",             "label": "UMAP" },
+        { "type": "html", "pattern": "${embeddingsRoot}/tsne/tsne_plot.html",             "label": "t-SNE" },
+        { "type": "png",  "pattern": "${plotsRoot}/gll_heatmap/gll_heatmap.png",          "label": "GLL" }
+      ],
+      "commands": [
+        { "cmd": "spectramind diagnose dashboard --html-out ${reportsRoot}/dashboard.html?${freshness.cacheBustParam}" },
+        { "cmd": "spectramind diagnose umap --html-out ${embeddingsRoot}/umap/umap_plot.html?${freshness.cacheBustParam}" },
+        { "cmd": "spectramind diagnose tsne --html-out ${embeddingsRoot}/tsne/tsne_plot.html?${freshness.cacheBustParam}" },
+        { "cmd": "spectramind diagnose gll-heatmap --out ${plotsRoot}/gll_heatmap/gll_heatmap.png" }
+      ]
+    },
+
+    "Button": {
+      "triggers": [
+        { "label": "Run Calibration", "cmd": "spectramind calibrate --out-dir ${calibrationRoot}" },
+        { "label": "Run Training",    "cmd": "spectramind train --config ${configPath} --out-dir ${artifactsRoot}/train/${runId}" },
+        { "label": "Run Diagnostics", "cmd": "spectramind diagnose dashboard --html-out ${reportsRoot}/dashboard.html" },
+        { "label": "Make Submission", "cmd": "spectramind submit --bundle ${submissionRoot}" },
+        { "label": "Self Test",       "cmd": "spectramind selftest --report ${reportsRoot}/selftest_report.html" }
+      ],
+      "renders": []
+    },
+
+    "Input": {
+      "bindsHydra": true,
+      "hydraPaths": [
+        "trainer.epochs",
+        "trainer.batch_size",
+        "optimizer.lr",
+        "optimizer.weight_decay",
+        "model",
+        "data",
+        "diagnostics.max_planets"
+      ],
+      "renders": []
+    },
+
+    "Select": {
+      "bindsHydraGroups": true,
+      "groups": [
+        { "group": "model", "optionsCmd": "${hydra.groupListCommands.model}" },
+        { "group": "data",  "optionsCmd": "${hydra.groupListCommands.data}"  },
+        { "group": "optimizer", "optionsCmd": "${hydra.groupListCommands.optimizer}" }
+      ],
+      "renders": []
+    },
+
+    "Tooltip": {
+      "renders": [
+        { "type": "text", "source": "cliHelp", "pattern": "cache/help/{component}.txt" }
+      ],
+      "commands": [
+        { "cmd": "spectramind --help > cache/help/root.txt" },
+        { "cmd": "spectramind diagnose --help > cache/help/diagnose.txt" },
+        { "cmd": "spectramind train --help > cache/help/train.txt" }
+      ]
+    },
+
+    "Loader": {
+      "renders": [
+        { "type": "stream", "pattern": "${streams.eventlog}", "label": "Rich/JSONL stream" },
+        { "type": "text",   "pattern": "${streams.auditlog}",  "label": "Audit log" }
+      ],
+      "commands": [],
+      "streaming": {
+        "eventlog": "${streams.eventlog}",
+        "auditlog": "${streams.auditlog}",
+        "websocket": "${streams.websocket}"
+      }
+    },
+
+    "Modal": {
+      "renders": [
+        { "type": "html", "pattern": "${reportsRoot}/submission_report.html", "label": "Submission Report" },
+        { "type": "html", "pattern": "${reportsRoot}/selftest_report.html",    "label": "Selftest Report" }
+      ],
+      "commands": [
+        { "cmd": "spectramind submit --bundle ${submissionRoot} --report ${reportsRoot}/submission_report.html" },
+        { "cmd": "spectramind selftest --report ${reportsRoot}/selftest_report.html" }
+      ]
+    }
+  },
+
+  "routes": {
+    "/api/diagnostics/plot": {
+      "method": "GET",
+      "resolve": ["Chart", "Table", "Panel", "Card"],
+      "freshen": true
+    },
+    "/api/diagnostics/run": {
+      "method": "POST",
+      "accepts": ["Button", "Input", "Select"],
+      "exec": true
+    },
+    "/api/artifacts/list": {
+      "method": "GET",
+      "globs": [
+        "${reportsRoot}/**/*.html",
+        "${plotsRoot}/**/*.{png,svg}",
+        "${artifactsRoot}/**/*.json",
+        "${metricsRoot}/*.csv"
+      ]
+    },
+    "/api/artifacts/open": {
+      "method": "POST",
+      "command": "${variables.openCmd}"
+    }
+  },
+
+  "tests": {
+    "contracts": [
+      {
+        "name": "diagnostics-dashboard",
+        "command": "spectramind diagnose dashboard --html-out ${reportsRoot}/dashboard.html",
+        "expects": ["${reportsRoot}/dashboard.html"]
+      },
+      {
+        "name": "summary-json",
+        "command": "spectramind diagnose summary --out ${artifactsRoot}/diagnostic_summary.json",
+        "expects": ["${artifactsRoot}/diagnostic_summary.json"]
+      },
+      {
+        "name": "fft-plot",
+        "command": "spectramind diagnose fft --out ${plotsRoot}/fft/fft_plot_${planetId}.png",
+        "expects": ["${plotsRoot}/fft/fft_plot_${planetId}.png"]
+      }
+    ]
+  }
+}
+```
