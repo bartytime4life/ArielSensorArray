@@ -189,6 +189,7 @@ This generates synthetic data, runs the full pipeline, and writes an HTML+PNG pa
 
 ## 9) Workflow diagram
 
+```mermaid
 flowchart LR
   A[Latents (.npy/.npz/.csv)] --> C{Merge}
   B[Labels/metrics (CSV)] --> C
@@ -202,14 +203,15 @@ flowchart LR
 
   %% side-effect logging
   C --> I[Append run row → v50_debug_log.md]
+```
 
 ---
 
 ## 10) Outputs & paths (defaults)
 
-* HTML: `artifacts/tsne_v50.html`
-* PNG: `artifacts/tsne_v50.png` (only if `--out-png` **and** `kaleido` installed)
-* Log:  `v50_debug_log.md` (header auto-initialized, then row appended per run)
+* **HTML:** `artifacts/tsne_v50.html`
+* **PNG:** `artifacts/tsne_v50.png` (only if `--out-png` **and** `kaleido` installed)
+* **Log:**  `v50_debug_log.md` (header auto-initialized, then row appended per run)
 
 > All output directories are created on demand.
 
