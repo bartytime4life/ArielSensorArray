@@ -1,182 +1,278 @@
-# SpectraMind V50 — ArielSensorArray
+# 🚀 SpectraMind V50 — NeurIPS 2025 Ariel Data Challenge
 
-**Neuro-symbolic, physics-informed AI pipeline for the NeurIPS 2025 Ariel Data Challenge**
+**ARCHITECTURE.md (root)**
 
-> **North Star:** From raw Ariel **FGS1/AIRS frames** → **calibrated light curves** → **μ/σ spectra across 283 bins** → **diagnostics & symbolic overlays** → **leaderboard-ready submission** — fully reproducible via CLI, Hydra configs, DVC, CI, and Kaggle integration.
-
----
-
-[![Build](https://img.shields.io/badge/CI-GitHub_Actions-blue.svg)](./.github/workflows/ci.yml)
-![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)
-![License](https://img.shields.io/badge/license-MIT-green)
-![Hydra](https://img.shields.io/badge/config-Hydra_1.3-blueviolet)
-![DVC](https://img.shields.io/badge/data-DVC_3.x-945DD6)
-![GPU](https://img.shields.io/badge/CUDA-12.x-76B900)
-![Kaggle](https://img.shields.io/badge/platform-Kaggle-20BEFF)
+> Neuro-symbolic, physics-informed pipeline for ESA Ariel’s simulated data.
+> Design pillars: **NASA-grade reproducibility**, **CLI-first automation**, **Hydra configs**, **DVC-tracked data**, **symbolic physics constraints**, **diagnostics by default**.
 
 ---
 
-## 0) Overview
+## 1) System Overview
 
-**ArielSensorArray** is the engineering blueprint of **SpectraMind V50**: a **NASA-grade, mission-critical pipeline** for the NeurIPS 2025 Ariel Data Challenge.
+SpectraMind V50 predicts **exoplanet transmission spectra** — mean **μ** and uncertainty **σ** over **283 wavelength bins** — from raw **FGS1 photometry** and **AIRS spectroscopy**. The pipeline is end-to-end automated via a Typer CLI (`spectramind …`) and expressed entirely in Hydra-composable configs. Every run writes artifacts, hashes, and logs for deterministic reproduction.
 
-It integrates **astrophysical calibration**, **symbolic physics-informed modeling**, and **deep learning architectures** into a reproducible, **CLI-first** workflow.
-
-### 🛰️ Core Highlights
-
-* **Calibration Kill Chain** — ADC, bias, dark, flat, nonlinearity, dead-pixel masking, CDS, wavelength alignment, jitter correction.  
-* **Dual Encoders**:  
-  • **FGS1 → Mamba SSM** (long-sequence transit modeling)  
-  • **AIRS → Graph Neural Network** (edges = wavelength adjacency, molecule priors, detector regions)  
-* **Decoders** — μ (mean spectrum), σ (uncertainty), plus quantile & diffusion heads.  
-* **Uncertainty Calibration** — temperature scaling + **SpectralCOREL GNN** with temporal bin correlations.  
-* **Diagnostics** — GLL/entropy maps, SHAP overlays, symbolic rule scoring, FFT/UMAP/t-SNE, HTML dashboards.  
-* **Symbolic Physics Layer** — smoothness, positivity, asymmetry, FFT suppression, radiative transfer, gravitational & micro-lensing corrections.  
-* **Reproducibility** — Hydra configs, DVC/lakeFS, deterministic seeds, Git SHA + config hashes, CI pipelines.  
-* **Unified CLI** — `spectramind` orchestrates train, predict, calibrate, diagnose, ablate, submit, selftest, analyze-log, check-cli-map.  
-
-⏱ Optimized for **≤9 hr runtime** on ~1,100 planets with Kaggle A100 GPUs.
-
----
-
-## 1) System Architecture
+### 1.1 High-Level Dataflow
 
 ```mermaid
 flowchart TD
-    A[Raw Data: FGS1/AIRS Frames] --> B[Calibration Kill Chain]
-    B --> C1[FGS1 → Mamba SSM]
-    B --> C2[AIRS → Graph Neural Net]
-    C1 --> D[Multi-Scale Fusion]
-    C2 --> D[Multi-Scale Fusion]
-    D --> E1[μ Decoder (mean spectrum)]
-    D --> E2[σ Decoder (uncertainty)]
-    E1 --> F[Uncertainty Calibration (Temp Scaling + SpectralCOREL)]
-    E2 --> F
-    F --> G[Diagnostics Suite]
-    G --> H1[GLL Heatmaps]
-    G --> H2[SHAP Overlays]
-    G --> H3[Symbolic Rule Scoring]
-    G --> H4[FFT/UMAP/t-SNE]
-    G --> I[HTML Dashboard]
-    F --> J[Submission Bundle (Kaggle)]
+  U[User] -->|spectramind ...| CLI[Typer CLI]
+  CLI --> CFG[Hydra Compose\n(configs/* + overrides)]
+  CFG --> ORCH[Pipeline Orchestrator]
+  ORCH --> CAL[Calibration\nFGS1/AIRS preprocessing]
+  CAL --> ENC[Encoders\nFGS1 → Mamba SSM\nAIRS → GNN]
+  ENC --> DEC[Decoders → μ and σ]
+  DEC --> CALIB[Uncertainty Calibration\nTemp scaling + COREL + Conformal]
+  CALIB --> DIAG[Diagnostics & Explainability\nGLL, FFT, UMAP, t-SNE, SHAP, Symbolic]
+  DIAG --> BUNDLE[Submission Bundler\nselftest, manifest, zip]
+  BUNDLE --> KAG[Kaggle Leaderboard]
+
+  %% Artifact rails
+  CFG -. logs/overrides .-> ART[Artifacts\noutputs/YYYY-MM-DD/HH-MM-SS]
+  CAL -. dvc data .-> ART
+  ENC -. checkpoints/metrics .-> ART
+  DIAG -. html/png/json .-> ART
+  BUNDLE -. submission.zip .-> ART
 ```
 
 ---
 
-## 2) Calibration Kill Chain
+## 2) Core Components
+
+### 2.1 CLI (Typer)
+
+* Single entry (`spectramind`) with subcommands: `train`, `predict`, `calibrate`, `diagnose`, `submit`, `test`, `ablate`, `analyze-log`, `corel-train`.
+* Flags: `--dry-run`, `--debug`, `--config-path`, `--version`.
+* All invocations append to `v50_debug_log.md` and write a structured JSONL event stream.
+
+### 2.2 Config (Hydra)
+
+* Layered YAML groups: `data/`, `model/`, `train/`, `diagnostics/`, `submit/`, `profiles/`.
+* Deterministic composition via defaults list; overrides allowed on CLI (e.g., `model.v50.encoder.fgs1.mamba.d_state=64`).
+* Run hashes persisted (`run_hash_summary_v50.json`).
+
+### 2.3 Data Management (DVC + lakeFS optional)
+
+* Raw → calibrated light curves are **never** checked into Git.
+* DVC tracks inputs, intermediates, and model checkpoints; remote can be S3/GCS/SSH.
+* Hash lineage printed in dashboard and logs.
+
+### 2.4 Modeling
+
+* **FGS1**: Mamba **State-Space Model** for long photometric sequences; jitter augmentation and transit-shape priors.
+* **AIRS**: Graph Neural Network with edges for **wavelength proximity**, **molecule regions**, **detector segments**; optional edge features and positional encodings.
+* **Decoders**: dual-head for μ and σ with physics-aware regularization and symbolic fusion (smoothness, non-negativity, asymmetry, molecular priors).
+* **Loss**: Gaussian log-likelihood (GLL) + FFT smoothness + asymmetry penalty + symbolic terms; curriculum-stage toggles.
+
+### 2.5 Uncertainty Calibration
+
+* Temperature scaling, **COREL** bin-wise conformalization, instance-level tuning; coverage reports and heatmaps.
+
+### 2.6 Diagnostics & Explainability
+
+* **GLL** heatmaps, **FFT**/autocorr, **UMAP/t-SNE** latents, **SHAP overlays**, **symbolic violation** tables, calibration checks.
+* Unified **HTML dashboard** with versioned exports (`diagnostic_report_vN.html`).
+
+### 2.7 CI/CD
+
+* GitHub Actions: unit + CLI tests, security scans, docs build, dashboard artifacts, optional Kaggle packaging job.
+* Badges: CI, Tests, Coverage, Container.
+
+---
+
+## 3) Config Composition & Overrides
 
 ```mermaid
 flowchart LR
-    A[Raw Frames] --> B[ADC / Digitizer Normalization]
-    B --> C[Bias Subtraction]
-    C --> D[Dark Current Correction]
-    D --> E[Flat-Fielding]
-    E --> F[Nonlinearity Correction]
-    F --> G[Dead / Hot Pixel Masking]
-    G --> H[Correlated Double Sampling (CDS)]
-    H --> I[Wavelength Registration / Trace Extraction]
-    I --> J[Jitter Modeling & Correction]
-    J --> K[Background / Cosmic-Ray Handling]
-    K --> L[Time Series Assembly (per λ)]
-    L --> M[Calibrated Cubes & Light Curves]
+  R[Root Defaults] --> D1[data/nominal]
+  R --> D2[model/v50]
+  R --> D3[train/standard]
+  R --> D4[diagnostics/default]
+  R --> D5[submit/kaggle]
+  subgraph Hydra Composition
+    D1 --> H[(Hydra)]
+    D2 --> H
+    D3 --> H
+    D4 --> H
+    D5 --> H
+  end
+  UO[CLI Overrides\n(e.g., optimizer.lr=1e-3)] --> H
+  H --> RC[Resolved Config\n.frozen yaml + hash]
 ```
 
-* CDS reduces low-frequency drift; cosmic rays detected as temporal outliers.  
-* Jitter correction leverages FGS1-driven motion to decorrelate AIRS systematics.  
-* All steps parameterized via Hydra and tracked via DVC.  
+**Rules**
+
+* All parameters have explicit defaults.
+* Overrides are logged verbatim and saved with the resolved config file for replay.
+* `--multirun` used for ablations integrates with the ablation engine and leaderboard.
 
 ---
 
-## 3) Modeling & Uncertainty
+## 4) Reproducibility Stack
 
-* **Encoders**  
-  • FGS1 → Mamba SSM for long-range transit dynamics.  
-  • AIRS → GNN with molecule-informed edges and detector priors.  
+```mermaid
+flowchart TD
+  C1[Hydra YAMLs] --> R1[Resolved Config + Hash]
+  C2[DVC] --> R2[Data/Model Lineage]
+  C3[MLflow Optional] --> R3[Metrics/Params/Artifacts]
+  C4[CLI Logs] --> R4[v50_debug_log.md + events.jsonl]
+  C5[Docker/Conda/Poetry] --> R5[Env Lock + SBOM]
+  C6[CI Workflows] --> R6[Provenance + Status Badges]
+  R1 --> G[Guaranteed Replay]
+  R2 --> G
+  R4 --> G
+  R5 --> G
+```
 
-* **Decoders**  
-  • μ (mean spectrum across 283 bins).  
-  • σ (aleatoric uncertainty with symbolic overlay).  
+**Guarantees**
 
-* **Calibration**  
-  • Temperature scaling for global calibration.  
-  • SpectralCOREL for bin-to-bin conformal calibration.  
-
----
-
-## 4) Diagnostics & Symbolic Layer
-
-* **Metrics & Maps:** GLL, entropy, calibration plots.  
-* **Explainability:** SHAP overlays, attention/attribution traces.  
-* **Symbolic Rules:** smoothness, positivity, asymmetry, FFT-band suppression, radiative transfer checks.  
-* **Interactive Outputs:** HTML dashboards (UMAP/t-SNE, rule matrices, FFT panels), CSV/JSON exports.  
+* Every artifact links back to a **config hash**, **git commit**, **DVC rev**, and **env lock**.
+* **Self-test** validates shapes, paths, configs, and submission format before long jobs.
 
 ---
 
-## 5) Reproducibility & CI
+## 5) Training & Ablation
 
-* **Hydra** — config groups, overrides, run hashes.  
-* **DVC** — versioned datasets, checkpoints, diagnostics.  
-* **Poetry + Docker** — environment parity across dev/CI/Kaggle.  
-* **GitHub Actions** —  
-  • `ci.yml` (unit tests + build)  
-  • `diagnostics.yml` (dashboards)  
-  • `nightly-e2e.yml` (full smoke test)  
-  • `kaggle-submit.yml` (submission bundling)  
-  • `lint.yml` (ruff, black, isort, mypy, yaml, md)  
-  • `artifact-sweeper.yml` (cache cleanup)  
+```mermaid
+flowchart TD
+  A0[spectramind ablate] --> A1[Hydra Multirun]
+  A1 --> A2[Ablation Engine\n(grid/random/smart)]
+  A2 --> A3[Runner\ntrain → diagnose]
+  A3 --> A4[Collector\nmetrics.json]
+  A4 --> A5[Leaderboard\nmd/html/csv]
+  A5 -->|top-N| A6[Bundle Artifacts\nzip]
+```
 
----
-
-## 6) Kaggle Benchmarks
-
-We benchmarked against three notable Kaggle models:contentReference[oaicite:1]{index=1}:
-
-* **Thang Do Duc “0.329 LB” baseline** — shallow residual MLP; easy to reproduce, no uncertainty handling.  
-* **V1ctorious3010 “80bl-128hd-impact”** — extremely deep (80 residual blocks); strong leaderboard score but heavy runtime.  
-* **Fawad Awan “Spectrum Regressor”** — multi-output regression; efficient and decently performing.  
-
-**SpectraMind V50** extends beyond them with symbolic physics constraints, calibrated uncertainty, and CI-first reproducibility.  
+**Metrics included**: GLL, RMSE/MAE (dev), entropy, violation norms, FFT power, coverage deltas, runtime.
 
 ---
 
-## 7) Repository Layout
+## 6) Directory Layout (Top Level)
 
 ```
-ArielSensorArray/
-  configs/            # Hydra configs
-  src/                # Modules (calibration/, encoders/, decoders/, symbolic/, cli/, utils/)
-  data/               # raw/, processed/, meta/
-  outputs/            # checkpoints/, predictions/, diagnostics/, calibrated/
-  logs/               # v50_debug_log.md
-  .github/workflows/  # ci.yml, diagnostics.yml, nightly-e2e.yml, kaggle-submit.yml, lint.yml
+.
+├─ configs/              # Hydra groups: data/, model/, train/, diagnostics/, submit/, profiles/
+├─ src/                  # Pipeline code: data/, models/, calibrate/, cli/, diagnostics/, utils/
+├─ tests/                # Unit + CLI integration tests; fast and deep modes
+├─ docs/                 # This file, READMEs, diagrams, GUI/Server docs
+├─ artifacts/            # Versioned outputs: html/png/json, logs, leaderboards
+├─ .github/workflows/    # CI (lint/test/sbom/build/docs/release)
+├─ pyproject.toml        # Poetry; pinned deps; tools config
+├─ dvc.yaml              # Optional DVC stages for calibration/cache
+└─ v50_debug_log.md      # CLI call log (human-readable), plus events.jsonl
 ```
 
 ---
 
-## 8) Roadmap
+## 7) Command Matrix
 
-* TorchScript/JIT inference.  
-* Symbolic rule discovery + overlays.  
-* GUI (React + FastAPI).  
-* Automated leaderboard registry.  
-* Micro-lensing & non-Gaussian calibration.  
+| Purpose      | Command                                      | Notes                                                                 |
+| ------------ | -------------------------------------------- | --------------------------------------------------------------------- |
+| Smoke check  | `spectramind test`                           | Fast/Deep modes; validates paths, shapes, config, submission template |
+| Calibration  | `spectramind calibrate data=nominal`         | Writes DVC-tracked calibrated cubes and logs                          |
+| Train        | `spectramind train model=v50 trainer.gpus=1` | AMP, cosine LR, curriculum stages                                     |
+| Predict      | `spectramind predict ckpt=… outputs.dir=…`   | μ, σ tensors + CSV/NPZ export                                         |
+| Diagnose     | `spectramind diagnose dashboard --open`      | Generates HTML report with UMAP/t-SNE/SHAP/FFT/calibration            |
+| COREL        | `spectramind corel-train`                    | Bin-wise conformal σ calibration and coverage plots                   |
+| Ablate       | `spectramind ablate +grid=…`                 | Multirun with leaderboard (HTML/MD/CSV)                               |
+| Submit       | `spectramind submit --selftest`              | Validates, packs `submission.zip`, writes manifest                    |
+| Log Analysis | `spectramind analyze-log --md --csv`         | Summarizes `v50_debug_log.md` with hash groups                        |
 
 ---
 
-## 9) Citation
+## 8) Artifacts & Manifests
 
-```bibtex
-@software{spectramind_v50_2025,
-  title   = {SpectraMind V50 — Neuro-symbolic, Physics-informed Exoplanet Spectroscopy},
-  author  = {SpectraMind Team and Andy Barta},
-  year    = {2025},
-  url     = {https://github.com/bartytime4life/ArielSensorArray}
-}
+* `outputs/<date>/<time>/`
+
+  * `resolved_config.yaml`, `run_hash_summary_v50.json`
+  * `metrics.json`, `gll_heatmap.png`, `fft_*`, `umap.html`, `tsne.html`
+  * `shap_overlay/*.png|json`, `symbolic/*.json|html`
+  * `calibration/*.png|json`, `corel/*.csv`
+  * `diagnostic_report_vN.html` (versioned; embeds links to all artifacts)
+  * `submission/manifest.json`, `submission.zip`
+* Global logs: `v50_debug_log.md`, `events.jsonl`
+
+---
+
+## 9) CI/CD Workflow (Simplified)
+
+```mermaid
+flowchart LR
+  P[Push/PR] --> L[Lint + Type Check]
+  L --> UT[Unit + CLI Tests]
+  UT --> SEC[Security & SBOM]
+  SEC --> DOCS[Docs Build + Diagrams]
+  DOCS --> PACK[Package + Container]
+  PACK --> REL[Release Artifacts]
+  REL --> BADGE[Badges Updated]
 ```
 
+**Jobs**
+
+* **Lint**: black/ruff/mypy
+* **Tests**: pytest (fast), CLI smoke, optional GPU mock
+* **Security**: pip-audit, trivy, CodeQL (repo-wide)
+* **SBOM**: CycloneDX/SPDX via Syft/Grype
+* **Docs/Diagrams**: Mermaid render check
+* **Package**: Poetry build, Docker image, GHCR publish
+* **Release**: tag, changelog, assets (HTML dashboards optional)
+
 ---
 
-## 10) License
+## 10) Symbolic Logic & Physics Constraints
 
-MIT — see [LICENSE](./LICENSE).
-````
+* **Smoothness / TV / FFT** regularization in wavelength space.
+* **Non-negativity** and **molecular coherence** constraints by region.
+* **Photonic alignment**: FGS1 transit shape informs AIRS alignment and data augmentation.
+* Violations are scored, visualized, and fed into targeted retraining and calibration.
+
+---
+
+## 11) Security, Ethics, and Governance
+
+* No private data; model/dataset licenses respected.
+* Reproducibility and audit trails mandated (config, hash, DVC lineage).
+* **Deterministic seeds** and run metadata stamped on every artifact.
+* Optional role-based API wrapper for GUI orchestration; **no analytics in server**.
+
+---
+
+## 12) Troubleshooting (Quick)
+
+* **CI fails on diagrams**: ensure Mermaid nodes avoid HTML tags; use `\n` for newlines.
+* **Hydra not composing**: check `defaults:` order and group names; validate with `--cfg job --package _global_`.
+* **DVC missing files**: `dvc pull` with proper remote; verify `.dvc/config`.
+* **Submission invalid**: run `spectramind submit --selftest` and inspect the emitted `manifest.json`.
+* **Dashboard empty**: confirm diagnostics enabled and paths in `generate_html_report.py`.
+
+---
+
+## 13) Glossary
+
+* **FGS1**: Fine Guidance Sensor 1 photometry time series.
+* **AIRS**: Ariel InfraRed Spectrometer frames (wavelength × time).
+* **μ, σ**: Predicted mean spectrum and predictive uncertainty per bin.
+* **GLL**: Gaussian Log-Likelihood (primary leaderboard metric).
+* **COREL**: Conformal calibration method for bin-wise σ coverage.
+
+---
+
+## 14) Getting Started (TL;DR)
+
+```bash
+# 1) Self-test
+spectramind test
+
+# 2) Calibrate (DVC-tracked)
+spectramind calibrate data=nominal
+
+# 3) Train
+spectramind train model=v50 optimizer=adamw trainer.gpus=1
+
+# 4) Diagnose + dashboard
+spectramind diagnose dashboard --open
+
+# 5) Package submission
+spectramind submit --selftest
+```
+
+All operations are reproducible with the emitted **config hash**, **git commit**, **DVC revision**, and **env lock**.
