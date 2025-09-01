@@ -1,11 +1,11 @@
 # ==============================================================================
-# SpectraMind V50 — DVC Pipeline
+# SpectraMind V50 — DVC Pipeline (Upgraded, NASA-grade)
+# ------------------------------------------------------------------------------
 # Purpose:
-#   • Defines full end-to-end pipeline for NeurIPS 2025 Ariel Challenge
+#   • Defines full end-to-end pipeline for NeurIPS 2025 Ariel Data Challenge
 #   • Stages: calibration → training → prediction → diagnostics → submission
-#   • All configs handled by Hydra (YAMLs under /configs)
-#   • Outputs tracked with DVC for reproducibility
-#   • CI-safe: stages can be cached/skipped if inputs unchanged
+#   • Hydra config-driven, CLI-first, CI/Kaggle reproducibility
+#   • Uses stage caching so unchanged inputs skip recomputation
 # ==============================================================================
 
 stages:
@@ -33,6 +33,7 @@ stages:
       - data/processed
       - src/train_v50.py
       - configs/training/config_v50.yaml
+      - .dvc/params.yaml
     outs:
       - outputs/models/model_v50.pth
     metrics:
@@ -89,3 +90,11 @@ stages:
       - outputs/submissions/submission_v50.zip
     metrics:
       - outputs/metrics/leaderboard.tsv
+
+# ==============================================================================
+# Notes:
+#   • Each stage is Hydra-configurable and CLI-first (`spectramind …`)
+#   • Metrics + plots stored for DVC + CI dashboards
+#   • Kaggle runtime safe: stages cache automatically
+#   • Submission stage bundles diagnostics + validation
+# ==============================================================================
