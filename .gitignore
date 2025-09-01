@@ -1,7 +1,7 @@
 # ==============================================================================
 # .gitignore — SpectraMind V50 (NeurIPS 2025 Ariel Data Challenge)
 # Purpose: Keep Git history clean and reproducible (code + configs only).
-# Data, models, and generated artifacts are managed via DVC/lakeFS and CI.
+# Data, models, and generated artifacts are managed via DVC/LFS and CI.
 # Synchronized conceptually with .dvcignore and .dockerignore.
 # ==============================================================================
 
@@ -37,7 +37,8 @@ site-packages/
 
 # ===== Node / web toolchains (diagrams, dashboards) =====
 node_modules/
-# Track lockfiles for deterministic builds (do NOT ignore package-lock.json / pnpm-lock.yaml / yarn.lock)
+# Track lockfiles for deterministic builds:
+#   package-lock.json / pnpm-lock.yaml / yarn.lock  (DO NOT ignore)
 
 # ===== Editors / IDEs =====
 .vscode/
@@ -62,47 +63,47 @@ tmp/
 temp/
 
 # ===== Datasets, model weights, large binaries =====
-# Use DVC/lakeFS for data artifacts; keep only pointer files (*.dvc) and dvc.yaml in Git.
+# Use DVC/LFS for data artifacts; keep only pointer files (*.dvc) and dvc.yaml in Git.
 data/**
 !data/.gitkeep
 !*.dvc
-# Common model/artifact roots (still governed by DVC or LFS)
+
+# Common model/artifact roots (governed by DVC or LFS)
 models/**
 !models/.gitkeep
 
 # ===== Intermediate & cache outputs (pipeline-generated) =====
 outputs/**
 !outputs/.gitkeep
-# Optionally keep “final” submission bundle pointers elsewhere (see below)
 
-# Fine-grained excludes for typical pipeline subdirs (redundant if outputs/** ignored)
+# Fine-grained (typically redundant with outputs/**)
 # outputs/checkpoints/
 # outputs/intermediate/
-# outputs/temp/
 # outputs/cache/
 # outputs/debug/
 # outputs/tmp/
 
-# ===== Diagnostics, reports & dashboards (reproducible build artifacts) =====
+# ===== Diagnostics, reports & dashboards (generated) =====
 reports/
 dashboards/
 assets/screenshots/
 assets/plots/
 assets/tmp/
+# Mermaid/diagram outputs live here when exported by Node scripts
+outputs/diagrams/
 assets/diagrams/
 !assets/.gitkeep
-# Generated visuals and docs (built by CLI/CI)
-*.html
-*.htm
+
+# Generated visuals and docs (built by CLI/CI) — avoid blanket ignores by extension elsewhere
+# (let DVC track structured CSV/JSON in outputs/diagnostics if needed)
+*.pdf
 *.png
-*.svg
 *.jpg
 *.jpeg
 *.gif
-*.pdf
-*.csv
-*.json
-*.md
+*.svg
+*.htm
+*.html
 
 # ===== Submissions (reproducible via CLI) =====
 submission.csv
@@ -159,6 +160,7 @@ ssh_known_hosts
 # ===== Archives / bundles (reproducible by CI/CLI) =====
 *.tar
 *.tar.gz
+*.tgz
 *.7z
 *.zip
 
@@ -166,3 +168,6 @@ ssh_known_hosts
 !outputs/.gitkeep
 !assets/.gitkeep
 !models/.gitkeep
+
+# ===== DO NOT ignore documentation or notebooks =====
+# (We lint & strip outputs via pre-commit; *.md, *.ipynb remain tracked.)
