@@ -35,7 +35,6 @@ It is tightly aligned with:
 
 * **`interactive.py`** — main module (importable API + Typer CLI).
 * **Outputs**
-
   * `artifacts/tsne_v50.html` (default HTML)
   * `artifacts/tsne_v50.png` (optional PNG if `--out-png` and `kaleido` present)
   * `v50_debug_log.md` (append-only, Markdown table row per run)
@@ -61,7 +60,7 @@ spectramind diagnose tsne run \
   --url-template "/planets/{planet_id}.html" \
   --out-html artifacts/tsne_v50.html \
   --out-png artifacts/tsne_v50.png
-```
+````
 
 **Tip:** All options are available via `spectramind diagnose tsne run --help`.
 
@@ -189,6 +188,7 @@ This generates synthetic data, runs the full pipeline, and writes an HTML+PNG pa
 
 ## 9) Workflow diagram
 
+```mermaid
 flowchart LR
   A["Latents (.npy/.npz/.csv)"] --> C{"Merge"}
   B["Labels/metrics (CSV)"] --> C
@@ -202,6 +202,7 @@ flowchart LR
 
   %% side-effect logging
   C --> I["Append run row → v50_debug_log.md"]
+```
 
 ---
 
@@ -270,3 +271,6 @@ flowchart LR
 ---
 
 **End of README**
+
+```
+```
