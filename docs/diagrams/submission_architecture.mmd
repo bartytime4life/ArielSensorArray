@@ -1,0 +1,28 @@
+%% SpectraMind V50 — Submission & Packaging
+%% Ref: validated bundle, manifest, leaderboard upload:contentReference[oaicite:8]{index=8}:contentReference[oaicite:9]{index=9}
+
+flowchart LR
+  subgraph IN["Inputs"]
+    PRED["Predictions (μ, σ)"]
+    META["Run snapshot (Hydra), hashes"]
+  end
+
+  subgraph SUB["Submission Pipeline"]
+    V["Validate shapes/schema"]
+    M["Build manifest.json<br/>(config hash, git commit, DVC pointers)"]
+    Z["Create submission.zip"]
+    U["Upload to Kaggle leaderboard"]
+  end
+
+  subgraph OUT["Artifacts"]
+    ZIP["submission.zip"]
+    MAN["manifest.json"]
+    LOG["events.jsonl / v50_debug_log.md"]
+  end
+
+  CLI["spectramind submit"] --> SUB
+  IN --> SUB
+  V --> M --> Z --> U
+  Z --> ZIP
+  M --> MAN
+  SUB --> LOG
