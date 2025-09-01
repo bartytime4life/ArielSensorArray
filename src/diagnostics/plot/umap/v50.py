@@ -22,7 +22,7 @@
 
 # • Input: .npy/.npz/.csv latents (rows = planets, cols = features)
 
-# • Optional labels/metrics CSV (planet\_id,label,confidence,entropy,shap,...)
+# • Optional labels/metrics CSV (planet\_id,label,confidence,entropy,shap,gll,…)
 
 # • Optional symbolic overlays JSON (rule scores/masks per planet)
 
@@ -89,12 +89,11 @@ import logging
 import os
 import sys
 import time
-import math
 import hashlib
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -109,11 +108,11 @@ import plotly.io as pio
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 
-# Typer for CLI
+# Typer for CLI (optional dependency)
 
 try:
-import typer
-except Exception as \_e:
+import typer  # type: ignore
+except Exception:
 typer = None  # Allow import/use as a library even if Typer isn't installed
 
 # UMAP is optional; we fall back to PCA if missing
@@ -132,11 +131,11 @@ import kaleido  # noqa: F401
 except Exception:
 \_KALEIDO\_AVAILABLE = False
 
-# -----------------------------------------------------------------------------\#
+# -----------------------------------------------------------------------------
 
 # Constants and global defaults
 
-# -----------------------------------------------------------------------------\#
+# -----------------------------------------------------------------------------
 
 DEFAULT\_LOG\_PATH = Path("v50\_debug\_log.md")
 DEFAULT\_HTML\_OUT = Path("artifacts") / "umap\_v50.html"
@@ -155,11 +154,11 @@ GLL\_COL = "gll"
 
 DEFAULT\_SEED = 1337
 
-# -----------------------------------------------------------------------------\#
+# -----------------------------------------------------------------------------
 
 # Dataclasses
 
-# -----------------------------------------------------------------------------\#
+# -----------------------------------------------------------------------------
 
 @dataclass
 class UmapParams:
@@ -212,13 +211,14 @@ log\_path: Path = DEFAULT\_LOG\_PATH
 cli\_name: str = "spectramind diagnose umap"
 config\_hash\_path: Optional\[Path] = Path("run\_hash\_summary\_v50.json")  # optional
 
-# -----------------------------------------------------------------------------\#
+# -----------------------------------------------------------------------------
 
 # Utilities
 
-# -----------------------------------------------------------------------------\#
+# -----------------------------------------------------------------------------
 
 def \_now\_iso() -> str:
+"""Return current timestamp in ISO-like format (local time)."""
 return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 def \_hash\_file(path: Path) -> Optional\[str]:
@@ -232,12 +232,13 @@ h.update(chunk)
 return h.hexdigest()
 
 def \_ensure\_parent\_dir(p: Path) -> None:
+"""Ensure parent directory exists for a given path."""
 p = Path(p)
 if p.parent and not p.parent.exists():
 p.parent.mkdir(parents=True, exist\_ok=True)
 
 def setup\_logging(level: int = logging.INFO) -> None:
-"""Configure logging for console (and let caller write to v50\_debug\_log.md)."""
+"""Configure logging for console (stdout)."""
 logging.basicConfig(
 level=level,
 format="%(asctime)s | %(levelname)-7s | %(message)s",
@@ -245,7 +246,8 @@ datefmt="%H:%M:%S",
 )
 
 def append\_v50\_log(ctx: PipelineLogContext, metadata: Dict\[str, Any]) -> None:
-"""Append a structured log entry to v50\_debug\_log.md (Markdown table row).
+"""
+Append a structured log entry to v50\_debug\_log.md (Markdown table row).
 
 ```
 This log is human-readable and part of the project's audit trail.
@@ -285,7 +287,7 @@ try:
             "| timestamp | cli | config_hash | latents | labels | symbolic | out_html | out_png |\n"
             "|---|---|---|---|---|---|---|---|\n"
         )
-        ctx.log_path.write_text(header + line)
+        ctx.log_path.write_text(header + line, encoding="utf-8")
     else:
         with open(ctx.log_path, "a", encoding="utf-8") as f:
             f.write(line)
@@ -302,21 +304,23 @@ def \_safe\_read\_csv(path: Path) -> pd.DataFrame:
 return pd.read\_csv(path)
 
 def \_safe\_read\_json(path: Path) -> Any:
+"""Read JSON from a file path safely."""
 return json.loads(Path(path).read\_text())
 
-# -----------------------------------------------------------------------------\#
+# -----------------------------------------------------------------------------
 
 # Data loading and merging
 
-# -----------------------------------------------------------------------------\#
+# -----------------------------------------------------------------------------
 
 def load\_latents(latents\_path: Path, planet\_id\_col: str = PLANET\_ID\_COL) -> pd.DataFrame:
-"""Load latent vectors from .npy/.npz/.csv into a DataFrame.
+"""
+Load latent vectors from .npy/.npz/.csv into a DataFrame.
 
 ```
 Returns a DataFrame with:
   - A column `planet_id_col` (string id)
-  - Feature columns named f"f{i}" for i in [0, D)
+  - Feature columns named f"f{i}" for i in [0, D) if needed
 """
 path = Path(latents_path)
 if not path.exists():
@@ -331,6 +335,7 @@ if ext in [".npy"]:
     # If planet ids are not provided elsewhere, create synthetic incremental ids
     df[planet_id_col] = [str(i) for i in range(len(df))]
     df = df[[planet_id_col] + [c for c in df.columns if c != planet_id_col]]
+
 elif ext in [".npz"]:
     data = np.load(path)
     if "X" not in data and "latents" not in data:
@@ -345,6 +350,7 @@ elif ext in [".npz"]:
         ids = [str(i) for i in range(len(df))]
     df[planet_id_col] = ids
     df = df[[planet_id_col] + [c for c in df.columns if c != planet_id_col]]
+
 elif ext in [".csv", ".txt"]:
     df = _safe_read_csv(path)
     # If features come unnamed or as generic columns, standardize
@@ -356,11 +362,9 @@ elif ext in [".csv", ".txt"]:
         else:
             # As a last resort, synthesize ids
             df[planet_id_col] = [str(i) for i in range(len(df))]
-    # Rename feature columns to f0.. if they look numeric
-    feat_cols = [c for c in df.columns if c != planet_id_col and pd.api.types.is_numeric_dtype(df[c])]
-    # Already fine if they’re a mix; we keep their names
-    if not feat_cols:
-        raise ValueError("No numeric feature columns found in CSV; cannot plot UMAP.")
+    # No hard rename for feature columns; accept any numeric col as feature
+    # (Later we will filter non-numeric/known metadata columns.)
+
 else:
     raise ValueError(f"Unsupported latents file extension: {ext}")
 
@@ -419,21 +423,21 @@ if isinstance(obj, dict) and all(isinstance(k, str) for k in obj.keys()):
             continue
         rec = {
             planet_id_col: str(pid),
-            overlay_cfg.map_score_to or "symbolic_score": payload.get(overlay_cfg.symbolic_score_key),
-            overlay_cfg.map_label_to or "symbolic_label": payload.get(overlay_cfg.symbolic_label_key),
+            (overlay_cfg.map_score_to or "symbolic_score"): payload.get(overlay_cfg.symbolic_score_key),
+            (overlay_cfg.map_label_to or "symbolic_label"): payload.get(overlay_cfg.symbolic_label_key),
         }
         records.append(rec)
     ov = pd.DataFrame.from_records(records)
 elif isinstance(obj, list):
     ov = pd.DataFrame(obj)
-    # normalize columns
+    # Normalize columns
     if planet_id_col not in ov.columns:
         alt = [c for c in ov.columns if c.lower() in ("planet_id", "planet", "id")]
         if alt:
             ov = ov.rename(columns={alt[0]: planet_id_col})
         else:
             raise KeyError(f"Symbolic overlay list requires '{planet_id_col}' column.")
-    # map keys to desired names
+    # Map keys to desired names
     if overlay_cfg.symbolic_score_key in ov.columns and (overlay_cfg.map_score_to is not None):
         ov = ov.rename(columns={overlay_cfg.symbolic_score_key: overlay_cfg.map_score_to})
     if overlay_cfg.symbolic_label_key in ov.columns and (overlay_cfg.map_label_to is not None):
@@ -450,20 +454,24 @@ def add\_hyperlinks(df: pd.DataFrame, link\_cfg: HyperlinkConfig, planet\_id\_co
 """Add hyperlink column if url\_template provided."""
 if not link\_cfg.url\_template:
 return df
-def \_fmt(pid: str) -> str:
-try:
-return link\_cfg.url\_template.format(planet\_id=pid)
-except Exception:
-\# Keep robust if template missing braces
-return f"{link\_cfg.url\_template}{pid}"
-df\[link\_cfg.url\_col\_name] = df\[planet\_id\_col].map(\_fmt)
-return df
 
-# -----------------------------------------------------------------------------\#
+```
+def _fmt(pid: str) -> str:
+    try:
+        return link_cfg.url_template.format(planet_id=pid)
+    except Exception:
+        # Keep robust if template missing braces
+        return f"{link_cfg.url_template}{pid}"
+
+df[link_cfg.url_col_name] = df[planet_id_col].map(_fmt)
+return df
+```
+
+# -----------------------------------------------------------------------------
 
 # Embedding
 
-# -----------------------------------------------------------------------------\#
+# -----------------------------------------------------------------------------
 
 def compute\_embedding(
 X: np.ndarray,
@@ -494,13 +502,14 @@ Y = pca.fit_transform(Xs)
 return Y
 ```
 
-# -----------------------------------------------------------------------------\#
+# -----------------------------------------------------------------------------
 
 # Plotting
 
-# -----------------------------------------------------------------------------\#
+# -----------------------------------------------------------------------------
 
 def \_build\_plot\_title(base: str, params: UmapParams) -> str:
+"""Compose a plot title that includes algorithm and key params."""
 algo = "UMAP" if \_UMAP\_AVAILABLE else "PCA (fallback)"
 return f"{base} — {algo} (n={params.n\_components}, seed={params.seed})"
 
@@ -514,7 +523,7 @@ planet\_id\_col: str = PLANET\_ID\_COL,
 ) -> "plotly.graph\_objs.\_figure.Figure":
 """Build a Plotly scatter plot for 2D/3D embeddings with rich hover."""
 n\_components = emb.shape\[1]
-coords = {}
+coords: Dict\[str, np.ndarray] = {}
 if n\_components >= 1:
 coords\["x"] = emb\[:, 0]
 if n\_components >= 2:
@@ -537,31 +546,32 @@ for c in (planet_id_col, LABEL_COL, CONFIDENCE_COL, ENTROPY_COL, SHAP_MAG_COL, G
 if planet_id_col in pdf.columns:
     pdf[planet_id_col] = _coerce_to_str_index(pdf[planet_id_col])
 
-# Choose 2D vs 3D
+# Common kwargs
 common_kwargs = dict(
     data_frame=pdf,
     hover_data=sorted(list(hover_cols)) if hover_cols else None,
     title=out_cfg.title,
 )
 
+# Choose 2D vs 3D
 if n_components >= 3:
     fig = px.scatter_3d(
         **common_kwargs,
         x="x",
         y="y",
         z="z",
-        color=plot_map.color_by if plot_map.color_by in pdf.columns else None,
-        size=plot_map.size_by if plot_map.size_by in pdf.columns else None,
-        symbol=plot_map.symbol_by if plot_map.symbol_by in pdf.columns else None,
+        color=plot_map.color_by if (plot_map.color_by and plot_map.color_by in pdf.columns) else None,
+        size=plot_map.size_by if (plot_map.size_by and plot_map.size_by in pdf.columns) else None,
+        symbol=plot_map.symbol_by if (plot_map.symbol_by and plot_map.symbol_by in pdf.columns) else None,
     )
 else:
     fig = px.scatter(
         **common_kwargs,
         x="x",
         y="y",
-        color=plot_map.color_by if plot_map.color_by in pdf.columns else None,
-        size=plot_map.size_by if plot_map.size_by in pdf.columns else None,
-        symbol=plot_map.symbol_by if plot_map.symbol_by in pdf.columns else None,
+        color=plot_map.color_by if (plot_map.color_by and plot_map.color_by in pdf.columns) else None,
+        size=plot_map.size_by if (plot_map.size_by and plot_map.size_by in pdf.columns) else None,
+        symbol=plot_map.symbol_by if (plot_map.symbol_by and plot_map.symbol_by in pdf.columns) else None,
     )
 
 # Opacity mapping if requested: normalize a numeric column into [0.25, 1.0]
@@ -569,36 +579,29 @@ if plot_map.opacity_by and plot_map.opacity_by in pdf.columns:
     col = pdf[plot_map.opacity_by]
     if pd.api.types.is_numeric_dtype(col):
         v = col.to_numpy(dtype=float)
-        v = np.nan_to_num(v, nan=np.nanmean(v) if np.isfinite(np.nanmean(v)) else 0.0)
-        # Normalize robustly
+        # Replace NaNs with the mean if finite, else 0.0
+        mean_val = np.nanmean(v)
+        v = np.nan_to_num(v, nan=(mean_val if np.isfinite(mean_val) else 0.0))
+        # Normalize robustly via percentiles to resist outliers
         v_min, v_max = np.nanpercentile(v, 2), np.nanpercentile(v, 98)
         if v_max - v_min <= 1e-12:
             alpha = np.full_like(v, 0.9)
         else:
             alpha = 0.25 + 0.75 * (np.clip(v, v_min, v_max) - v_min) / (v_max - v_min)
-        # Assign per-point opacity
-        # For scatter_3d/scatter: we can set marker opacity via update_traces with sequence
+        # Assign per-point opacity (works with Plotly array-like marker.opacity)
         fig.update_traces(marker={"opacity": alpha})
     else:
         logging.warning(f"opacity-by column '{plot_map.opacity_by}' is not numeric; ignoring.")
 
-# Hyperlink click behavior: show URL in hover and let users Ctrl+Click in HTML
-# Plotly doesn't support per-point link actions natively, so we display URL in hover.
-# If the hosting page uses a wrapper, it can bind click events to open link_cfg.url_col_name.
+# Hyperlink hint (URL is included in hover via hover_data)
 if link_cfg.url_template and link_cfg.url_col_name in pdf.columns:
-    # Ensure URL appears prominently in hover
-    fig.update_traces(hovertemplate="%{customdata}")
-    # Build a custom hovertemplate string containing columns of interest
-    # However, hovertemplate replaces default; instead, rely on hover_data inclusion.
-    # We already included link column in hover_data above.
-
-    # Add subtle instruction as subtitle annotation
     fig.add_annotation(
         text="Tip: Ctrl/Cmd+Click the URL in hover to open planet page.",
         xref="paper", yref="paper", x=0, y=1.08, showarrow=False, align="left",
         font={"size": 12}
     )
 
+# Title and layout
 fig.update_layout(
     title={"text": _build_plot_title(out_cfg.title, UmapParams(n_components=emb.shape[1]))},
     legend_title_text=plot_map.color_by if plot_map.color_by else "legend",
@@ -619,11 +622,11 @@ fig.update_traces(
 return fig
 ```
 
-# -----------------------------------------------------------------------------\#
+# -----------------------------------------------------------------------------
 
 # Main orchestration (library API)
 
-# -----------------------------------------------------------------------------\#
+# -----------------------------------------------------------------------------
 
 def run\_umap\_pipeline(
 latents\_path: Path,
@@ -637,11 +640,15 @@ dedupe: bool = False,
 planet\_id\_col: str = PLANET\_ID\_COL,
 log\_ctx: Optional\[PipelineLogContext] = None,
 ) -> Dict\[str, Any]:
-"""End-to-end pipeline: load → merge → embed → plot → save (HTML/PNG)."""
-setup\_logging()
-t0 = time.time()
+"""
+End-to-end pipeline: load → merge → embed → plot → save (HTML/PNG).
 
 ```
+Returns a dict with output paths, counts, dims, and runtime metadata.
+"""
+setup_logging()
+t0 = time.time()
+
 # Load latents
 df = load_latents(latents_path, planet_id_col=planet_id_col)
 if dedupe:
@@ -721,7 +728,7 @@ if log_ctx:
         metadata={
             "latents": str(latents_path),
             "labels": str(labels_csv) if labels_csv else "",
-            "symbolic": str(overlay_cfg.symbolic_overlays_path) if overlay_cfg and overlay_cfg.symbolic_overlays_path else "",
+            "symbolic": str(overlay_cfg.symbolic_overlays_path) if (overlay_cfg and overlay_cfg.symbolic_overlays_path) else "",
             "out_html": str(out_cfg.out_html),
             "out_png": str(out_cfg.out_png) if out_cfg.out_png else "",
             "duration_sec": f"{dt:.2f}",
@@ -746,13 +753,14 @@ return {
 }
 ```
 
-# -----------------------------------------------------------------------------\#
+# -----------------------------------------------------------------------------
 
 # CLI
 
-# -----------------------------------------------------------------------------\#
+# -----------------------------------------------------------------------------
 
 def \_build\_typer\_app() -> "typer.Typer":
+"""Construct the Typer CLI application for this module."""
 if typer is None:
 raise RuntimeError(
 "Typer is not installed. Install with `pip install typer[all]` "
@@ -768,34 +776,81 @@ app = typer.Typer(
 
 @app.command("run")
 def cli_run(
-    latents: Path = typer.Option(..., exists=True, dir_okay=False, help="Latents file (.npy/.npz/.csv) with rows=planets, cols=features."),
-    labels: Optional[Path] = typer.Option(None, exists=True, dir_okay=False, help="Optional labels/metrics CSV with planet_id + metadata."),
-    symbolic_overlays: Optional[Path] = typer.Option(None, exists=True, dir_okay=False, help="Optional symbolic overlay JSON (per-planet)."),
-    symbolic_score_key: str = typer.Option("violation_score", help="Key in symbolic JSON to use as score column."),
-    symbolic_label_key: str = typer.Option("top_rule", help="Key in symbolic JSON to use as label column."),
-    map_score_to: str = typer.Option("symbolic_score", help="Target column name to store symbolic score in the merged frame."),
-    map_label_to: str = typer.Option("symbolic_label", help="Target column name to store symbolic label in the merged frame."),
-    color_by: Optional[str] = typer.Option(None, help="Column name to map to color (e.g., 'label', 'symbolic_score')."),
-    size_by: Optional[str] = typer.Option(None, help="Column name to map to marker size (e.g., 'confidence', 'shap')."),
-    opacity_by: Optional[str] = typer.Option(None, help="Column name to map to marker opacity (numeric only, e.g., 'entropy')."),
-    symbol_by: Optional[str] = typer.Option(None, help="Column name to map to marker symbol (categorical)."),
-    hover_cols: List[str] = typer.Option([], help="Additional columns to include in hover."),
-    url_template: Optional[str] = typer.Option(None, help="Hyperlink template per point, e.g. '/planets/{planet_id}.html'."),
-    url_col_name: str = typer.Option("url", help="Column name to store generated URLs when using url_template."),
-    out_html: Path = typer.Option(DEFAULT_HTML_OUT, help="Output HTML path."),
-    out_png: Optional[Path] = typer.Option(None, help="Optional PNG path (requires kaleido)."),
-    open_browser: bool = typer.Option(False, help="Open the HTML in a browser after generation."),
-    title: str = typer.Option("SpectraMind V50 — UMAP Latents", help="Plot title."),
+    latents: Path = typer.Option(
+        ...,
+        exists=True,
+        dir_okay=False,
+        help="Latents file (.npy/.npz/.csv) with rows=planets, cols=features.",
+    ),
+    labels: Optional[Path] = typer.Option(
+        None, exists=True, dir_okay=False, help="Optional labels/metrics CSV with planet_id + metadata."
+    ),
+    symbolic_overlays: Optional[Path] = typer.Option(
+        None, exists=True, dir_okay=False, help="Optional symbolic overlay JSON (per-planet)."
+    ),
+    symbolic_score_key: str = typer.Option(
+        "violation_score", help="Key in symbolic JSON to use as score column."
+    ),
+    symbolic_label_key: str = typer.Option(
+        "top_rule", help="Key in symbolic JSON to use as label column."
+    ),
+    map_score_to: str = typer.Option(
+        "symbolic_score", help="Target column name to store symbolic score in the merged frame."
+    ),
+    map_label_to: str = typer.Option(
+        "symbolic_label", help="Target column name to store symbolic label in the merged frame."
+    ),
+    color_by: Optional[str] = typer.Option(
+        None, help="Column name to map to color (e.g., 'label', 'symbolic_score')."
+    ),
+    size_by: Optional[str] = typer.Option(
+        None, help="Column name to map to marker size (e.g., 'confidence', 'shap')."
+    ),
+    opacity_by: Optional[str] = typer.Option(
+        None, help="Column name to map to marker opacity (numeric only, e.g., 'entropy')."
+    ),
+    symbol_by: Optional[str] = typer.Option(
+        None, help="Column name to map to marker symbol (categorical)."
+    ),
+    hover_cols: List[str] = typer.Option(
+        [], help="Additional columns to include in hover."
+    ),
+    url_template: Optional[str] = typer.Option(
+        None, help="Hyperlink template per point, e.g. '/planets/{planet_id}.html'."
+    ),
+    url_col_name: str = typer.Option(
+        "url", help="Column name to store generated URLs when using url_template."
+    ),
+    out_html: Path = typer.Option(
+        DEFAULT_HTML_OUT, help="Output HTML path."
+    ),
+    out_png: Optional[Path] = typer.Option(
+        None, help="Optional PNG path (requires kaleido)."
+    ),
+    open_browser: bool = typer.Option(
+        False, help="Open the HTML in a browser after generation."
+    ),
+    title: str = typer.Option(
+        "SpectraMind V50 — UMAP Latents", help="Plot title."
+    ),
     n_neighbors: int = typer.Option(15, help="UMAP: number of neighbors."),
     min_dist: float = typer.Option(0.1, help="UMAP: min_dist."),
     metric: str = typer.Option("euclidean", help="UMAP: metric."),
     n_components: int = typer.Option(2, help="Embedding dims (2 or 3)."),
     seed: int = typer.Option(DEFAULT_SEED, help="Random seed."),
-    pca_whiten: bool = typer.Option(False, help="If UMAP is unavailable, enable PCA whitening in fallback."),
+    pca_whiten: bool = typer.Option(
+        False, help="If UMAP is unavailable, enable PCA whitening in fallback."
+    ),
     dedupe: bool = typer.Option(False, help="Dedupe by planet_id (keep first)."),
-    planet_id_col: str = typer.Option(PLANET_ID_COL, help="Column name for planet ID."),
-    log_path: Path = typer.Option(DEFAULT_LOG_PATH, help="Path to v50_debug_log.md (for appending run rows)."),
-    config_hash_path: Optional[Path] = typer.Option(Path("run_hash_summary_v50.json"), help="Optional path to run hash summary JSON."),
+    planet_id_col: str = typer.Option(
+        PLANET_ID_COL, help="Column name for planet ID."
+    ),
+    log_path: Path = typer.Option(
+        DEFAULT_LOG_PATH, help="Path to v50_debug_log.md (for appending run rows)."
+    ),
+    config_hash_path: Optional[Path] = typer.Option(
+        Path("run_hash_summary_v50.json"), help="Optional path to run hash summary JSON."
+    ),
 ):
     """Run the UMAP plotting pipeline."""
     overlay_cfg = OverlayConfig(
@@ -892,18 +947,18 @@ def cli_selftest(
 return app
 ```
 
-# -----------------------------------------------------------------------------\#
+# -----------------------------------------------------------------------------
 
 # Module Entrypoint
 
-# -----------------------------------------------------------------------------\#
+# -----------------------------------------------------------------------------
 
 if **name** == "**main**":
 \# When executed directly, expose the Typer CLI (if available)
 if typer is None:
 print(
 "Typer is not installed. Install with `pip install typer[all]` or "
-"import run\_umap\_pipeline() from this module.",
+"import run\_umap\_pipelin e() from this module.",
 file=sys.stderr,
 )
 sys.exit(2)
