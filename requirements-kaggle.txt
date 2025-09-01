@@ -1,24 +1,16 @@
 # ==============================================================================
-
 # SpectraMind V50 — requirements-kaggle.txt
-
-# Kaggle-friendly runtime (CPU/GPU). Torch is preinstalled on Kaggle.
-
+# Kaggle-friendly runtime (CPU/GPU). Torch is preinstalled on Kaggle images.
+#
 # Notes:
-
-# • Avoids heavy/dev tooling (MLflow, W\&B, GUI libs, PyG).
-
-# • Pins align with full stack to prevent drift across CI/Kaggle/local.
-
-# • Safe on Kaggle GPU; install PyG separately inside a notebook if needed.
-
+# • Avoids heavy/dev tooling (MLflow, W&B, GUI libs, PyG).
+# • Pins align with the full stack to prevent drift across CI/Kaggle/local.
+# • Safe on Kaggle GPU; install PyG separately inside a notebook only if needed.
 # ==============================================================================
 
-\############################
-
+############################
 # Core CLI & Configuration
-
-\############################
+############################
 typer==0.12.3
 rich==13.7.1
 hydra-core==1.3.2
@@ -29,79 +21,49 @@ python-dotenv==1.0.1
 packaging==24.1
 click==8.1.7
 jinja2==3.1.4
-typing\_extensions==4.12.2     # stability helper for torch/pydantic
+typing_extensions==4.12.2
 
-\###########################
-
+###########################
 # Scientific Python Stack
-
-\###########################
+###########################
 numpy==1.26.4
 scipy==1.13.1
 pandas==2.2.2
 scikit-learn==1.4.2
-threadpoolctl==3.5.0          # explicit pin for sklearn backend control
+threadpoolctl==3.5.0
 joblib==1.4.2
 tqdm==4.66.4
 psutil==5.9.8
 
-\################################
+################################
+# PyTorch (preinstalled on Kaggle)
+################################
+# Do NOT install torch/torchvision/torchaudio here — Kaggle images include them.
+# If you need to pin locally, do it in requirements.txt or via pip flags outside Kaggle.
+Pillow==10.4.0   # imaging backend used by torchvision
 
-# PyTorch (preinstalled on KG)
-
-\################################
-
-# Torch is preinstalled on Kaggle. Do NOT install torch/torchvision/torchaudio here.
-
-# If you must pin locally, do it outside this file (e.g., requirements.txt).
-
-Pillow==10.4.0                # imaging backend used by torchvision
-
-\###################################
-
-# Visualization / Diagnostics
-
-\###################################
+###################################
+# Visualization / Diagnostics (light)
+###################################
 matplotlib==3.8.4
 umap-learn==0.5.6
 shap==0.45.0
 
-\#############
-
-# Utilities
-
-\#############
-
-# Small, useful libs commonly available on Kaggle images.
-
-# (Keep minimal to stay fast & compatible; add only if your notebooks import them.)
-
-\########
-
+########
 # DVC
-
-\########
-
-# DVC core is okay to parse pipelines locally; remote backends may be restricted on Kaggle.
-
+########
+# Core DVC is fine for parsing pipelines locally; remote backends may be restricted on Kaggle.
 dvc==3.51.2
 
 # ==============================================================================
-
-# Optional: Install PyTorch Geometric wheels in a Kaggle Notebook like this:
-
+# Optional: Install PyTorch Geometric (PyG) in a Kaggle Notebook
 # ------------------------------------------------------------------------------
-
-# import torch, sys, subprocess
-
-# ver = torch.**version**.split('+')\[0]
-
-# cu  = (torch.version.cuda or 'cpu').replace('.','')
-
-# idx = f"[https://data.pyg.org/whl/torch-{ver}+{'cu'+cu](https://data.pyg.org/whl/torch-{ver}+{'cu'+cu) if torch.version.cuda else 'cpu'}.html"
-
-# subprocess.check\_call(\[sys.executable, "-m", "pip", "install",
-
-# "torch-geometric==2.5.3", "-f", idx])
-
+# import sys, subprocess, torch
+# ver = torch.__version__.split('+')[0]                   # e.g. '2.2.2'
+# cu  = (torch.version.cuda or 'cpu').replace('.', '')    # e.g. '121' or 'cpu'
+# idx = f"https://data.pyg.org/whl/torch-{ver}+{'cu'+cu if torch.version.cuda else 'cpu'}.html"
+# subprocess.check_call([
+#     sys.executable, "-m", "pip", "install",
+#     "torch-geometric==2.5.3", "-f", idx
+# ])
 # ==============================================================================
