@@ -1,0 +1,58 @@
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+  "description": "Dark-themed heatmap template for DVC plots (per-bin diagnostics, calibration, symbolic violations, etc.)",
+  "background": "#1e1e1e",
+  "mark": {
+    "type": "rect",
+    "tooltip": true
+  },
+  "encoding": {
+    "x": {
+      "field": "bin",
+      "type": "ordinal",
+      "axis": {
+        "title": "Bin",
+        "labelAngle": -45,
+        "grid": false,
+        "labelColor": "#d4d4d4",
+        "titleColor": "#ffffff"
+      }
+    },
+    "y": {
+      "field": "metric",
+      "type": "ordinal",
+      "axis": {
+        "title": "Metric",
+        "grid": false,
+        "labelColor": "#d4d4d4",
+        "titleColor": "#ffffff"
+      }
+    },
+    "color": {
+      "field": "value",
+      "type": "quantitative",
+      "scale": {
+        "scheme": "plasma"
+      },
+      "legend": {
+        "title": "Value",
+        "labelColor": "#d4d4d4",
+        "titleColor": "#ffffff"
+      }
+    }
+  },
+  "config": {
+    "axis": {
+      "labelFontSize": 11,
+      "titleFontSize": 13,
+      "gridColor": "#555555"
+    },
+    "legend": {
+      "labelFontSize": 11,
+      "titleFontSize": 13
+    },
+    "view": {
+      "stroke": "transparent"
+    }
+  }
+}
