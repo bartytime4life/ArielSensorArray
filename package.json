@@ -1,6 +1,6 @@
 {
   "name": "spectramind-v50-mermaid-export",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Mermaid diagram rendering/export utilities for SpectraMind V50 (NeurIPS 2025 Ariel Data Challenge).",
   "private": true,
   "type": "module",
@@ -8,12 +8,10 @@
     "node": ">=20.10",
     "npm": ">=10"
   },
-
   "directories": {
     "diagram": "diagrams",
     "output": "outputs/diagrams"
   },
-
   "scripts": {
     "diag:version": "mmdc -V",
 
@@ -22,16 +20,16 @@
     "mmd:render:png": "mmdc -i diagrams/main.mmd -o outputs/diagrams/main.png -b transparent -t neutral",
 
     "// Batch / directory mode --------------------------------------------------": "",
-    "diag:clean": "rimraf outputs/diagrams && mkdir -p outputs/diagrams",
+    "diag:clean": "rimraf outputs/diagrams && shx mkdir -p outputs/diagrams",
     "diag:render:svg": "mmdc --inputDir diagrams --outputDir outputs/diagrams --outputFormat svg -b transparent -t neutral",
     "diag:render:png": "mmdc --inputDir diagrams --outputDir outputs/diagrams --outputFormat png -b transparent -t neutral",
     "diag:render:pdf": "mmdc --inputDir diagrams --outputDir outputs/diagrams --outputFormat pdf -b transparent -t neutral",
 
-    "diag:optimize": "svgo -r -f outputs/diagrams --config='{\"multipass\":true}'",
+    "diag:optimize": "svgo -r -f outputs/diagrams --config .svgo.json",
     "diag:render:all": "run-s diag:clean diag:render:svg diag:render:png diag:render:pdf diag:optimize",
 
-    "// Watch (renders only changed files to SVG, then optimizes) --------------": "",
-    "diag:watch": "chokidar \"diagrams/**/*.mmd\" -c \"node -e \\\"const {execSync}=require('node:child_process'); const f=process.env.CHOX_FILENAME||process.env.CHOKIDAR_CLI_FILE; const out=f.replace(/^diagrams\\//,'outputs/diagrams/').replace(/\\.mmd$/,'.svg'); execSync(\\`mkdir -p ${out.substring(0,out.lastIndexOf('/'))} && npx mmdc -i \\\"${f}\\\" -o \\\"${out}\\\" -b transparent -t neutral && npx svgo \\\"${out}\\\"\\`, {stdio:'inherit'})\\\"\"",
+    "// Watch (renders only changed .mmd to SVG, then optimizes) --------------": "",
+    "diag:watch": "chokidar \"diagrams/**/*.mmd\" -c \"node scripts/render_one.js\"",
 
     "// Formatting / linting ----------------------------------------------------": "",
     "format": "prettier --write \"**/*.{json,md,mmd,yml,yaml}\"",
@@ -41,7 +39,6 @@
     "build": "run-s diag:render:all",
     "start": "run-p diag:watch"
   },
-
   "devDependencies": {
     "@mermaid-js/mermaid-cli": "^10.9.1",
     "chokidar-cli": "^3.0.0",
@@ -49,9 +46,9 @@
     "npm-run-all": "^4.1.5",
     "prettier": "^3.3.3",
     "rimraf": "^5.0.7",
+    "shx": "^0.3.4",
     "svgo": "^3.3.2"
   },
-
   "prettier": {
     "printWidth": 100,
     "singleQuote": true,
