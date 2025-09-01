@@ -28,7 +28,7 @@
 
 # • Deterministic-ish t-SNE via explicit seed, PCA init, standardized inputs
 
-# • 2D/3D projections supported (n\_components∈{2,3})
+# • 2D/3D projections supported (n\_components ∈ {2,3})
 
 # • Plotly HTML always produced; PNG if kaleido is installed
 
@@ -58,7 +58,7 @@
 
 # Notes
 
-# • This script performs *visualization only*. All analytics/derivations are
+# • This script performs visualization only. All analytics/derivations are
 
 # assumed to be produced elsewhere by the CLI pipeline (NASA-grade ethos).
 
@@ -70,14 +70,12 @@ from **future** import annotations
 
 import json
 import logging
-import math
-import os
 import sys
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -98,7 +96,7 @@ except Exception:
 # Typer for CLI
 
 try:
-import typer
+import typer  # type: ignore
 except Exception:
 typer = None
 
@@ -112,11 +110,11 @@ from sklearn.preprocessing import StandardScaler
 except Exception:
 \_SKLEARN\_AVAILABLE = False
 
-# -----------------------------------------------------------------------------\#
+# -----------------------------------------------------------------------------
 
 # Constants
 
-# -----------------------------------------------------------------------------\#
+# -----------------------------------------------------------------------------
 
 DEFAULT\_LOG\_PATH = Path("v50\_debug\_log.md")
 DEFAULT\_HTML\_OUT = Path("artifacts") / "tsne\_v50.html"
@@ -131,11 +129,11 @@ GLL\_COL = "gll"
 
 DEFAULT\_SEED = 1337
 
-# -----------------------------------------------------------------------------\#
+# -----------------------------------------------------------------------------
 
 # Dataclasses
 
-# -----------------------------------------------------------------------------\#
+# -----------------------------------------------------------------------------
 
 @dataclass
 class TsneParams:
@@ -189,21 +187,24 @@ log\_path: Path = DEFAULT\_LOG\_PATH
 cli\_name: str = "spectramind diagnose tsne"
 config\_hash\_path: Optional\[Path] = Path("run\_hash\_summary\_v50.json")
 
-# -----------------------------------------------------------------------------\#
+# -----------------------------------------------------------------------------
 
 # Utilities
 
-# -----------------------------------------------------------------------------\#
+# -----------------------------------------------------------------------------
 
 def \_now\_iso() -> str:
+"""Return current local timestamp."""
 return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 def \_ensure\_parent\_dir(p: Path) -> None:
+"""Ensure parent directory exists."""
 p = Path(p)
 if p.parent and not p.parent.exists():
 p.parent.mkdir(parents=True, exist\_ok=True)
 
 def setup\_logging(level: int = logging.INFO) -> None:
+"""Configure console logging."""
 logging.basicConfig(
 level=level,
 format="%(asctime)s | %(levelname)-7s | %(message)s",
@@ -211,13 +212,16 @@ datefmt="%H:%M:%S",
 )
 
 def \_coerce\_to\_str\_index(s: pd.Series) -> pd.Series:
+"""Coerce identifiers to str, robustly."""
 return s.astype(str).str.strip()
 
 def \_safe\_read\_csv(path: Path) -> pd.DataFrame:
+"""Read CSV with reasonable defaults."""
 return pd.read\_csv(path)
 
 def \_safe\_read\_json(path: Path) -> Any:
-return json.loads(Path(path).read\_text())
+"""Read JSON safely."""
+return json.loads(Path(path).read\_text(encoding="utf-8"))
 
 def append\_v50\_log(ctx: PipelineLogContext, metadata: Dict\[str, Any]) -> None:
 """Append a Markdown table row with the most relevant run metadata."""
@@ -227,7 +231,7 @@ try:
 config\_hash = ""
 if ctx.config\_hash\_path and Path(ctx.config\_hash\_path).exists():
 try:
-obj = json.loads(Path(ctx.config\_hash\_path).read\_text())
+obj = json.loads(Path(ctx.config\_hash\_path).read\_text(encoding="utf-8"))
 config\_hash = obj.get("config\_hash") or obj.get("hash") or obj.get("run\_hash") or ""
 except Exception:
 config\_hash = ""
@@ -256,7 +260,7 @@ config\_hash = ""
             "| timestamp | cli | config_hash | latents | labels | symbolic | out_html | out_png |\n"
             "|---|---|---|---|---|---|---|---|\n"
         )
-        ctx.log_path.write_text(header + line)
+        ctx.log_path.write_text(header + line, encoding="utf-8")
     else:
         with open(ctx.log_path, "a", encoding="utf-8") as f:
             f.write(line)
@@ -264,14 +268,15 @@ except Exception as e:
     logging.warning(f"Failed to append to {ctx.log_path}: {e}")
 ```
 
-# -----------------------------------------------------------------------------\#
+# -----------------------------------------------------------------------------
 
 # IO & Merge
 
-# -----------------------------------------------------------------------------\#
+# -----------------------------------------------------------------------------
 
 def load\_latents(latents\_path: Path, planet\_id\_col: str = PLANET\_ID\_COL) -> pd.DataFrame:
-"""Load latents from .npy/.npz/.csv and standardize column names.
+"""
+Load latents from .npy/.npz/.csv and standardize column names.
 
 ```
 Returns a DataFrame with:
@@ -313,7 +318,8 @@ elif ext in (".csv", ".txt"):
             df = df.rename(columns={alt[0]: planet_id_col})
         else:
             df[planet_id_col] = [str(i) for i in range(len(df))]
-    # At least one numeric column must exist; keep original names if present
+    # Ensure there's at least one numeric column; names preserved
+
     numeric_cols = [c for c in df.columns if c != planet_id_col and pd.api.types.is_numeric_dtype(df[c])]
     if not numeric_cols:
         raise ValueError("No numeric feature columns found in CSV.")
@@ -325,12 +331,14 @@ return df
 ```
 
 def dedupe\_by\_planet\_id(df: pd.DataFrame, planet\_id\_col: str = PLANET\_ID\_COL) -> pd.DataFrame:
+"""Drop duplicate planet\_id rows, keeping the first occurrence."""
 if df\[planet\_id\_col].duplicated().any():
 logging.info("Duplicate planet\_id rows detected; deduping (keep first).")
 return df.drop\_duplicates(subset=\[planet\_id\_col], keep="first", ignore\_index=True)
 return df
 
 def merge\_labels(df\_latents: pd.DataFrame, labels\_csv: Optional\[Path]) -> pd.DataFrame:
+"""Merge optional labels CSV on planet\_id."""
 if not labels\_csv:
 return df\_latents
 if not Path(labels\_csv).exists():
@@ -350,6 +358,7 @@ df: pd.DataFrame,
 overlay\_cfg: OverlayConfig,
 planet\_id\_col: str = PLANET\_ID\_COL,
 ) -> pd.DataFrame:
+"""Merge symbolic overlays from JSON onto DataFrame."""
 if not overlay\_cfg.symbolic\_overlays\_path:
 return df
 path = Path(overlay\_cfg.symbolic\_overlays\_path)
@@ -390,27 +399,31 @@ return df.merge(ov, on=planet_id_col, how="left", validate="one_to_one")
 ```
 
 def add\_hyperlinks(df: pd.DataFrame, link\_cfg: HyperlinkConfig, planet\_id\_col: str = PLANET\_ID\_COL) -> pd.DataFrame:
+"""Add hyperlink column if url\_template provided."""
 if not link\_cfg.url\_template:
 return df
-def \_fmt(pid: str) -> str:
-try:
-return link\_cfg.url\_template.format(planet\_id=pid)
-except Exception:
-return f"{link\_cfg.url\_template}{pid}"
-df\[link\_cfg.url\_col\_name] = df\[planet\_id\_col].map(\_fmt)
-return df
 
-# -----------------------------------------------------------------------------\#
+```
+def _fmt(pid: str) -> str:
+    try:
+        return link_cfg.url_template.format(planet_id=pid)
+    except Exception:
+        return f"{link_cfg.url_template}{pid}"
+
+df[link_cfg.url_col_name] = df[planet_id_col].map(_fmt)
+return df
+```
+
+# -----------------------------------------------------------------------------
 
 # Embedding
 
-# -----------------------------------------------------------------------------\#
+# -----------------------------------------------------------------------------
 
 def compute\_embedding\_tsne(X: np.ndarray, params: TsneParams) -> np.ndarray:
 """Compute t-SNE (or PCA fallback if scikit-learn unavailable)."""
 if not \_SKLEARN\_AVAILABLE:
 logging.warning("scikit-learn not available; using PCA fallback for t-SNE.")
-\# Minimal PCA fallback for 2D/3D
 d = max(2, min(params.n\_components, 3))
 \# Standardize for stability
 Xs = (X - X.mean(0, keepdims=True)) / (X.std(0, keepdims=True) + 1e-8)
@@ -423,11 +436,11 @@ Xs = StandardScaler(with_mean=True, with_std=True).fit_transform(X)
 
 # Guard perplexity: must be < n_samples
 n = Xs.shape[0]
-perplexity = min(params.perplexity, max(5.0, (n - 1) / 3.0))  # safe upper bound heuristic
+safe_perp = min(params.perplexity, max(5.0, (n - 1) / 3.0))  # safe upper bound heuristic
 
 tsne = TSNE(
     n_components=max(2, min(params.n_components, 3)),
-    perplexity=perplexity,
+    perplexity=safe_perp,
     learning_rate=params.learning_rate,
     n_iter=params.n_iter,
     early_exaggeration=params.early_exaggeration,
@@ -435,7 +448,7 @@ tsne = TSNE(
     init=params.init,
     angle=params.angle,
     random_state=params.seed,
-    n_jobs=None,       # use default; users can set thread env vars externally
+    n_jobs=None,       # default threads; control via env if needed
     verbose=0,
     square_distances=True,
 )
@@ -443,15 +456,18 @@ Y = tsne.fit_transform(Xs)
 return Y
 ```
 
-# -----------------------------------------------------------------------------\#
+# -----------------------------------------------------------------------------
 
 # Plotting
 
-# -----------------------------------------------------------------------------\#
+# -----------------------------------------------------------------------------
 
 def \_build\_plot\_title(base: str, params: TsneParams) -> str:
-return (f"{base} — t-SNE (dims={max(2, min(params.n\_components, 3))}, "
-f"perplexity={params.perplexity}, lr={params.learning\_rate}, seed={params.seed})")
+"""Build a descriptive title with key t-SNE parameters."""
+return (
+f"{base} — t-SNE (dims={max(2, min(params.n\_components, 3))}, "
+f"perplexity={params.perplexity}, lr={params.learning\_rate}, seed={params.seed})"
+)
 
 def build\_plot(
 df: pd.DataFrame,
@@ -463,10 +479,13 @@ planet\_id\_col: str = PLANET\_ID\_COL,
 ) -> "plotly.graph\_objs.\_figure.Figure":
 """Build a 2D/3D Plotly scatter with rich hover and optional opacity mapping."""
 n\_components = emb.shape\[1]
-coords = {}
-if n\_components >= 1: coords\["x"] = emb\[:, 0]
-if n\_components >= 2: coords\["y"] = emb\[:, 1]
-if n\_components >= 3: coords\["z"] = emb\[:, 2]
+coords: Dict\[str, np.ndarray] = {}
+if n\_components >= 1:
+coords\["x"] = emb\[:, 0]
+if n\_components >= 2:
+coords\["y"] = emb\[:, 1]
+if n\_components >= 3:
+coords\["z"] = emb\[:, 2]
 
 ```
 pdf = df.copy()
@@ -484,7 +503,17 @@ if planet_id_col in pdf.columns:
 common_kwargs = dict(
     data_frame=pdf,
     hover_data=sorted(list(hover_cols)) if hover_cols else None,
-    title=out_cfg.title,
+    title=_build_plot_title(out_cfg.title, TsneParams(
+        n_components=n_components,
+        perplexity=0,            # display-only; already in title above
+        learning_rate=0,         # ditto (kept in title builder)
+        n_iter=0,
+        early_exaggeration=0,
+        metric="euclidean",
+        angle=0.5,
+        init="pca",
+        seed=DEFAULT_SEED,
+    )),
 )
 
 if n_components >= 3:
@@ -512,7 +541,8 @@ if plot_map.opacity_by and plot_map.opacity_by in pdf.columns:
     col = pdf[plot_map.opacity_by]
     if pd.api.types.is_numeric_dtype(col):
         v = col.to_numpy(dtype=float, copy=False)
-        v = np.nan_to_num(v, nan=np.nanmean(v) if np.isfinite(np.nanmean(v)) else 0.0)
+        mean_val = np.nanmean(v)
+        v = np.nan_to_num(v, nan=(mean_val if np.isfinite(mean_val) else 0.0))
         p2, p98 = np.nanpercentile(v, 2), np.nanpercentile(v, 98)
         if p98 - p2 <= 1e-12:
             alpha = np.full_like(v, 0.9)
@@ -531,14 +561,11 @@ if link_cfg.url_template and link_cfg.url_col_name in pdf.columns:
     )
 
 fig.update_layout(
-    title={"text": out_cfg.title},
     legend_title_text=plot_map.color_by if plot_map.color_by else "legend",
     template="plotly_white",
     margin=dict(l=40, r=40, t=80, b=40),
     hovermode="closest",
 )
-fig.update_layout(title=_build_plot_title(out_cfg.title, TsneParams()))  # preserve rich subtitle
-
 fig.update_traces(
     marker=dict(
         line=dict(width=0.5),
@@ -549,11 +576,11 @@ fig.update_traces(
 return fig
 ```
 
-# -----------------------------------------------------------------------------\#
+# -----------------------------------------------------------------------------
 
 # Orchestration
 
-# -----------------------------------------------------------------------------\#
+# -----------------------------------------------------------------------------
 
 def run\_tsne\_pipeline(
 latents\_path: Path,
@@ -588,10 +615,13 @@ if link_cfg:
 feat_cols = [c for c in df.columns if c.startswith("f") and pd.api.types.is_numeric_dtype(df[c])]
 if not feat_cols:
     non_feats = {planet_id_col, LABEL_COL, CONFIDENCE_COL, ENTROPY_COL, SHAP_MAG_COL, GLL_COL}
-    if link_cfg: non_feats.add(link_cfg.url_col_name)
+    if link_cfg:
+        non_feats.add(link_cfg.url_col_name)
     if overlay_cfg:
-        if overlay_cfg.map_score_to: non_feats.add(overlay_cfg.map_score_to)
-        if overlay_cfg.map_label_to: non_feats.add(overlay_cfg.map_label_to)
+        if overlay_cfg.map_score_to:
+            non_feats.add(overlay_cfg.map_score_to)
+        if overlay_cfg.map_label_to:
+            non_feats.add(overlay_cfg.map_label_to)
     feat_cols = [c for c in df.columns if (c not in non_feats) and pd.api.types.is_numeric_dtype(df[c])]
 if not feat_cols:
     raise ValueError("No numeric feature columns found for t-SNE embedding.")
@@ -667,13 +697,14 @@ return {
 }
 ```
 
-# -----------------------------------------------------------------------------\#
+# -----------------------------------------------------------------------------
 
 # CLI
 
-# -----------------------------------------------------------------------------\#
+# -----------------------------------------------------------------------------
 
 def \_build\_typer\_app() -> "typer.Typer":
+"""Build the Typer CLI application for this module."""
 if typer is None:
 raise RuntimeError(
 "Typer is not installed. Install with `pip install typer[all]` "
@@ -819,11 +850,11 @@ def cli_selftest(
 return app
 ```
 
-# -----------------------------------------------------------------------------\#
+# -----------------------------------------------------------------------------
 
 # Entrypoint
 
-# -----------------------------------------------------------------------------\#
+# -----------------------------------------------------------------------------
 
 if **name** == "**main**":
 if typer is None:
