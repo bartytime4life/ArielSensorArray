@@ -28,14 +28,13 @@
 
 name: spectramindv50
 
-# Prefer strict resolution and well-curated channels
 channels:
   - pytorch
   - nvidia
   - conda-forge
 channel_priority: strict
 
-# You can speed up solve by using mamba:
+# Tip: Use mamba for faster solves:
 #   conda install -n base -c conda-forge mamba
 #   mamba env create -f CONDA_ENV.yml
 dependencies:
