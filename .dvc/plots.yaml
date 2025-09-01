@@ -1,393 +1,225 @@
-#!/usr/bin/env bash
+# .dvc/plots.yaml
 # ==============================================================================
-# bin/diagrams.sh — Render Mermaid diagrams for SpectraMind V50 (upgraded)
+# SpectraMind V50 — DVC Plots Configuration (Upgraded)
 # ------------------------------------------------------------------------------
 # Purpose
-#   CI- and dev-friendly wrapper to render Mermaid diagrams (SVG/PNG/PDF) from
-#   *.mmd sources (and optionally from Markdown via a Python exporter).
-#
-# Highlights (new)
-#   • Source discovery with include/exclude globs and explicit paths
-#   • Parallel rendering (-j) with sane fallbacks (xargs -P)
-#   • Prune mode: remove orphaned outputs that no longer have sources
-#   • mmdc timeout, extra CLI args passthrough, CSS/theme/bg width/height/scale
-#   • JSON summary (--json) and dry-run previews
-#   • Node/mmdc resolution: --mmdc → local node_modules → global → npx fallback
-#   • Watch mode: npm script → watchexec → entr (best-available)
-#
-# Usage
-#   bin/diagrams.sh [options] [--] [PATH ...]
-#
-# Common examples
-#   # Render all .mmd files to SVG (default) under outputs/diagrams/
-#   bin/diagrams.sh
-#
-#   # Render to SVG+PNG with dark theme; extract MD-embedded Mermaid
-#   bin/diagrams.sh --png --theme dark --use-python
-#
-#   # Watch diagrams/ for changes and re-render SVG/PNG
-#   bin/diagrams.sh --watch --png
-#
-# Options
-#   --outdir DIR         Output directory (default: outputs/diagrams)
-#   --svg                Render SVG (default if nothing selected)
-#   --png                Render PNG
-#   --pdf                Render PDF
-#   --theme NAME         Mermaid theme: default|dark|forest|neutral (default: default)
-#   --bg COLOR           Background: transparent|white|#RRGGBB (default: transparent)
-#   --config FILE        Mermaid CLI config (.mermaidrc.mjs/.json)
-#   --css FILE           Custom CSS file for Mermaid CLI
-#   --width N            Canvas width (px) for PNG/PDF
-#   --height N           Canvas height (px) for PNG/PDF
-#   --scale N            Scale factor for raster outputs
-#   --mmdc PATH          Use a specific mmdc binary (fallback: npx @mermaid-js/mermaid-cli mmdc)
-#   --mmdc-args "ARGS"   Extra args passed verbatim to mmdc
-#   --timeout SEC        Timeout per mmdc render (default: 90)
-#   --use-python         Also run scripts/export_mermaid.py for Markdown-embedded Mermaid
-#   --lint               Run `npm run lint` if present
-#   --format             Run `npm run format` if present
-#   --watch              Watch for changes (npm run mmd:watch → watchexec → entr)
-#   --clean              Remove output dir before rendering
-#   --prune              Remove orphaned outputs (no matching source)
-#   --jobs N             Parallel jobs (best-effort; default: 0 = auto serial)
-#   --include GLOB       Include glob(s) (can repeat); default: diagrams/**/*.mmd, docs/**/*.mmd
-#   --exclude GLOB       Exclude glob(s) (can repeat)
-#   --list               Only list resolved sources and exit
-#   --json               Emit JSON summary to stdout
-#   --dry-run            Show actions without executing
-#   --quiet              Reduce verbosity
-#   -h, --help           Show help
+#   Centralize all plot definitions used by `dvc plots show/diff` for CI and local dev.
+#   These entries can be referenced or merged into dvc.yaml stages, and also
+#   consumed directly with:
+#     dvc plots show --targets .dvc/plots.yaml
+#     dvc plots diff  --targets .dvc/plots.yaml HEAD~1
 #
 # Notes
-#   • Explicit PATH args (files/dirs) override defaults. Directories are searched for *.mmd.
-#   • Mermaid CLI requires Node; we invoke via npx fallback when not locally installed.
-#   • Exit code non-zero if any render fails (even in parallel).
+#   • DVC supports CSV/TSV/JSON. For JSON, fields must be addressable as keys.
+#   • Each plot entry below declares x/y columns/keys and a vega-lite template.
+#   • Paths/globs point to standard SpectraMind V50 outputs written by the CLI.
+#   • To add or rename a plot, keep the "id" unique and "rev_lock" untouched (DVC sets it).
+#
+# Templates
+#   Custom vega-lite templates are stored under: plots/templates/vega/*.json
+#   If a template is not found, DVC falls back to its default scheme.
 # ==============================================================================
 
-set -euo pipefail
+version: 1
 
-# ---------- colors ----------
-BOLD=$'\033[1m'; DIM=$'\033[2m'; RED=$'\033[31m'; GRN=$'\033[32m'; CYN=$'\033[36m'; RST=$'\033[0m'
-say()  { [[ "${QUIET:-0}" -eq 1 ]] && return 0; printf '%s[DIAGRAMS]%s %s\n' "${CYN}" "${RST}" "$*"; }
-warn() { printf '%s[DIAGRAMS]%s %s\n' "${DIM}" "${RST}" "$*" >&2; }
-fail() { printf '%s[DIAGRAMS]%s %s\n' "${RED}" "${RST}" "$*" >&2; exit 1; }
+templates:
+  # Line plots (loss/metrics over steps or epochs)
+  line:            plots/templates/vega/line.json
+  line_dark:       plots/templates/vega/line_dark.json
+  # Scatter with identity guide (for calibration, residual vs sigma, etc.)
+  scatter_guide:   plots/templates/vega/scatter_guide.json
+  # Histogram
+  hist:            plots/templates/vega/hist.json
+  # Heatmap (e.g., per-bin GLL)
+  heatmap:         plots/templates/vega/heatmap.json
 
-# ---------- defaults ----------
-OUTDIR="outputs/diagrams"
-DO_SVG=0; DO_PNG=0; DO_PDF=0
-THEME="default"; BG="transparent"
-MMDC_BIN=""; MMDC_CONFIG=""; CSS_FILE=""; MMDC_EXTRA=""
-WIDTH=""; HEIGHT=""; SCALE=""
-USE_PYTHON=0; DO_LINT=0; DO_FORMAT=0; WATCH=0; CLEAN=0; PRUNE=0
-JOBS="${JOBS:-0}"; DRY=0; QUIET=0; JSON=0
-TIMEOUT="${DIAGRAMS_TIMEOUT:-90}"
-INCLUDES=(); EXCLUDES=()
-ARGS=()
+# ------------------------------------------------------------------------------
+# Plot groups
+# - Each entry defines a single “target” for DVC plots (file + axes + template).
+# - Use `dvc plots show .dvc/plots.yaml:train_loss` to render a single plot by id.
+# ------------------------------------------------------------------------------
 
-usage() { sed -n '1,200p' "$0" | sed 's/^# \{0,1\}//'; }
+plots:
 
-# ---------- args ----------
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --outdir)     OUTDIR="${2:?}"; shift 2 ;;
-    --svg)        DO_SVG=1; shift ;;
-    --png)        DO_PNG=1; shift ;;
-    --pdf)        DO_PDF=1; shift ;;
-    --theme)      THEME="${2:?}"; shift 2 ;;
-    --bg)         BG="${2:?}"; shift 2 ;;
-    --config)     MMDC_CONFIG="${2:?}"; shift 2 ;;
-    --css)        CSS_FILE="${2:?}"; shift 2 ;;
-    --width)      WIDTH="${2:?}"; shift 2 ;;
-    --height)     HEIGHT="${2:?}"; shift 2 ;;
-    --scale)      SCALE="${2:?}"; shift 2 ;;
-    --mmdc)       MMDC_BIN="${2:?}"; shift 2 ;;
-    --mmdc-args)  MMDC_EXTRA="${2:?}"; shift 2 ;;
-    --timeout)    TIMEOUT="${2:?}"; shift 2 ;;
-    --use-python) USE_PYTHON=1; shift ;;
-    --lint)       DO_LINT=1; shift ;;
-    --format)     DO_FORMAT=1; shift ;;
-    --watch)      WATCH=1; shift ;;
-    --clean)      CLEAN=1; shift ;;
-    --prune)      PRUNE=1; shift ;;
-    --jobs)       JOBS="${2:?}"; shift 2 ;;
-    --include)    INCLUDES+=("${2:?}"); shift 2 ;;
-    --exclude)    EXCLUDES+=("${2:?}"); shift 2 ;;
-    --list)       LIST_ONLY=1; shift ;;
-    --json)       JSON=1; shift ;;
-    --dry-run)    DRY=1; shift ;;
-    --quiet)      QUIET=1; shift ;;
-    -h|--help)    usage; exit 0 ;;
-    --) shift; while [[ $# -gt 0 ]]; do ARGS+=("$1"); shift; done ;;
-    *)  ARGS+=("$1"); shift ;;
-  esac
-done
-: "${LIST_ONLY:=0}"
+  # ===========================
+  # TRAINING / VALIDATION LINES
+  # ===========================
+  - id: train_loss
+    title: "Training Loss vs Step"
+    x: step
+    y: loss
+    # Accept JSON or CSV; the CLI writes JSON by default at this path.
+    path: outputs/metrics/train_metrics.json
+    template: line
+    x_label: "Step"
+    y_label: "Loss"
+    smooth: true
 
-# Defaults: if no formats selected, render SVG
-if [[ $DO_SVG -eq 0 && $DO_PNG -eq 0 && $DO_PDF -eq 0 ]]; then DO_SVG=1; fi
+  - id: val_loss
+    title: "Validation Loss vs Step"
+    x: step
+    y: val_loss
+    path: outputs/metrics/val_metrics.json
+    template: line
+    x_label: "Step"
+    y_label: "Val Loss"
+    smooth: true
 
-# ---------- repo root ----------
-if git_root=$(command -v git >/dev/null 2>&1 && git rev-parse --show-toplevel 2>/dev/null); then
-  cd "$git_root"
-else
-  SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-  cd "$SCRIPT_DIR/.." || { fail "Cannot locate repo root"; }
-fi
+  - id: lr_schedule
+    title: "Learning Rate vs Step"
+    x: step
+    y: lr
+    path: outputs/metrics/train_metrics.json
+    template: line
+    x_label: "Step"
+    y_label: "LR"
+    smooth: false
 
-# ---------- helpers ----------
-have() { command -v "$1" >/dev/null 2>&1; }
+  - id: gll_over_time
+    title: "Gaussian Log-Likelihood vs Step"
+    x: step
+    y: gll
+    path: outputs/metrics/val_metrics.json
+    template: line
+    x_label: "Step"
+    y_label: "GLL (↑ better)"
+    smooth: true
 
-run() {
-  local desc="$1"; shift
-  if [[ $DRY -eq 1 ]]; then
-    say "[dry-run] $desc :: $*"
-    return 0
-  fi
-  [[ $QUIET -eq 0 ]] && printf "%s→ %s%s\n" "${DIM}" "${desc}" "${RST}"
-  "$@"
-}
+  # ===========================
+  # CALIBRATION / RESIDUAL PLOTS
+  # ===========================
+  - id: residual_hist
+    title: "Residuals Histogram | (μ - y)"
+    path: outputs/diagnostics/calibration/residuals.csv
+    y: residual      # column in CSV
+    template: hist
+    bins: 60
+    x_label: "Residual (μ - y)"
+    y_label: "Count"
 
-resolve_mmdc() {
-  if [[ -n "$MMDC_BIN" ]]; then echo "$MMDC_BIN"; return; fi
-  if [[ -f "node_modules/.bin/mmdc" ]]; then echo "node_modules/.bin/mmdc"; return; fi
-  if have mmdc; then echo "mmdc"; return; fi
-  if have npx; then echo "npx -y @mermaid-js/mermaid-cli mmdc"; return; fi
-  fail "Mermaid CLI not found. Install via 'npm i -D @mermaid-js/mermaid-cli', use 'npx', or pass --mmdc <path>."
-}
-MMDC_CMD="$(resolve_mmdc)"
+  - id: sigma_hist
+    title: "Predicted σ Histogram"
+    path: outputs/diagnostics/calibration/residuals.csv
+    y: sigma
+    template: hist
+    bins: 60
+    x_label: "Predicted σ"
+    y_label: "Count"
 
-# ---------- npm lint/format (optional) ----------
-if [[ $DO_LINT -eq 1 && -f package.json ]]; then
-  if jq -e '.scripts.lint' package.json >/dev/null 2>&1; then
-    run "npm run lint" npm run lint
-  else
-    warn "package.json has no 'lint' script."
-  fi
-fi
-if [[ $DO_FORMAT -eq 1 && -f package.json ]]; then
-  if jq -e '.scripts.format' package.json >/dev/null 2>&1; then
-    run "npm run format" npm run format
-  else
-    warn "package.json has no 'format' script."
-  fi
-fi
+  - id: residual_vs_sigma
+    title: "|Residual| vs σ"
+    path: outputs/diagnostics/calibration/residuals.csv
+    x: sigma
+    y: abs_residual
+    template: scatter_guide   # draws y=x guide for visual calibration check
+    x_label: "Predicted σ"
+    y_label: "|μ - y|"
 
-# ---------- prepare ----------
-if [[ $CLEAN -eq 1 ]]; then
-  [[ -d "$OUTDIR" ]] && run "rm -rf $OUTDIR" rm -rf "$OUTDIR"
-fi
-mkdir -p "$OUTDIR"
+  - id: reliability_curve
+    title: "Reliability Curve (Calibration)"
+    path: outputs/diagnostics/calibration/reliability.csv
+    x: expected
+    y: observed
+    template: scatter_guide   # diagonal = perfect calibration
+    x_label: "Expected Coverage"
+    y_label: "Observed Coverage"
 
-# ---------- source discovery ----------
-collect_sources_from_paths() {
-  local -a paths=()
-  for p in "${ARGS[@]}"; do
-    if [[ -d "$p" ]]; then
-      while IFS= read -r -d '' f; do paths+=("$f"); done < <(find "$p" -type f -name "*.mmd" -print0)
-    elif [[ -f "$p" ]]; then
-      [[ "$p" == *.mmd ]] && paths+=("$p") || warn "Skipping non-.mmd file: $p"
-    else
-      warn "Path not found: $p"
-    fi
-  done
-  printf '%s\n' "${paths[@]}"
-}
+  # ===========================
+  # PER-BIN / PER-WAVELENGTH HEATMAPS
+  # ===========================
+  - id: gll_heatmap
+    title: "Per-Bin GLL Heatmap"
+    path: outputs/diagnostics/gll_per_bin.csv
+    # Expected columns: bin, step (or epoch), gll
+    heatmap:
+      x: bin
+      y: step
+      color: gll
+      colorbar_label: "GLL"
+    template: heatmap
 
-collect_sources_default() {
-  local -a paths=()
-  if [[ ${#INCLUDES[@]} -gt 0 ]]; then
-    for g in "${INCLUDES[@]}"; do
-      while IFS= read -r -d '' f; do paths+=("$f"); done < <(find . -type f -name "$(basename "$g")" -path "*/$(dirname "$g")/*" -print0 2>/dev/null || true)
-    done
-  else
-    while IFS= read -r -d '' f; do paths+=("$f"); done < <(find diagrams -type f -name "*.mmd" -print0 2>/dev/null || true)
-    while IFS= read -r -d '' f; do paths+=("$f"); done < <(find docs     -type f -name "*.mmd" -print0 2>/dev/null || true)
-  fi
-  # Apply excludes
-  if [[ ${#EXCLUDES[@]} -gt 0 ]]; then
-    printf '%s\n' "${paths[@]}" | while IFS= read -r f; do
-      skip=0
-      for ex in "${EXCLUDES[@]}"; do [[ "$f" == $ex ]] && skip=1 && break; done
-      [[ $skip -eq 0 ]] && printf '%s\n' "$f"
-    done
-  else
-    printf '%s\n' "${paths[@]}"
-  fi
-}
+  - id: coverage_heatmap
+    title: "Per-Bin Coverage Heatmap"
+    path: outputs/diagnostics/coverage_per_bin.csv
+    heatmap:
+      x: bin
+      y: threshold      # e.g., 50%, 80%, 90% lines evaluated
+      color: coverage
+      colorbar_label: "Coverage"
+    template: heatmap
 
-collect_sources() {
-  if [[ ${#ARGS[@]} -gt 0 ]]; then collect_sources_from_paths | sort -u
-  else collect_sources_default | sort -u
-  fi
-}
+  # ===========================
+  # FFT / SPECTRAL DIAGNOSTICS
+  # ===========================
+  - id: fft_power
+    title: "FFT Power (μ spectrum)"
+    path: outputs/diagnostics/fft/power.csv
+    x: freq
+    y: power
+    template: line
+    x_label: "Frequency"
+    y_label: "Power"
+    smooth: false
+    log_x: false
+    log_y: true
 
-SOURCES=()
-mapfile -t SOURCES < <(collect_sources)
+  # ===========================
+  # UMAP / t-SNE OVERVIEWS (SCATTER)
+  # ===========================
+  - id: umap_latents
+    title: "UMAP Latents (colored by cluster)"
+    path: outputs/diagnostics/umap/umap_latents.csv
+    x: x
+    y: y
+    color: cluster       # optional field; if absent, template ignores
+    template: scatter_guide
+    x_label: "UMAP-1"
+    y_label: "UMAP-2"
 
-if [[ $LIST_ONLY -eq 1 ]]; then
-  printf '%s\n' "${SOURCES[@]}"
-  exit 0
-fi
+  - id: tsne_latents
+    title: "t-SNE Latents (colored by entropy)"
+    path: outputs/diagnostics/tsne/tsne_latents.csv
+    x: x
+    y: y
+    color: entropy
+    template: scatter_guide
+    x_label: "t-SNE-1"
+    y_label: "t-SNE-2"
 
-# ---------- optional: MD extraction via Python ----------
-if [[ $USE_PYTHON -eq 1 ]]; then
-  if [[ -f "scripts/export_mermaid.py" ]]; then
-    say "Extracting Mermaid codeblocks from Markdown via scripts/export_mermaid.py"
-    run "python scripts/export_mermaid.py" python scripts/export_mermaid.py || warn "export_mermaid.py returned non-zero."
-    # Re-scan sources in case exporter wrote *.mmd files
-    mapfile -t SOURCES < <(collect_sources)
-  else
-    warn "scripts/export_mermaid.py not found; skipping Markdown extraction."
-  fi
-fi
+# ------------------------------------------------------------------------------
+# Globs (optional convenience)
+# You can reference these as `--targets .dvc/plots.yaml:group:<name>`
+# to show all plots in a group at once.
+# ------------------------------------------------------------------------------
+groups:
+  training:
+    - train_loss
+    - val_loss
+    - lr_schedule
+    - gll_over_time
+  calibration:
+    - residual_hist
+    - sigma_hist
+    - residual_vs_sigma
+    - reliability_curve
+  binwise:
+    - gll_heatmap
+    - coverage_heatmap
+  spectral:
+    - fft_power
+  embedding:
+    - umap_latents
+    - tsne_latents
 
-if [[ ${#SOURCES[@]} -eq 0 ]]; then
-  warn "No .mmd sources found to render."
-fi
-
-# ---------- prune orphaned outputs ----------
-if [[ $PRUNE -eq 1 ]]; then
-  say "Pruning orphaned outputs from $OUTDIR…"
-  while IFS= read -r -d '' out; do
-    base_rel="${out#$OUTDIR/}"          # diagrams/foo/bar.svg
-    src="${base_rel%.*}.mmd"            # diagrams/foo/bar.mmd
-    # Try to locate source anywhere under repo (relative)
-    if ! [[ -f "$src" || -f "./$src" ]]; then
-      say "Removing orphaned: $out"
-      [[ $DRY -eq 1 ]] || rm -f "$out"
-    fi
-  done < <(find "$OUTDIR" -type f \( -name "*.svg" -o -name "*.png" -o -name "*.pdf" \) -print0)
-fi
-
-# ---------- compute outputs / render ----------
-render_one() {
-  local src="$1"
-  local rel="${src#./}"
-  local base="${rel%.*}"     # diagrams/foo/bar.mmd -> diagrams/foo/bar
-  local subdir="$(dirname "$base")"
-  local name="$(basename "$base")"
-  local out_sub="$OUTDIR/$subdir"
-  mkdir -p "$out_sub"
-
-  local common=()
-  [[ -n "$MMDC_CONFIG" ]] && common+=(--configFile "$MMDC_CONFIG")
-  [[ -n "$CSS_FILE"    ]] && common+=(--cssFile "$CSS_FILE")
-  common+=(--input "$src" --theme "$THEME" --backgroundColor "$BG")
-  [[ -n "$WIDTH"  ]] && common+=(--width "$WIDTH")
-  [[ -n "$HEIGHT" ]] && common+=(--height "$HEIGHT")
-  [[ -n "$SCALE"  ]] && common+=(--scale "$SCALE")
-
-  local cmd="$MMDC_CMD"
-  [[ -n "$MMDC_EXTRA" ]] && cmd="$cmd $MMDC_EXTRA"
-
-  # SVG
-  if [[ $DO_SVG -eq 1 ]]; then
-    local out_svg="$out_sub/$name.svg"
-    if [[ $DRY -eq 1 ]]; then
-      say "[dry-run] mmdc SVG $src → $out_svg"
-    else
-      if command -v timeout >/dev/null 2>&1; then
-        timeout --preserve-status --signal=TERM "$TIMEOUT" bash -lc "$cmd --output '$out_svg' ${common[*]}"
-      else
-        bash -lc "$cmd --output '$out_svg' ${common[*]}"
-      fi
-    fi
-  fi
-  # PNG
-  if [[ $DO_PNG -eq 1 ]]; then
-    local out_png="$out_sub/$name.png"
-    if [[ $DRY -eq 1 ]]; then
-      say "[dry-run] mmdc PNG $src → $out_png"
-    else
-      if command -v timeout >/dev/null 2>&1; then
-        timeout --preserve-status --signal=TERM "$TIMEOUT" bash -lc "$cmd --png --output '$out_png' ${common[*]}"
-      else
-        bash -lc "$cmd --png --output '$out_png' ${common[*]}"
-      fi
-    fi
-  fi
-  # PDF
-  if [[ $DO_PDF -eq 1 ]]; then
-    local out_pdf="$out_sub/$name.pdf"
-    if [[ $DRY -eq 1 ]]; then
-      say "[dry-run] mmdc PDF $src → $out_pdf"
-    else
-      if command -v timeout >/dev/null 2>&1; then
-        timeout --preserve-status --signal=TERM "$TIMEOUT" bash -lc "$cmd --pdf --output '$out_pdf' ${common[*]}"
-      else
-        bash -lc "$cmd --pdf --output '$out_pdf' ${common[*]}"
-      fi
-    fi
-  fi
-}
-
-# Parallelism (best-effort): if jobs > 1, use xargs -P
-render_all() {
-  local fails=0
-  if [[ ${#SOURCES[@]} -eq 0 ]]; then
-    return 0
-  fi
-  say "Rendering ${#SOURCES[@]} Mermaid file(s) → ${OUTDIR} (theme=${THEME}, bg=${BG}, timeout=${TIMEOUT}s)"
-  if [[ "$JOBS" =~ ^[1-9][0-9]*$ && $JOBS -gt 1 ]]; then
-    export -f render_one
-    export OUTDIR DO_SVG DO_PNG DO_PDF THEME BG MMDC_CMD MMDC_CONFIG CSS_FILE MMDC_EXTRA TIMEOUT DRY QUIET WIDTH HEIGHT SCALE
-    printf '%s\0' "${SOURCES[@]}" \
-      | xargs -0 -n1 -P "$JOBS" bash -lc 'render_one "$0"' \
-      || fails=1
-  else
-    for s in "${SOURCES[@]}"; do
-      render_one "$s" || fails=1
-    done
-  fi
-  return $fails
-}
-
-# ---------- list sources or render ----------
-if [[ $LIST_ONLY -eq 1 ]]; then
-  printf '%s\n' "${SOURCES[@]}"
-  exit 0
-fi
-
-FAILED=0
-render_all || FAILED=1
-
-# ---------- watch mode ----------
-if [[ $WATCH -eq 1 ]]; then
-  say "Watch mode enabled (re-render on change)…"
-  # Preferred: npm run mmd:watch if present
-  if [[ -f package.json ]] && jq -e '.scripts["mmd:watch"]' package.json >/dev/null 2>&1; then
-    run "npm run mmd:watch" npm run mmd:watch
-    exit 0
-  fi
-  # Next: watchexec
-  if have watchexec; then
-    say "Using watchexec to watch diagrams/**/*.mmd and docs/**/*.mmd"
-    watchexec -e mmd -w diagrams -w docs -- \
-      bash -lc "bin/diagrams.sh --outdir '$OUTDIR' $( [[ $DO_SVG -eq 1 ]] && echo --svg ) $( [[ $DO_PNG -eq 1 ]] && echo --png ) $( [[ $DO_PDF -eq 1 ]] && echo --pdf ) --theme '$THEME' --bg '$BG' $( [[ -n $MMDC_CONFIG ]] && echo --config "$MMDC_CONFIG" ) $( [[ -n $CSS_FILE ]] && echo --css "$CSS_FILE" ) $( [[ -n $MMDC_EXTRA ]] && echo --mmdc-args "$MMDC_EXTRA" )"
-    exit 0
-  fi
-  # Fallback: entr
-  if have entr; then
-    say "Using entr to watch diagrams/**/*.mmd and docs/**/*.mmd"
-    { find diagrams docs -type f -name '*.mmd' 2>/dev/null || true; } \
-      | entr -r bash -lc "bin/diagrams.sh --outdir '$OUTDIR' $( [[ $DO_SVG -eq 1 ]] && echo --svg ) $( [[ $DO_PNG -eq 1 ]] && echo --png ) $( [[ $DO_PDF -eq 1 ]] && echo --pdf ) --theme '$THEME' --bg '$BG' $( [[ -n $MMDC_CONFIG ]] && echo --config "$MMDC_CONFIG" ) $( [[ -n $CSS_FILE ]] && echo --css "$CSS_FILE" ) $( [[ -n $MMDC_EXTRA ]] && echo --mmdc-args "$MMDC_EXTRA" )"
-    exit 0
-  fi
-  warn "No watch tool found (npm script, watchexec, or entr). Exiting."
-fi
-
-# ---------- JSON summary ----------
-if [[ $JSON -eq 1 ]]; then
-  # Minimal robust JSON without external deps
-  printf '{'
-  printf '"ok": %s, ' "$([[ $FAILED -eq 0 ]] && echo true || echo false)"
-  printf '"count": %s, ' "${#SOURCES[@]}"
-  printf '"outdir": "%s", ' "$OUTDIR"
-  printf '"formats": "%s", ' "$([[ $DO_SVG -eq 1 ]] && echo svg) $([[ $DO_PNG -eq 1 ]] && echo png) $([[ $DO_PDF -eq 1 ]] && echo pdf)"
-  printf '"theme": "%s", "bg": "%s", ' "$THEME" "$BG"
-  printf '"timeout": %s' "$TIMEOUT"
-  printf '}\n'
-fi
-
-[[ $FAILED -eq 0 ]] && say "${GRN}Diagram rendering complete.${RST}" || fail "Some diagrams failed to render."
-exit $FAILED
+# ------------------------------------------------------------------------------
+# Rendering hints
+#   These are generic knobs some templates respect (optional).
+#   DVC ignores unknown keys, so it’s safe to keep them here.
+# ------------------------------------------------------------------------------
+hints:
+  dark_mode: false
+  point_size: 28
+  line_width: 2
+  palette: "viridis"
+  # If your CI uses dark backgrounds, set:
+  # dark_mode: true
