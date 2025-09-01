@@ -136,12 +136,12 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-  A0[spectramind ablate] --> A1[Hydra Multirun]
-  A1 --> A2[Ablation Engine\n(grid/random/smart)]
-  A2 --> A3[Runner\ntrain → diagnose]
-  A3 --> A4[Collector\nmetrics.json]
-  A4 --> A5[Leaderboard\nmd/html/csv]
-  A5 -->|top-N| A6[Bundle Artifacts\nzip]
+  A0["spectramind ablate"] --> A1["Hydra Multirun"]
+  A1 --> A2["Ablation Engine<br/>(grid · random · smart)"]
+  A2 --> A3["Runner<br/>train → diagnose"]
+  A3 --> A4["Collector<br/>metrics.json"]
+  A4 --> A5["Leaderboard<br/>md / html / csv"]
+  A5 -->|top-N| A6["Bundle Artifacts<br/>zip"]
 ```
 
 **Metrics included**: GLL, RMSE/MAE (dev), entropy, violation norms, FFT power, coverage deltas, runtime.
