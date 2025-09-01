@@ -13,8 +13,8 @@ The design emphasizes:
 
 ## 1. High-Level DAG
 
-```mermaid
-flowchart TD
+---
+`flowchart TD
   U[User CLI Call] -->|spectramind ablate ...| E0[Typer Entrypoint]
 
   E0 --> H0[Hydra Compose\n(train/ablation.yaml + overrides)]
@@ -24,7 +24,7 @@ flowchart TD
 
   subgraph RUN[Parallel/Sequential Runs]
     direction TB
-    R1[Trainer(i)] --> R2[Metrics & Artifacts(i)] --> R3[Predictions μ,σ(i)]
+    R1[Trainer (i)] --> R2[Metrics & Artifacts (i)] --> R3[Predictions μ, σ (i)]
   end
 
   A1 --> RUN
@@ -33,9 +33,9 @@ flowchart TD
   D0 --> L0[Leaderboard Export\n(MD + HTML)]
 
   %% side outputs
-  R2 --> L1[(events.jsonl)]
-  H0 --> S0[(Resolved Config Snapshots)]
-````
+  R2 --> L1[events.jsonl]
+  H0 --> S0[Resolved Config Snapshots]
+---
 
 ---
 
