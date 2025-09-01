@@ -1,8 +1,9 @@
 {
+  "prereserve_doi": true,
   "title": "SpectraMind V50 — Neuro-symbolic, Physics-informed Exoplanet Spectroscopy Pipeline",
   "upload_type": "software",
   "publication_type": "software",
-  "description": "<p>SpectraMind V50 is a mission-grade, CLI-first, neuro-symbolic, physics-informed AI pipeline for the NeurIPS 2025 Ariel Data Challenge. It integrates a long-sequence Structured State-Space Model (SSM) for FGS1 time-series with a molecule- and wavelength-aware Graph Neural Network (GNN) for AIRS spectra; training uses Gaussian log-likelihood with symbolic/physics constraints. NASA-grade reproducibility is enforced via Hydra configs, DVC/lakeFS data versioning, CI workflows, Docker/Poetry environments, and deterministic self-tests. Outputs include per-wavelength μ and σ, plus diagnostics (UMAP/t‑SNE, SHAP, symbolic overlays, FFT, calibration maps) and leaderboard-ready Kaggle submissions. All functionality is orchestrated through a unified Typer CLI with integrated logging, symbolic validation, and diagnostics dashboards.</p>",
+  "description": "<p>SpectraMind V50 is a mission-grade, CLI-first, neuro-symbolic, physics-informed AI pipeline for the NeurIPS 2025 Ariel Data Challenge. It integrates a long-sequence Structured State-Space Model (SSM) for FGS1 time-series with a molecule- and wavelength-aware Graph Neural Network (GNN) for AIRS spectra; training uses Gaussian log-likelihood with symbolic/physics constraints. NASA-grade reproducibility is enforced via Hydra configs, DVC/lakeFS data versioning, CI workflows, Docker/Poetry environments, and deterministic self-tests. Outputs include per-wavelength μ and σ, plus diagnostics (UMAP/t-SNE, SHAP, symbolic overlays, FFT, calibration maps) and leaderboard-ready Kaggle submissions. All functionality is orchestrated through a unified Typer CLI with integrated logging, symbolic validation, and diagnostics dashboards.</p>",
   "creators": [
     {
       "name": "Barta, Andy",
@@ -13,7 +14,7 @@
       "name": "SpectraMind V50 Team",
       "affiliation": "SpectraMind Research / NeurIPS 2025 Ariel Challenge"
     }
-    ],
+  ],
   "contributors": [
     {
       "name": "SpectraMind V50 Community Contributors",
@@ -43,8 +44,8 @@
     "UMAP",
     "t-SNE"
   ],
-  "language": "eng",
-  "version": "0.2.0",
+  "language": "en",
+  "version": "0.3.0",
   "publication_date": "2025-08-21",
   "license": "Apache-2.0",
   "access_right": "open",
@@ -87,12 +88,10 @@
   ],
   "alternate_identifiers": [
     {
-      "identifier": "https://github.com/bartytime4life/SpectraMindV50/releases/tag/v0.2.0",
+      "identifier": "https://github.com/bartytime4life/SpectraMindV50/releases/tag/v0.3.0",
       "scheme": "url"
     }
   ],
-  "notes_license": "CC-BY-4.0",
-  "related_uploads": [],
   "custom": {
     "cli_entrypoint": "spectramind",
     "artifact_layout": [
@@ -107,7 +106,7 @@
       ".dvc/**",
       "README.md",
       "ARCHITECTURE.md",
-      "citation.cff"
+      "CITATION.cff"
     ]
   }
 }
