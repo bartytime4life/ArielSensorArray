@@ -1,65 +1,246 @@
 # ==============================================================================
-# SpectraMind V50 — DVC Ignore Rules
+
+# SpectraMind V50 — DVC Ignore Rules (Upgraded, Mission-Grade)
+
 # ------------------------------------------------------------------------------
+
 # Purpose:
-#   • Prevents DVC from accidentally tracking ephemeral or environment files
-#   • Keeps the DVC DAG clean, reproducible, and Kaggle/CI-safe
-#   • Complements .gitignore — this applies only to DVC tracking scope
+
+# • Prevent DVC from scanning/adding ephemeral, environment, or rebuildable files
+
+# • Keep the DVC DAG clean, reproducible, and Kaggle/CI-safe
+
+# • Complements .gitignore — these patterns affect only DVC’s file discovery
+
+#
+
+# Notes:
+
+# • DO NOT ignore real datasets/models that you intend to manage with DVC.
+
+# • Keep dvc.yaml, dvc.lock, and \*.dvc visible to DVC (never ignore them).
+
+# • Prefer storing true datasets under data/ and registering via `dvc add`.
+
 # ==============================================================================
 
+# ───────────────────────── Core DVC/Repo Safety ─────────────────────────
+
+# Keep DVC’s own control files visible
+
+!.dvc/
+!.dvcignore
+!dvc.yaml
+!dvc.lock
+!\*.dvc
+
 # ───────────────────────── Python Build Artifacts ─────────────────────────
-**/__pycache__/
-**/*.pyc
-**/*.pyo
-**/*.pyd
-**/*.so
-**/*.dll
-**/*.dylib
-**/*.egg-info/
-*.egg
-dist/
+
+\*\*/**pycache**/
+\*\*/*.pyc
+\*\*/*.pyo
+\*\*/*.pyd
+\*\*/*.so
+\*\*/*.dll
+\*\*/*.dylib
+\*\*/\*.egg-info/
+\*.egg
 build/
+dist/
+.eggs/
+\*.pkl
+\*.dill
+\*.whl
 
-# ───────────────────────── Notebook / Editor Junk ─────────────────────────
-**/.ipynb_checkpoints/
-**/*.swp
-**/*.swo
-**/*.tmp
-**/*.bak
+# ───────────────────────── Notebooks / Editors / Lint ────────────────────
 
-# ───────────────────────── Logs & Run Artifacts ─────────────────────────
-logs/**
-wandb/**             # Weights & Biases run logs
-mlruns/**            # MLflow tracking runs
-tensorboard/**       # Local tensorboard event files
-.dvc/tmp/**          # DVC’s own temp dirs (don’t recurse into cache)
-.dvc/exp/**          # Experiment scratch space
+\*\*/.ipynb\_checkpoints/
+\*\*/*.ipynb\~        # temp saves
+\*\*/*.swp
+\*\*/*.swo
+\*\*/*.tmp
+\*\*/*.bak
+\*\*/*.orig
+\*\*/\*.rej
+.mypy\_cache/
+.pytest\_cache/
+.ruff\_cache/
+.coverage
+htmlcov/
 
-# ───────────────────────── Environment / Dependency Files ─────────────────
-.venv/**
-.env
-.env.*
-.conda_env/
+# ───────────────────────── OS / IDE Noise ────────────────────────────────
+
+.DS\_Store
+Thumbs.db
+Desktop.ini
+.idea/\*\*
+.vscode/\*\*
+\*.log
+
+# ───────────────────────── Environment / Dependency Files ────────────────
+
+.venv/\*\*
+venv/\*\*
+env/\*\*
+ENV/\*\*
+.conda/
+.conda\_env/
+poetry.lock
+poetry.toml
 Pipfile
 Pipfile.lock
-poetry.lock
+requirements\*.txt
 pyproject.toml
-requirements*.txt
 
-# ───────────────────────── Kaggle / Competition Artifacts ─────────────────
-kaggle_work/**
-kaggle_notebooks/**
-kaggle_submissions/**
-kaggle_cache/**
+# Local caches
 
-# ───────────────────────── OS / IDE Noise ─────────────────────────
-.DS_Store
-Thumbs.db
-.idea/**
-.vscode/**
-*.log
+.cache/\*\*
+**/.cache/**
+pip-wheel-metadata/
+site-packages/
 
-# ───────────────────────── Safety Notes ─────────────────────────
-# DVC will ignore these patterns; Git may still see them unless in .gitignore.
-# Ensure pipeline data (data/, outputs/, models/, artifacts/) are tracked ONLY via DVC.
+# ───────────────────────── Logs & Run Artifacts (Rebuildable) ────────────
+
+logs/\*\*
+wandb/\*\*                 # W\&B run logs
+mlruns/\*\*                # MLflow tracking runs
+tensorboard/\*\*           # TensorBoard events
+events.jsonl
+v50\_debug\_log.md
+run\_hash\_summary\_v50.json
+outputs/diagrams/\*\*
+outputs/tmp/\*\*
+outputs/**/tmp/**
+outputs/**/scratch/**
+
+# Keep all general outputs rebuildable and out of DVC unless explicitly added
+
+outputs/\*\*
+
+# ───────────────────────── Diagnostics & Reports (Derived) ───────────────
+
+diagnostics/\*\*
+reports/\*\*
+aggregated/\*\*
+benchmarks/\*\*
+artifacts/\*\*
+submissions/\*\*
+submission/\*\*
+predictions/\*\*
+
+# Project-convention subfolders (often nested under outputs/)
+
+**/diagnostics/**
+**/predictions/**
+**/submission/**
+**/reports/**
+**/aggregated/**
+**/benchmarks/**
+**/artifacts/**
+
+# ───────────────────────── GUI / Frontend Build Artifacts ────────────────
+
+node\_modules/\*\*
+.npm/\*\*
+bower\_components/\*\*
+.next/\*\*
+.out/\*\*
+dist/\*\*
+build/\*\*
+coverage/\*\*
+
+# Static sites / docs builds
+
+site/\*\*
+docs/site/\*\*
+docs/build/\*\*
+docs/\_build/\*\*
+
+# Mermaid outputs (rendered images)
+
+**/\*.mmd.cache
+assets/diagrams/**/render-cache/\*\*
+outputs/diagrams/\*\*
+diagrams/out/\*\*
+diagrams/build/\*\*
+
+# ───────────────────────── Containers / Docker / Compose ─────────────────
+
+.docker-build-cache/\*\*
+docker-cache/\*\*
+\*.dockerlayer
+
+# Compose state and transient volumes (if persisted locally)
+
+compose-data/\*\*
+compose-logs/\*\*
+
+# ───────────────────────── CI / Tox / Nox / Misc Tooling ─────────────────
+
+.tox/\*\*
+.nox/\*\*
+.mermaid-temp/\*\*
+.pre-commit-cache/\*\*
+precommit-cache/\*\*
+.sbom/\*\*
+sbom/\*\*
+
+# Security scan outputs
+
+trivy-report.\*
+grype-report.\*
+syft-report.\*
+
+# CycloneDX/SPDX artifacts (rebuildable)
+
+\*\*/sbom.json
+\*\*/sbom.xml
+\*\*/*.spdx.json
+\*\*/*.cdx.json
+
+# ───────────────────────── Kaggle / Challenge Ephemera ───────────────────
+
+kaggle\_work/\*\*
+kaggle\_notebooks/\*\*
+kaggle\_submissions/\*\*
+kaggle\_cache/\*\*
+kaggle\_output/\*\*
+kaggle\_artifacts/\*\*
+
+# ───────────────────────── CUDA / GPU Diagnostics (Ephemeral) ────────────
+
+nvidia-logs/\*\*
+\*\*/nvidia-smi.txt
+\*\*/cuda-report.txt
+
+# ───────────────────────── Temporary & Swap Areas ────────────────────────
+
+tmp/\*\*
+temp/\*\*
+scratch/\*\*
+**/.trash/**
+**/.tmp/**
+\*\*/.DS\_Store
+\*.tmp
+\*.bak
+\*.temp
+
+# ───────────────────────── Data / Models — Guardrails ────────────────────
+
+# Keep REAL datasets/models visible to DVC (do NOT ignore these by default).
+
+# If you must exclude a specific derived subset, add a precise pattern below.
+
+# data/\*\*            ← typically MANAGED by DVC (do not ignore)
+
+# models/\*\*          ← typically MANAGED by DVC (do not ignore)
+
+# ───────────────────────── Safety Notes ───────────────────────────────────
+
+# • DVC will ignore these patterns; Git may still see them unless also in .gitignore.
+
+# • Never add real datasets/models to .dvcignore unless you intend to keep them external.
+
+# • Prefer `dvc add data/...` and `dvc.yaml` stages for controlled artifacts.
+
 # ==============================================================================
