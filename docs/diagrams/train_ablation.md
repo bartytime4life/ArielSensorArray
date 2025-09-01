@@ -13,11 +13,11 @@ The design emphasizes:
 
 ## 1. High-Level DAG
 
----
-`flowchart TD
+```mermaid
+flowchart TD
   U[User CLI Call] -->|spectramind ablate ...| E0[Typer Entrypoint]
 
-  E0 --> H0[Hydra Compose\n(train/ablation.yaml + overrides)]
+  E0 --> H0[Hydra Compose<br/>(train/ablation.yaml + overrides)]
   H0 --> A0[Ablation Engine]
 
   A0 -->|Generate run grid| A1{Configs i=1..N}
@@ -30,12 +30,12 @@ The design emphasizes:
   A1 --> RUN
   R2 --> D0[Diagnostics Collation]
   R3 --> D0
-  D0 --> L0[Leaderboard Export\n(MD + HTML)]
+  D0 --> L0[Leaderboard Export<br/>(MD + HTML)]
 
   %% side outputs
-  R2 --> L1[events.jsonl]
-  H0 --> S0[Resolved Config Snapshots]
----
+  R2 --> L1[(events.jsonl)]
+  H0 --> S0[(Resolved Config Snapshots)]
+````
 
 ---
 
@@ -106,7 +106,7 @@ The design emphasizes:
 
 ---
 
-✅ **Audit Checklist**
+## ✅ Audit Checklist
 
 * [ ] Hydra config snapshots written (`configs_resolved/*.yaml`)
 * [ ] Logs captured in `events.jsonl`
@@ -118,4 +118,4 @@ The design emphasizes:
 
 **End of Document**
 
-```
+````
