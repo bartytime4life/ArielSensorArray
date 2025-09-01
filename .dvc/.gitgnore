@@ -1,49 +1,45 @@
 # ==============================================================================
-# SpectraMind V50 — DVC Git Ignore Rules (Upgraded)
+# SpectraMind V50 — DVC Git Ignore Rules
 # ------------------------------------------------------------------------------
 # Purpose:
-#   • Prevent committing heavy or environment-specific DVC internals
-#   • Keep Git history reproducible while allowing DVC to manage large artifacts
-#   • CI-, Kaggle-, and Docker-safe defaults
-#   • Complements .gitignore and .dvcignore
+#   • Prevents committing heavy or environment-specific DVC internals
+#   • Ensures reproducibility while keeping Git clean
+#   • Safe defaults for CI, local dev, and Kaggle sync
 # ==============================================================================
 
 # ───────────────────────── DVC Core Internals ─────────────────────────
-.dvc/cache/              # Local cache of blobs (large, not for Git)
-.dvc/tmp/                # Ephemeral temp workspace (locks, stage runs, exp cache)
-.dvc/lock/               # Lock files (pipeline runtime state)
-.dvc/state/              # SQLite state DB (dynamic)
-.dvc/experiments/        # Experiment DAGs, not reproducible
-.dvc/exp/                # Experimental scratch metadata
-.dvc/logs/               # Local-only debug logs
-.dvc/events/             # Local-only event/trace logs
+.dvc/cache/              # Local cache (large blobs, copy-on-write)
+.dvc/tmp/                # Ephemeral tmp workspace (locks, stage runs, exp cache)
 
 # ───────────────────────── Local Overrides ─────────────────────────
-.dvc/config.local        # Developer-specific secrets / local remote config
-.dvc/user/               # User/session scratch dirs
-.dvc/remotes/local/      # Local remotes not meant for Git
+.dvc/config.local         # Developer-specific overrides (secrets, local remotes)
 
 # ───────────────────────── Experiment / Run Artifacts ─────────────────────────
-.dvc/plots/tmp/          # Interactive plot caches
-.dvc/stage.lock          # Auto-generated stage lock (not portable)
+.dvc/exp/                # Local experiment tracking metadata
+.dvc/experiments/        # Temporary exp DAGs
+.dvc/lock/               # Lock files (not needed in Git history)
+.dvc/state/              # SQLite state DB, updated dynamically
+.dvc/stage.lock          # Stage runtime locks (machine-local only)
 
-# ───────────────────────── Optional / Transient ─────────────────────────
-# These may appear depending on CLI runs or extensions
-.dvc/.cache/             # Nested cache dirs if plugins/tools use them
-.dvc/tmp.*               # Misc ephemeral lock/temp files
+# ───────────────────────── Logs & Debug ─────────────────────────
+.dvc/logs/               # Local-only logs (not reproducible)
+.dvc/events/             # JSONL/trace logs for interactive runs
 
-# ================================
+# ───────────────────────── Optional Extensions ─────────────────────────
+.dvc/remotes/local/      # Local remote mirrors
+.dvc/plots/tmp/          # Interactive plot cache
+.dvc/user/               # User/session scratch (CLI runs, previews)
+
+# ───────────────────────── Safety Notes ─────────────────────────
 # SAFE TO COMMIT (KEEP IN GIT):
-#   ✔ .dvc/config
-#   ✔ .dvcignore
-#   ✔ dvc.yaml
-#   ✔ *.dvc pointer files
-#   ✔ .dvc/plots/* (templates, tracked plots)
-# ================================
+#   • .dvc/config (shared remote definitions, safe defaults)
+#   • .dvcignore
+#   • dvc.yaml (pipeline stages + DAG)
+#   • *.dvc pointer files
+#   • .dvc/plots/* (templates and specs tracked in repo)
+#
+# NEVER COMMIT:
+#   • Cache/state/tmp/lock dirs above (machine-local, non-reproducible)
+#   • Any secrets in .dvc/config.local
+# ==============================================================================
 
-# ==============================================================================
-# Notes:
-# • This file keeps DVC’s internal runtime noise out of Git.
-# • All scientific artifacts (data/, outputs/, models/, artifacts/) remain tracked by DVC.
-# • Only reproducible pointers and pipeline descriptors are versioned in Git.
-# ==============================================================================
