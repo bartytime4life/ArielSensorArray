@@ -1,0 +1,61 @@
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+  "description": "Dark-themed line chart template for DVC plots (training/validation loss, metrics, etc.)",
+  "background": "#1e1e1e",
+  "mark": {
+    "type": "line",
+    "point": true,
+    "tooltip": true
+  },
+  "encoding": {
+    "x": {
+      "field": "step",
+      "type": "quantitative",
+      "axis": {
+        "title": "Step",
+        "grid": true,
+        "labelColor": "#d4d4d4",
+        "titleColor": "#ffffff"
+      }
+    },
+    "y": {
+      "field": "value",
+      "type": "quantitative",
+      "axis": {
+        "title": "Metric Value",
+        "grid": true,
+        "labelColor": "#d4d4d4",
+        "titleColor": "#ffffff"
+      }
+    },
+    "color": {
+      "field": "rev",
+      "type": "nominal",
+      "legend": {
+        "title": "Revision",
+        "labelColor": "#d4d4d4",
+        "titleColor": "#ffffff"
+      }
+    }
+  },
+  "config": {
+    "axis": {
+      "labelFontSize": 12,
+      "titleFontSize": 13,
+      "gridColor": "#555555"
+    },
+    "legend": {
+      "labelFontSize": 12,
+      "titleFontSize": 13
+    },
+    "line": {
+      "strokeWidth": 2
+    },
+    "point": {
+      "size": 40
+    },
+    "view": {
+      "stroke": "transparent"
+    }
+  }
+}
