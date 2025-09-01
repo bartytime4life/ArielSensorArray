@@ -189,20 +189,19 @@ This generates synthetic data, runs the full pipeline, and writes an HTML+PNG pa
 
 ## 9) Workflow diagram
 
-```mermaid
 flowchart LR
-  A[Latents (.npy/.npz/.csv)] --> C{Merge}
-  B[Labels/metrics (CSV)] --> C
-  S[Symbolic overlays (JSON)] --> C
+  A["Latents (.npy/.npz/.csv)"] --> C{"Merge"}
+  B["Labels/metrics (CSV)"] --> C
+  S["Symbolic overlays (JSON)"] --> C
 
-  C --> D[Standardize features]
-  D --> E[t-SNE (scikit-learn)]
-  E --> F[Plotly figure]
-  F --> G[HTML]
-  F --> H[PNG (if kaleido)]
+  C --> D["Standardize features"]
+  D --> E["t-SNE (scikit-learn)"]
+  E --> F["Plotly figure"]
+  F --> G["HTML"]
+  F --> H["PNG (if kaleido)"]
 
   %% side-effect logging
-  C --> I[Append run row → v50_debug_log.md]
+  C --> I["Append run row → v50_debug_log.md"]
 
 ---
 
