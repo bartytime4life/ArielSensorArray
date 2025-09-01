@@ -148,19 +148,138 @@ FASTAPI\_APP        ?= \$(GUI\_DIR)/fastapi\_backend.py
 QT\_APP             ?= \$(GUI\_DIR)/qt\_diag\_demo.py
 FASTAPI\_PORT       ?= 8089
 
-# ========= Docker & Compose =========
+# ========= Docker (upgraded, lean context, GPU/CPU multi-target) =========
 
-DOCKER           ?= docker
-DOCKERFILE       ?= Dockerfile
-DOCKER\_IMAGE     ?= spectramindv50
-DOCKER\_TAG       ?= dev
-DOCKER\_FULL      := \$(DOCKER\_IMAGE):\$(DOCKER\_TAG)
-DOCKER\_BUILD\_ARGS?=
-HAS\_NVIDIA       := \$(shell command -v nvidia-smi >/dev/null 2>&1 && echo 1 || echo 0)
-DOCKER\_GPU\_FLAG  := \$(if \$(filter 1,\$(HAS\_NVIDIA)),--gpus all,)
+DOCKER              ?= docker
+export DOCKER_BUILDKIT=1
 
-COMPOSE          ?= docker compose
-COMPOSE\_FILE     ?= docker-compose.yml
+# image meta
+IMAGE_NAME          ?= spectramind-v50
+IMAGE_TAG           ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
+IMAGE_GPU           := $(IMAGE_NAME):$(IMAGE_TAG)-gpu
+IMAGE_CPU           := $(IMAGE_NAME):$(IMAGE_TAG)-cpu
+
+# build cache dir (local)
+BUILD_CACHE_DIR     ?= .docker-build-cache
+
+# repo mount → /workspace
+WORKDIR_MOUNT       := -v $(PWD):/workspace -w /workspace
+
+# cache mounts for runtime (host-side)
+CACHE_BASE          ?= $(PWD)/.cache
+HF_CACHE_MNT        := -v $(CACHE_BASE)/hf:/cache/hf
+WANDB_CACHE_MNT     := -v $(CACHE_BASE)/wandb:/cache/wandb
+PIP_CACHE_MNT       := -v $(CACHE_BASE)/pip:/root/.cache/pip
+
+# base env (no secrets baked)
+BASE_ENV            := \
+	-e PYTHONUNBUFFERED=1 \
+	-e HF_HOME=/cache/hf \
+	-e TRANSFORMERS_CACHE=/cache/hf \
+	-e WANDB_DIR=/cache/wandb \
+	-e WANDB_MODE=offline
+
+# optional env-file (e.g., ENV_FILE=.env.local)
+ENV_FILE            ?=
+ENVFILE_FLAG        := $(if $(strip $(ENV_FILE)),--env-file $(ENV_FILE),)
+
+# pass-thru build args if needed (avoid secrets)
+EXTRA_BUILD_ARGS    ?=
+
+# detect NVIDIA runtime
+HAS_NVIDIA          := $(shell command -v nvidia-smi >/dev/null 2>&1 && echo 1 || echo 0)
+
+.PHONY: docker-help
+docker-help:
+	@echo "Docker targets"
+	@echo "  make docker-build-gpu      # build GPU image  → $(IMAGE_GPU)"
+	@echo "  make docker-build-cpu      # build CPU image  → $(IMAGE_CPU)"
+	@echo "  make docker-run-gpu        # bash shell (GPU), mounts repo + caches"
+	@echo "  make docker-run-cpu        # bash shell (CPU), mounts repo + caches"
+	@echo "  make cli CMD='spectramind --version'  # auto GPU/CPU"
+	@echo "  make cli-gpu CMD='spectramind train ...'"
+	@echo "  make cli-cpu CMD='spectramind diagnose ...'"
+	@echo "  make docker-context-check  # quick context size sanity"
+	@echo "  make docker-cache-clean    # remove local build cache dir"
+
+# -----------------------------
+# Build GPU (expects Dockerfile stage: runtime-gpu)
+# -----------------------------
+.PHONY: docker-build-gpu
+docker-build-gpu:
+	@mkdir -p "$(BUILD_CACHE_DIR)"
+	@echo ">> Building GPU image: $(IMAGE_GPU)"
+	$(DOCKER) build \
+		--target runtime-gpu \
+		-t $(IMAGE_GPU) \
+		--progress=plain \
+		--cache-from type=local,src=$(BUILD_CACHE_DIR) \
+		--cache-to   type=local,dest=$(BUILD_CACHE_DIR),mode=max \
+		$(EXTRA_BUILD_ARGS) \
+		.
+
+# -----------------------------
+# Build CPU (expects Dockerfile stage: runtime-cpu)
+# -----------------------------
+.PHONY: docker-build-cpu
+docker-build-cpu:
+	@mkdir -p "$(BUILD_CACHE_DIR)"
+	@echo ">> Building CPU image: $(IMAGE_CPU)"
+	$(DOCKER) build \
+		--target runtime-cpu \
+		-t $(IMAGE_CPU) \
+		--progress=plain \
+		--cache-from type=local,src=$(BUILD_CACHE_DIR) \
+		--cache-to   type=local,dest=$(BUILD_CACHE_DIR),mode=max \
+		$(EXTRA_BUILD_ARGS) \
+		.
+
+# -----------------------------
+# Interactive shells
+# -----------------------------
+.PHONY: docker-run-gpu
+docker-run-gpu:
+	@echo ">> Running GPU shell: $(IMAGE_GPU)"
+	$(DOCKER) run --rm -it --name spectramind-gpu \
+		--gpus all \
+		$(WORKDIR_MOUNT) \
+		$(HF_CACHE_MNT) $(WANDB_CACHE_MNT) $(PIP_CACHE_MNT) \
+		$(BASE_ENV) $(ENVFILE_FLAG) \
+		$(IMAGE_GPU) bash
+
+.PHONY: docker-run-cpu
+docker-run-cpu:
+	@echo ">> Running CPU shell: $(IMAGE_CPU)"
+	$(DOCKER) run --rm -it --name spectramind-cpu \
+		$(WORKDIR_MOUNT) \
+		$(HF_CACHE_MNT) $(WANDB_CACHE_MNT) $(PIP_CACHE_MNT) \
+		$(BASE_ENV) $(ENVFILE_FLAG) \
+		$(IMAGE_CPU) bash
+
+# -----------------------------
+# CLI runners (auto-select GPU if available)
+# -----------------------------
+CMD ?= spectramind --help
+
+.PHONY: cli
+cli:
+	@echo ">> Detecting NVIDIA runtime..."
+	@if [ "$(HAS_NVIDIA)" = "1" ]; then \
+	  echo '>> NVIDIA found — using GPU image'; \
+	  $(MAKE) -s cli-gpu CMD="$(CMD)"; \
+	else \
+	  echo '>> NVIDIA not found — using CPU image'; \
+	  $(MAKE) -s cli-cpu CMD="$(CMD)"; \
+	fi
+
+.PHONY: cli-gpu
+cli-gpu:
+	@echo ">> [GPU] $(CMD)"
+	$(DOCKER) run --rm -t --name spectramind-cli-gpu \
+		--gpus all \
+		$(WORKDIR_MOUNT) \
+		$(HF_CACHE_MNT) $(WANDB_CACHE_MNT
+
 
 # ========= Colors =========
 
