@@ -1,108 +1,166 @@
-# 🌌 SpectraMind V50 — GitHub Meta & Governance
+# 🚀 SpectraMind V50 — NeurIPS 2025 Ariel Data Challenge
 
-This `.github/` directory contains all **project governance, automation, and contribution infrastructure**  
-for the **SpectraMind V50** repository, built for the **NeurIPS 2025 Ariel Data Challenge**.
-
-The design philosophy is aligned with **NASA-grade reproducibility**, **CLI-first workflows**, and  
-**scientific rigor** [oai_citation:0‡SpectraMind V50 Technical Plan for the NeurIPS 2025 Ariel Data Challenge.pdf](file-service://file-6PdU5f5knreHjmSdSauj3w) [oai_citation:1‡SpectraMind V50 Project Analysis (NeurIPS 2025 Ariel Data Challenge).pdf](file-service://file-QRDy8Xn69XgxEjZgtZZ8FK). Every template, workflow, and policy enforces  
-**traceability from CLI command → Hydra config → run hash → CI validation**.
+<p align="center">
+  <a href="https://github.com/your-org/your-repo/actions/workflows/ci.yml">
+    <img alt="CI" src="https://github.com/your-org/your-repo/actions/workflows/ci.yml/badge.svg">
+  </a>
+  <a href="https://github.com/your-org/your-repo/actions/workflows/tests.yml">
+    <img alt="Tests" src="https://github.com/your-org/your-repo/actions/workflows/tests.yml/badge.svg">
+  </a>
+  <a href="https://codecov.io/gh/your-org/your-repo">
+    <img alt="Coverage" src="https://codecov.io/gh/your-org/your-repo/branch/main/graph/badge.svg">
+  </a>
+  <img alt="Python" src="https://img.shields.io/badge/Python-3.10%2B-blue.svg">
+  <img alt="CUDA" src="https://img.shields.io/badge/CUDA-12.1-success.svg">
+  <a href="https://hydra.cc/"><img alt="Hydra" src="https://img.shields.io/badge/Config-Hydra-1f6feb.svg"></a>
+  <a href="https://dvc.org/"><img alt="DVC" src="https://img.shields.io/badge/Data-DVC-945dd6.svg"></a>
+  <a href="https://mlflow.org/"><img alt="MLflow" src="https://img.shields.io/badge/Tracking-MLflow-0194E2.svg"></a>
+  <a href="https://hub.docker.com/r/your-docker-namespace/spectramind-v50">
+    <img alt="Docker pulls" src="https://img.shields.io/docker/pulls/your-docker-namespace/spectramind-v50.svg">
+  </a>
+  <a href="https://github.com/your-org/your-repo/pkgs/container/spectramind-v50">
+    <img alt="GHCR" src="https://img.shields.io/badge/Container-GHCR-2b3137.svg">
+  </a>
+  <a href="https://opensource.org/licenses/MIT">
+    <img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg">
+  </a>
+  <a href="https://your-org.github.io/your-repo/">
+    <img alt="Docs" src="https://img.shields.io/badge/Docs-Website-0ea5e9.svg">
+  </a>
+  <a href="https://www.kaggle.com/competitions/ariel-data-challenge-2025">
+    <img alt="Kaggle" src="https://img.shields.io/badge/Kaggle-NeurIPS%202025%20Ariel-20BEFF.svg">
+  </a>
+  <a href="https://github.com/your-org/your-repo/releases">
+    <img alt="Release" src="https://img.shields.io/github/v/release/your-org/your-repo?display_name=tag&sort=semver">
+  </a>
+</p>
 
 ---
 
-## 📂 Directory Structure
+## 🌌 Overview
 
-```plaintext
-.github/
-├── ISSUE_TEMPLATE/          # Structured GitHub issue forms
-│   ├── bug_report.yml
-│   ├── feature_request.yml
-│   ├── documentation_request.yml
-│   ├── performance_issue.yml
-│   ├── security_report.yml
-│   ├── config_update.yml
-│   ├── task_tracking.yml
-│   ├── README.md
-│   └── architecture.md
-├── workflows/               # GitHub Actions workflows (CI/CD, diagnostics, submissions)
-│   ├── ci.yml
-│   ├── tests.yml
-│   ├── submission.yml
-│   ├── kaggle-submit.yml
-│   ├── diagnostics.yml
-│   ├── ci-dashboard.yml
-│   ├── performance.yml
-│   ├── security.yml
-│   └── ... (30+ total workflows)
-├── CODEOWNERS               # Maintainer + reviewer assignments
-├── CONTRIBUTING.md          # Contribution guidelines (CLI-first, Hydra-safe, DVC-tracked)
-├── SECURITY.md              # Security reporting & coordinated disclosure policy
-├── FUNDING.yml              # Sponsor links (if enabled)
-├── PULL_REQUEST_TEMPLATE.md # Structured PR checklist
-└── SUPPORT.md               # Support channels & community help
+**SpectraMind V50** is a neuro-symbolic, physics-informed AI pipeline for the  
+[NeurIPS 2025 Ariel Data Challenge](https://www.kaggle.com/competitions/ariel-data-challenge-2025).  
 
+It predicts **exoplanet transmission spectra (μ, σ across 283 bins)** from raw **FGS photometry** and **AIRS spectroscopy**.  
+Design principles: **NASA-grade reproducibility, CLI-first automation, Hydra configs, DVC data versioning, symbolic physics constraints.**
 
-⸻
+---
 
-📝 Issue Templates
+## 🧩 Features
 
-All issues must be filed using structured YAML forms under .github/ISSUE_TEMPLATE/.
-This ensures:
-	•	Bug Reports: CLI command, config hash, logs, repro steps.
-	•	Feature Requests: Motivation, proposed CLI/config solution, impact.
-	•	Docs Requests: File/section, missing content, proposed edits.
-	•	Performance Issues: Metrics snapshot, expected vs actual, environment.
-	•	Security Reports: Coordinated disclosure, redacted evidence, mitigations.
-	•	Config Updates: Hydra/DVC/CI config paths, YAML diffs, validation plan.
-	•	Task Tracking: DoR/DoD, subtasks, acceptance criteria, CLI repro.
+- **CLI-first** (`spectramind …`) with Typer + Hydra — discoverable, reproducible, tab-completion.
+- **Physics-informed encoders**:  
+  - FGS1 → Mamba State-Space Model (long-context sequence).  
+  - AIRS → Graph Neural Network with molecular/temporal edges.
+- **Dual decoders** → μ and σ, with uncertainty calibration (temperature scaling, COREL, conformal prediction).
+- **Symbolic logic engine** enforcing smoothness, non-negativity, molecular priors.
+- **Diagnostics**: FFT, UMAP/t-SNE, SHAP overlays, symbolic violations, calibration heatmaps.
+- **MLOps**: Hydra configs, DVC-tracked data & checkpoints, MLflow tracking (optional).
+- **CI/CD**: GitHub Actions runs training, diagnostics, submission packaging, HTML dashboard build.
 
-➡️ See ISSUE_TEMPLATE/architecture.md for the full rationale.
+---
 
-⸻
+## ⚙️ Installation
 
-⚙️ Workflows
+```bash
+# clone repo
+git clone https://github.com/your-org/your-repo.git
+cd your-repo
 
-Located under .github/workflows/, 33+ GitHub Actions define CI/CD and reproducibility guardrails:
-	•	CI / Tests: linting, unit tests, Hydra config validation, pipeline selftest ￼.
-	•	Diagnostics: generate GLL heatmaps, FFT/UMAP/t-SNE, symbolic overlays, HTML dashboards.
-	•	Submissions: validate and package Kaggle-ready ZIPs; gated kaggle-submit.yml.
-	•	Reproducibility: hash checks, config integrity, DVC pipeline consistency.
-	•	Security: CodeQL, Bandit, dependency audits, Trivy scans.
-	•	Automation: artifact sweeper, stale issue management, dependabot auto-merge.
+# setup env (Poetry recommended)
+poetry install
 
-➡️ See workflows/README.md and workflows/architecture.md.
+# or pip
+pip install -e .
+````
 
-⸻
+Docker image is published at:
+`docker pull your-docker-namespace/spectramind-v50:latest`
 
-🔐 Security & Disclosure
-	•	Vulnerabilities must be filed using security_report.yml (safe/dry-run repro only).
-	•	No secrets or payloads should be posted publicly.
-	•	See SECURITY.md for disclosure windows and maintainer contacts ￼.
+---
 
-⸻
+## 🚦 Quickstart
 
-🧭 Contribution Principles
-	•	CLI-First: All changes are validated via spectramind CLI commands ￼.
-	•	Hydra-Safe: New params/configs go through structured YAML, not code constants ￼.
-	•	DVC-Tracked: Large data/artifacts tracked by DVC, ensuring dataset/model reproducibility.
-	•	CI-Verified: No merges without green workflows and pipeline consistency checks.
-	•	Docs-Updated: README, configs.md, and CHANGELOG must reflect changes.
+```bash
+# run a pipeline self-test
+spectramind test
 
-⸻
+# calibrate telescope data
+spectramind calibrate configs/data/nominal.yaml
 
-🚀 Quick Links
-	•	📖 SpectraMind V50 Technical Plan ￼
-	•	🔬 SpectraMind V50 Project Analysis ￼
-	•	🛡️ Security Policy ￼
-	•	📝 Issue Template Architecture
-	•	⚙️ Workflows Architecture
+# train model
+spectramind train model=v50 optimizer=adamw trainer.gpus=1
 
-⸻
+# run diagnostics + dashboard
+spectramind diagnose dashboard --open
 
-✅ Summary
+# package submission
+spectramind submit --selftest
+```
 
-The .github/ directory is mission control for SpectraMind V50:
-	•	Issues → structured, reproducible, science-grade tickets.
-	•	Workflows → automated CI/CD guardrails.
-	•	Policies → enforce reproducibility, security, and transparency.
+All configs live under `configs/` and are Hydra-composable.
+Override any param on the CLI (e.g. `optimizer.lr=1e-3`).
 
-Together, they ensure the repository evolves with traceability, rigor, and Kaggle-ready discipline ￼ ￼.
+---
+
+## 🗺️ End-to-End Workflow
+
+```mermaid
+flowchart TD
+  A["User"] -->|invokes| B["spectramind CLI"]
+  B -->|compose + override| C["Hydra Configs<br/>configs folder"]
+  C --> D["Pipeline Orchestrator"]
+  D --> E["Calibration<br/>FGS and AIRS processing"]
+  E --> F["Model Training<br/>SSM + GNN -> mu, sigma"]
+  F --> G["Diagnostics and Explainability<br/>GLL, FFT, SHAP, Symbolic"]
+  G --> H["Submission Bundler<br/>selftest, manifest, zip"]
+  H --> I["Kaggle Leaderboard"]
+
+  %% artifact side rails
+  C -. "logs, overrides" .-> J["Artifacts<br/>outputs/YYYY-MM-DD/HH-MM-SS"]
+  E -. "DVC tracked data" .-> J
+  F -. "checkpoints, metrics" .-> J
+  G -. "HTML dashboard" .-> J
+  H -. "submission.zip" .-> J
+
+```
+
+---
+
+## 📂 Repository Structure
+
+```
+configs/        # Hydra YAML configs (data, model, train, diagnose, etc.)
+src/            # Core pipeline code (data, models, CLI, diagnostics)
+data/           # Raw + processed data (DVC tracked, not in Git)
+tests/          # Unit tests + CLI integration tests
+.github/        # CI workflows
+docs/           # Architecture & diagrams
+artifacts/      # Generated diagnostics, dashboards, logs
+```
+
+---
+
+## 📊 Kaggle Challenge Context
+
+* Dataset: **ESA Ariel telescope simulation** (FGS photometer, AIRS spectrometer).
+* Goal: predict mean (μ) & uncertainty (σ) spectra for \~1,100 exoplanets.
+* Runtime budget: ≤ 9h end-to-end on Kaggle GPU.
+* Metric: **Gaussian log-likelihood (GLL)** + leaderboard evaluation.
+
+---
+
+## 🤝 Contributing
+
+Contributions welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md).
+All PRs must pass `spectramind test` and CI workflows before merge.
+
+---
+
+## 📜 License
+
+MIT © 2025 \[Your Org / Your Team]
+See [LICENSE](LICENSE) for details.
+
+```
