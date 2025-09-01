@@ -1,21 +1,35 @@
 # ==============================================================================
-# params.yaml — DVC params for SpectraMind V50 (ArielSensorArray)
+# params.yaml — DVC params for SpectraMind V50
+# Neuro-symbolic, physics-informed AI for NeurIPS 2025 Ariel Challenge
 # ------------------------------------------------------------------------------
-# Use `dvc repro -S data.mode=kaggle` or `-S data.mode=debug` to switch modes.
-# All values here are safe defaults; override per-run via `-S key=value`.
+# Use:
+#   dvc repro -S data.mode=kaggle
+#   dvc repro -S data.mode=debug
+# Override any key at run-time with `-S key=value`.
+# All defaults are safe; Kaggle mode remaps paths via CLI/Hydra to /kaggle/*.
 # ==============================================================================
 
 # -----------------------------
 # Data & runtime selection
 # -----------------------------
 data:
-  mode: nominal           # nominal | kaggle | debug
-  # DVC- or env-specific paths (nominal/local defaults below; Kaggle config
-  # will remap these internally via Hydra to /kaggle/input and /kaggle/working)
+  mode: nominal                # nominal | kaggle | debug
+  # Nominal/local defaults; Kaggle remaps via Hydra/CLI to /kaggle/input & /kaggle/working
   fgs1_path: data/raw/fgs1
   airs_path: data/raw/airs
   calibration_path: data/calibrated
-  bins: 283               # AIRS spectral bins (challenge fixed)
+  work_dir: outputs            # where stage artifacts land (figs, html, metrics)
+  bins: 283                    # AIRS spectral bins (challenge fixed)
+  num_planets: 1100            # ~challenge scale; debug can reduce this
+  shuffle_files: true
+
+runtime:
+  num_workers: 4               # dataloader workers (set 2–4 on Kaggle)
+  pin_memory: true
+  persistent_workers: true
+  device: auto                 # auto | cpu | cuda
+  amp: true                    # mixed precision
+  deterministic: true          # cudnn deterministic for reproducibility (slower)
 
 # -----------------------------
 # Calibration toggles (per-step)
@@ -27,6 +41,7 @@ calibration:
   cds_correction: true
   nonlinearity: true
   phase_normalization: true
+  save_intermediate: false     # drop intermediates to save disk unless debugging
 
 # -----------------------------
 # Training
@@ -34,19 +49,43 @@ calibration:
 training:
   epochs: 20
   batch_size: 64
+  grad_accum_steps: 1
   lr: 3.0e-4
+  weight_decay: 0.01
+  optimizer: adamw
+  scheduler: cosine_warmup
+  warmup_steps: 1000
+  early_stopping_patience: 5
+  grad_clip_norm: 1.0
   seed: 42
+  val_split: 0.1
+  num_folds: 1                 # >1 enables CV loops in diagnose/submit stages
 
 # -----------------------------
 # Model (encoders/decoder)
 # -----------------------------
 model:
-  encoder: fgs1_mamba_v50       # options: fgs1_mamba_v50, ...
-  gnn: airs_gnn_gat_v50         # options: airs_gnn_gat_v50, airs_gnn_rgcn_v50, ...
-  decoder: multi_scale_decoder  # options: multi_scale_decoder, quantile_decoder, ...
+  encoder: fgs1_mamba_v50           # e.g. fgs1_mamba_v50
+  gnn: airs_gnn_gat_v50             # e.g. airs_gnn_gat_v50 | airs_gnn_rgcn_v50
+  decoder: multi_scale_decoder      # multi_scale_decoder | quantile_decoder
+  hidden_dim: 256
+  dropout: 0.1
+  activation: gelu
+  # symbolics/priors
+  enforce_nonneg: true
+  smoothness_lambda: 0.0            # >0 applies spectral smoothness regularization
 
 # -----------------------------
-# Diagnostics
+# Uncertainty & calibration
+# -----------------------------
+uncertainty:
+  predict_sigma: true               # μ/σ heads
+  conformal_corel: false            # COREL calibration (enable in post-cal)
+  temperature_scaling: true
+  temperature_init: 1.0
+
+# -----------------------------
+# Diagnostics & reports
 # -----------------------------
 diagnostics:
   save_html: true
@@ -54,6 +93,20 @@ diagnostics:
   run_umap: true
   run_tsne: false
   run_symbolic: true
+  save_png: true
+  save_json: true
+  top_k_bins: 20
+
+# -----------------------------
+# Logging / tracking (optional)
+# -----------------------------
+logging:
+  level: INFO
+  to_file: true
+  file: logs/run.log
+  mlflow: false
+  wandb: false
+  run_name: v50_nominal
 
 # -----------------------------
 # Submission
@@ -61,3 +114,13 @@ diagnostics:
 submission:
   kaggle_format: true
   validate_before_zip: true
+  out_dir: outputs/submissions
+  filename: spectramind_v50.csv
+
+# -----------------------------
+# CI / debug knobs
+# -----------------------------
+debug:
+  take_n_planets: 24           # CI/quick runs: dvc repro -S debug.take_n_planets=24
+  take_n_steps: 0              # 0 = full epoch; >0 limits training steps/epoch
+  fast_dev_run: false
