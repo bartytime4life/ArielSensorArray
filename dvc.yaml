@@ -1,39 +1,37 @@
 # ==============================================================================
-# dvc.yaml — SpectraMind V50 (ArielSensorArray)
-# ------------------------------------------------------------------------------
+# dvc.yaml — SpectraMind V50
 # Declarative, CI-safe pipeline:
 #   • raw → calibrated → train → predict → diagnostics → submit
 #   • Hydra-driven configs, DVC params/plots, Kaggle-ready bundle
 #   • Physics-informed (FGS1 Mamba, AIRS GNN) + neuro-symbolic diagnostics
 #
 # Usage:
-#   dvc repro                 # rebuild entire pipeline
-#   dvc exp run               # run an experiment with param overrides
-#   dvc plots show            # render plots configured below
-#   dvc plots diff            # compare plots across commits/experiments
+#   dvc repro
+#   dvc exp run -S data.mode=kaggle -S training.epochs=1
+#   dvc plots show
+#   dvc plots diff
 # ==============================================================================
 
 stages:
 
-  # ------------------------------------------------------------------
   calibrate:
     desc: "ADC, dark, flat, CDS, nonlinearity → calibrated cubes (FGS1 + AIRS)."
-    cmd: >
-      bash -c 'set -euo pipefail &&
-      poetry run spectramind calibrate
-        --config-dir config
-        --config-name config_v50.yaml
-        data.mode=${data.mode}
-        --input ${data.fgs1_path} ${data.airs_path}
-        --output ${data.calibration_path}
+    cmd: |
+      bash -c 'set -euo pipefail
+      poetry run spectramind calibrate \
+        --config-dir config \
+        --config-name config_v50.yaml \
+        --input ${params.data.fgs1_path} ${params.data.airs_path} \
+        --output ${params.data.calibration_path} \
         --log logs/calibration.log'
     deps:
       - config/config_v50.yaml
       - src/pipeline/calibration_pipeline.py
-      - ${data.fgs1_path}
-      - ${data.airs_path}
+      - ${params.data.fgs1_path}
+      - ${params.data.airs_path}
     outs:
-      - ${data.calibration_path}
+      - path: ${params.data.calibration_path}
+        persist: true
     outs_no_cache:
       - logs/calibration.log
     params:
@@ -41,32 +39,32 @@ stages:
       - data.fgs1_path
       - data.airs_path
       - data.calibration_path
-      - calibration  # expose per-step calibration toggles in params.yaml
+      - calibration
     metrics:
-      - logs/calibration.json
+      - logs/calibration.json:
+          cache: false
     plots:
       - logs/calibration_plots
 
-  # ------------------------------------------------------------------
   train:
     desc: "Train V50 (FGS1 Mamba + AIRS GNN + decoder) with physics/symbolic options."
-    cmd: >
-      bash -c 'set -euo pipefail &&
-      poetry run spectramind train
-        --config-dir config
-        --config-name config_v50.yaml
-        data.mode=${data.mode}
-        training.epochs=${training.epochs}
-        training.batch_size=${training.batch_size}
-        training.lr=${training.lr}
-        training.seed=${training.seed}
-        model.encoder=${model.encoder}
-        model.gnn=${model.gnn}
-        model.decoder=${model.decoder}
-        data.calibration_path=${data.calibration_path}
+    cmd: |
+      bash -c 'set -euo pipefail
+      poetry run spectramind train \
+        --config-dir config \
+        --config-name config_v50.yaml \
+        data.mode=${params.data.mode} \
+        training.epochs=${params.training.epochs} \
+        training.batch_size=${params.training.batch_size} \
+        training.lr=${params.training.lr} \
+        training.seed=${params.training.seed} \
+        model.encoder=${params.model.encoder} \
+        model.gnn=${params.model.gnn} \
+        model.decoder=${params.model.decoder} \
+        data.calibration_path=${params.data.calibration_path} \
         +outputs.dir=outputs/models'
     deps:
-      - ${data.calibration_path}
+      - ${params.data.calibration_path}
       - config/config_v50.yaml
       - src/train/train_v50.py
       - src/models/fgs1_mamba.py
@@ -81,25 +79,25 @@ stages:
       - training
       - model
     metrics:
-      - outputs/models/metrics.json
+      - outputs/models/metrics.json:
+          cache: false
     plots:
       - outputs/models/loss_curve.png
 
-  # ------------------------------------------------------------------
   predict:
     desc: "Model inference → μ, σ predictions + summary/manifest."
-    cmd: >
-      bash -c 'set -euo pipefail &&
-      poetry run spectramind predict
-        --config-dir config
-        --config-name config_v50.yaml
-        data.mode=${data.mode}
-        --model outputs/models
-        --input ${data.calibration_path}
+    cmd: |
+      bash -c 'set -euo pipefail
+      poetry run spectramind predict \
+        --config-dir config \
+        --config-name config_v50.yaml \
+        data.mode=${params.data.mode} \
+        --model outputs/models \
+        --input ${params.data.calibration_path} \
         --output outputs/predictions'
     deps:
       - outputs/models
-      - ${data.calibration_path}
+      - ${params.data.calibration_path}
       - src/predict/predict_v50.py
       - config/config_v50.yaml
     outs:
@@ -110,19 +108,19 @@ stages:
       - data.bins
       - submission.kaggle_format
     metrics:
-      - outputs/predictions/summary.json
+      - outputs/predictions/summary.json:
+          cache: false
 
-  # ------------------------------------------------------------------
   diagnostics:
     desc: "Generate HTML dashboard + JSON summary (GLL, FFT, SHAP, symbolic overlays)."
-    cmd: >
-      bash -c 'set -euo pipefail &&
-      poetry run spectramind diagnose dashboard
-        --config-dir config
-        --config-name config_v50.yaml
-        data.mode=${data.mode}
-        --pred outputs/predictions
-        --out outputs/diagnostics
+    cmd: |
+      bash -c 'set -euo pipefail
+      poetry run spectramind diagnose dashboard \
+        --config-dir config \
+        --config-name config_v50.yaml \
+        data.mode=${params.data.mode} \
+        --pred outputs/predictions \
+        --out outputs/diagnostics \
         --html-out outputs/diagnostics/report.html'
     deps:
       - outputs/predictions
@@ -140,24 +138,24 @@ stages:
       - data.mode
       - diagnostics
     metrics:
-      - outputs/diagnostics/diagnostic_summary.json
+      - outputs/diagnostics/diagnostic_summary.json:
+          cache: false
     plots:
       - outputs/diagnostics/*.png
       - outputs/diagnostics/*.html
 
-  # ------------------------------------------------------------------
   submit:
     desc: "Validate & bundle Kaggle submission."
-    cmd: >
-      bash -c 'set -euo pipefail &&
-      poetry run spectramind submit
-        --config-dir config
-        --config-name config_v50.yaml
-        data.mode=${data.mode}
-        --pred outputs/predictions
-        --bundle outputs/submission/bundle.zip
-        --meta outputs/submission/manifest.json
-        --validate ${submission.validate_before_zip}'
+    cmd: |
+      bash -c 'set -euo pipefail
+      poetry run spectramind submit \
+        --config-dir config \
+        --config-name config_v50.yaml \
+        data.mode=${params.data.mode} \
+        --pred outputs/predictions \
+        --bundle outputs/submission/bundle.zip \
+        --meta outputs/submission/manifest.json \
+        --validate ${params.submission.validate_before_zip}'
     deps:
       - outputs/predictions
       - outputs/diagnostics
@@ -172,10 +170,11 @@ stages:
       - data.mode
       - submission
     metrics:
-      - outputs/submission/manifest.json
+      - outputs/submission/manifest.json:
+          cache: false
 
 # ------------------------------------------------------------------------------
-# Global metrics/plots (DVC will discover series; HTML/PNG listed for convenience)
+# Global metrics/plots
 # ------------------------------------------------------------------------------
 metrics:
   - outputs/diagnostics/diagnostic_summary.json:
