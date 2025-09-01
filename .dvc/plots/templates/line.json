@@ -1,0 +1,50 @@
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+  "description": "Line chart template for DVC plots (training/validation loss, metrics, etc.)",
+  "mark": {
+    "type": "line",
+    "point": true,
+    "tooltip": true
+  },
+  "encoding": {
+    "x": {
+      "field": "step",
+      "type": "quantitative",
+      "axis": {
+        "title": "Step",
+        "grid": true
+      }
+    },
+    "y": {
+      "field": "value",
+      "type": "quantitative",
+      "axis": {
+        "title": "Metric Value",
+        "grid": true
+      }
+    },
+    "color": {
+      "field": "rev",
+      "type": "nominal",
+      "legend": {
+        "title": "Revision"
+      }
+    }
+  },
+  "config": {
+    "axis": {
+      "labelFontSize": 12,
+      "titleFontSize": 13
+    },
+    "legend": {
+      "labelFontSize": 12,
+      "titleFontSize": 13
+    },
+    "line": {
+      "strokeWidth": 2
+    },
+    "point": {
+      "size": 40
+    }
+  }
+}
