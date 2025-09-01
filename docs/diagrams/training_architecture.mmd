@@ -1,0 +1,44 @@
+%% SpectraMind V50 — Training / Inference
+%% Ref: FGS1-Mamba + AIRS-GNN encoders, μ/σ decoders, DVC checkpoints:contentReference[oaicite:4]{index=4}:contentReference[oaicite:5]{index=5}
+
+flowchart LR
+  subgraph IN["Inputs"]
+    X["features.npz/parquet"]
+    Y["labels (train)"]
+    CFG["Hydra configs (configs/train/*)"]
+  end
+
+  subgraph ENC["Encoders"]
+    E1["FGS1 → Mamba SSM"]
+    E2["AIRS → GNN (edge-feature aware)"]
+    FUSE["Fusion head"]
+  end
+
+  subgraph DEC["Decoders"]
+    Dmu["μ decoder"]
+    Dsig["σ decoder"]
+  end
+
+  subgraph OUT["Artifacts"]
+    CKPT["Checkpoints (DVC)"]
+    PRED["Predictions (μ, σ)"]
+    RLOG["events.jsonl / v50_debug_log.md"]
+    SNAP["Resolved YAML snapshot"]
+  end
+
+  CLI["spectramind train"] -->|Hydra compose| ENC
+  CFG --> ENC
+  X --> ENC
+  Y --> ENC
+
+  ENC --> FUSE --> DEC
+  DEC --> Dmu
+  DEC --> Dsig
+  Dmu --> PRED
+  Dsig --> PRED
+
+  PRED --> OUT
+  ENC --> CKPT
+  DEC --> CKPT
+  OUT --> RLOG
+  OUT --> SNAP
