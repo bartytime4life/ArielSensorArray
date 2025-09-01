@@ -1,10 +1,11 @@
+# syntax=docker/dockerfile:1.6
 # ------------------------------------------------------------------------------
 # SpectraMind V50 — Dockerfile
-# GPU-ready, reproducible, CI/Compose-friendly, Poetry-based
+# GPU-ready, reproducible, CI/Compose-friendly, Poetry-based, multi-stage
 #
 # Quick switches:
 #   • GPU (default): nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
-#   • CPU:          --build-arg BASE_IMAGE=python:3.11-slim
+#   • CPU:           --build-arg BASE_IMAGE=python:3.11-slim
 #
 # Build examples:
 #   docker build -t spectramind:gpu .
@@ -12,9 +13,9 @@
 #
 # Run examples:
 #   # GPU
-#   docker run --rm -it --gpus all spectramind:gpu bash
+#   docker run --rm -it --gpus all spectramind:gpu spectramind --help
 #   # CPU
-#   docker run --rm -it spectramind:cpu bash
+#   docker run --rm -it spectramind:cpu spectramind --help
 # ------------------------------------------------------------------------------
 
 # ===== 1) Base (CUDA or pure Python) =====
@@ -22,13 +23,21 @@ ARG BASE_IMAGE=nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
 FROM ${BASE_IMAGE} AS base
 
 # OCI labels
+ARG VCS_REF=unknown
+ARG BUILD_DATE=unknown
 LABEL org.opencontainers.image.title="SpectraMind V50" \
-      org.opencontainers.image.description="Neuro‑symbolic, physics‑informed AI pipeline for NeurIPS 2025 Ariel Data Challenge" \
+      org.opencontainers.image.description="Neuro-symbolic, physics-informed AI pipeline for NeurIPS 2025 Ariel Data Challenge" \
       org.opencontainers.image.vendor="SpectraMind" \
-      org.opencontainers.image.licenses="Apache-2.0"
+      org.opencontainers.image.source="https://github.com/bartytime4life/SpectraMindV50" \
+      org.opencontainers.image.revision="${VCS_REF}" \
+      org.opencontainers.image.created="${BUILD_DATE}" \
+      org.opencontainers.image.licenses="MIT"
 
 # Common env
 ENV DEBIAN_FRONTEND=noninteractive \
+    TZ=UTC \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
@@ -48,9 +57,10 @@ ARG USERNAME=dev
 ARG UID=1000
 ARG GID=1000
 
-# Detect if we're on Debian/Ubuntu vs slim Python base
-# Install minimal, practical system deps:
-#  - python3, pip, dev headers (if CUDA base may not ship Python)
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+# Detect apt-based image; install practical system deps:
+#  - python & headers (CUDA bases might not ship these)
 #  - build-essential/pkg-config: compile native wheels
 #  - git & git-lfs: repos + large files (DVC/HF)
 #  - curl, ca-certificates: secure downloads
@@ -74,56 +84,78 @@ RUN set -eux; \
       echo "Assuming Python base already contains python & pip"; \
     fi
 
-# Install Poetry (global)
+# Poetry (global)
 ENV POETRY_HOME=/opt/poetry
 RUN curl -sSL https://install.python-poetry.org | python - --version ${POETRY_VERSION} \
   && ln -s ${POETRY_HOME}/bin/poetry /usr/local/bin/poetry
 
-# Create non-root user (matching host UID/GID simplifies volume ownership)
+# Non-root user (volume ownership parity with host)
 RUN groupadd -g ${GID} ${USERNAME} \
   && useradd -m -u ${UID} -g ${GID} -s /bin/bash ${USERNAME}
 
 WORKDIR /workspace
 
-# ===== 2) Deps stage (cache-friendly) =====
+# ===== 2) Deps stage (cache-friendly, BuildKit-aware) =====
 FROM base AS deps
 
 # Copy only dependency manifests to leverage Docker layer cache
 COPY pyproject.toml poetry.lock* ./
 
-# Optional: pin pip/setuptools/wheel for reproducible builds
+# (Optional) freeze bootstrap tools for reproducibility
 RUN python -m pip install --upgrade pip setuptools wheel
 
 # Install project dependencies (no source yet, no-root to retain cache)
-RUN poetry config virtualenvs.create false \
-  && poetry install --no-interaction --no-ansi --no-root
+# BuildKit cache mounts (safe no-op when not using buildx)
+RUN --mount=type=cache,target=/root/.cache/pip \
+    poetry config virtualenvs.create false \
+ && poetry install --no-interaction --no-ansi --no-root
 
-# ===== 3) Runtime stage =====
-FROM base AS runtime
+# ===== 3) Builder stage (install project for CLI) =====
+FROM base AS build
 
-# Copy installed site-packages and scripts from deps
-# (Poetry installed into /usr/local for system Python)
+# Bring in resolved deps/site-packages and console scripts
 COPY --from=deps /usr/local /usr/local
 
-# Workdir and user
-WORKDIR /workspace
+# Copy source AFTER deps for better caching
+COPY . /workspace
+
+# Install project so entry points (e.g., `spectramind`) are available
+# If pyproject defines console_scripts, Poetry will expose them to /usr/local/bin
+RUN poetry install --no-interaction --no-ansi
+
+# Quick smoke: can we import & show help?
+RUN spectramind --help >/dev/null
+
+# ===== 4) Runtime stage (slim, non-root, tini) =====
+FROM base AS runtime
+
+# Copy the fully installed Python env + scripts from build
+COPY --from=build /usr/local /usr/local
+# Copy the working tree for runtime (needed for configs/assets; code already installed)
+COPY --chown=${UID}:${GID} . /workspace
+
+# Recommended caches and envs
+ENV HF_HOME=/home/${USERNAME}/.cache/huggingface \
+    HF_HUB_DISABLE_TELEMETRY=1 \
+    TRANSFORMERS_OFFLINE=1 \
+    PYTHONHASHSEED=0 \
+    OMP_NUM_THREADS=1 \
+    MKL_NUM_THREADS=1
+
+# Writable dirs for logs / outputs / data (bind-mount friendly)
+RUN mkdir -p /workspace/outputs /workspace/logs /workspace/data \
+ && chown -R ${UID}:${GID} /workspace /home/${USERNAME}
+
+# Switch to non-root
 USER ${USERNAME}
 
-# Copy repository AFTER deps for better caching
-# Ensure .dockerignore excludes data/, outputs/, .venv/, .dvc/cache, etc.
-COPY --chown=${UID}:${GID} . .
-
-# Optionally install the project as a package to expose entry points (CLIs)
-# Uncomment if you define console_scripts in pyproject.toml
-# RUN poetry install --no-interaction --no-ansi
-
-# Healthcheck: verify Python can import the package
-HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
-  CMD python -c "import importlib; importlib.import_module('spectramind')" >/dev/null 2>&1 || exit 1
+# Healthcheck: verify CLI import and help
+HEALTHCHECK --interval=30s --timeout=8s --start-period=45s --retries=3 \
+  CMD python -c "import importlib; importlib.import_module('spectramind')" >/dev/null 2>&1 && spectramind --help >/dev/null 2>&1 || exit 1
 
 # Tini as entrypoint for proper signal handling & zombie reaping
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["bash"]
+CMD ["spectramind", "--help"]
 
 # ------------------------------------------------------------------------------
 # Notes
@@ -131,9 +163,10 @@ CMD ["bash"]
 # 1) CUDA vs CPU:
 #    - Default GPU base: nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
 #      Build: docker build -t spectramind:gpu .
-#      Run:   docker run --rm -it --gpus all spectramind:gpu bash
+#      Run:   docker run --rm -it --gpus all spectramind:gpu spectramind --help
 #    - CPU base: --build-arg BASE_IMAGE=python:3.11-slim
 #      Build: docker build -t spectramind:cpu --build-arg BASE_IMAGE=python:3.11-slim .
+#      Run:   docker run --rm -it spectramind:cpu spectramind --help
 #
 # 2) PyTorch wheels:
 #    - For CUDA builds, PIP_EXTRA_INDEX_URL defaults to cu121 wheel index.
@@ -142,18 +175,19 @@ CMD ["bash"]
 #    - For CPU builds, set empty to avoid wrong wheel resolution:
 #        --build-arg TORCH_WHL_INDEX=
 #
-# 3) Torch Geometric (if installed by Poetry):
-#    - Make sure versions in pyproject.toml match your torch+cuda combo.
-#    - If needed, you can install wheels at runtime:
-#        pip install torch-scatter -f https://data.pyg.org/whl/torch-2.4.0+cu121.html
-#        pip install torch-sparse  -f https://data.pyg.org/whl/torch-2.4.0+cu121.html
-#        pip install torch-cluster -f https://data.pyg.org/whl/torch-2.4.0+cu121.html
+# 3) Optional runtime extras:
+#    - DVC remotes: add in pyproject (recommended) or install ad-hoc:
+#        pip install "dvc[s3]" "dvc[gdrive]"
+#    - Torch Geometric matching your torch+cuda combo (example for torch 2.4 + cu121):
+#        pip install torch-scatter     -f https://data.pyg.org/whl/torch-2.4.0+cu121.html
+#        pip install torch-sparse      -f https://data.pyg.org/whl/torch-2.4.0+cu121.html
+#        pip install torch-cluster     -f https://data.pyg.org/whl/torch-2.4.0+cu121.html
 #        pip install torch-spline-conv -f https://data.pyg.org/whl/torch-2.4.0+cu121.html
 #
-# 4) Caching:
+# 4) Layer caching:
 #    - Keep dependency install isolated in the "deps" stage with only pyproject/lock copied in.
 #    - Copy source later to avoid invalidating dependency layer on code edits.
-#    - Use BuildKit cache mounts for pip/poetry if desired (docker buildx).
+#    - BuildKit cache mounts are enabled for pip to speed up iterative builds.
 #
 # 5) Compose (GPU):
 #    version: "3.9"
@@ -175,6 +209,7 @@ CMD ["bash"]
 #    - We install only essential libs (graphviz, ffmpeg, libgl1) commonly needed by diagnostics.
 #    - Remove or add system packages according to your pipeline requirements.
 #
-# 8) Healthcheck:
-#    - Adjust the module name if your top-level package is not 'spectramind'.
+# 8) Entrypoint:
+#    - Defaults to `spectramind --help`. Override with subcommands, e.g.:
+#      docker run --rm --gpus all -v $PWD:/workspace spectramind:gpu spectramind train --config-name=config_v50.yaml
 # ------------------------------------------------------------------------------
