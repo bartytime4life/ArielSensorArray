@@ -189,6 +189,8 @@ This generates synthetic data, runs the full pipeline, and writes an HTML+PNG pa
 
 ## 9) Workflow diagram
 
+## 9) Workflow diagram
+
 ```mermaid
 flowchart LR
   A[Latents (.npy/.npz/.csv)] --> C{Merge}
@@ -203,7 +205,6 @@ flowchart LR
 
   %% side-effect logging
   C --> I[Append run row → v50_debug_log.md]
-```
 
 ---
 
