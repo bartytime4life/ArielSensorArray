@@ -1,0 +1,30 @@
+%% SpectraMind V50 — Preprocess & Packaging
+%% Ref: QC/SNR, feature assembly, artifacting:contentReference[oaicite:2]{index=2}:contentReference[oaicite:3]{index=3}
+
+flowchart LR
+  subgraph IN["From Calibration (DVC)"]
+    A1["FGS1 calibrated cube"]
+    A2["AIRS calibrated cube"]
+    M1["Metadata (ephemerides, masks)"]
+  end
+
+  subgraph PREP["QC & Feature Packaging"]
+    Q1["QC checks (bad frames, flags)"]
+    Q2["SNR estimation"]
+    F1["Feature build: FGS1 (temporal)"]
+    F2["Feature build: AIRS (spectral 283 bins)"]
+    F3["Join w/ metadata"]
+  end
+
+  subgraph OUT["Packaged Features (artifacts/)"]
+    PF["features.npz / parquet"]
+  end
+
+  CLI["spectramind calibrate --with-qc"] --> PREP
+  LOG["events.jsonl / v50_debug_log.md"]
+
+  A1 --> PREP
+  A2 --> PREP
+  M1 --> PREP
+  PREP --> PF
+  PREP --> LOG
