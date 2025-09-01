@@ -1,64 +1,156 @@
 # ==============================================================================
-# SpectraMind V50 — Git Attributes for DVC Integration
+
+# SpectraMind V50 — Git Attributes for DVC Integration (Upgraded)
+
 # ------------------------------------------------------------------------------
+
 # Purpose:
-#   • Normalize text file handling across platforms (LF endings, no CRLF drift)
-#   • Ensure all DVC-managed data/artifacts bypass Git LFS & diff/merge filters
-#   • Restrict Git LFS use to docs/media assets only (never pipeline data)
-#   • Provide CI- and Kaggle-safe reproducibility with clean diffs and merges
+
+# • Normalize text handling cross-platform (LF; avoid CRLF drift)
+
+# • Keep DVC-managed data/artifacts out of Git LFS & diff/merge filters
+
+# • Reserve Git LFS ONLY for human-facing docs/media (never pipeline data)
+
+# • Produce clean diffs/merges in CI, Kaggle, and local dev
+
+#
+
+# Placement:
+
+# Save this file at the REPO ROOT as `.gitattributes`
+
 # ==============================================================================
 
-# ───────────────────────── Core Defaults ─────────────────────────
-* text=auto eol=lf          # Normalize all text → LF endings
+# ───────────────────────── Core Text Defaults ─────────────────────────
 
-# Common text-based formats (always treated as text)
-*.md      text
-*.txt     text
-*.csv     text
-*.tsv     text
-*.json    text
-*.yaml    text
-*.yml     text
-*.toml    text
-*.ini     text
-*.py      text
-*.sh      text
-*.ipynb   text
+* text=auto eol=lf
 
-# DVC pipeline metadata (always text, never LFS)
+# Common text formats (always text; normalized to LF)
+
+\*.md      text
+\*.txt     text
+\*.csv     text
+\*.tsv     text
+\*.json    text
+\*.jsonl   text
+\*.yaml    text
+\*.yml     text
+\*.toml    text
+\*.ini     text
+\*.cfg     text
+\*.conf    text
+\*.py      text
+\*.pyi     text
+\*.ipynb   text
+\*.sh      text
+\*.bash    text
+\*.zsh     text
+\*.mmd     text
+Makefile  text
+\*.mk      text
+Dockerfile text
+
+# DVC pipeline metadata (ALWAYS text; NEVER LFS)
+
 dvc.yaml     text
-*.dvc        text
+dvc.lock     text
+\*.dvc        text
 .dvcignore   text
 
+# Keep DVC’s own control area visible & textual
+
+.dvc/config  text
+.dvc/\*       text
+
 # ───────────────────────── DVC-Managed Data/Artifacts ─────────────────────────
-# Explicitly disable Git LFS, diff, and merge drivers on DVC-tracked paths.
-# These are versioned via DVC (pointer files in Git, blobs in cache/remote).
-data/**        -filter -diff -merge
-outputs/**     -filter -diff -merge
-models/**      -filter -diff -merge
-artifacts/**   -filter -diff -merge
-logs/**        -filter -diff -merge
-.dvc/**        -filter -diff -merge
+
+# Disable LFS, custom diff, and merge drivers on DVC-tracked trees.
+
+# (Data lives in DVC cache/remote; Git only versions lightweight pointers.)
+
+data/\*\*        -filter -diff -merge -text
+outputs/\*\*     -filter -diff -merge -text
+models/\*\*      -filter -diff -merge -text
+artifacts/\*\*   -filter -diff -merge -text
+logs/\*\*        -filter -diff -merge -text
+
+# Extra safety: common scientific binaries that should never be LFS here
+
+# (Most will be under DVC; these patterns prevent accidental LFS capture)
+
+\*.npz          -filter -diff -merge -text
+\*.npy          -filter -diff -merge -text
+\*.pt           -filter -diff -merge -text
+\*.pth          -filter -diff -merge -text
+\*.onnx         -filter -diff -merge -text
+\*.ckpt         -filter -diff -merge -text
+\*.h5           -filter -diff -merge -text
+\*.hd5          -filter -diff -merge -text
+\*.hdf5         -filter -diff -merge -text
+\*.fits         -filter -diff -merge -text
+\*.fz           -filter -diff -merge -text
 
 # ───────────────────────── Optional: Git LFS for Docs/Media ───────────────────
-# Safe for human-facing assets only. NOT used for pipeline data.
-# Enable with:   git lfs install
-docs/**/*.{png,jpg,jpeg,gif,webp,svg} filter=lfs diff=lfs merge=lfs -text
-docs/**/*.{pdf,mp4,mov,avi}           filter=lfs diff=lfs merge=lfs -text
 
-# Optional: allow LFS for large images in site/ (e.g., dashboards, docs site)
-site/**/*.{png,jpg,jpeg,gif,webp,svg} filter=lfs diff=lfs merge=lfs -text
+# Human-facing assets only. Do NOT use LFS for pipeline data.
+
+# Enable once per machine: `git lfs install`
+
+docs/**/\*.png  filter=lfs diff=lfs merge=lfs -text
+docs/**/*.jpg  filter=lfs diff=lfs merge=lfs -text
+docs/\*\*/*.jpeg filter=lfs diff=lfs merge=lfs -text
+docs/**/\*.gif  filter=lfs diff=lfs merge=lfs -text
+docs/**/*.webp filter=lfs diff=lfs merge=lfs -text
+docs/\*\*/*.svg  filter=lfs diff=lfs merge=lfs -text
+docs/**/\*.pdf  filter=lfs diff=lfs merge=lfs -text
+docs/**/*.mp4  filter=lfs diff=lfs merge=lfs -text
+docs/\*\*/*.mov  filter=lfs diff=lfs merge=lfs -text
+docs/\*\*/\*.avi  filter=lfs diff=lfs merge=lfs -text
+
+# Static site / dashboards (if published)
+
+site/**/\*.png   filter=lfs diff=lfs merge=lfs -text
+site/**/*.jpg   filter=lfs diff=lfs merge=lfs -text
+site/\*\*/*.jpeg  filter=lfs diff=lfs merge=lfs -text
+site/**/\*.gif   filter=lfs diff=lfs merge=lfs -text
+site/**/*.webp  filter=lfs diff=lfs merge=lfs -text
+site/\*\*/*.svg   filter=lfs diff=lfs merge=lfs -text
+site/**/\*.pdf   filter=lfs diff=lfs merge=lfs -text
+site/**/*.mp4   filter=lfs diff=lfs merge=lfs -text
+site/\*\*/*.mov   filter=lfs diff=lfs merge=lfs -text
+site/\*\*/\*.avi   filter=lfs diff=lfs merge=lfs -text
+
+# Mermaid renders (optional LFS if large)
+
+outputs/diagrams/**/\*.png filter=lfs diff=lfs merge=lfs -text
+outputs/diagrams/**/\*.svg filter=lfs diff=lfs merge=lfs -text
 
 # ───────────────────────── Safety Rails ─────────────────────────
-# Never let Git LFS intercept DVC or config files.
-*.dvc          -filter -diff -merge
-dvc.yaml       -filter -diff -merge
-.dvc/config    -filter -diff -merge
 
-# ==============================================================================
-# Notes:
-# • Keep this file at repo root as `.gitattributes`
-# • Pipeline data (data/, outputs/, models/, etc.) MUST stay under DVC
-# • Only use Git LFS for docs/media; never for scientific pipeline artifacts
-# • Guarantees clean diffs, no accidental binary pollution in Git history
+# Never let Git LFS or drivers intercept DVC/Git config & pipeline controls
+
+\*.dvc           -filter -diff -merge
+dvc.yaml        -filter -diff -merge
+dvc.lock        -filter -diff -merge
+.dvc/config     -filter -diff -merge
+.gitattributes  -filter -diff -merge
+.gitignore      -filter -diff -merge
+
+# Guard common lock/state files to minimize merge noise (keep text, default merge)
+
+poetry.lock     text -filter -diff -merge
+package-lock.json text -filter -diff -merge
+yarn.lock       text -filter -diff -merge
+
+# ───────────────────────── GitHub Linguist Hints (Optional) ───────────────────
+
+# Keep repo language stats focused on source, not generated artifacts
+
+outputs/\*\* linguist-generated
+benchmarks/\*\* linguist-generated
+aggregated/\*\* linguist-generated
+docs/site/\*\* linguist-generated
+diagrams/out/\*\* linguist-generated
+
 # ==============================================================================
