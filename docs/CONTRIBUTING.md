@@ -102,11 +102,11 @@ mkdocs serve
 
 ```mermaid
 flowchart TD
-    subgraph CLI (Typer Entrypoint)
-        A0[spectramind calibrate] --> P1[Data Calibration<br/>(bias, dark, flat, wavelength)]
-        A1[spectramind train] --> P2[Model Training<br/>SSM + GNN + Decoders]
-        A2[spectramind diagnose] --> P3[Diagnostics<br/>UMAP/t-SNE, SHAP, Symbolic, FFT]
-        A3[spectramind submit] --> P4[Submission Bundle<br/>μ, σ, leaderboard.zip]
+    subgraph CLI["Typer Entrypoint"]
+        A0["spectramind calibrate"] --> P1["Data Calibration\n(bias, dark, flat, wavelength)"]
+        A1["spectramind train"] --> P2["Model Training\nSSM + GNN + Decoders"]
+        A2["spectramind diagnose"] --> P3["Diagnostics\nUMAP/t-SNE, SHAP, Symbolic, FFT"]
+        A3["spectramind submit"] --> P4["Submission Bundle\nμ, σ, leaderboard.zip"]
     end
 
     P1 --> P2
