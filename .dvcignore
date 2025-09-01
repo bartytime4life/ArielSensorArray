@@ -1,77 +1,160 @@
 # ==============================================================================
+
 # .dvcignore — SpectraMind V50 (NeurIPS 2025 Ariel Data Challenge)
+
 # ------------------------------------------------------------------------------
+
 # Purpose:
-#   • Prevent DVC from scanning ephemeral / reproducible files, caches, CI outputs
-#   • Speed up `dvc status` / `dvc repro` by scoping to true data/model artifacts
-#   • Keep Git, Docker, Kaggle, Hydra, and ML ecosystem ignores aligned
-#   • Ensure secrets and transient outputs are never versioned
+
+# • Prevent DVC from scanning ephemeral / reproducible files, caches, CI outputs
+
+# • Speed up `dvc status` / `dvc repro` by scoping to true data/model artifacts
+
+# • Keep Git, Docker, Kaggle, Hydra, and ML ecosystem ignores aligned
+
+# • Ensure secrets and transient outputs are never versioned
+
+#
+
+# Notes:
+
+# • .dvcignore affects what DVC scans; it does NOT affect Git. Track true
+
+# datasets/models via `dvc add` and keep ephemeral/generated bits ignored here.
+
+# • Keep this file logically in sync with: .gitignore, .dockerignore
+
 # ==============================================================================
 
 # ----------------------------------------------------------------------
-# Python build & cache
-__pycache__/
-*.py[cod]
-*.pyd
-*.so
-*.egg-info/
-*.egg
-*.whl
-*.pkl
-*.dill
+
+# Python builds, bytecode & caches
 
 # ----------------------------------------------------------------------
-# Virtual environments & package managers
+
+**pycache**/
+\*.py\[cod]
+\*.pyd
+\*.so
+\*.dll
+\*.dylib
+\*.egg-info/
+\*.egg
+\*.whl
+\*.pkl
+\*.dill
+\*.prof
+\*.lprof
+.pyre/
+.pytype/
+.pyright/
 .venv/
 venv/
 env/
 ENV/
-.poetry/
-pip-wheel-metadata/
 site-packages/
+pip-wheel-metadata/
 .cache/
 .python-version
 
 # ----------------------------------------------------------------------
-# IDE/editor settings
-.vscode/
-.idea/
-*.swp
-*.swo
+
+# Package managers / tooling caches
 
 # ----------------------------------------------------------------------
+
+.poetry/
+.poetry-cache/
+.pre-commit-cache/
+npm-cache/
+.yarn/
+.pnpm-store/
+.parcel-cache/
+.vite/
+.rollup.cache/
+webpack-cache/
+node\_modules/
+pnpm-lock.yaml.tmp
+yarn-error.log
+npm-debug.log\*
+
+# ----------------------------------------------------------------------
+
+# IDE / editor settings
+
+# ----------------------------------------------------------------------
+
+.vscode/
+.idea/
+\*.swp
+\*.swo
+\*.swn
+\*.swo
+\*.orig
+
+# ----------------------------------------------------------------------
+
 # OS / system junk
-.DS_Store
+
+# ----------------------------------------------------------------------
+
+.DS\_Store
 Thumbs.db
 Desktop.ini
 
 # ----------------------------------------------------------------------
+
 # Logs & temporary artifacts
-logs/
-*.log
-*.tmp
-*.bak
-*.old
-*.pid
-*.lock
 
 # ----------------------------------------------------------------------
+
+logs/
+run\_logs/
+\*.log
+\*.tmp
+\*.temp
+\*.bak
+\*.old
+\*.pid
+\*.lock
+\*.cache
+\*.trace
+\*.out
+\*.err
+
+# Project-wide debug logs (avoid DVC scanning)
+
+v50\_debug\_log.md
+
+# ----------------------------------------------------------------------
+
 # Test/coverage caches & build artifacts
+
+# ----------------------------------------------------------------------
+
 dist/
 build/
 .eggs/
 coverage/
-.coverage*
-pytest_cache/
-.ruff_cache/
-.mypy_cache/
+.coverage\*
+coverage.xml
+htmlcov/
+.pytest\_cache/
+pytest\_cache/
+.ruff\_cache/
+.mypy\_cache/
 .tox/
 .nox/
-.pytest_cache/
-htmlcov/
+.pytype/
+.mutmut-cache/
+.lcov-report/
 
 # ----------------------------------------------------------------------
+
 # Intermediate & scratch outputs
+
+# ----------------------------------------------------------------------
+
 outputs/checkpoints/
 outputs/intermediate/
 outputs/temp/
@@ -79,24 +162,62 @@ outputs/cache/
 outputs/debug/
 outputs/tmp/
 outputs/sandbox/
+outputs/artifacts/
 scratch/
 .simulations/
 experiments/
-ray_results/
-optuna_study/
+ray\_results/
+ray\_tune/
+optuna/
+optuna\_study/
+lightning\_logs/
+
+# Common large temporaries
+
+*.tmp.*
+\*.partial
+\*.part
 
 # ----------------------------------------------------------------------
+
 # Model bundles & artifacts (tracked selectively via DVC)
-*.ckpt
-*.pth
-*.pt
-*.onnx
-*.h5
-*.tar.gz
-*.mlmodel
 
 # ----------------------------------------------------------------------
+
+\*.ckpt
+\*.pth
+\*.pt
+\*.safetensors
+\*.onnx
+\*.h5
+\*.tar
+\*.tar.gz
+\*.tgz
+\*.mlmodel
+models/
+checkpoints/
+
+# ----------------------------------------------------------------------
+
+# Data lake / data workspace (speed up scans; track via `dvc add`)
+
+# ----------------------------------------------------------------------
+
+data/.cache/
+data/cache/
+data/tmp/
+data/temp/
+data/interim/
+data/derived/
+data/scratch/
+data/.DS\_Store
+
+# ----------------------------------------------------------------------
+
 # Kaggle / competition specifics
+
+# ----------------------------------------------------------------------
+
 .kaggle/
 kaggle.json
 input/
@@ -104,30 +225,49 @@ working/
 .kernels/
 kernel-metadata.json
 
-# Kaggle kernel checkpoints & notebooks
-*.ipynb
-.ipynb_checkpoints/
-notebooks/.ipynb_checkpoints/
+# Kaggle kernel checkpoints & notebooks (DVC should not scan)
+
+\*.ipynb
+.ipynb\_checkpoints/
+notebooks/.ipynb\_checkpoints/
 
 # ----------------------------------------------------------------------
+
 # Hugging Face / ML frameworks caches
+
+# ----------------------------------------------------------------------
+
 .huggingface/
-transformers_cache/
+transformers\_cache/
 datasets/
 models/
 wandb/
 mlruns/
 tensorboard/
-tb_logs/
-ray_tune/
-optuna/
+tb\_logs/
+comet-ml/
+
+# JAX/XLA / PyTorch compile caches (repo-local)
+
+.xla\_cache/
+.pyTorch\_FX\_cache/
 
 # ----------------------------------------------------------------------
-# GUI / UX artifacts
+
+# GUI / web app build artifacts
+
+# ----------------------------------------------------------------------
+
 gui/.cache/
 gui/dist/
 gui/build/
-gui/node_modules/
+gui/.next/
+gui/.nuxt/
+gui/.svelte-kit/
+gui/node\_modules/
+
+# Static assets generated by pipelines (reproducible)
+
 assets/screenshots/
 assets/plots/
 assets/tmp/
@@ -136,16 +276,48 @@ assets/**.svg
 assets/**.jpg
 assets/**.jpeg
 assets/**.gif
+assets/**.webp
+assets/**.mp4
+assets/**.webm
+assets/\*\*.pdf
 
 # ----------------------------------------------------------------------
+
+# Documentation builds / diagram caches
+
+# ----------------------------------------------------------------------
+
+docs/site/
+site/
+\_build/
+.doctrees/
+.mermaid-cache/
+diagrams/.cache/
+docs/.cache/
+\*.aux
+\*.toc
+
+# ----------------------------------------------------------------------
+
 # DVC internals
+
+# ----------------------------------------------------------------------
+
 .dvc/cache/
 .dvc/tmp/
 .dvc/plots/
 .dvc/config.local
 
+# Optional: exclude local remote workspace mounts (if any)
+
+.dvc/local\_\*
+
 # ----------------------------------------------------------------------
+
 # Diagnostics, reports & dashboards (reproducible)
+
+# ----------------------------------------------------------------------
+
 outputs/diagnostics/
 outputs/**.html
 outputs/**.htm
@@ -156,48 +328,96 @@ outputs/**.jpeg
 outputs/**.gif
 outputs/**.pdf
 outputs/**.csv
+outputs/**.parquet
+outputs/**.feather
 outputs/**.json
-outputs/**.md
+outputs/\*\*.md
+reports/
+artifacts/
+diagnostic\_summary.json
+pipeline\_consistency\_report.json
+run\_hash\_summary\_v50.json
+version\_manifest.json
+manifest.json
+config\_snapshot.yaml
 
 # ----------------------------------------------------------------------
+
 # Submission bundles (reproducible via pipeline)
+
+# ----------------------------------------------------------------------
+
 outputs/submission.csv
 outputs/submission.zip
-outputs/submission_bundle.zip
-outputs/submission/**/*.zip
-outputs/submission/**/*.csv
+outputs/submission\_bundle.zip
+outputs/submission/**/\*.zip
+outputs/submission/**/\*.csv
 
 # ----------------------------------------------------------------------
-# Generated configs, manifests & run artifacts
-hydra_outputs/
+
+# Hydra & multirun outputs
+
+# ----------------------------------------------------------------------
+
+hydra\_outputs/
 multirun/
-run_logs/
-manifest.json
-diagnostic_summary.json
-run_hash_summary_v50.json
-version_manifest.json
-pipeline_consistency_report.json
-config_snapshot.yaml
 
 # ----------------------------------------------------------------------
+
 # Secrets & local creds (never track in DVC)
+
+# ----------------------------------------------------------------------
+
 .env
+.env.\*
 .envrc
 .aws/
 .gcloud/
 .azure/
 secrets.yaml
+secrets.yml
 secrets.json
 credentials.json
 token.json
-hf_token.txt
+hf\_token.txt
+gcloud.json
+azure\_credentials.json
 
 # ----------------------------------------------------------------------
-# CI/CD scaffolding
+
+# CI/CD scaffolding & security artifacts
+
+# ----------------------------------------------------------------------
+
 .git/
 .github/
 .gitattributes
 .gitignore
-*.sbom.json
-*.sbom.spdx
-*.cyclonedx.json
+\*.sbom.json
+\*.sbom.spdx
+\*.cyclonedx.json
+sbom/
+codeql-db/
+trivy-report.json
+grype-report.json
+syft-output.json
+
+# ----------------------------------------------------------------------
+
+# Server / API build output (reproducible)
+
+# ----------------------------------------------------------------------
+
+src/server/static/
+src/server/dist/
+src/server/**pycache**/
+
+# ----------------------------------------------------------------------
+
+# Local web server artifact mounts (served copies of outputs/)
+
+# ----------------------------------------------------------------------
+
+public/
+static/
+.artifacts/
