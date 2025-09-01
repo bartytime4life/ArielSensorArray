@@ -68,6 +68,11 @@ env:
   TRANSFORMERS_OFFLINE: "1"
   HF_HUB_OFFLINE: "1"
   HYDRA_FULL_ERROR: "1"
+  # Deterministic CPU math
+  OMP_NUM_THREADS: "1"
+  MKL_NUM_THREADS: "1"
+  OPENBLAS_NUM_THREADS: "1"
+  NUMEXPR_NUM_THREADS: "1"
   # Flip to '1' once mypy is green to make it blocking in hygiene job
   STRICT_MYPY: "0"
 
