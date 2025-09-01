@@ -1,0 +1,95 @@
+# ==============================================================================
+# 📊 .github/workflows/diagrams.yml
+# SpectraMind V50 (NeurIPS 2025 Ariel Data Challenge)
+# ------------------------------------------------------------------------------
+# Purpose:
+#   • Automatically render all Mermaid diagrams in docs/diagrams/*.md
+#   • Export diagrams to SVG + PNG for embedding in README/docs
+#   • Keep docs/diagrams/*.svg tracked in Git for CI/CD + dashboard sync
+#   • Ensure diagrams are reproducible, versioned, and CI-validated
+#
+# Triggers:
+#   • On push/PR to main/docs branches
+#   • On manual workflow dispatch
+#
+# Outputs:
+#   • ./docs/diagrams/*.svg + *.png
+#   • Commit back via GitHub Actions bot (if enabled)
+# ==============================================================================
+
+name: Render Mermaid Diagrams
+
+on:
+  push:
+    branches: [ main, docs, develop ]
+    paths:
+      - "docs/diagrams/**.md"
+      - ".github/workflows/diagrams.yml"
+  pull_request:
+    branches: [ main, docs ]
+    paths:
+      - "docs/diagrams/**.md"
+  workflow_dispatch:
+
+jobs:
+  render-mermaid:
+    runs-on: ubuntu-latest
+
+    steps:
+      # -------------------------------
+      # Checkout repository
+      # -------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # -------------------------------
+      # Setup Node + Mermaid CLI
+      # -------------------------------
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Mermaid CLI
+        run: npm install -g @mermaid-js/mermaid-cli
+
+      # -------------------------------
+      # Render Mermaid diagrams
+      # -------------------------------
+      - name: Find and render diagrams
+        run: |
+          mkdir -p docs/diagrams/rendered
+          for file in docs/diagrams/*.md; do
+            base=$(basename "$file" .md)
+            # extract mermaid code blocks → .mmd
+            awk '/```mermaid/{flag=1;next}/```/{flag=0}flag' "$file" > docs/diagrams/$base.mmd || true
+            if [ -s docs/diagrams/$base.mmd ]; then
+              echo "Rendering $base.mmd → SVG+PNG"
+              mmdc -i docs/diagrams/$base.mmd -o docs/diagrams/rendered/$base.svg
+              mmdc -i docs/diagrams/$base.mmd -o docs/diagrams/rendered/$base.png
+            fi
+          done
+
+      # -------------------------------
+      # Upload artifacts for inspection
+      # -------------------------------
+      - name: Upload rendered diagrams
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagrams
+          path: docs/diagrams/rendered/
+
+      # -------------------------------
+      # Optional: Commit back rendered diagrams
+      # -------------------------------
+      - name: Commit rendered diagrams
+        if: github.ref == 'refs/heads/main'
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          cp docs/diagrams/rendered/* docs/diagrams/
+          git add docs/diagrams/*.svg docs/diagrams/*.png
+          git commit -m "ci(diagrams): update rendered Mermaid diagrams [skip ci]" || echo "No changes to commit"
+          git push
