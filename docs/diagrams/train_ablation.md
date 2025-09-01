@@ -17,20 +17,20 @@ The design emphasizes:
 flowchart TD
   U[User CLI Call] -->|spectramind ablate ...| E0[Typer Entrypoint]
 
-  E0 --> H0[Hydra Compose<br/>(train/ablation.yaml + overrides)]
+  E0 --> H0[Hydra Compose - train/ablation.yaml + overrides]
   H0 --> A0[Ablation Engine]
 
   A0 -->|Generate run grid| A1{Configs i=1..N}
 
-  subgraph RUN[Parallel/Sequential Runs]
+  subgraph RUN [Parallel or Sequential Runs]
     direction TB
-    R1[Trainer (i)] --> R2[Metrics & Artifacts (i)] --> R3[Predictions μ, σ (i)]
+    R1[Trainer i] --> R2[Metrics and Artifacts i] --> R3[Predictions mu and sigma i]
   end
 
   A1 --> RUN
   R2 --> D0[Diagnostics Collation]
   R3 --> D0
-  D0 --> L0[Leaderboard Export<br/>(MD + HTML)]
+  D0 --> L0[Leaderboard Export - MD + HTML]
 
   %% side outputs
   R2 --> L1[(events.jsonl)]
@@ -50,7 +50,7 @@ flowchart TD
 ### Runs
 
 * Each config instance → `Trainer(i)` executes a **training run** with consistent logging.
-* Artifacts: checkpoints, metrics, predictions (μ, σ).
+* Artifacts: checkpoints, metrics, predictions (mu, sigma).
 * Config + dataset version hashes stored alongside logs.
 
 ### Diagnostics
@@ -118,4 +118,4 @@ flowchart TD
 
 **End of Document**
 
-````
+```
