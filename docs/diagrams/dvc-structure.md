@@ -14,23 +14,23 @@ It pairs with our CLI-first + Hydra configs + DVC versioning strategy for NASA-g
 
 ```mermaid
 flowchart LR
-  subgraph GIT[Git-tracked (commit to repo)]
-    A[src/** (code)]
-    B[configs/** (Hydra YAMLs)]
-    C[dvc.yaml (pipeline DAG)]
+  subgraph GIT["Git-tracked (commit to repo)"]
+    A["src/** (code)"]
+    B["configs/** (Hydra YAMLs)"]
+    C["dvc.yaml (pipeline DAG)"]
     D["*.dvc (pointers)"]
     E[".dvc/config (shared, no secrets)"]
     F[".dvc/plots/** (specs/templates)"]
   end
 
-  subgraph DVC[DVC-tracked (stored in remote, referenced in Git)]
-    G[data/** (raw, processed)]
-    H[artifacts/** (intermediates)]
-    I[models/** (checkpoints)]
-    J[outputs/** (large reports)]
+  subgraph DVC["DVC-tracked (stored in remote, referenced in Git)"]
+    G["data/** (raw, processed)"]
+    H["artifacts/** (intermediates)"]
+    I["models/** (checkpoints)"]
+    J["outputs/** (large reports)"]
   end
 
-  subgraph IGNORED[Ignored (machine-local, non-reproducible)]
+  subgraph IGNORED["Ignored (machine-local, non-reproducible)"]
     K[".dvc/cache/**"]
     L[".dvc/tmp/** (locks, runs, exp cache)"]
     M[".dvc/state/** (sqlite)"]
@@ -45,9 +45,20 @@ flowchart LR
   A -->|uses| C
   B -->|composed by| C
   C -->|produces pointers| D
-  D -->|references| G & H & I & J
+  D -->|references| G
+  D -->|references| H
+  D -->|references| I
+  D -->|references| J
 
-  K & L & M & N & O & P & Q & R & S -.->|never commit| IGNORED
+  K -.->|never commit| IGNORED
+  L -.->|never commit| IGNORED
+  M -.->|never commit| IGNORED
+  N -.->|never commit| IGNORED
+  O -.->|never commit| IGNORED
+  P -.->|never commit| IGNORED
+  Q -.->|never commit| IGNORED
+  R -.->|never commit| IGNORED
+  S -.->|never commit| IGNORED
 ````
 
 **Legend**
