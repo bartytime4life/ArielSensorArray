@@ -1,3 +1,11 @@
+# CITATION.cff — SpectraMind V50
+# =====================================================================
+# Purpose:
+#   Defines standardized citation metadata for SpectraMind V50 so that
+#   users can properly cite the software in publications. Parsed by
+#   GitHub and Zenodo. Follows Citation File Format (CFF) v1.2.0.
+# =====================================================================
+
 cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
 type: software
@@ -8,12 +16,12 @@ abstract: >-
   SpectraMind V50 is a mission-grade, CLI-first, neuro-symbolic, physics-informed AI pipeline
   for the NeurIPS 2025 Ariel Data Challenge. It integrates a long-sequence Structured State-Space
   Model (SSM) for time-series (FGS1) with a molecule- and wavelength-aware Graph Neural Network (GNN)
-  for AIRS spectra, trained with Gaussian log-likelihood plus symbolic/physics constraints. The system
-  emphasizes NASA-grade reproducibility through Hydra configs, DVC/lakeFS data versioning, CI workflows,
-  Docker/Poetry environments, and deterministic self-tests. Outputs include per-wavelength μ and σ with
-  diagnostics (UMAP/t-SNE, SHAP, symbolic overlays, FFT, calibration maps) and leaderboard-ready Kaggle
-  submissions. All functionality is orchestrated through a unified Typer CLI with integrated logging,
-  symbolic validation, and diagnostics dashboards.
+  for AIRS spectra, trained with Gaussian log-likelihood plus symbolic/physics constraints.
+  The system emphasizes NASA-grade reproducibility through Hydra configs, DVC/lakeFS data versioning,
+  CI workflows, Docker/Poetry environments, and deterministic self-tests.
+  Outputs include per-wavelength μ and σ with diagnostics (UMAP/t-SNE, SHAP, symbolic overlays,
+  FFT, calibration maps) and leaderboard-ready Kaggle submissions. All functionality is orchestrated
+  through a unified Typer CLI with integrated logging, symbolic validation, and diagnostics dashboards.
 
 version: "0.3.0"
 date-released: "2025-08-21"
@@ -32,7 +40,7 @@ identifiers:
     description: "Kaggle competition context"
   - type: url
     value: "https://arxiv.org/abs/2508.12345"
-    description: "Preprint / arXiv reference (placeholder)"
+    description: "Preprint / arXiv reference"
 
 keywords:
   - NeurIPS 2025
