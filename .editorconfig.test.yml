@@ -1,0 +1,107 @@
+```yaml
+# ==============================================================================
+# .editorconfig.test.yml — Hydra-safe config for EditorConfig CI enforcement
+# SpectraMind V50 (ArielSensorArray)
+# Purpose: Drive pre-commit / CI checks that .editorconfig rules are respected
+# ==============================================================================
+
+# Hydra basics (keeps this runnable via `python -m ...` or your CLI wrapper)
+defaults:
+  - override hydra/job_logging: default
+  - override hydra/hydra_logging: default
+
+hydra:
+  run:
+    dir: outputs/hydra/${now:%Y-%m-%d}/${now:%H-%M-%S}/editorconfig
+  output_subdir: .
+
+# ------------------------------------------------------------------------------
+# Tooling configuration
+# - Uses the `editorconfig-checker` CLI (https://github.com/editorconfig-checker/editorconfig-checker)
+# - See also: pre-commit hook `editorconfig-checker` for local enforcement.
+# ------------------------------------------------------------------------------
+editorconfig_test:
+  tool: editorconfig-checker
+  # Any 3.x should be fine; keep in sync with pre-commit and CI image.
+  version: ">=3.3.0"
+  fail_on_warnings: true
+
+  # Explicit include patterns (globs) — keep aligned with repo file types.
+  include:
+    - "**/*.py"
+    - "**/*.ipynb"
+    - "**/*.md"
+    - "**/*.rst"
+    - "**/*.yml"
+    - "**/*.yaml"
+    - "**/*.json"
+    - "**/*.jsonl"
+    - "**/*.toml"
+    - "**/*Dockerfile*"
+    - "**/*Makefile*"
+    - "**/*.ts"
+    - "**/*.tsx"
+    - "**/*.js"
+    - "**/*.jsx"
+    - "**/*.csv"
+    - "**/*.tsv"
+    - "**/*.txt"
+    - "**/*.ini"
+
+  # Exclusions: caches, large artifacts, data, envs, build outputs, etc.
+  exclude:
+    - ".git/**"
+    - ".dvc/**"
+    - ".venv/**"
+    - "venv/**"
+    - "env/**"
+    - "site-packages/**"
+    - ".mypy_cache/**"
+    - ".pytest_cache/**"
+    - ".ruff_cache/**"
+    - "node_modules/**"
+    - "build/**"
+    - "dist/**"
+    - "data/**"
+    - "artifacts/**"
+    - "outputs/**"
+    - "logs/**"
+    - "wandb/**"
+    - "mlruns/**"
+
+  # Environment/flags for the checker. Most repos just need EC_CONFIG.
+  env:
+    EC_CONFIG: ".editorconfig"
+
+  # Shell commands (used by CI or local runner). The checker auto-detects .editorconfig.
+  commands:
+    check: "editorconfig-checker"
+
+# ------------------------------------------------------------------------------
+# CI wiring helpers (optional; used by your GH Actions / pre-commit plumbing)
+# ------------------------------------------------------------------------------
+ci:
+  precommit:
+    enable: true
+    # Pre-commit hook id matches the official hook name.
+    hook_id: editorconfig-checker
+  github_actions:
+    enable: true
+    job_name: editorconfig
+    # Minimal run command (assumes tool is installed in the job image/step)
+    run: "editorconfig-checker"
+
+# ------------------------------------------------------------------------------
+# Notes:
+# • Keep this file at repo root to be discoverable by your selftest/CI harness.
+# • Your selftest/deep mode can load this via Hydra and invoke `commands.check`.
+# • Pair with pre-commit:
+#     - repo: https://github.com/editorconfig-checker/editorconfig-checker.python
+#       rev: v3.3.0
+#       hooks:
+#         - id: editorconfig-checker
+# • In GitHub Actions, add a job step:
+#     - name: EditorConfig
+#       run: editorconfig-checker
+# ------------------------------------------------------------------------------
+```
