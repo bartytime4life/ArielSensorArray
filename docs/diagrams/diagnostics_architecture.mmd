@@ -1,0 +1,47 @@
+%% SpectraMind V50 — Diagnostics & Reports
+%% Ref: metrics, calibration checks, symbolic overlays, UMAP/t-SNE/FFT, HTML bundle:contentReference[oaicite:6]{index=6}:contentReference[oaicite:7]{index=7}
+
+flowchart LR
+  subgraph IN["Inputs"]
+    PRED["Predictions (μ, σ)"]
+    GT["Ground truth (val)"]
+    LAT["Latents/embeddings"]
+    SYM["Symbolic rules/overlays JSON"]
+  end
+
+  subgraph DIAG["Diagnostics"]
+    M["Metrics: GLL / RMSE / MAE"]
+    C["Calibration checks: σ vs residuals"]
+    S["Symbolic overlays: smoothness, non-negativity, FFT priors"]
+    U["UMAP / t-SNE (interactive HTML)"]
+    F["FFT / autocorr μ"]
+    RPT["Generate HTML Dashboard"]
+  end
+
+  subgraph OUT["Outputs (artifacts/diagnostics)"]
+    H["HTML reports"]
+    PNG["Static PNGs"]
+    SUM["diagnostic_summary.json"]
+    LOG["events.jsonl / v50_debug_log.md"]
+  end
+
+  CLI["spectramind diagnose"] --> DIAG
+
+  PRED --> M
+  GT --> M
+  PRED --> C
+  GT --> C
+  LAT --> U
+  SYM --> S
+  PRED --> F
+
+  M --> RPT
+  C --> RPT
+  S --> RPT
+  U --> RPT
+  F --> RPT
+
+  RPT --> H
+  DIAG --> PNG
+  DIAG --> SUM
+  DIAG --> LOG
