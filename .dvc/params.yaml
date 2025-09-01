@@ -1,62 +1,169 @@
+# .dvc/params.yaml
 # ==============================================================================
-# SpectraMind V50 — Parameter Tracking for DVC
+# SpectraMind V50 — Parameter Tracking for DVC (Upgraded)
 # ------------------------------------------------------------------------------
-# Purpose:
-#   • Single source of truth for pipeline hyperparameters
-#   • Shared by Hydra configs, Typer CLI, and DVC stages
-#   • Ensures NASA-grade reproducibility and run hash traceability
+# Single source of truth for hyperparameters and pipeline knobs.
+# Shared by Hydra configs, Typer CLI, and DVC stages to guarantee
+# NASA-grade reproducibility, stable run hashing, and CI determinism.
 # ==============================================================================
 
-training:
-  epochs: 100                   # Full training length; override via CLI for quick runs
-  batch_size: 48                # Larger batch size (fits Kaggle T4/V100 constraints)
-  grad_accum_steps: 2           # Gradient accumulation for memory efficiency
-  lr: 0.00025                   # Base learning rate (cosine schedule tuned)
-  lr_scheduler: cosine
-  warmup_epochs: 5              # Linear warmup to stabilize convergence
-  optimizer: adamw
-  weight_decay: 0.01
-  early_stop_patience: 15       # Validation-based early stop
-  checkpoint_interval: 5        # Save every N epochs
-  log_interval: 50              # Log every N steps
-  amp: true                     # Mixed precision (torch.cuda.amp)
-  device: cuda
-  seed: 1337                    # Deterministic RNG seeds across libs
+# -------------------------
+# Reproducibility & Logging
+# -------------------------
+run:
+  project: spectramind_v50
+  tag: ""                        # Optional freeform tag appended to run hash
+  seed: 1337                     # Global RNG seed (torch, numpy, python, cuda)
+  deterministic: true            # Enable cudnn_deterministic, disable benchmark
+  hash_inputs: true              # Include params + data manifest in run hash
+  env_capture: true              # Persist env (pip freeze, git sha, cuda, drivers)
+  save_dir: outputs              # Root for all pipeline artifacts
+  time_fmt: "%Y%m%d-%H%M%S"     # Timestamp format for run folders
 
-model:
-  encoder: fgs1_mamba           # Long-sequence Mamba encoder for FGS1
-  gnn: airs_gnn                 # Graph Neural Network for AIRS spectra
-  decoder: multi_scale_decoder  # Multi-scale μ spectrum decoder
-  latent_dim: 256
-  dropout: 0.1
-  residual: true
-  attention_fusion: true
-  sigma_head: flow_uncertainty  # Flow-based σ head for uncertainty
-  symbolic_loss: true
-  symbolic_weight: 0.2          # Weight of symbolic logic constraints
-  spectral_smoothness: true     # L2/FFT smoothness regularizer
-  asymmetry_loss: true          # Penalize asymmetric spectra
+logging:
+  level: INFO
+  jsonl_path: logs/events.jsonl
+  tensorboard: true
+  mlflow:
+    enable: false
+    uri: ""
+  rich_console: true
+  log_interval: 50               # Steps between train logs
+  val_interval: 1                # Epochs between validations
 
+# -------------
+# Data & Paths
+# -------------
 data:
   fgs1_path: data/raw/fgs1/
   airs_path: data/raw/airs/
   calibration_path: data/processed/calibration/
+  processed_path: data/processed/
+  cache_path: data/.cache/
+  splits_file: data/splits/splits_v50.json
   bins: 283
   split_seed: 2025
-  snr_masking: true             # SNR-based masking (MAE pretraining)
-  molecule_masking: true        # Mask known molecular bands in curriculum
-  curriculum: true              # Epoch-based curriculum learning
-  jitter_augmentation: true     # Pointing jitter augmentation for realism
+  num_workers: 4
+  pin_memory: true
+  persistent_workers: true
+  prefetch_factor: 2
+  # Curriculum / masking (used by MAE/contrastive phases as well)
+  snr_masking: true              # Mask by per-bin SNR during MAE pretrain
+  molecule_masking: true         # Mask known molecular bands in curriculum
+  curriculum: true               # Ramp unmasking over epochs
+  jitter_augmentation: true      # Pointing jitter augmentation
+  jitter_strength: 0.5           # Relative amplitude (0..1)
+  normalize_mu: true             # Normalize spectra target μ
+  normalize_sigma: false         # Keep σ in native units unless calibrating
 
+# -----------------------------
+# DataLoader & Batch Composition
+# -----------------------------
+loader:
+  batch_size: 48                 # Per forward pass
+  grad_accum_steps: 2            # Effective batch = batch_size * grad_accum
+  shuffle: true
+  drop_last: true
+  collate: default               # or "packed", "padded"
+
+# --------------
+# Training Setup
+# --------------
+training:
+  epochs: 100
+  device: cuda
+  amp: true                      # torch.cuda.amp autocast
+  grad_clip_norm: 1.0
+  find_unused_parameters: false
+  sync_batchnorm: false
+  ema:
+    enable: true
+    decay: 0.999
+  early_stop:
+    enable: true
+    patience: 15
+    metric: val/gll              # Lower better unless noted
+    mode: min
+  checkpoint:
+    enable: true
+    dir: outputs/checkpoints
+    interval_epochs: 5
+    keep_last: 3
+    best_metric: val/gll
+  resume:
+    auto: true                   # Auto resume last run if shapes/config match
+    path: ""                     # Manual override
+
+# --------------
+# Optimization
+# --------------
+optim:
+  name: adamw
+  lr: 0.00025
+  betas: [0.9, 0.999]
+  eps: 1.0e-08
+  weight_decay: 0.01
+  scheduler:
+    name: cosine
+    warmup_epochs: 5
+    min_lr_mult: 0.1             # Final LR = base_lr * min_lr_mult
+    t_mult: 1.0
+  # Optional second stage fine-tuning (e.g., with lower LR)
+  stage2:
+    enable: false
+    start_epoch: 80
+    lr_mult: 0.25
+
+# -----------
+# Model Stack
+# -----------
+model:
+  encoder: fgs1_mamba            # Long-sequence SSM encoder for FGS1
+  gnn: airs_gnn                  # AIRS spectral GNN with edge features
+  decoder: multi_scale_decoder   # Multi-scale μ spectrum decoder
+  sigma_head: flow_uncertainty   # Flow-based σ head for uncertainty
+  latent_dim: 256
+  layers: 12
+  dropout: 0.10
+  residual: true
+  attention_fusion: true
+  norm: layer
+  # Symbolic / physics constraints
+  symbolic_loss: true
+  symbolic_weight: 0.20
+  spectral_smoothness: true      # L2/FFT smoothness regularizer
+  spectral_smoothness_weight: 0.05
+  asymmetry_loss: true
+  asymmetry_weight: 0.02
+  nonnegativity_clamp: true
+
+# -----------------
+# Calibration (UQ)
+# -----------------
 calibration:
   enable: true
-  method: corel                 # Conformal calibration (COREL)
-  temperature_scaling: true
-  coverage_target: 0.9
+  method: corel                  # Conformal calibration with relational GNN
   per_bin: true
+  coverage_target: 0.90
+  temperature_scaling: true
+  temperature_init: 1.0
+  temperature_lr: 0.01
+  temperature_max_iter: 1000
+  # COREL specifics
+  corel:
+    k_neighbors: 8
+    edge_features: ["distance", "molecule", "detector_region"]
+    hidden_dim: 128
+    layers: 3
+    dropout: 0.10
+    alpha: 0.05                  # (1 - coverage_target)
   plots: true
   save_csv: outputs/calibration/per_bin.csv
+  summary_json: outputs/calibration/summary.json
 
+# -----------------------
+# Diagnostics & Explainability
+# -----------------------
 diagnostics:
   shap: true
   shap_topk: 20
@@ -72,20 +179,58 @@ diagnostics:
   gll_heatmap: true
   smoothness_map: true
   violation_overlay: true
+  save_artifacts: outputs/diagnostics/
   html_report: outputs/diagnostics/report.html
   summary_json: outputs/diagnostics/diagnostic_summary.json
 
+# -----------------
+# Evaluation / E2E
+# -----------------
+eval:
+  metrics:
+    - gll
+    - rmse
+    - mae
+    - calibration_error
+  num_tta: 1                     # Test-time augmentation repeats
+  ensemble:
+    enable: false
+    members: []                  # Paths to member checkpoints
+
+# -----------------
+# Submission Bundle
+# -----------------
 submission:
   bundle_dir: outputs/submission
   bundle_zip: outputs/submission/bundle.zip
-  kaggle_format: true           # submission.csv is Kaggle-compliant
-  include_diagnostics: true     # Attach diagnostics summary to bundle
-  validate_before_zip: true     # Run selftest/validation before zipping
-  versioned: true               # Version tag with run hash
+  kaggle_format: true
+  include_diagnostics: true
+  validate_before_zip: true
+  versioned: true                # Append run hash to version label
+  csv_path: outputs/predictions/submission.csv
+  manifest_path: outputs/submission/manifest.json
 
+# ------------
+# CI Settings
+# ------------
 ci:
-  selftest: deep                # Full selftest before pipelines
-  max_runtime: 9h               # Kaggle GPU runtime guardrail
+  selftest: deep                 # fast|deep
+  max_runtime: "9h"              # Kaggle GPU guardrail (human-readable)
   cache_datasets: true
-  fail_on_violation: true       # Fail CI if symbolic violations exceed threshold
+  fail_on_violation: true
+  violation_threshold: 0.05      # Max allowed symbolic violation rate
   log_jsonl: logs/ci_events.jsonl
+  dvc_remote: "origin"           # Expected default DVC remote name
+
+# -----------------
+# Ablations / Sweeps
+# -----------------
+ablate:
+  enable: false
+  grid:
+    symbolic_weight: [0.0, 0.1, 0.2, 0.3]
+    spectral_smoothness_weight: [0.0, 0.02, 0.05, 0.1]
+    optim.lr: [0.00015, 0.00025, 0.00035]
+  max_trials: 12
+  selection_metric: val/gll
+  selection_mode: min
