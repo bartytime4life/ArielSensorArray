@@ -1,4 +1,3 @@
-# .pre-commit-config.yaml
 # SpectraMind V50 — pre-commit suite (code quality, security, notebooks, docs)
 # Run locally:  pre-commit install && pre-commit run --all-files
 # CI tip:       pre-commit run --all-files (as a separate step)
@@ -9,12 +8,11 @@ default_language_version:
   python: python3.11
 
 repos:
-  # ── EditorConfig enforcement ─────────────────────────────────────────────────
+  # ── EditorConfig enforcement ────────────────────────────────────────────────
   - repo: https://github.com/editorconfig-checker/editorconfig-checker.python
     rev: 3.3.0
     hooks:
       - id: editorconfig-checker
-        name: editorconfig-checker
         alias: ec
         args: [--config=.editorconfig]
         exclude: |
@@ -26,7 +24,7 @@ repos:
             .*\.log$
           )
 
-  # ── Python lint/format ──────────────────────────────────────────────────────
+  # ── Python lint/format ─────────────────────────────────────────────────────
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.6.9
     hooks:
@@ -46,7 +44,7 @@ repos:
       - id: isort
         args: ["--profile", "black", "--line-length=88"]
 
-  # Upgrade Python syntax to current targets (safe fixes, complements Ruff)
+  # Upgrade Python syntax to current target (safe transforms; complements Ruff)
   - repo: https://github.com/asottile/pyupgrade
     rev: v3.15.1
     hooks:
@@ -62,12 +60,12 @@ repos:
           - --strict
           - --ignore-missing-imports
         additional_dependencies:
-          - types-PyYAML==6.0.12
-          - types-requests==2.32.0.20240622
+          - types-PyYAML==6.0.12.20240808
+          - types-requests==2.32.0.20240712
 
-  # ── Notebooks (lint/format via nbQA + strip big outputs) ────────────────────
+  # ── Notebooks: lint/format via nbQA + strip outputs ─────────────────────────
   - repo: https://github.com/nbQA-dev/nbQA
-    rev: 1.9.0
+    rev: 1.9.1
     hooks:
       - id: nbqa-ruff
         args: [--fix]
@@ -75,7 +73,7 @@ repos:
         args: ["--line-length=88"]
       - id: nbqa-isort
         args: ["--profile", "black", "--line-length=88"]
-      # Optional: mypy on notebooks (enable if notebooks use types)
+      # Optional: mypy for notebooks (enable if notebook code is typed)
       # - id: nbqa-mypy
       #   args: [--strict, --ignore-missing-imports]
 
@@ -91,7 +89,7 @@ repos:
     rev: v4.6.0
     hooks:
       - id: check-added-large-files
-        args: ["--maxkb=5120"]   # 5 MB cap; adjust for your repo
+        args: ["--maxkb=5120"]   # 5 MB cap; adjust to taste
         exclude: ^(data/|outputs/|docs/assets/|\.dvc/)
       - id: check-ast
       - id: check-builtin-literals
@@ -130,14 +128,14 @@ repos:
     hooks:
       - id: pyproject-fmt
 
-  # YAML lint beyond well-formedness (style + rules)
+  # YAML lint (style rules, beyond well-formedness)
   - repo: https://github.com/adrienverge/yamllint
     rev: v1.35.1
     hooks:
       - id: yamllint
         args: ["-d", "{extends: default, rules: {line-length: {max: 120}, truthy: disable}}"]
 
-  # GitHub Actions / JSON / YAML schema validation (early CI failures locally)
+  # GitHub Actions / JSON / YAML schema validation
   - repo: https://github.com/python-jsonschema/check-jsonschema
     rev: 0.28.5
     hooks:
@@ -145,7 +143,6 @@ repos:
       - id: check-jsonschema
         name: check-jsonschema (generic)
         files: "\\.(json|ya?ml)$"
-        # You can add --schemafile for specific JSON schemas as needed
 
   # Format Markdown / JSON / YAML consistently (Prettier for docs/config)
   - repo: https://github.com/pre-commit/mirrors-prettier
@@ -158,7 +155,7 @@ repos:
 
   # ── Security: static & supply-chain ─────────────────────────────────────────
   - repo: https://github.com/Yelp/detect-secrets
-    rev: v1.5.0
+    rev: v1.6.0
     hooks:
       - id: detect-secrets
         args: ["--baseline", ".secrets.baseline"]
@@ -203,8 +200,8 @@ repos:
     rev: v1.7.3
     hooks:
       - id: actionlint
-        name: actionlint (GitHub Actions linter)
-        files: ^\.github/workflows/.*\.ya?ml$
+      name: actionlint (GitHub Actions linter)
+      files: ^\.github/workflows/.*\.ya?ml$
 
   # ── Local hooks (repo-managed) ─────────────────────────────────────────────
   - repo: local
@@ -224,17 +221,20 @@ ci:
 # Global excludes to keep hooks fast & non-noisy
 exclude: |
   (?x)(
-      ^\.venv/|
-      ^venv/|
-      ^\.mypy_cache/|
-      ^\.ruff_cache/|
-      ^\.pytest_cache/|
-      ^\.dvc/|
-      ^\.git/|
-      ^build/|
-      ^dist/|
-      ^data/|
-      ^outputs/|
-      ^logs/|
-      ^docs/_build/
+    ^\.venv/|
+    ^venv/|
+    ^ENV/|
+    ^env/|
+    ^__pycache__/|
+    ^\.mypy_cache/|
+    ^\.ruff_cache/|
+    ^\.pytest_cache/|
+    ^\.dvc/|
+    ^\.git/|
+    ^build/|
+    ^dist/|
+    ^data/|
+    ^outputs/|
+    ^logs/|
+    ^docs/_build/
   )
