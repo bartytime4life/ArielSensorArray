@@ -1,10 +1,10 @@
 # ==============================================================================
-# SpectraMind V50 — CI/Kaggle Makefile (Upgraded: deterministic, non‑interactive)
+# SpectraMind V50 — CI/Kaggle Makefile (Upgraded: deterministic, non-interactive)
 # Purpose: Minimal, reproducible pipeline for CI runners and Kaggle kernels
 # Notes:
-#   • Zero‑prompt, non‑interactive, CPU‑deterministic defaults
+#   • Zero-prompt, non-interactive, CPU-deterministic defaults
 #   • Emits calibration + run manifests for audit
-#   • Safe no‑ops when optional tools (DVC/pandoc) are absent
+#   • Safe no-ops when optional tools (DVC/pandoc) are absent
 # ==============================================================================
 
 # ========= Shell (strict) =========
@@ -98,7 +98,7 @@ help:
 	@echo "  selftest          : fast integrity checks (CLI/files)"
 	@echo "  selftest-deep     : deeper checks (Hydra/DVC/GPU visibility)"
 	@echo "  versions          : print tool versions (python/poetry/cli)"
-	@echo "  train             : 1‑epoch training to $(OUT_DIR) (DEVICE=$(DEVICE), SEED=$(SEED))"
+	@echo "  train             : 1-epoch training to $(OUT_DIR) (DEVICE=$(DEVICE), SEED=$(SEED))"
 	@echo "  diagnose          : smoothness + lightweight dashboard → $(DIAG_DIR)"
 	@echo "  analyze           : parse CLI logs to CSV/MD"
 	@echo "  analyze-short     : print last 5 CLI calls (generates CSV if missing)"
@@ -156,11 +156,11 @@ selftest:
 selftest-deep:
 	$(CLI) selftest --deep
 
-# ========= Calibration (mission‑grade CI) =========
+# ========= Calibration (mission-grade CI) =========
 calibration:
 	@echo ">>> Calibration (deterministic CI)"
 	$(CLI) calibrate $(OVERRIDES) $(EXTRA_ARGS)
-	@# Ensure JSON log exists and is non‑empty
+	@# Ensure JSON log exists and is non-empty
 	@test -s "$(LOGS_DIR)/calibration.json" || { echo "::error::Missing or empty $(LOGS_DIR)/calibration.json"; exit 1; }
 	@# Optional quality gates (if jq is present)
 	@if command -v $(JQ) >/dev/null 2>&1; then \
@@ -196,7 +196,7 @@ analyze-short:
 	if [ -f "$(OUT_DIR)/log_table.csv" ]; then \
 	  echo "=== Last 5 CLI invocations ==="; \
 	  tail -n +2 "$(OUT_DIR)/log_table.csv" | tail -n 5 | \
-	    awk -F',' 'BEGIN{OFS=" | "} {print "time="$${1}, "cmd="$${2}, "git_sha="$${3}, "cfg="$${4}}'; \
+	    awk -F',' 'BEGIN{OFS=" | "} {print "time=\""$$1"\"", "cmd=\""$$2"\"", "git_sha=\""$$3"\"", "cfg=\""$$4"\""}'; \
 	else \
 	  echo "::warning::No log_table.csv to summarize"; \
 	fi
