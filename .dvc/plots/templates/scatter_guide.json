@@ -1,0 +1,58 @@
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+  "description": "Scatter plot with identity line guide (for residual vs σ calibration, reliability checks, etc.)",
+  "layer": [
+    {
+      "mark": {
+        "type": "line",
+        "strokeDash": [4, 4],
+        "color": "#888888"
+      },
+      "encoding": {
+        "x": {"field": "x", "type": "quantitative"},
+        "y": {"field": "x", "type": "quantitative"}
+      }
+    },
+    {
+      "mark": {
+        "type": "point",
+        "filled": true,
+        "tooltip": true
+      },
+      "encoding": {
+        "x": {
+          "field": "x",
+          "type": "quantitative",
+          "axis": {
+            "title": "Predicted σ",
+            "grid": true
+          }
+        },
+        "y": {
+          "field": "y",
+          "type": "quantitative",
+          "axis": {
+            "title": "|Residual|",
+            "grid": true
+          }
+        },
+        "color": {
+          "field": "rev",
+          "type": "nominal",
+          "legend": {"title": "Revision"}
+        },
+        "size": {"value": 60}
+      }
+    }
+  ],
+  "config": {
+    "axis": {
+      "labelFontSize": 12,
+      "titleFontSize": 13
+    },
+    "legend": {
+      "labelFontSize": 12,
+      "titleFontSize": 13
+    }
+  }
+}
