@@ -37,12 +37,18 @@ Each document is **GitHub-ready** and uses Mermaid flowcharts with conservative 
 Use this template when adding new diagrams (ASCII labels; no `<br/>` or `\n` inside node text):
 
 ```mermaid
-flowchart LR
-  A[Start] --> B{Decision}
-  B -->|yes| C[Step yes]
-  B -->|no|  D[Step no]
-  C --> E[(Artifacts)]
-  D --> E
+flowchart LR;
+  A[Start];
+  B{Decision};
+  C[Step yes];
+  D[Step no];
+  E[(Artifacts)];
+  A --> B;
+  B -- yes --> C;
+  B -- no  --> D;
+  C --> E;
+  D --> E;
+
 ````
 
 **Tips**
