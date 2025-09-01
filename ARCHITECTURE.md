@@ -83,20 +83,22 @@ flowchart TD
 
 ```mermaid
 flowchart LR
-  R[Root Defaults] --> D1[data/nominal]
-  R --> D2[model/v50]
-  R --> D3[train/standard]
-  R --> D4[diagnostics/default]
-  R --> D5[submit/kaggle]
-  subgraph Hydra Composition
+  R["Root Defaults"] --> D1["data/nominal"]
+  R --> D2["model/v50"]
+  R --> D3["train/standard"]
+  R --> D4["diagnostics/default"]
+  R --> D5["submit/kaggle"]
+
+  subgraph HC["Hydra Composition"]
     D1 --> H[(Hydra)]
     D2 --> H
     D3 --> H
     D4 --> H
     D5 --> H
   end
-  UO[CLI Overrides\n(e.g., optimizer.lr=1e-3)] --> H
-  H --> RC[Resolved Config\n.frozen yaml + hash]
+
+  UO["CLI Overrides<br/>(e.g., optimizer.lr=1e-3)"] --> H
+  H --> RC["Resolved Config<br/>.frozen yaml + hash"]
 ```
 
 **Rules**
