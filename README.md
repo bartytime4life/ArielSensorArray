@@ -108,21 +108,22 @@ Override any param on the CLI (e.g. `optimizer.lr=1e-3`).
 
 ```mermaid
 flowchart TD
-  A[User] -->|invokes| B[spectramind CLI]
-  B -->|compose + override| C[Hydra Configs<br/>(configs/*.yaml)]
-  C --> D[Pipeline Orchestrator]
-  D --> E[Calibration<br/>(FGS/AIRS processing)]
-  E --> F[Model Training<br/>(SSM + GNN → μ, σ)]
-  F --> G[Diagnostics & Explainability<br/>(GLL, FFT, SHAP, Symbolic)]
-  G --> H[Submission Bundler<br/>(selftest, manifest, zip)]
-  H --> I[Kaggle Leaderboard]
+  A["User"] -->|invokes| B["spectramind CLI"]
+  B -->|compose + override| C["Hydra Configs<br/>configs folder"]
+  C --> D["Pipeline Orchestrator"]
+  D --> E["Calibration<br/>FGS and AIRS processing"]
+  E --> F["Model Training<br/>SSM + GNN -> mu, sigma"]
+  F --> G["Diagnostics and Explainability<br/>GLL, FFT, SHAP, Symbolic"]
+  G --> H["Submission Bundler<br/>selftest, manifest, zip"]
+  H --> I["Kaggle Leaderboard"]
 
-  %% artifacts
-  C -. logs, overrides .-> J[(Artifacts<br/>outputs/YYYY-MM-DD/HH-MM-SS)]
-  E -. DVC tracked data .-> J
-  F -. checkpoints, metrics .-> J
-  G -. HTML dashboard .-> J
-  H -. submission.zip .-> J
+  %% artifact side rails
+  C -. "logs, overrides" .-> J["Artifacts<br/>outputs/YYYY-MM-DD/HH-MM-SS"]
+  E -. "DVC tracked data" .-> J
+  F -. "checkpoints, metrics" .-> J
+  G -. "HTML dashboard" .-> J
+  H -. "submission.zip" .-> J
+
 ```
 
 ---
