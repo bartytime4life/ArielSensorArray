@@ -36,8 +36,6 @@
 
 # - EXTRA\_ARGS pass raw flags to CLI subcommands.
 
-#
-
 # ==============================================================================
 
 # ========= Shell & Make hygiene =========
@@ -98,14 +96,14 @@ DEVICE       ?= cpu
 EPOCHS       ?= 1
 TS           := \$(shell date +%Y%m%d\_%H%M%S)
 
-OUT\_DIR      ?= outputs
-LOGS\_DIR     ?= logs
-DIAG\_DIR     ?= \$(OUT\_DIR)/diagnostics
-PRED\_DIR     ?= \$(OUT\_DIR)/predictions
-SUBMIT\_DIR   ?= \$(OUT\_DIR)/submission
-SUBMIT\_ZIP   ?= \$(SUBMIT\_DIR)/bundle.zip
-MANIFEST\_DIR ?= \$(OUT\_DIR)/manifests
-RUN\_HASH\_FILE ?= run\_hash\_summary\_v50.json
+OUT\_DIR        ?= outputs
+LOGS\_DIR       ?= logs
+DIAG\_DIR       ?= \$(OUT\_DIR)/diagnostics
+PRED\_DIR       ?= \$(OUT\_DIR)/predictions
+SUBMIT\_DIR     ?= \$(OUT\_DIR)/submission
+SUBMIT\_ZIP     ?= \$(SUBMIT\_DIR)/bundle.zip
+MANIFEST\_DIR   ?= \$(OUT\_DIR)/manifests
+RUN\_HASH\_FILE  ?= run\_hash\_summary\_v50.json
 
 # Kaggle competition handle
 
@@ -151,135 +149,189 @@ FASTAPI\_PORT       ?= 8089
 # ========= Docker (upgraded, lean context, GPU/CPU multi-target) =========
 
 DOCKER              ?= docker
-export DOCKER_BUILDKIT=1
+export DOCKER\_BUILDKIT = 1
 
 # image meta
-IMAGE_NAME          ?= spectramind-v50
-IMAGE_TAG           ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
-IMAGE_GPU           := $(IMAGE_NAME):$(IMAGE_TAG)-gpu
-IMAGE_CPU           := $(IMAGE_NAME):$(IMAGE_TAG)-cpu
+
+IMAGE\_NAME          ?= spectramind-v50
+IMAGE\_TAG           ?= \$(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
+IMAGE\_GPU           := \$(IMAGE\_NAME):\$(IMAGE\_TAG)-gpu
+IMAGE\_CPU           := \$(IMAGE\_NAME):\$(IMAGE\_TAG)-cpu
 
 # build cache dir (local)
-BUILD_CACHE_DIR     ?= .docker-build-cache
+
+BUILD\_CACHE\_DIR     ?= .docker-build-cache
 
 # repo mount → /workspace
-WORKDIR_MOUNT       := -v $(PWD):/workspace -w /workspace
+
+WORKDIR\_MOUNT       := -v \$(PWD):/workspace -w /workspace
 
 # cache mounts for runtime (host-side)
-CACHE_BASE          ?= $(PWD)/.cache
-HF_CACHE_MNT        := -v $(CACHE_BASE)/hf:/cache/hf
-WANDB_CACHE_MNT     := -v $(CACHE_BASE)/wandb:/cache/wandb
-PIP_CACHE_MNT       := -v $(CACHE_BASE)/pip:/root/.cache/pip
+
+CACHE\_BASE          ?= \$(PWD)/.cache
+HF\_CACHE\_MNT        := -v \$(CACHE\_BASE)/hf:/cache/hf
+WANDB\_CACHE\_MNT     := -v \$(CACHE\_BASE)/wandb:/cache/wandb
+PIP\_CACHE\_MNT       := -v \$(CACHE\_BASE)/pip\:/root/.cache/pip
 
 # base env (no secrets baked)
-BASE_ENV            := \
-	-e PYTHONUNBUFFERED=1 \
-	-e HF_HOME=/cache/hf \
-	-e TRANSFORMERS_CACHE=/cache/hf \
-	-e WANDB_DIR=/cache/wandb \
-	-e WANDB_MODE=offline
 
-# optional env-file (e.g., ENV_FILE=.env.local)
-ENV_FILE            ?=
-ENVFILE_FLAG        := $(if $(strip $(ENV_FILE)),--env-file $(ENV_FILE),)
+BASE\_ENV            :=&#x20;
+-e PYTHONUNBUFFERED=1&#x20;
+-e HF\_HOME=/cache/hf&#x20;
+-e TRANSFORMERS\_CACHE=/cache/hf&#x20;
+-e WANDB\_DIR=/cache/wandb&#x20;
+-e WANDB\_MODE=offline
 
-# pass-thru build args if needed (avoid secrets)
-EXTRA_BUILD_ARGS    ?=
+# optional env-file (e.g., ENV\_FILE=.env.local)
+
+ENV\_FILE            ?=
+ENVFILE\_FLAG        := \$(if \$(strip \$(ENV\_FILE)),--env-file \$(ENV\_FILE),)
+
+# pass-though build args if needed (avoid secrets)
+
+EXTRA\_BUILD\_ARGS    ?=
 
 # detect NVIDIA runtime
-HAS_NVIDIA          := $(shell command -v nvidia-smi >/dev/null 2>&1 && echo 1 || echo 0)
+
+HAS\_NVIDIA          := \$(shell command -v nvidia-smi >/dev/null 2>&1 && echo 1 || echo 0)
+
+# Generic docker variables for legacy helpers
+
+DOCKERFILE     ?= Dockerfile
+DOCKER\_FULL    ?= \$(IMAGE\_CPU)
+DOCKER\_GPU\_FLAG?=
+ifeq (\$(HAS\_NVIDIA),1)
+DOCKER\_GPU\_FLAG := --gpus all
+endif
+
+# Docker Compose
+
+COMPOSE        ?= docker compose
+COMPOSE\_FILE   ?= docker-compose.yml
 
 .PHONY: docker-help
 docker-help:
-	@echo "Docker targets"
-	@echo "  make docker-build-gpu      # build GPU image  → $(IMAGE_GPU)"
-	@echo "  make docker-build-cpu      # build CPU image  → $(IMAGE_CPU)"
-	@echo "  make docker-run-gpu        # bash shell (GPU), mounts repo + caches"
-	@echo "  make docker-run-cpu        # bash shell (CPU), mounts repo + caches"
-	@echo "  make cli CMD='spectramind --version'  # auto GPU/CPU"
-	@echo "  make cli-gpu CMD='spectramind train ...'"
-	@echo "  make cli-cpu CMD='spectramind diagnose ...'"
-	@echo "  make docker-context-check  # quick context size sanity"
-	@echo "  make docker-cache-clean    # remove local build cache dir"
+@echo "Docker targets"
+@echo "  make docker-build-gpu      # build GPU image  → \$(IMAGE\_GPU)"
+@echo "  make docker-build-cpu      # build CPU image  → \$(IMAGE\_CPU)"
+@echo "  make docker-run-gpu        # bash shell (GPU), mounts repo + caches"
+@echo "  make docker-run-cpu        # bash shell (CPU), mounts repo + caches"
+@echo "  make cli CMD='spectramind --version'        # auto GPU/CPU"
+@echo "  make cli-gpu CMD='spectramind train ...'    # run in GPU image"
+@echo "  make cli-cpu CMD='spectramind diagnose ...' # run in CPU image"
+@echo "  make docker-context-check  # quick context size sanity"
+@echo "  make docker-cache-clean    # remove local build cache dir"
 
 # -----------------------------
+
 # Build GPU (expects Dockerfile stage: runtime-gpu)
+
 # -----------------------------
+
 .PHONY: docker-build-gpu
 docker-build-gpu:
-	@mkdir -p "$(BUILD_CACHE_DIR)"
-	@echo ">> Building GPU image: $(IMAGE_GPU)"
-	$(DOCKER) build \
-		--target runtime-gpu \
-		-t $(IMAGE_GPU) \
-		--progress=plain \
-		--cache-from type=local,src=$(BUILD_CACHE_DIR) \
-		--cache-to   type=local,dest=$(BUILD_CACHE_DIR),mode=max \
-		$(EXTRA_BUILD_ARGS) \
-		.
+@mkdir -p "\$(BUILD\_CACHE\_DIR)"
+@echo ">> Building GPU image: \$(IMAGE\_GPU)"
+\$(DOCKER) build&#x20;
+\--target runtime-gpu&#x20;
+-t \$(IMAGE\_GPU)&#x20;
+\--progress=plain&#x20;
+\--cache-from type=local,src=\$(BUILD\_CACHE\_DIR)&#x20;
+\--cache-to   type=local,dest=\$(BUILD\_CACHE\_DIR),mode=max&#x20;
+\$(EXTRA\_BUILD\_ARGS)&#x20;
+.
 
 # -----------------------------
+
 # Build CPU (expects Dockerfile stage: runtime-cpu)
+
 # -----------------------------
+
 .PHONY: docker-build-cpu
 docker-build-cpu:
-	@mkdir -p "$(BUILD_CACHE_DIR)"
-	@echo ">> Building CPU image: $(IMAGE_CPU)"
-	$(DOCKER) build \
-		--target runtime-cpu \
-		-t $(IMAGE_CPU) \
-		--progress=plain \
-		--cache-from type=local,src=$(BUILD_CACHE_DIR) \
-		--cache-to   type=local,dest=$(BUILD_CACHE_DIR),mode=max \
-		$(EXTRA_BUILD_ARGS) \
-		.
+@mkdir -p "\$(BUILD\_CACHE\_DIR)"
+@echo ">> Building CPU image: \$(IMAGE\_CPU)"
+\$(DOCKER) build&#x20;
+\--target runtime-cpu&#x20;
+-t \$(IMAGE\_CPU)&#x20;
+\--progress=plain&#x20;
+\--cache-from type=local,src=\$(BUILD\_CACHE\_DIR)&#x20;
+\--cache-to   type=local,dest=\$(BUILD\_CACHE\_DIR),mode=max&#x20;
+\$(EXTRA\_BUILD\_ARGS)&#x20;
+.
 
 # -----------------------------
+
 # Interactive shells
+
 # -----------------------------
+
 .PHONY: docker-run-gpu
 docker-run-gpu:
-	@echo ">> Running GPU shell: $(IMAGE_GPU)"
-	$(DOCKER) run --rm -it --name spectramind-gpu \
-		--gpus all \
-		$(WORKDIR_MOUNT) \
-		$(HF_CACHE_MNT) $(WANDB_CACHE_MNT) $(PIP_CACHE_MNT) \
-		$(BASE_ENV) $(ENVFILE_FLAG) \
-		$(IMAGE_GPU) bash
+@echo ">> Running GPU shell: \$(IMAGE\_GPU)"
+\$(DOCKER) run --rm -it --name spectramind-gpu&#x20;
+\--gpus all&#x20;
+\$(WORKDIR\_MOUNT)&#x20;
+\$(HF\_CACHE\_MNT) \$(WANDB\_CACHE\_MNT) \$(PIP\_CACHE\_MNT)&#x20;
+\$(BASE\_ENV) \$(ENVFILE\_FLAG)&#x20;
+\$(IMAGE\_GPU) bash
 
 .PHONY: docker-run-cpu
 docker-run-cpu:
-	@echo ">> Running CPU shell: $(IMAGE_CPU)"
-	$(DOCKER) run --rm -it --name spectramind-cpu \
-		$(WORKDIR_MOUNT) \
-		$(HF_CACHE_MNT) $(WANDB_CACHE_MNT) $(PIP_CACHE_MNT) \
-		$(BASE_ENV) $(ENVFILE_FLAG) \
-		$(IMAGE_CPU) bash
+@echo ">> Running CPU shell: \$(IMAGE\_CPU)"
+\$(DOCKER) run --rm -it --name spectramind-cpu&#x20;
+\$(WORKDIR\_MOUNT)&#x20;
+\$(HF\_CACHE\_MNT) \$(WANDB\_CACHE\_MNT) \$(PIP\_CACHE\_MNT)&#x20;
+\$(BASE\_ENV) \$(ENVFILE\_FLAG)&#x20;
+\$(IMAGE\_CPU) bash
 
 # -----------------------------
+
 # CLI runners (auto-select GPU if available)
+
 # -----------------------------
+
 CMD ?= spectramind --help
 
 .PHONY: cli
 cli:
-	@echo ">> Detecting NVIDIA runtime..."
-	@if [ "$(HAS_NVIDIA)" = "1" ]; then \
-	  echo '>> NVIDIA found — using GPU image'; \
-	  $(MAKE) -s cli-gpu CMD="$(CMD)"; \
-	else \
-	  echo '>> NVIDIA not found — using CPU image'; \
-	  $(MAKE) -s cli-cpu CMD="$(CMD)"; \
-	fi
+@echo ">> Detecting NVIDIA runtime..."
+@if \[ "\$(HAS\_NVIDIA)" = "1" ]; then&#x20;
+echo '>> NVIDIA found — using GPU image';&#x20;
+\$(MAKE) -s cli-gpu CMD="\$(CMD)";&#x20;
+else&#x20;
+echo '>> NVIDIA not found — using CPU image';&#x20;
+\$(MAKE) -s cli-cpu CMD="\$(CMD)";&#x20;
+fi
 
 .PHONY: cli-gpu
 cli-gpu:
-	@echo ">> [GPU] $(CMD)"
-	$(DOCKER) run --rm -t --name spectramind-cli-gpu \
-		--gpus all \
-		$(WORKDIR_MOUNT) \
-		$(HF_CACHE_MNT) $(WANDB_CACHE_MNT
+@echo ">> \[GPU] \$(CMD)"
+\$(DOCKER) run --rm -t --name spectramind-cli-gpu&#x20;
+\--gpus all&#x20;
+\$(WORKDIR\_MOUNT)&#x20;
+\$(HF\_CACHE\_MNT) \$(WANDB\_CACHE\_MNT) \$(PIP\_CACHE\_MNT)&#x20;
+\$(BASE\_ENV) \$(ENVFILE\_FLAG)&#x20;
+\$(IMAGE\_GPU) bash -lc '\$(CMD)'
 
+.PHONY: cli-cpu
+cli-cpu:
+@echo ">> \[CPU] \$(CMD)"
+\$(DOCKER) run --rm -t --name spectramind-cli-cpu&#x20;
+\$(WORKDIR\_MOUNT)&#x20;
+\$(HF\_CACHE\_MNT) \$(WANDB\_CACHE\_MNT) \$(PIP\_CACHE\_MNT)&#x20;
+\$(BASE\_ENV) \$(ENVFILE\_FLAG)&#x20;
+\$(IMAGE\_CPU) bash -lc '\$(CMD)'
+
+.PHONY: docker-context-check
+docker-context-check:
+@echo ">> Docker build context (top offenders):"
+@du -h -d1 . | sort -hr | head -n 30
+
+.PHONY: docker-cache-clean
+docker-cache-clean:
+@rm -rf "\$(BUILD\_CACHE\_DIR)"
+@echo ">> Removed \$(BUILD\_CACHE\_DIR)"
 
 # ========= Colors =========
 
@@ -344,10 +396,10 @@ help:
 @echo "  \$(CYN)benchmark-bin\$(RST)       : run ./bin/benchmark.sh (preferred, feature-rich)"
 @echo "  \$(CYN)diagnostics-bin\$(RST)     : run ./bin/diagnostics.sh (rich overlays + options)"
 @echo "  \$(CYN)ci-smoke\$(RST)            : local smoke of benchmark+diagnostics (CPU)"
-@echo "  \$(CYN)repro-*(RST)              : run snapshot & manifest (config/data hashing)"
-@echo "  \$(CYN)dvc-*(RST)                : DVC pull/push/status/repro & sanity checks"
-@echo "  \$(CYN)kaggle-*(RST)             : Kaggle run/submit/dataset publish"
-@echo "  \$(CYN)diagrams*(RST)            : render Mermaid diagrams with mmdc"
+@echo "  \$(CYN)repro-*\$(RST)             : run snapshot & manifest (config/data hashing)"
+@echo "  \$(CYN)dvc-*\$(RST)               : DVC pull/push/status/repro & sanity checks"
+@echo "  \$(CYN)kaggle-*\$(RST)            : Kaggle run/submit/dataset publish"
+@echo "  \$(CYN)diagrams*\$(RST)           : render Mermaid diagrams with mmdc"
 @echo "  \$(CYN)docker-build/run/shell\$(RST) : Dockerized workflow (GPU autodetect)"
 @echo "  \$(CYN)compose-up-…\$(RST)        : Start services by profile (gpu/cpu/api/web/docs/viz/lab/llm/ci)"
 @echo "  \$(CYN)gui-help\$(RST)            : list GUI demo targets (Streamlit/FastAPI/Qt)"
@@ -356,6 +408,7 @@ help:
 # ========= Init / Env =========
 
 init: env
+
 env:
 mkdir -p "\$(OUT\_DIR)" "\$(LOGS\_DIR)" "\$(DIAG\_DIR)" "\$(PRED\_DIR)" "\$(SUBMIT\_DIR)" "\$(DIAGRAMS\_OUT\_DIR)" "\$(MANIFEST\_DIR)"
 
@@ -387,7 +440,7 @@ try:
 import torch
 print("torch:", getattr(torch, "**version**", "n/a"))
 print("cuda :", getattr(getattr(torch, "version", None), "cuda", "n/a"))
-except Exception as e:
+except Exception:
 print("torch: (missing)")
 PY
 test \$\$ok -eq 1
@@ -469,7 +522,7 @@ open-report:
 @latest=$$(ls -t $(DIAG_DIR)/*.html 2>/dev/null | head -n1 || true); \
 	if [ -n "$$latest" ]; then&#x20;
 echo "Opening $latest"; \
-	  if command -v xdg-open >/dev/null 2>&1; then xdg-open "$latest" || true;&#x20;
+		if command -v xdg-open >/dev/null 2>&1; then xdg-open "$latest" || true;&#x20;
 elif command -v open >/dev/null 2>&1; then open "\$\$latest" || true;&#x20;
 else echo "No opener found (CI/headless)"; fi;&#x20;
 else echo "No diagnostics HTML found."; fi
@@ -503,7 +556,7 @@ submission-bin: ensure-exec
 
 repair: ensure-exec
 @if \[ -z "\$(MSG)" ]; then echo "Usage: make repair MSG="Commit message""; exit 2; fi
-@echo "\[bin] ./bin/repair\_and\_push.sh "\$(MSG)""
+@echo "\[bin] ./bin/repair\_and\_push.sh '\$(MSG)'"
 @./bin/repair\_and\_push.sh "\$(MSG)"
 
 # New: run bin/benchmark.sh (feature-rich wrapper)
@@ -554,7 +607,7 @@ fi;&#x20;
 if \[ -f "\$(OUT\_DIR)/log\_table.csv" ]; then&#x20;
 echo "=== Last 5 CLI invocations ===";&#x20;
 tail -n +2 "\$(OUT\_DIR)/log\_table.csv" | tail -n 5 |&#x20;
-awk -F',' 'BEGIN{OFS=" | "} {print "time="${1}, "cmd="${2}, "git\_sha="${3}, "cfg="${4}}';&#x20;
+awk -F',' 'BEGIN{OFS=" | "} {print "time="$1, "cmd="$2, "git\_sha="$3, "cfg="$4}';&#x20;
 else&#x20;
 echo "::warning::No log\_table.csv to summarize";&#x20;
 fi
@@ -596,7 +649,7 @@ benchmark-gpu: bench-selftest
 @\$(MAKE) benchmark-run DEVICE=gpu EPOCHS=\$(EPOCHS) OVERRIDES='\$(OVERRIDES)' EXTRA\_ARGS='\$(EXTRA\_ARGS)'
 
 benchmark-run:
-OUTDIR="benchmarks/\$(TS)\_\$(DEVICE)";&#x20;
+@OUTDIR="benchmarks/\$(TS)\_\$(DEVICE)";&#x20;
 mkdir -p "$$OUTDIR"; \
 	$(CLI) train +training.epochs=$(EPOCHS) +training.seed=$(SEED) $(OVERRIDES) --device $(DEVICE) --outdir "$$OUTDIR" \$(EXTRA\_ARGS);&#x20;
 \$(CLI) diagnose smoothness --outdir "$$OUTDIR" $(EXTRA_ARGS); \
@@ -625,7 +678,7 @@ mkdir -p aggregated
 echo "# SpectraMind V50 Benchmark Report";&#x20;
 echo "";&#x20;
 for f in $(find benchmarks -type f -name summary.txt | sort); do \
-	    echo "## $f"; echo ""; cat "\$\$f"; echo "";&#x20;
+	  echo "## $f"; echo ""; cat "\$\$f"; echo "";&#x20;
 done;&#x20;
 } > aggregated/report.md
 @echo ">>> Aggregated → aggregated/report.md"
@@ -778,6 +831,7 @@ else echo "::warning::trivy not found"; fi
 audit: pip-audit sbom sbom-scan
 
 docs: docs-html docs-pdf
+
 docs-html:
 @command -v pandoc >/dev/null || { echo "pandoc not found. Install pandoc (and TeX for PDF)."; exit 1; }
 @test -f "\$(DOC\_MD)" || { echo "Missing \$(DOC\_MD)."; exit 1; }
@@ -824,13 +878,15 @@ pyg-install:
 	echo "Using index: $$PYG\_INDEX";&#x20;
 \$(PIP) install torch-geometric==2.5.3 -f "\$\$PYG\_INDEX"
 
-# ========= Docker =========
+# ========= Docker (generic helpers for legacy paths) =========
 
 docker-print:
 @echo "Image : \$(DOCKER\_FULL)"
 @echo "GPU   : \$(HAS\_NVIDIA)"
 @echo "File  : \$(DOCKERFILE)"
 @echo "Args  : \$(DOCKER\_BUILD\_ARGS)"
+
+DOCKER\_BUILD\_ARGS ?=
 
 docker-build: docker-print
 \$(DOCKER) build&#x20;
@@ -959,7 +1015,7 @@ diagrams-lint:
 @echo ">>> Lint diagrams — ensure .mmd files compile"
 @for f in \$(DIAGRAMS\_SRC\_DIR)/\*.mmd; do&#x20;
 \[ -f "$$f" ] || continue; \
-	  $(MMDC_BIN) -i "$$f" -o /dev/null >/dev/null 2>&1 || echo "::warning::Failed to render \$\$f";&#x20;
+		$(MMDC_BIN) -i "$$f" -o /dev/null >/dev/null 2>&1 || echo "::warning::Failed to render \$\$f";&#x20;
 done
 
 diagrams-format:
@@ -994,8 +1050,10 @@ return ""
 manifest = {
 "run\_id": run\_id,
 "ts\_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-"git": {"commit": sh("git rev-parse --short HEAD 2>/dev/null || echo 'nogit'"),
-"status": sh("git status --porcelain || true")},
+"git": {
+"commit": sh("git rev-parse --short HEAD 2>/dev/null || echo 'nogit'"),
+"status": sh("git status --porcelain || true")
+},
 "hydra\_config\_hash": sh("spectramind hash-config 2>/dev/null || echo ''"),
 "device": os.environ.get("DEVICE",""),
 "epochs": os.environ.get("EPOCHS",""),
