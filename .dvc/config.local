@@ -1,34 +1,37 @@
 # ==============================================================================
-# SpectraMind V50 — DVC Local Config Override
+# SpectraMind V50 — DVC Local Config Override (Upgraded)
 # ------------------------------------------------------------------------------
 # Purpose:
-#   • Safe offline/local defaults (no cloud creds required)
-#   • Shared group cache for collaborative speed-ups
-#   • Seamless switching between file:// and cloud remotes (S3/GCS/Azure)
-#   • CI- and Kaggle-friendly; avoids leaking secrets into Git
+#   • Offline-first defaults (no cloud creds required)
+#   • Shared group cache for collaborative speed-ups (NAS / shared SSD)
+#   • Seamless opt-in to cloud remotes without committing secrets
+#   • CI/Kaggle friendly; never leaks credentials into Git
 # ==============================================================================
 
 [core]
-# Default remote for pulls/pushes (use `dvc remote default <name>` to switch)
+# Default remote for pulls/pushes (switch with: `dvc remote default <name>`)
 remote = storage
 autostage = true          ; auto add/commit .dvc/.gitignore changes
-jobs = 4                  ; parallel threads for fetch/push
+jobs = 4                  ; parallel threads for fetch/push/status
 no_scm = false            ; we use Git for reproducibility
+analytics = false         ; disable telemetry on CI
+check_update = false      ; avoid network checks on air-gapped runners
 
 [cache]
-# Prefer reflink when supported; fall back to copy where not available
-type = reflink,copy
+# Fast, safe link strategy: try reflink; fall back to hardlink/symlink; copy last
+type = reflink,hardlink,symlink,copy
 shared = group
 dir = .dvc/cache
-protected = true          ; avoid accidental workspace edits of cached files
+protected = true          ; prevent accidental workspace edits of cached files
 
 [state]
-# Reduce lock contention on shared filesystems
+# Reduce lock contention on shared FS and speed up large DAG scans
 row_limit = 10000
+sqlite_timeout = 5000
 update_lock = true
 
 [experiments]
-auto_push = false                 ; keep local by default
+auto_push = false                 ; keep local by default (avoid accidental remote writes)
 temp_dir = .dvc/tmp/experiments
 run_cache = true
 
@@ -38,6 +41,8 @@ template_dir = .dvc/plots/templates
 # ───────────────────────── Local/File remotes (offline-first) ──────────────────
 [remote "storage"]
 # Host-mounted/shared volume — ideal for a lab NAS or local SSD RAID
+# Tip: you can override with env at run time:
+#   DVC_REMOTE_STORAGE=file:///my/fast/ssd  dvc pull
 url = file:///mnt/data/spectramind-v50-dvc
 verify = true
 slow_link_warning = true
@@ -49,32 +54,43 @@ url = ../.dvc-storage
 verify = true
 
 # ───────────────────────── Optional Cloud remotes (opt-in) ─────────────────────
-# NOTE: These are disabled by default. To use one, set creds via environment
-#       (never commit secrets), then:
-#         dvc remote default s3   # or gcs/azure
+# NOTE: Disabled by default. To use one:
+#   • Set creds via environment/CLI (never commit them)
+#   • Select as default: `dvc remote default s3` (or gcs/azure)
 #
-# S3 (MinIO/AWS). Provide creds/endpoint via env vars or the AWS profile.
+# S3 (AWS/MinIO). Provide creds/endpoint via env or AWS profile.
 [remote "s3"]
 type = s3
 url = s3://spectramind-v50-dvc
-profile = default
+# profile = default
 # endpointurl = https://minio.your.domain      ; uncomment for MinIO
 # region = us-east-1
-# Use env vars: AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN
+# Env: AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN
 
 # Google Cloud Storage. Auth via ADC (gcloud) or env-based key file.
 [remote "gcs"]
 type = gcs
 url = gs://spectramind-v50-dvc
-# gcloud ADC recommended; otherwise set GOOGLE_APPLICATION_CREDENTIALS
+# Env: GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json
 
-# Azure Blob Storage (ABFS). Auth via env or az login.
+# Azure Blob Storage. Auth via env or `az login`.
 [remote "azure"]
 type = azure
 url = azure://spectramindv50/container
-# AZURE_STORAGE_CONNECTION_STRING / AZURE_STORAGE_ACCOUNT / AZURE_STORAGE_KEY
+# Env: AZURE_STORAGE_CONNECTION_STRING or
+#      AZURE_STORAGE_ACCOUNT / AZURE_STORAGE_KEY
 
-# ───────────────────────── Push behavior hardening ─────────────────────────────
+# ───────────────────────── Push/pull hardening & timeouts ──────────────────────
 [feature "push"]
 retries = 3
 jobs = 2
+
+[feature "fetch"]
+retries = 3
+jobs = 4
+timeout = 120
+
+# ───────────────────────── Kaggle/CI quality-of-life defaults ──────────────────
+# On ephemeral runners, keep everything local and quiet by default.
+[core.ui]
+loglevel = info
