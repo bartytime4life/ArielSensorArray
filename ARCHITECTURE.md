@@ -16,22 +16,22 @@ SpectraMind V50 predicts **exoplanet transmission spectra** — mean **μ** and 
 ```mermaid
 flowchart TD
   U[User] -->|spectramind ...| CLI[Typer CLI]
-  CLI --> CFG[Hydra Compose\n(configs/* + overrides)]
-  CFG --> ORCH[Pipeline Orchestrator]
-  ORCH --> CAL[Calibration\nFGS1/AIRS preprocessing]
-  CAL --> ENC[Encoders\nFGS1 → Mamba SSM\nAIRS → GNN]
-  ENC --> DEC[Decoders → μ and σ]
-  DEC --> CALIB[Uncertainty Calibration\nTemp scaling + COREL + Conformal]
-  CALIB --> DIAG[Diagnostics & Explainability\nGLL, FFT, UMAP, t-SNE, SHAP, Symbolic]
-  DIAG --> BUNDLE[Submission Bundler\nselftest, manifest, zip]
-  BUNDLE --> KAG[Kaggle Leaderboard]
+  CLI --> CFG["Hydra Compose<br/>configs/* + overrides"]
+  CFG --> ORCH["Pipeline Orchestrator"]
+  ORCH --> CAL["Calibration<br/>FGS1/AIRS preprocessing"]
+  CAL --> ENC["Encoders<br/>FGS1 → Mamba SSM<br/>AIRS → GNN"]
+  ENC --> DEC["Decoders → μ and σ"]
+  DEC --> CALIB["Uncertainty Calibration<br/>Temp scaling · COREL · Conformal"]
+  CALIB --> DIAG["Diagnostics & Explainability<br/>GLL · FFT · UMAP · t-SNE · SHAP · Symbolic"]
+  DIAG --> BUNDLE["Submission Bundler<br/>selftest · manifest · zip"]
+  BUNDLE --> KAG["Kaggle Leaderboard"]
 
-  %% Artifact rails
-  CFG -. logs/overrides .-> ART[Artifacts\noutputs/YYYY-MM-DD/HH-MM-SS]
-  CAL -. dvc data .-> ART
-  ENC -. checkpoints/metrics .-> ART
-  DIAG -. html/png/json .-> ART
-  BUNDLE -. submission.zip .-> ART
+  %% artifact side rails
+  CFG -. "logs / overrides" .-> ART["Artifacts<br/>outputs/YYYY-MM-DD/HH-MM-SS"]
+  CAL -. "DVC data" .-> ART
+  ENC -. "checkpoints / metrics" .-> ART
+  DIAG -. "HTML / PNG / JSON" .-> ART
+  BUNDLE -. "submission.zip" .-> ART
 ```
 
 ---
