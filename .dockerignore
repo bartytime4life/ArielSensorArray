@@ -1,4 +1,3 @@
-```gitignore
 # ==============================================================================
 # .dockerignore — SpectraMind V50 (NeurIPS 2025 Ariel Data Challenge)
 # ------------------------------------------------------------------------------
@@ -27,9 +26,9 @@ __pycache__/
 venv/
 env/
 ENV/
+site-packages/
 .poetry/
 pip-wheel-metadata/
-site-packages/
 .cache/
 .python-version
 
@@ -65,9 +64,13 @@ outputs/cache/
 outputs/debug/
 outputs/tmp/
 outputs/sandbox/
+scratch/
+.simulations/
+ray_results/
+optuna_study/
 
 # ----------------------------------------------------------------------
-# Model bundles & artifacts (selectively managed by pipeline, not baked in images)
+# Model bundles & artifacts (regenerable by pipeline)
 *.ckpt
 *.pth
 *.pt
@@ -85,38 +88,68 @@ working/
 .kernels/
 kernel-metadata.json
 
-# ----------------------------------------------------------------------
-# Notebooks (dev only — not needed in runtime image)
+# Kaggle notebooks (not needed inside Docker images)
 *.ipynb
 .ipynb_checkpoints/
 notebooks/.ipynb_checkpoints/
 
 # ----------------------------------------------------------------------
-# DVC internals (host-managed; never ship into container)
+# Hugging Face / ML frameworks caches
+.huggingface/
+transformers_cache/
+datasets/
+models/
+wandb/
+mlruns/
+tensorboard/
+tb_logs/
+lightning_logs/
+ray_tune/
+optuna/
+
+# ----------------------------------------------------------------------
+# GUI / UX build artifacts
+gui/.cache/
+gui/dist/
+gui/build/
+gui/node_modules/
+node_modules/
+assets/screenshots/
+assets/plots/
+assets/tmp/
+assets/diagrams/
+assets/**/*.png
+assets/**/*.svg
+assets/**/*.jpg
+assets/**/*.jpeg
+assets/**/*.gif
+
+# ----------------------------------------------------------------------
+# DVC internals (host-managed; not shipped into containers)
 .dvc/cache/
 .dvc/tmp/
 .dvc/plots/
 .dvc/config.local
 
 # ----------------------------------------------------------------------
-# Diagnostics, reports & dashboards (regenerable)
+# Diagnostics, reports & dashboards (reproducible)
 outputs/diagnostics/
 reports/
 dashboards/
-*.html
-*.htm
-*.png
-*.svg
-*.jpg
-*.jpeg
-*.gif
-*.pdf
-*.csv
-*.json
-*.md
+outputs/**/*.html
+outputs/**/*.htm
+outputs/**/*.png
+outputs/**/*.svg
+outputs/**/*.jpg
+outputs/**/*.jpeg
+outputs/**/*.gif
+outputs/**/*.pdf
+outputs/**/*.csv
+outputs/**/*.json
+outputs/**/*.md
 
 # ----------------------------------------------------------------------
-# Submission bundles (regenerable via pipeline)
+# Submission bundles (reproducible by pipeline)
 outputs/submission.csv
 outputs/submission.zip
 outputs/submission_bundle.zip
@@ -136,41 +169,18 @@ pipeline_consistency_report.json
 config_snapshot.yaml
 
 # ----------------------------------------------------------------------
-# Local GUI/UX assets (reproducible — avoid shipping large diagrams/images)
-assets/screenshots/
-assets/plots/
-assets/tmp/
-assets/diagrams/
-assets/**.png
-assets/**.svg
-assets/**.jpg
-assets/**.jpeg
-assets/**.gif
-
-# ----------------------------------------------------------------------
-# Hugging Face / MLflow / W&B / Lightning / tuning caches
-.huggingface/
-transformers_cache/
-datasets/
-models/
-wandb/
-mlruns/
-tensorboard/
-tb_logs/
-lightning_logs/
-ray_results/
-optuna_study/
-optuna/
-ray_tune/
-cache/
-
-# ----------------------------------------------------------------------
-# Frontend / GUI build artifacts
-gui/.cache/
-gui/dist/
-gui/build/
-gui/node_modules/
-node_modules/
+# Secrets & local creds (must never leak into containers)
+*.env
+.env*
+.envrc
+.aws/
+.gcloud/
+.azure/
+secrets.yaml
+secrets.json
+credentials.json
+token.json
+hf_token.txt
 
 # ----------------------------------------------------------------------
 # Build system artifacts
@@ -194,27 +204,13 @@ htmlcov/
 .github/
 
 # ----------------------------------------------------------------------
-# Secrets & local creds (must never leak into containers)
-*.env
-.env*
-.envrc
-.aws/
-.gcloud/
-.azure/
-secrets.yaml
-secrets.json
-credentials.json
-token.json
-hf_token.txt
-
-# ----------------------------------------------------------------------
 # Data folders (kept on host/DVC, not baked into images)
 data/
 datasets/
-models/  # model zoo / HF mirrors; real runtime models pulled at run-time
+models/   # runtime models pulled dynamically (HF/DVC/Kaggle)
 
 # ----------------------------------------------------------------------
-# Misc (CI/CD, local-only overrides)
+# Misc (local-only, CI/CD overrides, dev tools)
 Dockerfile.local
 Dockerfile.dev
 docker-compose*.yml
@@ -225,4 +221,3 @@ Makefile.local
 *.sbom.json
 *.cyclonedx.json
 *.spdx
-```
