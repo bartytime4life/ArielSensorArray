@@ -1,65 +1,124 @@
-# 🌌 SpectraMind V50 — NeurIPS 2025 Ariel Data Challenge
+# 🚀 SpectraMind V50 — NeurIPS 2025 Ariel Data Challenge
 
-**Mission:** Build a **neuro-symbolic, physics-informed AI pipeline** to extract exoplanetary spectra (μ, σ for 283 bins) from ESA Ariel telescope simulation data.  
-Designed for **NASA-grade reproducibility**, **CLI-first workflows**, and **Kaggle runtime compliance** (≤9h on ~1,100 planets).
+<p align="center">
+  <a href="https://github.com/your-org/your-repo/actions/workflows/ci.yml">
+    <img alt="CI" src="https://github.com/your-org/your-repo/actions/workflows/ci.yml/badge.svg">
+  </a>
+  <a href="https://github.com/your-org/your-repo/actions/workflows/tests.yml">
+    <img alt="Tests" src="https://github.com/your-org/your-repo/actions/workflows/tests.yml/badge.svg">
+  </a>
+  <a href="https://codecov.io/gh/your-org/your-repo">
+    <img alt="Coverage" src="https://codecov.io/gh/your-org/your-repo/branch/main/graph/badge.svg">
+  </a>
+  <img alt="Python" src="https://img.shields.io/badge/Python-3.10%2B-blue.svg">
+  <img alt="CUDA" src="https://img.shields.io/badge/CUDA-12.1-success.svg">
+  <a href="https://hydra.cc/"><img alt="Hydra" src="https://img.shields.io/badge/Config-Hydra-1f6feb.svg"></a>
+  <a href="https://dvc.org/"><img alt="DVC" src="https://img.shields.io/badge/Data-DVC-945dd6.svg"></a>
+  <a href="https://mlflow.org/"><img alt="MLflow" src="https://img.shields.io/badge/Tracking-MLflow-0194E2.svg"></a>
+  <a href="https://hub.docker.com/r/your-docker-namespace/spectramind-v50">
+    <img alt="Docker pulls" src="https://img.shields.io/docker/pulls/your-docker-namespace/spectramind-v50.svg">
+  </a>
+  <a href="https://github.com/your-org/your-repo/pkgs/container/spectramind-v50">
+    <img alt="GHCR" src="https://img.shields.io/badge/Container-GHCR-2b3137.svg">
+  </a>
+  <a href="https://opensource.org/licenses/MIT">
+    <img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg">
+  </a>
+  <a href="https://your-org.github.io/your-repo/">
+    <img alt="Docs" src="https://img.shields.io/badge/Docs-Website-0ea5e9.svg">
+  </a>
+  <a href="https://www.kaggle.com/competitions/ariel-data-challenge-2025">
+    <img alt="Kaggle" src="https://img.shields.io/badge/Kaggle-NeurIPS%202025%20Ariel-20BEFF.svg">
+  </a>
+  <a href="https://github.com/your-org/your-repo/releases">
+    <img alt="Release" src="https://img.shields.io/github/v/release/your-org/your-repo?display_name=tag&sort=semver">
+  </a>
+</p>
 
 ---
 
-## 🚀 Quickstart
+## 🌌 Overview
+
+**SpectraMind V50** is a neuro-symbolic, physics-informed AI pipeline for the  
+[NeurIPS 2025 Ariel Data Challenge](https://www.kaggle.com/competitions/ariel-data-challenge-2025).  
+
+It predicts **exoplanet transmission spectra (μ, σ across 283 bins)** from raw **FGS photometry** and **AIRS spectroscopy**.  
+Design principles: **NASA-grade reproducibility, CLI-first automation, Hydra configs, DVC data versioning, symbolic physics constraints.**
+
+---
+
+## 🧩 Features
+
+- **CLI-first** (`spectramind …`) with Typer + Hydra — discoverable, reproducible, tab-completion.
+- **Physics-informed encoders**:  
+  - FGS1 → Mamba State-Space Model (long-context sequence).  
+  - AIRS → Graph Neural Network with molecular/temporal edges.
+- **Dual decoders** → μ and σ, with uncertainty calibration (temperature scaling, COREL, conformal prediction).
+- **Symbolic logic engine** enforcing smoothness, non-negativity, molecular priors.
+- **Diagnostics**: FFT, UMAP/t-SNE, SHAP overlays, symbolic violations, calibration heatmaps.
+- **MLOps**: Hydra configs, DVC-tracked data & checkpoints, MLflow tracking (optional).
+- **CI/CD**: GitHub Actions runs training, diagnostics, submission packaging, HTML dashboard build.
+
+---
+
+## ⚙️ Installation
 
 ```bash
-# Clone the repo
-git clone https://github.com/<YOUR_ORG>/SpectraMindV50.git
-cd SpectraMindV50
+# clone repo
+git clone https://github.com/your-org/your-repo.git
+cd your-repo
 
-# Create environment
-poetry install   # or: pip install -r requirements.txt
+# setup env (Poetry recommended)
+poetry install
 
-# Fetch data/models (DVC)
-dvc pull
-
-# Run pipeline self-test
-spectramind test --deep
-
-# Train and predict
-spectramind train +experiment=nominal
-spectramind submit --config configs/train/nominal.yaml
+# or pip
+pip install -e .
 ````
 
----
-
-## 🧭 Repository Structure
-
-```
-SpectraMindV50/
-├── configs/          # Hydra configs (data, model, training, diagnostics)
-├── src/              # Core pipeline code (encoders, decoders, diagnostics)
-├── docs/             # Documentation, diagrams, guides
-├── data/             # Raw + processed (DVC-tracked, not stored in Git)
-├── tests/            # Pytest suite for all modules
-├── artifacts/        # Outputs: logs, HTML dashboards, submission bundles
-├── pyproject.toml    # Poetry environment
-├── Dockerfile        # Reproducible build (Ubuntu CUDA base)
-└── README.md         # You are here
-```
+Docker image is published at:
+`docker pull your-docker-namespace/spectramind-v50:latest`
 
 ---
 
-## 🗺️ End-to-End Workflow (CLI → Hydra → Pipeline → Kaggle)
+## 🚦 Quickstart
+
+```bash
+# run a pipeline self-test
+spectramind test
+
+# calibrate telescope data
+spectramind calibrate configs/data/nominal.yaml
+
+# train model
+spectramind train model=v50 optimizer=adamw trainer.gpus=1
+
+# run diagnostics + dashboard
+spectramind diagnose dashboard --open
+
+# package submission
+spectramind submit --selftest
+```
+
+All configs live under `configs/` and are Hydra-composable.
+Override any param on the CLI (e.g. `optimizer.lr=1e-3`).
+
+---
+
+## 🗺️ End-to-End Workflow
 
 ```mermaid
 flowchart TD
   A[User] -->|invokes| B[spectramind CLI]
-  B -->|compose + override| C[Hydra Configs\n(configs/*.yaml)]
+  B -->|compose + override| C[Hydra Configs<br/>(configs/*.yaml)]
   C --> D[Pipeline Orchestrator]
-  D --> E[Calibration\n(FGS/AIRS processing)]
-  E --> F[Model Training\n(SSM + GNN → μ, σ)]
-  F --> G[Diagnostics & Explainability\n(GLL, FFT, SHAP, Symbolic)]
-  G --> H[Submission Bundler\n(selftest, manifest, zip)]
+  D --> E[Calibration<br/>(FGS/AIRS processing)]
+  E --> F[Model Training<br/>(SSM + GNN → μ, σ)]
+  F --> G[Diagnostics & Explainability<br/>(GLL, FFT, SHAP, Symbolic)]
+  G --> H[Submission Bundler<br/>(selftest, manifest, zip)]
   H --> I[Kaggle Leaderboard]
 
-  %% Artifact side-rails
-  C -. logs, overrides .-> J[(Artifacts\noutputs/YYYY-MM-DD/HH-MM-SS)]
+  %% artifacts
+  C -. logs, overrides .-> J[(Artifacts<br/>outputs/YYYY-MM-DD/HH-MM-SS)]
   E -. DVC tracked data .-> J
   F -. checkpoints, metrics .-> J
   G -. HTML dashboard .-> J
@@ -68,121 +127,39 @@ flowchart TD
 
 ---
 
-## 📦 Features (Implemented vs Planned)
+## 📂 Repository Structure
 
-* ✅ **CLI-first orchestration** via `spectramind` Typer app
-* ✅ **Hydra configs** for full experiment control
-* ✅ **DVC** for data/model versioning
-* ✅ **NASA-grade reproducibility**: config hashes, JSONL logs, CI checks
-* ✅ **Scientific constraints**: smoothness, non-negativity, symbolic rule checks
-* ✅ **Diagnostics**: FFT, SHAP, UMAP/t-SNE, calibration plots
-* 🚧 **Experiment tracking UI** — *MLflow planned*
-* 🚧 **GUI dashboard** (React + FastAPI, CLI artifact mirror)
-* 🚧 **Advanced uncertainty calibration** (COREL, conformal prediction)
-* 🚧 **Interpretability suite** (attention maps, symbolic overlays)
-
----
-
-## 📊 Example Outputs
-
-* 🖼️ **UMAP / t-SNE latent projections** (interactive HTML)
-* 📈 **Per-bin GLL heatmaps** (diagnostics/plot)
-* 🧩 **Symbolic rule violation overlays** (smoothness, physical constraints)
-* 📜 **`diagnostic_summary.json`** — JSON export for dashboard integration
-
-*(See `/artifacts/` after running `spectramind diagnose dashboard`)*
+```
+configs/        # Hydra YAML configs (data, model, train, diagnose, etc.)
+src/            # Core pipeline code (data, models, CLI, diagnostics)
+data/           # Raw + processed data (DVC tracked, not in Git)
+tests/          # Unit tests + CLI integration tests
+.github/        # CI workflows
+docs/           # Architecture & diagrams
+artifacts/      # Generated diagnostics, dashboards, logs
+```
 
 ---
 
-## 🧪 Development Philosophy
+## 📊 Kaggle Challenge Context
 
-* **CLI-first, GUI-optional** — all operations reproducible via Typer + Hydra
-* **Reproducibility First** — configs in Git, data in DVC, hashes logged
-* **Scientific Integrity** — physics-informed ML, symbolic constraints
-* **Automation & CI** — GitHub Actions enforce reproducibility
-* **Mission-grade Logging** — JSONL + Rich console + HTML dashboards
+* Dataset: **ESA Ariel telescope simulation** (FGS photometer, AIRS spectrometer).
+* Goal: predict mean (μ) & uncertainty (σ) spectra for \~1,100 exoplanets.
+* Runtime budget: ≤ 9h end-to-end on Kaggle GPU.
+* Metric: **Gaussian log-likelihood (GLL)** + leaderboard evaluation.
 
 ---
 
-## 🧩 Roadmap (2025)
+## 🤝 Contributing
 
-**Phase 1: Audit & Gap Close**
-
-* Expand Hydra config coverage (uncertainty calibration, GUI settings)
-* Fully capture pipeline stages in DVC for caching and reuse
-
-**Phase 2: Diagnostics Expansion**
-
-* SHAP overlays + GNN explainers
-* Symbolic rule influence mapping
-* Extended per-bin diagnostics
-
-**Phase 3: Uncertainty Calibration**
-
-* COREL GNN calibration
-* Per-bin conformal prediction
-* Coverage plots + symbolic weighting
-
-**Phase 4: GUI Layer**
-
-* React/Vite dashboard on top of FastAPI server
-* Purely artifact-driven (no drift from CLI runs)
-
-**Phase 5: Leaderboard Polishing**
-
-* Hyperparameter sweeps (Hydra multirun)
-* Ensemble inference
-* Ablation engine with symbolic overlays
+Contributions welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md).
+All PRs must pass `spectramind test` and CI workflows before merge.
 
 ---
 
 ## 📜 License
 
-This project is released under the **MIT License** (OSI approved).
+MIT © 2025 \[Your Org / Your Team]
+See [LICENSE](LICENSE) for details.
 
-* ✅ Open-source friendly
-* ✅ Compatible with Kaggle distribution
-* ✅ Aligns with NASA/ESA open data sharing principles
-
-See [`LICENSE`](LICENSE) for details.
-
----
-
-## 📝 Citations
-
-* [SpectraMind V50 Technical Plan]: contentReference[oaicite:27]{index=27}
-* [SpectraMind V50 Project Analysis]: contentReference[oaicite:28]{index=28}
-* [Strategy for Updating V50]: contentReference[oaicite:29]{index=29}
-* [Hydra for AI Projects Guide]: contentReference[oaicite:30]{index=30}
-* [Mermaid Diagrams in GitHub Markdown]: contentReference[oaicite:31]{index=31}
-* [Engineering Guide to GUI Development]: contentReference[oaicite:32]{index=32}
-* [Computational Physics Modeling]: contentReference[oaicite:33]{index=33}
-* [Gravitational Lensing in Observation]: contentReference[oaicite:34]{index=34}
-* [Radiation Technical Reference]: contentReference[oaicite:35]{index=35}
-
----
-
-## 🧑‍💻 Maintainers
-
-**SpectraMind Core Team** — NeurIPS 2025 Ariel Data Challenge
-Contact: `<your_email@domain>`
-
----
-
-<p align="center">
-  <a href="https://github.com/<YOUR_ORG>/SpectraMindV50/actions/workflows/ci.yml">
-    <img alt="CI" src="https://github.com/<YOUR_ORG>/SpectraMindV50/actions/workflows/ci.yml/badge.svg">
-  </a>
-  <a href="https://github.com/<YOUR_ORG>/SpectraMindV50/releases">
-    <img alt="Release" src="https://img.shields.io/github/v/release/<YOUR_ORG>/SpectraMindV50?display_name=tag&sort=semver">
-  </a>
-  <a href="https://hub.docker.com/r/<YOUR_DOCKER_NS>/spectramind-v50">
-    <img alt="Docker pulls" src="https://img.shields.io/docker/pulls/<YOUR_DOCKER_NS>/spectramind-v50.svg">
-  </a>
-  <a href="https://www.kaggle.com/competitions/ariel-data-challenge-2025">
-    <img alt="Kaggle" src="https://img.shields.io/badge/Kaggle-NeurIPS%202025%20Ariel-20BEFF.svg">
-  </a>
-</p>
 ```
-
----
