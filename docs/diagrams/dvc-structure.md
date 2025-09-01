@@ -1,6 +1,3 @@
-Here’s a drop-in **`docs/diagrams/dvc-structure.md`** with a Mermaid diagram and a concise explainer for new contributors.
-
-````markdown
 # DVC Structure & Commit Policy (SpectraMind V50)
 
 This page clarifies **what lives in Git vs DVC vs is ignored** across the SpectraMind V50 pipeline.  
