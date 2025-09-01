@@ -1,0 +1,55 @@
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+  "description": "Histogram template for DVC plots (e.g., residuals, sigma, loss distributions).",
+  "data": {"name": "table"},
+  "mark": {
+    "type": "bar",
+    "tooltip": true
+  },
+  "encoding": {
+    "x": {
+      "field": "value",
+      "type": "quantitative",
+      "bin": {
+        "maxbins": 40
+      },
+      "axis": {
+        "title": "Value",
+        "grid": false
+      }
+    },
+    "y": {
+      "aggregate": "count",
+      "type": "quantitative",
+      "axis": {
+        "title": "Count",
+        "grid": true
+      }
+    },
+    "color": {
+      "field": "rev",
+      "type": "nominal",
+      "legend": {
+        "title": "Revision"
+      }
+    },
+    "opacity": {"value": 0.85}
+  },
+  "config": {
+    "axis": {
+      "labelFontSize": 12,
+      "titleFontSize": 13
+    },
+    "legend": {
+      "labelFontSize": 12,
+      "titleFontSize": 13
+    },
+    "bar": {
+      "stroke": "white",
+      "strokeWidth": 0.5
+    },
+    "view": {
+      "stroke": "transparent"
+    }
+  }
+}
