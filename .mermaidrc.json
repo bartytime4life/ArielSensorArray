@@ -6,8 +6,9 @@
   "deterministicIds": true,
   "deterministicIDSeed": "spectramind-v50",
   "logLevel": "error",
-  "wrap": true,
+
   "fontFamily": "Inter, Roboto, Segoe UI, Helvetica Neue, Arial, ui-sans-serif, system-ui, sans-serif",
+
   "themeVariables": {
     "background": "transparent",
     "primaryColor": "#0ea5e9",
@@ -22,22 +23,9 @@
     "errorTextColor": "#991b1b",
     "fontSize": "16px"
   },
-  "darkModeThemeVariables": {
-    "background": "transparent",
-    "primaryColor": "#38bdf8",
-    "primaryTextColor": "#f8fafc",
-    "primaryBorderColor": "#0ea5e9",
-    "lineColor": "#94a3b8",
-    "textColor": "#e2e8f0",
-    "tertiaryColor": "#1e293b",
-    "noteBkgColor": "#1e3a8a",
-    "noteTextColor": "#e0f2fe",
-    "errorBkgColor": "#450a0a",
-    "errorTextColor": "#fecaca",
-    "fontSize": "16px"
-  },
+
   "flowchart": {
-    "htmlLabels": true,
+    "htmlLabels": false,
     "useMaxWidth": true,
     "diagramPadding": 16,
     "padding": 8,
@@ -45,6 +33,7 @@
     "rankSpacing": 60,
     "curve": "basis"
   },
+
   "sequence": {
     "useMaxWidth": true,
     "mirrorActors": false,
@@ -55,20 +44,24 @@
     "activationWidth": 12,
     "bottomMarginAdj": 10
   },
+
   "er": {
     "useMaxWidth": true,
     "diagramPadding": 12
   },
+
   "class": {
     "useMaxWidth": true,
     "diagramPadding": 12
   },
+
   "state": {
     "useMaxWidth": true,
     "padding": 10,
     "forkWidth": 12,
     "forkHeight": 12
   },
+
   "gantt": {
     "useMaxWidth": true,
     "titleTopMargin": 28,
@@ -83,17 +76,20 @@
     "numberSectionStyles": 4,
     "axisFormat": "%m-%d"
   },
+
   "journey": {
     "useMaxWidth": true,
     "fontSize": 14,
     "padding": 12
   },
+
   "pie": {
     "useMaxWidth": true,
     "strokeWidth": 1.2,
     "textPosition": "inside",
     "fontSize": 14
   },
+
   "mindmap": {
     "useMaxWidth": true,
     "padding": 12,
