@@ -64,7 +64,7 @@ lakefs-client==0.127.0   # keep only if lakeFS is used by your pipeline
 
 # ----- Kaggle Integration -----
 kaggle==1.6.17
-cloudpickle==3.0.0
+cloudpickle==3.1.1
 
 # ----- Utilities -----
 requests==2.32.3
