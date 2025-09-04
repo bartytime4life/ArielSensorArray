@@ -1,6 +1,12 @@
 # .github/workflows/codeql.yml
-# SpectraMind V50 — CodeQL Code Scanning
-# Scans Python (and optional JS/TS) for security & quality issues on PRs, pushes, and a weekly cron.
+# ==============================================================================
+# SpectraMind V50 — CodeQL Code Scanning (hardened, fast, reproducible)
+# Scans Python (and optional JS/TS) for security & quality issues on PRs, pushes, cron.
+# - Minimal permissions, concurrency guard, explicit timeouts
+# - Matrix per language (Python mandatory, JS optional and auto-skips if no sources)
+# - Best-effort dependency restore for more accurate dataflow
+# - Upload SARIF + (on failure) CodeQL database for debugging
+# ==============================================================================
 
 name: codeql
 
@@ -20,8 +26,7 @@ on:
       - ".github/ISSUE_TEMPLATE/**"
       - "**/*.md"
   schedule:
-    # Weekly scan (Sundays 06:30 UTC)
-    - cron: "30 6 * * 0"
+    - cron: "30 6 * * 0"  # Sundays 06:30 UTC
   workflow_dispatch:
 
 permissions:
@@ -33,59 +38,118 @@ concurrency:
   group: codeql-${{ github.ref }}
   cancel-in-progress: true
 
+defaults:
+  run:
+    shell: bash -euxo pipefail
+
 jobs:
+  # Quick probe to see if we actually have JS/TS in the repo; used to skip the JS shard cheaply.
+  detect-langs:
+    name: Detect Languages
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      has_js: ${{ steps.probe.outputs.has_js }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - id: probe
+        run: |
+          if git ls-files -- \
+              '*.js' '*.jsx' '*.mjs' '*.cjs' \
+              '*.ts' '*.tsx' 2>/dev/null | grep -q .; then
+            echo "has_js=true" | tee -a "$GITHUB_OUTPUT"
+          else
+            echo "has_js=false" | tee -a "$GITHUB_OUTPUT"
+          fi
+
   analyze:
     name: CodeQL • ${{ matrix.language }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
-
+    needs: detect-langs
     strategy:
       fail-fast: false
       matrix:
-        language: ["python", "javascript"] # Keep JS to catch any website/tooling code; safe if none present.
+        include:
+          - language: python
+          - language: javascript
+    # Skip the JS/TS job entirely if no JS/TS files are present
+    if: |
+      matrix.language == 'python' ||
+      (matrix.language == 'javascript' && needs.detect-langs.outputs.has_js == 'true')
 
     steps:
       - name: Checkout repository
-      # Full history not required for CodeQL; depth=2 keeps performance snappy while allowing diff-based extraction.
         uses: actions/checkout@v4
         with:
+          # full history not required; depth=2 allows diff-based extraction optimizations
           fetch-depth: 2
 
-      # --- Optional environment prep (Python) ---------------------------------
+      # -------------------- Optional environment prep (Python) --------------------
       - name: Set up Python
         if: matrix.language == 'python'
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
+          cache: "pip"
 
       - name: Install Python dependencies (best-effort)
         if: matrix.language == 'python'
         run: |
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt || true; fi
-          # If your project uses Poetry:
           if [ -f pyproject.toml ] && grep -qi '\[tool.poetry\]' pyproject.toml; then
-            pip install poetry || true
+            pip install "poetry==1.8.3" || true
             poetry export -f requirements.txt --without-hashes -o /tmp/reqs.txt || true
             if [ -s /tmp/reqs.txt ]; then pip install -r /tmp/reqs.txt || true; fi
           fi
 
-      # --- Initialize CodeQL ---------------------------------------------------
+      # -------------------- Optional environment prep (JS/TS) ---------------------
+      - name: Set up Node
+        if: matrix.language == 'javascript'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install JS/TS dependencies (best-effort)
+        if: matrix.language == 'javascript'
+        run: |
+          if [ -f package-lock.json ] || [ -f package.json ]; then
+            npm ci || npm i || true
+          fi
+
+      # -------------------------- CodeQL Init & Build -----------------------------
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
         with:
           languages: ${{ matrix.language }}
-          # security-extended adds more depth than the default; security-and-quality adds additional quality queries.
           queries: security-extended,security-and-quality
+          # If you keep custom query packs, uncomment and point to them:
+          # packs: |
+          #   githubsecuritylab/codeql-python-queries
+          #   githubsecuritylab/codeql-javascript-queries
 
-      # --- Autobuild (no-op for Python/JS, but harmless) ----------------------
+      # Autobuild is a no-op for Python/Node in most cases, but harmless and sometimes useful.
       - name: Autobuild
         uses: github/codeql-action/autobuild@v3
 
-      # --- Analyze & upload SARIF ---------------------------------------------
+      # --------------------------- Analyze & Upload -------------------------------
       - name: Perform CodeQL Analysis
+        id: analyze
         uses: github/codeql-action/analyze@v3
         with:
           category: "/language:${{ matrix.language }}"
-          # Fail CI only on CodeQL-detected "errors" (not warnings) to be pragmatic early on.
           fail-on: errors
+
+      # Upload CodeQL database for triage if analysis step fails
+      - name: Upload CodeQL Database (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: codeql-db-${{ matrix.language }}
+          path: ${{ runner.temp }}/codeql_databases/${{ matrix.language }}
+          if-no-files-found: ignore
+          retention-days: 7
