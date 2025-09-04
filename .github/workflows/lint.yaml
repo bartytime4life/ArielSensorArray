@@ -1,240 +1,312 @@
-# .github/workflows/lint.yaml
-# ==============================================================================
-# SpectraMind V50 — Lint & Static Analysis (pre-commit first-class)
-# - Python 3.12, cached pip + pre-commit envs for speed
+upgrade, # ==============================================================================
+
+# SpectraMind V50 — Lint & Static Analysis (pre-commit first-class, SARIF opt-in)
+
+# - Python 3.12 (configurable), cached pip + pre-commit envs for speed
+
 # - Two-pass strategy: autofix (non-blocking) then enforce clean (blocking)
-# - Optional quick-signal ruff/mypy summaries (non-blocking)
-# - Problem matchers for inline annotations where possible
-# - Skips noisy paths by default (data/outputs/logs/etc.)
-# - Cancels superseded runs per ref
+
+# - Problem matchers for inline annotations (Ruff/Mypy)
+
+# - Optional Ruff SARIF export to Code Scanning (fork-safe fallback → artifact)
+
+# - Skips noisy paths by default; cancels superseded runs per ref
+
+# - Graceful no-op if .pre-commit-config.yaml is missing
+
 # ==============================================================================
 
 name: Lint & Static Analysis
 
 on:
-  push:
-    branches: ["**"]
-    paths-ignore:
-      - "data/**"
-      - "outputs/**"
-      - "logs/**"
-      - "benchmarks/**"
-      - "artifacts/**"
-      - "site/**"
-      - "node_modules/**"
-      - "**/.ipynb_checkpoints/**"
-  pull_request:
-    branches: ["**"]
-    paths-ignore:
-      - "data/**"
-      - "outputs/**"
-      - "logs/**"
-      - "benchmarks/**"
-      - "artifacts/**"
-      - "site/**"
-      - "node_modules/**"
-      - "**/.ipynb_checkpoints/**"
-  workflow_dispatch: {}
+push:
+branches: \["**"]
+paths-ignore:
+\- "data/**"
+\- "outputs/**"
+\- "logs/**"
+\- "benchmarks/**"
+\- "artifacts/**"
+\- "site/**"
+\- "node\_modules/**"
+\- "**/.ipynb\_checkpoints/**"
+pull\_request:
+branches: \["**"]
+paths-ignore:
+\- "data/**"
+\- "outputs/**"
+\- "logs/**"
+\- "benchmarks/**"
+\- "artifacts/**"
+\- "site/**"
+\- "node\_modules/**"
+\- "**/.ipynb\_checkpoints/**"
+workflow\_dispatch:
+inputs:
+py:
+description: "Python version"
+required: false
+default: "3.12"
+ruff\_sarif:
+description: "Also run Ruff in SARIF mode and upload to Code Scanning (true/false)"
+required: false
+default: "true"
+type: choice
+options: \["true", "false"]
 
 permissions:
-  contents: read
+contents: read
+security-events: write   # needed only when uploading SARIF (harmless otherwise)
 
 concurrency:
-  group: lint-${{ github.ref }}
-  cancel-in-progress: true
+group: lint-\${{ github.ref }}
+cancel-in-progress: true
 
 defaults:
-  run:
-    shell: bash -euxo pipefail
+run:
+shell: bash -euxo pipefail
+
+env:
+PYTHONDONTWRITEBYTECODE: "1"
+PIP\_DISABLE\_PIP\_VERSION\_CHECK: "1"
+PIP\_NO\_PYTHON\_VERSION\_WARNING: "1"
+PRE\_COMMIT\_COLOR: "always"
+NO\_COLOR: \${{ vars.NO\_COLOR || '' }}
+PY\_DEFAULT: "3.12"
 
 jobs:
-  lint:
-    name: pre-commit (ruff/black/isort/mypy/nbqa/yamllint/prettier/etc.)
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+lint:
+name: pre-commit (ruff/black/isort/mypy/nbqa/yamllint/prettier/etc.)
+runs-on: ubuntu-latest
+timeout-minutes: 30
 
-    env:
-      PYTHONDONTWRITEBYTECODE: "1"
-      PIP_DISABLE_PIP_VERSION_CHECK: "1"
-      PIP_NO_PYTHON_VERSION_WARNING: "1"
-      PRE_COMMIT_COLOR: "always"
-      NO_COLOR: ${{ vars.NO_COLOR || '' }}
-      PY: "3.12"
+````
+steps:
+  - name: Checkout
+    uses: actions/checkout@v4
+    with:
+      # fetch-depth 0 to allow hooks that inspect git history (e.g., seed-isort-config)
+      fetch-depth: 0
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          # fetch-depth 0 to allow some hooks (e.g., seed-isort-config) that inspect git history
-          fetch-depth: 0
+  - name: Resolve Python version
+    id: pyver
+    run: |
+      if [[ -n "${{ inputs.py }}" ]]; then
+        echo "ver=${{ inputs.py }}" >> "$GITHUB_OUTPUT"
+      else
+        echo "ver=${PY_DEFAULT}" >> "$GITHUB_OUTPUT"
+      fi
 
-      - name: Setup Python ${{ env.PY }}
-        id: setup-python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PY }}
-          cache: "pip"
+  - name: Setup Python ${{ steps.pyver.outputs.ver }}
+    id: setup-python
+    uses: actions/setup-python@v5
+    with:
+      python-version: ${{ steps.pyver.outputs.ver }}
+      cache: "pip"
 
-      - name: Cache pip
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: >-
-            pip-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-
-            ${{ hashFiles('**/pyproject.toml', '**/poetry.lock', '**/requirements*.txt', '.pre-commit-config.yaml') }}
-          restore-keys: |
-            pip-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-
-            pip-${{ runner.os }}-
+  - name: Cache pip
+    uses: actions/cache@v4
+    with:
+      path: ~/.cache/pip
+      key: >-
+        pip-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-
+        ${{ hashFiles('**/pyproject.toml', '**/poetry.lock', '**/requirements*.txt', '.pre-commit-config.yaml') }}
+      restore-keys: |
+        pip-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-
+        pip-${{ runner.os }}-
 
-      - name: Cache pre-commit env
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pre-commit
-          key: precommit-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('.pre-commit-config.yaml') }}
-          restore-keys: |
-            precommit-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-
-            precommit-${{ runner.os }}-
+  - name: Cache pre-commit env
+    uses: actions/cache@v4
+    with:
+      path: ~/.cache/pre-commit
+      key: precommit-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('.pre-commit-config.yaml') }}
+      restore-keys: |
+        precommit-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-
+        precommit-${{ runner.os }}-
 
-      - name: Install pre-commit (and minimal extras for hooks)
-        run: |
-          python -m pip install --upgrade pip
-          pip install pre-commit
+  - name: Install minimal tooling (pre-commit + jq)
+    run: |
+      python -m pip install --upgrade pip
+      pip install pre-commit jq
 
-      - name: Prepare artifacts dir
-        run: mkdir -p artifacts
+  - name: Prepare artifacts dir
+    run: mkdir -p artifacts
 
-      - name: Show pre-commit version & hooks
-        run: |
-          pre-commit --version | tee artifacts/precommit-version.txt
-          awk '/^- id: /{print $0}' .pre-commit-config.yaml | tee artifacts/hooks.txt || true
+  - name: Guard: ensure .pre-commit-config.yaml exists
+    id: guard
+    run: |
+      if [[ ! -f ".pre-commit-config.yaml" ]]; then
+        echo "::notice::.pre-commit-config.yaml not found — skipping lint job."
+        echo "skip=true" >> "$GITHUB_OUTPUT"
+      else
+        echo "skip=false" >> "$GITHUB_OUTPUT"
+      fi
 
-      # ----- Problem matchers (inline PR annotations) --------------------------------
-      - name: Add Ruff problem matcher
-        run: |
-          cat > ruff-matcher.json <<'JSON'
+  - name: Show pre-commit version & hooks
+    if: steps.guard.outputs.skip == 'false'
+    run: |
+      pre-commit --version | tee artifacts/precommit-version.txt
+      awk '/^- id: /{print $0}' .pre-commit-config.yaml | tee artifacts/hooks.txt || true
+
+  # ----- Problem matchers (inline PR annotations) --------------------------------
+  - name: Add Ruff problem matcher
+    if: steps.guard.outputs.skip == 'false'
+    run: |
+      cat > ruff-matcher.json <<'JSON'
+      {
+        "problemMatcher": [
           {
-            "problemMatcher": [
+            "owner": "ruff",
+            "pattern": [
               {
-                "owner": "ruff",
-                "pattern": [
-                  {
-                    "regexp": "^(.+?):(\\d+):(\\d+):\\s([A-Z]\\d{3})\\s(.+)$",
-                    "file": 1,
-                    "line": 2,
-                    "column": 3,
-                    "code": 4,
-                    "message": 5
-                  }
-                ]
+                "regexp": "^(.+?):(\\d+):(\\d+):\\s([A-Z]\\d{3})\\s(.+)$",
+                "file": 1,
+                "line": 2,
+                "column": 3,
+                "code": 4,
+                "message": 5
               }
             ]
           }
-          JSON
-          echo "::add-matcher::ruff-matcher.json"
+        ]
+      }
+      JSON
+      echo "::add-matcher::ruff-matcher.json"
 
-      - name: Add MyPy problem matcher
-        run: |
-          cat > mypy-matcher.json <<'JSON'
+  - name: Add MyPy problem matcher
+    if: steps.guard.outputs.skip == 'false'
+    run: |
+      cat > mypy-matcher.json <<'JSON'
+      {
+        "problemMatcher": [
           {
-            "problemMatcher": [
+            "owner": "mypy",
+            "pattern": [
               {
-                "owner": "mypy",
-                "pattern": [
-                  {
-                    "regexp": "^(.+?):(\\d+): (error|note): (.+)$",
-                    "file": 1,
-                    "line": 2,
-                    "severity": 3,
-                    "message": 4
-                  }
-                ]
+                "regexp": "^(.+?):(\\d+): (error|note): (.+)$",
+                "file": 1,
+                "line": 2,
+                "severity": 3,
+                "message": 4
               }
             ]
           }
-          JSON
-          echo "::add-matcher::mypy-matcher.json"
+        ]
+      }
+      JSON
+      echo "::add-matcher::mypy-matcher.json"
 
-      # ----- First pass: allow autofixes; do not fail the job on this pass -------------
-      - name: pre-commit (autofix pass)
-        run: |
-          set +e
-          pre-commit install
-          pre-commit run --all-files --show-diff-on-failure | tee artifacts/precommit.txt
-          status=${PIPESTATUS[0]}
-          if [ $status -ne 0 ]; then
-            echo "::warning::pre-commit found fixable issues (autofix applied where possible)"
+  # ----- First pass: allow autofixes; do not fail the job on this pass -------------
+  - name: pre-commit (autofix pass)
+    if: steps.guard.outputs.skip == 'false'
+    run: |
+      set +e
+      pre-commit install
+      pre-commit run --all-files --show-diff-on-failure | tee artifacts/precommit.txt
+      status=${PIPESTATUS[0]}
+      if [ $status -ne 0 ]; then
+        echo "::warning::pre-commit found fixable issues (autofix applied where possible)"
+      fi
+      exit 0
+
+  # Save a patch of autofixes (if any) to help reviewers
+  - name: Create patch of autofixes (if any)
+    if: steps.guard.outputs.skip == 'false'
+    run: |
+      git diff --patch > artifacts/autofix.patch || true
+      if [ ! -s artifacts/autofix.patch ]; then rm -f artifacts/autofix.patch; fi
+
+  # ----- Second pass: enforce clean state (fail if anything remains) ---------------
+  - name: pre-commit (enforce clean)
+    if: steps.guard.outputs.skip == 'false'
+    run: pre-commit run --all-files --show-diff-on-failure
+
+  # ----- Optional quick signal jobs (non-blocking) --------------------------------
+  - name: Ruff (summary)
+    if: always() && steps.guard.outputs.skip == 'false'
+    run: |
+      python -m pip install ruff || true
+      ruff --version | tee -a artifacts/ruff.txt || true
+      # run with --exit-non-zero-on-fix to show when fixes were applied
+      ruff check . --exit-non-zero-on-fix --show-fixes | tee -a artifacts/ruff.txt || true
+
+  - name: MyPy (summary)
+    if: always() && steps.guard.outputs.skip == 'false'
+    run: |
+      python -m pip install mypy || true
+      mypy --version | tee artifacts/mypy.txt || true
+      # Keep this fast; full strictness is enforced via repo hooks
+      mypy --pretty --show-error-codes src || true
+
+  # ----- Optional: Ruff SARIF export (fork-safe) ----------------------------------
+  - name: Ruff → SARIF (generate)
+    if: always() && steps.guard.outputs.skip == 'false' && inputs.ruff_sarif == 'true'
+    run: |
+      python -m pip install ruff || true
+      # Ruff supports SARIF output directly
+      ruff check . --output-format sarif > artifacts/ruff.sarif || true
+      if [[ ! -s artifacts/ruff.sarif ]]; then
+        echo "::warning::No Ruff SARIF produced; creating empty SARIF."
+        cat > artifacts/ruff.sarif <<'EOF'
+        { "version": "2.1.0", "$schema": "https://json.schemastore.org/sarif-2.1.0.json", "runs": [ { "tool": { "driver": { "name": "ruff" } }, "results": [] } ] }
+        EOF
+      fi
+
+  - name: Ruff → SARIF (upload to Code Scanning)
+    if: always() && steps.guard.outputs.skip == 'false' && inputs.ruff_sarif == 'true' && github.event_name != 'pull_request'  # fork-safe: skip PR from forks
+    uses: github/codeql-action/upload-sarif@v3
+    with:
+      sarif_file: artifacts/ruff.sarif
+      category: ruff
+
+  # ----- CI summary ---------------------------------------------------------------
+  - name: Build CI summary
+    if: always()
+    run: |
+      SUMMARY="artifacts/lint-summary.md"
+      {
+        echo "# Lint & Static Analysis Summary"
+        echo
+        echo "- Repo: $GITHUB_REPOSITORY"
+        echo "- Commit: $GITHUB_SHA"
+        echo "- Run ID: $GITHUB_RUN_ID"
+        echo "- Python: ${{ steps.setup-python.outputs.python-version }}"
+        echo
+        if [[ "${{ steps.guard.outputs.skip }}" == "true" ]]; then
+          echo "_No .pre-commit-config.yaml detected — lint skipped._"
+        else
+          echo "## pre-commit (truncated output)"
+          echo '```'
+          (test -f artifacts/precommit.txt && awk 'NR<=400{print} NR==401{print "...(truncated)"}' artifacts/precommit.txt) || echo "No output"
+          echo '```'
+          echo
+          echo "## Ruff (optional signal)"
+          echo '```'
+          (test -f artifacts/ruff.txt && awk 'NR<=200{print} NR==201{print "...(truncated)"}' artifacts/ruff.txt) || echo "No output"
+          echo '```'
+          echo
+          echo "## MyPy (optional signal)"
+          echo '```'
+          (test -f artifacts/mypy.txt && awk 'NR<=200{print} NR==201{print "...(truncated)"}' artifacts/mypy.txt) || echo "No output"
+          echo '```'
+          if [[ -f artifacts/ruff.sarif ]]; then
+            echo
+            ISSUES=$(jq '[.runs[].results[]] | length' artifacts/ruff.sarif 2>/dev/null || echo 0)
+            echo "## Ruff SARIF"
+            echo "- Findings: ${ISSUES}"
+            echo "- Delivery: $([[ \"${{ github.event_name }}\" == \"pull_request\" ]] && echo 'artifact only (fork-safe)' || echo 'uploaded to Code Scanning')"
           fi
-          exit 0
+        fi
+      } > "$SUMMARY"
+      cat "$SUMMARY" >> "$GITHUB_STEP_SUMMARY"
 
-      # Save a patch of autofixes (if any) to help reviewers
-      - name: Create patch of autofixes (if any)
-        run: |
-          git diff --patch > artifacts/autofix.patch || true
-          if [ ! -s artifacts/autofix.patch ]; then rm -f artifacts/autofix.patch; fi
-
-      # ----- Second pass: enforce clean state (fail if anything remains) ---------------
-      - name: pre-commit (enforce clean)
-        run: pre-commit run --all-files --show-diff-on-failure
-
-      # ----- Optional quick signal jobs (non-blocking) --------------------------------
-      - name: Ruff (summary)
-        if: always()
-        run: |
-          python -m pip install ruff || true
-          ruff --version | tee -a artifacts/ruff.txt || true
-          # run with --exit-non-zero-on-fix to show when fixes were applied
-          ruff check . --exit-non-zero-on-fix --show-fixes | tee -a artifacts/ruff.txt || true
-
-      - name: MyPy (summary)
-        if: always()
-        run: |
-          python -m pip install mypy || true
-          mypy --version | tee artifacts/mypy.txt || true
-          # Keep this fast; full strictness is enforced via repo hooks
-          mypy --pretty --show-error-codes src || true
-
-      # ----- CI summary ---------------------------------------------------------------
-      - name: Build CI summary
-        if: always()
-        run: |
-          SUMMARY="artifacts/lint-summary.md"
-          {
-            echo "# Lint & Static Analysis Summary"
-            echo
-            echo "- Repo: $GITHUB_REPOSITORY"
-            echo "- Commit: $GITHUB_SHA"
-            echo "- Run ID: $GITHUB_RUN_ID"
-            echo
-            echo "## pre-commit (truncated output)"
-            echo '```'
-            (test -f artifacts/precommit.txt && awk 'NR<=400{print} NR==401{print "...(truncated)"}' artifacts/precommit.txt) || echo "No output"
-            echo '```'
-            echo
-            echo "## Ruff (optional signal)"
-            echo '```'
-            (test -f artifacts/ruff.txt && awk 'NR<=200{print} NR==201{print "...(truncated)"}' artifacts/ruff.txt) || echo "No output"
-            echo '```'
-            echo
-            echo "## MyPy (optional signal)"
-            echo '```'
-            (test -f artifacts/mypy.txt && awk 'NR<=200{print} NR==201{print "...(truncated)"}' artifacts/mypy.txt) || echo "No output"
-            echo '```'
-            echo
-            echo "## Overall Status"
-            if grep -qsE "(Failed|^fail|❌|error|failing)" artifacts/precommit.txt 2>/dev/null; then
-              echo "- **Result:** ❌ Issues detected by pre-commit. See artifacts."
-            else
-              echo "- **Result:** ✅ All pre-commit hooks passed."
-            fi
-          } > "$SUMMARY"
-          cat "$SUMMARY" >> "$GITHUB_STEP_SUMMARY"
-
-      # ----- Artifacts ---------------------------------------------------------------
-      - name: Upload artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: lint-artifacts
-          path: artifacts/
-          if-no-files-found: ignore
-          retention-days: 14
+  # ----- Artifacts ---------------------------------------------------------------
+  - name: Upload artifacts
+    if: always()
+    uses: actions/upload-artifact@v4
+    with:
+      name: lint-artifacts
+      path: artifacts/
+      if-no-files-found: ignore
+      retention-days: 14
+````
