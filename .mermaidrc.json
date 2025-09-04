@@ -14,23 +14,42 @@
     "primaryColor": "#0ea5e9",
     "primaryTextColor": "#0f172a",
     "primaryBorderColor": "#0284c7",
+
+    "secondaryColor": "#e2e8f0",
+    "secondaryTextColor": "#0f172a",
+    "secondaryBorderColor": "#cbd5e1",
+
+    "tertiaryColor": "#f1f5f9",
+    "tertiaryTextColor": "#0f172a",
+    "tertiaryBorderColor": "#e2e8f0",
+
     "lineColor": "#334155",
     "textColor": "#0f172a",
-    "tertiaryColor": "#f1f5f9",
+
+    "clusterBkg": "#f8fafc",
+    "clusterBorder": "#cbd5e1",
+    "edgeLabelBackground": "#ffffffcc",
+
     "noteBkgColor": "#fef9c3",
     "noteTextColor": "#1f2937",
     "errorBkgColor": "#fee2e2",
     "errorTextColor": "#991b1b",
-    "fontSize": "16px"
+
+    "fontSize": "16px",
+
+    /* NEW: safer label sizing to avoid overflow in strict/CSP contexts */
+    "maxTextSize": 40
   },
+
+  "themeCSS": ":root{--mermaid-font-family:Inter, Roboto, Segoe UI, Helvetica Neue, Arial, ui-sans-serif, system-ui, sans-serif} @media (prefers-color-scheme: dark){:root{--mermaid-primaryColor:#38bdf8;--mermaid-primaryTextColor:#e2e8f0;--mermaid-primaryBorderColor:#22d3ee;--mermaid-secondaryColor:#0b1220;--mermaid-secondaryTextColor:#e2e8f0;--mermaid-secondaryBorderColor:#1f2937;--mermaid-tertiaryColor:#111827;--mermaid-tertiaryTextColor:#e5e7eb;--mermaid-tertiaryBorderColor:#374151;--mermaid-lineColor:#93c5fd;--mermaid-textColor:#e5e7eb;--mermaid-clusterBkg:#0b1220;--mermaid-clusterBorder:#334155;--mermaid-edgeLabelBackground:#0b1220cc;--mermaid-noteBkgColor:#1f2937;--mermaid-noteTextColor:#f8fafc;--mermaid-errorBkgColor:#7f1d1d;--mermaid-errorTextColor:#fecaca}}",
 
   "flowchart": {
     "htmlLabels": false,
     "useMaxWidth": true,
     "diagramPadding": 16,
     "padding": 8,
-    "nodeSpacing": 40,
-    "rankSpacing": 60,
+    "nodeSpacing": 44,
+    "rankSpacing": 64,
     "curve": "basis"
   },
 
