@@ -1,3 +1,19 @@
+# .github/workflows/branch-protection.yml
+# ==============================================================================
+# SpectraMind V50 — Apply Branch Protection & Enable Auto-merge (Upgraded)
+# ------------------------------------------------------------------------------
+# One-click hardening for repo branch policies:
+# • Enables repository auto-merge and merge strategy controls.
+# • Applies protection to DEFAULT branch (e.g., main) + optional release/* globs.
+# • Requires status checks, PR approvals, CODEOWNERS (optional), linear history.
+# • Optional release locking (prevent direct pushes), admin enforcement, signed commits.
+# • Idempotent: safe to re-run; summarizes effective settings at end.
+#
+# Requirements:
+#   - Secret: BRANCH_PROTECT_PAT  (classic PAT or fine-grained token with admin:repo / branch protection scope)
+#   - The PAT owner must have admin rights on the target repository.
+# ==============================================================================
+
 name: "Apply Branch Protection & Enable Auto-merge (Upgraded)"
 
 on:
@@ -19,7 +35,7 @@ on:
         default: "1"
 
       release_branch_glob:
-        description: "Protect all matching release branches (glob), leave blank to skip (e.g., release/*)"
+        description: "Protect release branches (glob) — leave empty to skip (e.g., release/*)"
         required: false
         default: "release/*"
 
@@ -34,7 +50,7 @@ on:
         default: "2"
 
       require_code_owner_reviews:
-        description: "Require CODEOWNERS approval (true/false)"
+        description: "Require CODEOWNERS approvals (true/false)"
         required: true
         default: "false"
 
@@ -63,8 +79,13 @@ on:
         required: true
         default: "true"
 
+      require_signed_commits:
+        description: "Require signed commits on protected branches (true/false)"
+        required: true
+        default: "true"
+
 permissions:
-  contents: read
+  contents: read   # Gh CLI uses BRANCH_PROTECT_PAT; GITHUB_TOKEN perms here are minimal.
 
 concurrency:
   group: branch-protection-${{ github.ref }}
@@ -72,31 +93,46 @@ concurrency:
 
 jobs:
   protect:
+    name: Apply Branch Protection
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ secrets.BRANCH_PROTECT_PAT }}
       OWNER: ${{ github.repository_owner }}
       REPO: ${{ github.event.repository.name }}
     steps:
-      - name: Check GitHub CLI auth
-        run: gh auth status
-
-      - name: Enable repository-level Auto-merge
+      - name: Preflight — CLI & jq
         run: |
+          set -e
+          gh --version || (type -p curl >/dev/null && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | \
+            sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && \
+            sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg && \
+            echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | \
+            sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null && \
+            sudo apt-get update && sudo apt-get install gh -y)
+          sudo apt-get update -y && sudo apt-get install -y jq
+          gh auth status
+
+      - name: Repo settings — enable Auto-merge & merge strategy hygiene
+        run: |
+          # Enable auto-merge; prefer squash merges; optionally enforce branch deletion after merge.
           gh api \
             --method PATCH \
             -H "Accept: application/vnd.github+json" \
             /repos/${OWNER}/${REPO} \
-            -f allow_auto_merge=true
+            -f allow_auto_merge=true \
+            -f delete_branch_on_merge=true \
+            -f allow_squash_merge=true \
+            -f allow_merge_commit=false \
+            -f allow_rebase_merge=false
 
       - name: Normalize boolean inputs
         id: bools
         shell: bash
         run: |
           to_bool() { [[ "${1,,}" == "true" ]]; }
-          for k in require_code_owner_reviews enforce_admins allow_deletions allow_force_pushes require_linear_history lock_release_branches; do
-            v="${{ github.event.inputs[$k] }}"
-            if to_bool "$v"; then echo "$k=true"  >> $GITHUB_OUTPUT; else echo "$k=false" >> $GITHUB_OUTPUT; fi
+          for k in require_code_owner_reviews enforce_admins allow_deletions allow_force_pushes require_linear_history lock_release_branches require_signed_commits; do
+            val="${{ github.event.inputs[$k] }}"
+            if to_bool "$val"; then echo "$k=true"  >> $GITHUB_OUTPUT; else echo "$k=false" >> $GITHUB_OUTPUT; fi
           done
 
       - name: Build JSON helpers
@@ -105,12 +141,16 @@ jobs:
         run: |
           csv_to_json_array () {
             local CSV="$1"
+            if [ -z "$CSV" ]; then echo "[]"; return; fi
             IFS=',' read -ra ARR <<< "$CSV"
-            # trim spaces
-            for i in "${!ARR[@]}"; do ARR[$i]="\"$(echo "${ARR[$i]}" | sed 's/^ *//;s/ *$//')\""; done
-            local joined
-            joined=$(IFS=,; echo "${ARR[*]}")
-            echo "[$joined]"
+            for i in "${!ARR[@]}"; do
+              # trim spaces around each entry
+              v="$(echo "${ARR[$i]}" | sed 's/^ *//;s/ *$//')"
+              # reject empty entries
+              if [ -n "$v" ]; then ARR[$i]="\"$v\""; else unset 'ARR[i]'; fi
+            done
+            local joined; joined=$(IFS=,; echo "${ARR[*]}")
+            echo "[${joined}]"
           }
 
           JSON_MAIN=$(csv_to_json_array "${{ github.event.inputs.required_checks_csv_main }}")
@@ -119,7 +159,7 @@ jobs:
           echo "json_main=$JSON_MAIN" >> $GITHUB_OUTPUT
           echo "json_rel=$JSON_REL"   >> $GITHUB_OUTPUT
 
-      - name: Apply protection to DEFAULT branch
+      - name: Apply protection — DEFAULT branch
         env:
           DEFAULT_BRANCH: ${{ github.event.inputs.default_branch }}
           REQUIRED_CHECKS_JSON: ${{ steps.helpers.outputs.json_main }}
@@ -129,8 +169,10 @@ jobs:
           ALLOW_FORCE: ${{ steps.bools.outputs.allow_force_pushes }}
           ALLOW_DELETE: ${{ steps.bools.outputs.allow_deletions }}
           REQUIRE_CODEOWNERS: ${{ steps.bools.outputs.require_code_owner_reviews }}
+          REQ_SIGNED: ${{ steps.bools.outputs.require_signed_commits }}
         shell: bash
         run: |
+          echo "🔐 Protecting ${DEFAULT_BRANCH}"
           cat > body.json <<JSON
           {
             "required_status_checks": {
@@ -154,39 +196,49 @@ jobs:
           }
           JSON
 
-          gh api \
-            --method PUT \
-            -H "Accept: application/vnd.github+json" \
+          # Apply core protection
+          gh api --method PUT -H "Accept: application/vnd.github+json" \
             /repos/${OWNER}/${REPO}/branches/${DEFAULT_BRANCH}/protection \
             --input body.json
 
-      - name: Discover release branches (if any)
+          # Signed commits (optional)
+          if [[ "${REQ_SIGNED}" == "true" ]]; then
+            gh api --method POST -H "Accept: application/vnd.github+json" \
+              /repos/${OWNER}/${REPO}/branches/${DEFAULT_BRANCH}/protection/required_signatures || true
+          else
+            gh api --method DELETE -H "Accept: application/vnd.github+json" \
+              /repos/${OWNER}/${REPO}/branches/${DEFAULT_BRANCH}/protection/required_signatures || true
+          fi
+
+      - name: Discover release branches (glob -> regex)
         id: rels
         env:
           GLOB: ${{ github.event.inputs.release_branch_glob }}
         shell: bash
         run: |
-          if [[ -z "$GLOB" || "$GLOB" == "" ]]; then
+          if [[ -z "$GLOB" ]]; then
             echo "branches=" >> $GITHUB_OUTPUT
             exit 0
           fi
 
-          # Fetch first 200 branches (adjust if you have more)
-          branches=$(gh api -H "Accept: application/vnd.github+json" \
-                     /repos/${OWNER}/${REPO}/branches?per_page=100 | jq -r '.[].name')
-          # basic glob filter via egrep (translate glob to regex)
-          regex=$(printf '%s\n' "$GLOB" | sed 's/\./\\./g; s/\*/.*/g; s/\?/./g')
-          matches=$(printf '%s\n' "$branches" | egrep -E "^${regex}$" || true)
+          # fetch paginated branches (first 300)
+          all="$( (gh api "/repos/${OWNER}/${REPO}/branches?per_page=100&page=1";
+                   gh api "/repos/${OWNER}/${REPO}/branches?per_page=100&page=2";
+                   gh api "/repos/${OWNER}/${REPO}/branches?per_page=100&page=3") \
+                   | jq -r '.[].name' | sort -u )"
+
+          # translate glob to regex
+          regex="$(printf '%s\n' "$GLOB" | sed 's/\./\\./g; s/\*/.*/g; s/\?/./g')"
+          matches="$(printf '%s\n' "$all" | egrep -E "^${regex}$" || true)"
 
           if [[ -z "$matches" ]]; then
             echo "branches=" >> $GITHUB_OUTPUT
           else
-            # output as space-separated list
             list=$(echo "$matches" | tr '\n' ' ' | sed 's/  */ /g;s/ $//')
             echo "branches=$list" >> $GITHUB_OUTPUT
           fi
 
-      - name: Apply protection to release branches
+      - name: Apply protection — release branches
         if: ${{ steps.rels.outputs.branches != '' }}
         env:
           BRANCHES: ${{ steps.rels.outputs.branches }}
@@ -198,10 +250,11 @@ jobs:
           ALLOW_DELETE: ${{ steps.bools.outputs.allow_deletions }}
           LOCK_REL: ${{ steps.bools.outputs.lock_release_branches }}
           REQUIRE_CODEOWNERS: ${{ steps.bools.outputs.require_code_owner_reviews }}
+          REQ_SIGNED: ${{ steps.bools.outputs.require_signed_commits }}
         shell: bash
         run: |
           for BR in $BRANCHES; do
-            echo "Applying protection to $BR"
+            echo "🔐 Protecting ${BR}"
             cat > body.json <<JSON
             {
               "required_status_checks": {
@@ -225,11 +278,17 @@ jobs:
             }
             JSON
 
-            gh api \
-              --method PUT \
-              -H "Accept: application/vnd.github+json" \
+            gh api --method PUT -H "Accept: application/vnd.github+json" \
               /repos/${OWNER}/${REPO}/branches/${BR}/protection \
               --input body.json
+
+            if [[ "${REQ_SIGNED}" == "true" ]]; then
+              gh api --method POST -H "Accept: application/vnd.github+json" \
+                /repos/${OWNER}/${REPO}/branches/${BR}/protection/required_signatures || true
+            else
+              gh api --method DELETE -H "Accept: application/vnd.github+json" \
+                /repos/${OWNER}/${REPO}/branches/${BR}/protection/required_signatures || true
+            fi
           done
 
       - name: Summary
@@ -238,13 +297,24 @@ jobs:
           REQS_MAIN: ${{ github.event.inputs.required_checks_csv_main }}
           REQS_REL: ${{ github.event.inputs.required_checks_csv_release }}
           RELS: ${{ steps.rels.outputs.branches }}
+          REQUIRE_LINEAR: ${{ steps.bools.outputs.require_linear_history }}
+          REQUIRE_CODEOWNERS: ${{ steps.bools.outputs.require_code_owner_reviews }}
+          REQ_SIGNED: ${{ steps.bools.outputs.require_signed_commits }}
+          ENFORCE_ADMINS: ${{ steps.bools.outputs.enforce_admins }}
         run: |
-          echo "✅ Repo-level Auto-merge enabled."
+          echo "✅ Repository Auto-merge enabled; squash merges preferred; delete-branch-on-merge enabled."
           echo "✅ Protection applied to: ${DEFAULT_BRANCH}"
-          echo "   • Required checks: ${REQS_MAIN}"
+          echo "   • Required checks        : ${REQS_MAIN}"
+          echo "   • Linear history         : ${REQUIRE_LINEAR}"
+          echo "   • CODEOWNERS required    : ${REQUIRE_CODEOWNERS}"
+          echo "   • Signed commits         : ${REQ_SIGNED}"
+          echo "   • Enforce admins         : ${ENFORCE_ADMINS}"
           if [[ -n "${RELS}" ]]; then
             echo "✅ Protection applied to release branches:"
-            for b in ${RELS}; do echo "   • ${b}  (checks: ${REQS_REL})"; done
+            for b in ${RELS}; do
+              echo "   • ${b}  (checks: ${REQS_REL})"
+            done
           else
-            echo "ℹ️  No release branches matched pattern or pattern not provided."
+            echo "ℹ️  No release branches matched pattern or pattern omitted."
           fi
+```
