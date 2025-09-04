@@ -1,180 +1,262 @@
-# syntax=docker/dockerfile:1.6
-# ==============================================================================
-# Dockerfile.prod — SpectraMind V50 (NeurIPS 2025 Ariel Data Challenge)
-# Production-grade, CUDA-enabled, Poetry-managed image with Hydra/DVC/CLI
-# - Multi-stage build for smaller runtime images
-# - Non-root user, reproducible locks, deterministic locales
-# - Ready to run: `spectramind` CLI (train/predict/diagnose/submit)
-# - CPU or GPU selectable via BASE_IMAGE build-arg
-#   • GPU (default): nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
-#   • CPU:           python:3.11-slim
-# ------------------------------------------------------------------------------
-# Examples:
-#   GPU build:
-#     docker build -f Dockerfile.prod -t spectramind:v50 .
-#   CPU build:
-#     docker build -f Dockerfile.prod --build-arg BASE_IMAGE=python:3.11-slim -t spectramind:v50-cpu .
-#   Run (GPU):
-#     docker run --rm --gpus all -v $PWD:/opt/app spectramind:v50 train --config-name=config_v50.yaml
-#   Run (CPU):
-#     docker run --rm -v $PWD:/opt/app spectramind:v50-cpu diagnose dashboard --html-out outputs/report.html
-# ==============================================================================
+syntax=docker/dockerfile:1.6
+
+==============================================================================
+
+Dockerfile.prod — SpectraMind V50 (NeurIPS 2025 Ariel Data Challenge)
+
+Production-grade, CUDA-aware, Poetry-managed image with Hydra/DVC/CLI
+
+
+
+Highlights
+
+• Multi-stage, cache-accelerated build (BuildKit) → small, reproducible runtime
+
+• CPU/GPU selectable via BASE_IMAGE; optional Torch auto-install by index URL
+
+• Non-root user, tini as PID1, deterministic locales/threads, health checks
+
+• Poetry lock respected; project installed editable to expose spectramind CLI
+
+• Optional DVC remotes; optional extra index URLs for private mirrors
+
+• Ready to run:
+
+docker run –rm –gpus all -v $PWD:/opt/app spectramind:v50 train –config-name=config_v50.yaml
+
+==============================================================================
 
 ############################
-# Stage 0: base (CUDA/CPU + OS)
+
+Stage 0: base (OS + CUDA/CPU)
+
 ############################
 ARG BASE_IMAGE=nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
 FROM ${BASE_IMAGE} AS base
 
-# ----- OCI labels (supply at build time if desired) -----
+—– OCI labels (override via –build-arg at build time) —–
+
 ARG VCS_REF=unknown
 ARG BUILD_DATE=unknown
-LABEL org.opencontainers.image.title="SpectraMind V50" \
-      org.opencontainers.image.description="Neuro-symbolic, physics-informed exoplanet spectroscopy pipeline (NeurIPS 2025 Ariel Data Challenge)" \
-      org.opencontainers.image.url="https://github.com/bartytime4life/SpectraMindV50" \
-      org.opencontainers.image.source="https://github.com/bartytime4life/SpectraMindV50" \
-      org.opencontainers.image.revision="${VCS_REF}" \
-      org.opencontainers.image.created="${BUILD_DATE}" \
-      org.opencontainers.image.licenses="MIT"
+LABEL org.opencontainers.image.title=“SpectraMind V50” 
+org.opencontainers.image.description=“Neuro-symbolic, physics-informed exoplanet spectroscopy pipeline (NeurIPS 2025 Ariel Data Challenge)” 
+org.opencontainers.image.url=“https://github.com/bartytime4life/SpectraMindV50” 
+org.opencontainers.image.source=“https://github.com/bartytime4life/SpectraMindV50” 
+org.opencontainers.image.revision=”${VCS_REF}” 
+org.opencontainers.image.created=”${BUILD_DATE}” 
+org.opencontainers.image.licenses=“MIT”
 
-# Deterministic locale & non-interactive apt
-ENV DEBIAN_FRONTEND=noninteractive \
-    TZ=UTC \
-    LANG=C.UTF-8 \
-    LC_ALL=C.UTF-8
+Deterministic locale & non-interactive apt
 
-SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+ENV DEBIAN_FRONTEND=noninteractive 
+TZ=UTC 
+LANG=C.UTF-8 
+LC_ALL=C.UTF-8
 
-# Minimal OS deps + security updates
-# - If BASE_IMAGE is python:3.11-slim, Python is present; the extra packages are harmless.
-RUN apt-get update -y && \
-    apt-get upgrade -y && \
-    apt-get install -y --no-install-recommends \
-      python3.11 python3.11-distutils python3-pip python3-venv \
-      git curl ca-certificates tzdata \
-      build-essential gcc g++ pkg-config \
-      libglib2.0-0 libsm6 libxrender1 libxext6 libx11-6 \
-      # Compression/runtime niceties
-      unzip zip xz-utils \
-    && rm -rf /var/lib/apt/lists/*
+SHELL [”/bin/bash”, “-o”, “pipefail”, “-c”]
 
-# Make python -> python3.11 (safe even if python exists)
-RUN ln -sf /usr/bin/python3.11 /usr/bin/python && \
-    python -m pip install --no-cache-dir --upgrade pip setuptools wheel
+Minimal OS deps + security updates
 
-# Create least-privileged user
+- Uses BuildKit cache mounts to accelerate apt and pip/poetry installs.
+
+RUN –mount=type=cache,target=/var/cache/apt,sharing=locked 
+–mount=type=cache,target=/var/lib/apt,sharing=locked 
+apt-get update -y && 
+apt-get upgrade -y && 
+apt-get install -y –no-install-recommends 
+python3.11 python3.11-distutils python3-pip python3-venv 
+git curl ca-certificates tzdata 
+build-essential gcc g++ pkg-config 
+libglib2.0-0 libsm6 libxrender1 libxext6 libx11-6 
+# Compression/runtime niceties
+unzip zip xz-utils 
+# Proper PID 1 / signals
+tini 
+&& rm -rf /var/lib/apt/lists/*
+
+Make python -> python3.11 (safe even if python exists)
+
+RUN ln -sf /usr/bin/python3.11 /usr/bin/python && 
+python -m pip install –no-cache-dir –upgrade pip setuptools wheel
+
+Create least-privileged user
+
 ARG USERNAME=spectra
 ARG UID=1010
 ARG GID=1010
-RUN groupadd -g ${GID} ${USERNAME} && \
-    useradd -m -u ${UID} -g ${GID} -s /bin/bash ${USERNAME}
+RUN groupadd -g ${GID} ${USERNAME} && 
+useradd -m -u ${UID} -g ${GID} -s /bin/bash ${USERNAME}
 WORKDIR /home/${USERNAME}
 
 ############################
-# Stage 1: builder (Poetry + deps)
+
+Stage 1: builder (Poetry + deps)
+
 ############################
 FROM base AS builder
 
-# Poetry
-ENV POETRY_VERSION=1.8.3 \
-    POETRY_HOME=/opt/poetry \
-    POETRY_NO_INTERACTION=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+Poetry
 
-RUN curl -sSL https://install.python-poetry.org | python - && \
-    ln -sf ${POETRY_HOME}/bin/poetry /usr/local/bin/poetry
+ENV POETRY_VERSION=1.8.3 
+POETRY_HOME=/opt/poetry 
+POETRY_NO_INTERACTION=1 
+PIP_DISABLE_PIP_VERSION_CHECK=1 
+# Speed up Poetry & pip with cache mounts
+POETRY_CACHE_DIR=/opt/.cache/pypoetry
 
-# Virtualenv path for deterministic runtime copy
+Install Poetry via official installer
+
+RUN –mount=type=cache,target=/root/.cache,persistence=shared 
+curl -sSL https://install.python-poetry.org | python - && 
+ln -sf ${POETRY_HOME}/bin/poetry /usr/local/bin/poetry
+
+Virtualenv path for deterministic runtime copy
+
 ENV VIRTUAL_ENV=/opt/venv
-RUN python -m venv ${VIRTUAL_ENV} && \
-    . ${VIRTUAL_ENV}/bin/activate && \
-    pip install --no-cache-dir -U pip setuptools wheel
+RUN python -m venv ${VIRTUAL_ENV} && 
+. ${VIRTUAL_ENV}/bin/activate && 
+pip install –no-cache-dir -U pip setuptools wheel
 
-# Copy only dependency manifests first for layer caching
+Copy only dependency manifests first for layer caching
+
 WORKDIR /opt/app
 COPY pyproject.toml poetry.lock ./
 
-# Optional: allow toggling installation of extra groups (e.g., "cuda", "cpu", "viz")
-# Example usage: --build-arg POETRY_ONLY_GROUPS="main,cuda"
+Optional: allow toggling installation of extra groups (e.g., “cuda”, “cpu”, “viz”)
+
+Example usage: –build-arg POETRY_ONLY_GROUPS=“main,cuda”
+
 ARG POETRY_ONLY_GROUPS=main
 
-# Install dependencies (respect lockfile; no project install here)
-RUN . ${VIRTUAL_ENV}/bin/activate && \
-    poetry config virtualenvs.create false && \
-    poetry install --only ${POETRY_ONLY_GROUPS} --no-interaction --no-ansi
+Optional: private indexes for enterprise mirrors (space-separated)
+
+Example: –build-arg EXTRA_INDEX_URLS=“https://pypi.mycompany.org/simple”
+
+ARG EXTRA_INDEX_URLS=””
+ENV PIP_EXTRA_INDEX_URL=${EXTRA_INDEX_URLS}
+
+Install dependencies according to lockfile (no project install here)
+
+RUN –mount=type=cache,target=/root/.cache/pip,sharing=locked 
+–mount=type=cache,target=/opt/.cache/pypoetry,sharing=locked 
+. ${VIRTUAL_ENV}/bin/activate && 
+poetry config virtualenvs.create false && 
+poetry install –only ${POETRY_ONLY_GROUPS} –no-interaction –no-ansi
 
 ############################
-# Stage 2: runtime (slim, non-root)
+
+Stage 2: runtime (slim, non-root)
+
 ############################
 FROM base AS runtime
 
-# Reproducible, headless-friendly environment
-ENV VIRTUAL_ENV=/opt/venv \
-    PATH=/opt/venv/bin:$PATH \
-    PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
-    MPLBACKEND=Agg \
-    # HF/Torch caches disabled by default in prod; flip as needed
-    HF_HOME=/home/spectra/.cache/huggingface \
-    HF_HUB_DISABLE_TELEMETRY=1 \
-    TRANSFORMERS_OFFLINE=1
+Reproducible, headless-friendly environment
 
-# Copy the prebuilt virtualenv from builder
-COPY --from=builder ${VIRTUAL_ENV} ${VIRTUAL_ENV}
+ENV VIRTUAL_ENV=/opt/venv 
+PATH=/opt/venv/bin:$PATH 
+PYTHONUNBUFFERED=1 
+PIP_NO_CACHE_DIR=1 
+MPLBACKEND=Agg 
+# HF/Torch caches disabled by default in prod; flip as needed
+HF_HOME=/home/spectra/.cache/huggingface 
+HF_HUB_DISABLE_TELEMETRY=1 
+TRANSFORMERS_OFFLINE=1 
+# Determinism and sane thread defaults (override at runtime as needed)
+PYTHONHASHSEED=0 
+OMP_NUM_THREADS=1 
+MKL_NUM_THREADS=1 
+OPENBLAS_NUM_THREADS=1
 
-# Ensure venv owned by non-root
+Copy the prebuilt virtualenv from builder
+
+COPY –from=builder ${VIRTUAL_ENV} ${VIRTUAL_ENV}
+
+Ensure venv owned by non-root
+
 ARG UID=1010
 ARG GID=1010
 RUN chown -R ${UID}:${GID} ${VIRTUAL_ENV}
 
-# Project code (honor .dockerignore to keep clean)
-WORKDIR /opt/app
-COPY --chown=${UID}:${GID} . .
+Project code (honor .dockerignore to keep clean)
 
-# ----- Optional PyTorch wheels (GPU/CPU) -----
-# Configure at build time:
-#   • GPU CUDA 12.1: --build-arg INSTALL_TORCH=true --build-arg TORCH_INDEX_URL=https://download.pytorch.org/whl/cu121
-#   • CPU           : --build-arg INSTALL_TORCH=true --build-arg TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
+WORKDIR /opt/app
+COPY –chown=${UID}:${GID} . .
+
+—– Optional PyTorch wheels (GPU/CPU) —–
+
+Configure at build time:
+
+• GPU CUDA 12.1: –build-arg INSTALL_TORCH=true –build-arg TORCH_INDEX_URL=https://download.pytorch.org/whl/cu121
+
+• CPU           : –build-arg INSTALL_TORCH=true –build-arg TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
+
 ARG INSTALL_TORCH=false
 ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cu121
-RUN . ${VIRTUAL_ENV}/bin/activate && \
-    if [ "${INSTALL_TORCH}" = "true" ]; then \
-      pip install --no-cache-dir --index-url ${TORCH_INDEX_URL} torch torchvision torchaudio; \
-    fi
 
-# ----- Optional DVC remotes (comment if unneeded) -----
-# Build arg example: --build-arg INSTALL_DVC=true --build-arg DVC_EXTRAS="s3,gdrive,azure"
+Optionally pin Torch versions (leave empty to get latest compatible from index)
+
+ARG TORCH_VERSION=
+ARG TORCHVISION_VERSION=
+ARG TORCHAUDIO_VERSION=
+RUN –mount=type=cache,target=/root/.cache/pip,sharing=locked 
+. ${VIRTUAL_ENV}/bin/activate && 
+if [ “${INSTALL_TORCH}” = “true” ]; then 
+if [ -n “${TORCH_VERSION}” ]; then TORCH_PKG=“torch==${TORCH_VERSION}”; else TORCH_PKG=“torch”; fi; 
+if [ -n “${TORCHVISION_VERSION}” ]; then VISION_PKG=“torchvision==${TORCHVISION_VERSION}”; else VISION_PKG=“torchvision”; fi; 
+if [ -n “${TORCHAUDIO_VERSION}” ]; then AUDIO_PKG=“torchaudio==${TORCHAUDIO_VERSION}”; else AUDIO_PKG=“torchaudio”; fi; 
+pip install –no-cache-dir –index-url ${TORCH_INDEX_URL} ${TORCH_PKG} ${VISION_PKG} ${AUDIO_PKG}; 
+fi
+
+—– Optional DVC remotes (comment if unneeded) —–
+
+Build arg example: –build-arg INSTALL_DVC=true –build-arg DVC_EXTRAS=“s3,gdrive,azure,ssh,gs,webdav”
+
 ARG INSTALL_DVC=false
-ARG DVC_EXTRAS="s3"
-RUN . ${VIRTUAL_ENV}/bin/activate && \
-    if [ "${INSTALL_DVC}" = "true" ]; then \
-      pip install --no-cache-dir "dvc[${DVC_EXTRAS}]"; \
-    fi
+ARG DVC_EXTRAS=“s3”
+RUN –mount=type=cache,target=/root/.cache/pip,sharing=locked 
+. ${VIRTUAL_ENV}/bin/activate && 
+if [ “${INSTALL_DVC}” = “true” ]; then 
+pip install –no-cache-dir “dvc[${DVC_EXTRAS}]”; 
+fi
 
-# Install the project (exposes CLI entrypoints like `spectramind`)
-RUN . ${VIRTUAL_ENV}/bin/activate && \
-    pip install --no-cache-dir -e .
+Optional: extra pip index URLs at runtime layer (mirrors, private wheels)
 
-# Writable dirs for logs / outputs / data (bind-mount friendly)
-RUN mkdir -p /opt/app/outputs /opt/app/logs /opt/app/data && \
-    chown -R ${UID}:${GID} /opt/app
+ARG EXTRA_INDEX_URLS=””
+ENV PIP_EXTRA_INDEX_URL=${EXTRA_INDEX_URLS}
 
-# Non-root runtime
+Install the project (exposes CLI entrypoints like spectramind)
+
+RUN –mount=type=cache,target=/root/.cache/pip,sharing=locked 
+. ${VIRTUAL_ENV}/bin/activate && 
+pip install –no-cache-dir -e .
+
+Writable dirs for logs / outputs / data (bind-mount friendly)
+
+RUN mkdir -p /opt/app/outputs /opt/app/logs /opt/app/data && 
+chown -R ${UID}:${GID} /opt/app
+
+Non-root runtime
+
 USER ${UID}:${GID}
 
-# Determinism / resource constraints (override per deployment as needed)
-ENV PYTHONHASHSEED=0 \
-    OMP_NUM_THREADS=1 \
-    MKL_NUM_THREADS=1
+Volumes (optional; helps some orchestrators)
 
-# Quick sanity: verify CLI is importable & responsive
-RUN python -c "import importlib.util, sys; sys.exit(0) if importlib.util.find_spec('spectramind') else sys.exit(1)" && \
-    spectramind --help >/dev/null
+VOLUME [”/opt/app/outputs”, “/opt/app/logs”, “/opt/app/data”]
 
-# Healthcheck: basic Python + CLI availability probe
-HEALTHCHECK --interval=60s --timeout=8s --retries=5 \
-  CMD python -c "import sys" && spectramind --help >/dev/null || exit 1
+Quick sanity: verify CLI is importable & responsive
 
-# Default entrypoint → show CLI help if no args provided
-ENTRYPOINT ["spectramind"]
-CMD ["--help"]
+RUN python - <<‘PY’\nimport importlib.util, sys\nsys.exit(0) if importlib.util.find_spec(‘spectramind’) else sys.exit(1)\nPY
+
+Optional CUDA probe (non-fatal): prints presence of libcuda.so if available
+
+RUN bash -lc ‘ldconfig -p | grep -i cuda || true’
+
+Healthcheck: basic Python + CLI availability probe
+
+HEALTHCHECK –interval=60s –timeout=8s –retries=5 
+CMD python -c “import sys” && spectramind –help >/dev/null || exit 1
+
+Default entrypoint → tini as PID1 then spectramind
+
+ENTRYPOINT [”/usr/bin/tini”,”-g”,”–”,“spectramind”]
+CMD [”–help”]
