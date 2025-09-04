@@ -1,9 +1,10 @@
 # .github/workflows/ablation.yml
 # ==============================================================================
-# SpectraMind V50 — Ablation Runner (Hydra-safe)
-# - Uses ablation_v50.yaml presets
-# - PR: fast_eval only (≤ ~5–10 min)
-# - Manual / nightly: run selected presets matrix, upload bundles
+# SpectraMind V50 — Ablation Runner (Hydra-safe, Reproducible)
+# - Presets come from configs/ablation/ablation_v50.yaml
+# - PR: runs ONLY fast_eval (≤ ~5–10 min)
+# - Nightly / Manual: runs selected preset matrix; optional Hydra multirun grid
+# - Artifacts: per-preset logs + ablation outputs under outputs/ablations/<preset>/
 # ==============================================================================
 
 name: Ablations
@@ -17,21 +18,24 @@ on:
       - "src/**"
       - "pyproject.toml"
       - "poetry.lock"
+      - "!**/*.md"
   schedule:
-    - cron: "45 2 * * 2,5"   # Tue/Fri ~02:45 UTC
+    - cron: "45 2 * * 2,5"   # Tue/Fri @ 02:45 UTC
   workflow_dispatch:
     inputs:
       presets:
-        description: "Comma-separated presets to run (default,light,strict_symbolic,fast_eval,gnn_ssm_ablate)"
+        description: "Comma-separated presets to run (e.g. default,light,strict_symbolic,fast_eval,gnn_ssm_ablate)"
         required: false
         default: "default,light"
       multirun:
-        description: "Enable grid multirun (+grid.enable=true)"
+        description: "Enable Hydra multirun grid (+grid.enable=true) for selected presets"
         required: false
         default: "false"
 
 permissions:
   contents: read
+  actions: read
+  checks: read
 
 concurrency:
   group: ablations-${{ github.ref }}
@@ -52,7 +56,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        preset: ${{ fromJSON('["default","light","strict_symbolic","fast_eval","gnn_ssm_ablate"]') }}
+        preset: [default, light, strict_symbolic, fast_eval, gnn_ssm_ablate]
 
     steps:
       - name: Checkout
@@ -68,12 +72,17 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install "poetry==${POETRY_VERSION}"
 
-      - name: Cache Poetry & pip
+      - name: Configure in-project venv for caching
+        run: |
+          poetry config virtualenvs.in-project true
+
+      - name: Cache deps (pip/poetry/.venv)
         uses: actions/cache@v4
         with:
           path: |
             ~/.cache/pip
             ~/.cache/pypoetry
+            ./.venv
           key: ablate-${{ runner.os }}-py${{ env.PY }}-${{ hashFiles('**/poetry.lock') }}
           restore-keys: |
             ablate-${{ runner.os }}-py${{ env.PY }}-
@@ -84,41 +93,85 @@ jobs:
 
       - name: Select presets for this event
         id: select
+        shell: bash
         run: |
-          PRESETS="${{ github.event.inputs.presets }}"
-          if [ -z "$PRESETS" ]; then
-            # PRs: only fast_eval to keep CI under budget
+          # Determine desired presets list
+          INPUT_PRESETS="${{ github.event.inputs.presets }}"
+          if [ -z "$INPUT_PRESETS" ]; then
             if [ "${{ github.event_name }}" = "pull_request" ]; then
-              echo "presets=fast_eval" >> $GITHUB_OUTPUT
+              PRESETS="fast_eval"
             else
-              echo "presets=default,light" >> $GITHUB_OUTPUT
+              PRESETS="default,light"
             fi
           else
-            echo "presets=$PRESETS" >> $GITHUB_OUTPUT
+            PRESETS="$INPUT_PRESETS"
           fi
-          echo "multirun=${{ github.event.inputs.multirun || 'false' }}" >> $GITHUB_OUTPUT
+          echo "presets=$PRESETS" >> "$GITHUB_OUTPUT"
 
-      - name: Skip unrelated presets on PR
+          # Determine multirun flag
+          MR="${{ github.event.inputs.multirun }}"
+          if [ -z "$MR" ]; then MR="false"; fi
+          echo "multirun=$MR" >> "$GITHUB_OUTPUT"
+
+          echo "Selected presets: $PRESETS"
+          echo "Multirun: $MR"
+
+      - name: Skip preset (not selected for this event)
+        if: ${{ !contains(steps.select.outputs.presets, matrix.preset) }}
+        run: |
+          echo "Preset '${{ matrix.preset }}' not in selected list '${{ steps.select.outputs.presets }}' — skipping."
+          printf "skipped\n" > "skip_${{ matrix.preset }}.txt"
+
+      - name: Enforce PR fast path
         if: ${{ github.event_name == 'pull_request' && matrix.preset != 'fast_eval' }}
         run: |
-          echo "Skipping preset ${{ matrix.preset }} on PR to keep CI fast."
-          echo "skipped" > skip.txt
+          echo "PR fast path: only 'fast_eval' allowed — skipping '${{ matrix.preset }}'."
+          printf "pr-fast-skip\n" > "skip_${{ matrix.preset }}.txt"
+
+      - name: Show CLI banner / versions
+        if: ${{ contains(steps.select.outputs.presets, matrix.preset) && !(github.event_name == 'pull_request' && matrix.preset != 'fast_eval') }}
+        run: |
+          poetry run spectramind --version || true
+          python -V
+          poetry -V
 
       - name: Run ablation preset
-        if: ${{ !(github.event_name == 'pull_request' && matrix.preset != 'fast_eval') }}
+        if: ${{ contains(steps.select.outputs.presets, matrix.preset) && !(github.event_name == 'pull_request' && matrix.preset != 'fast_eval') }}
+        shell: bash
         run: |
+          set -eo pipefail
           mkdir -p "${OUTDIR}"
           EXTRA=""
           if [ "${{ steps.select.outputs.multirun }}" = "true" ]; then
             EXTRA="+grid.enable=true -m"
           fi
-          # Respect your guardrails/timebox; use the ablation preset hook
+
+          echo "::group::Ablation ${{ matrix.preset }}"
           poetry run spectramind ablate \
             ablation=${{ matrix.preset }} \
             --config-path configs/ablation \
             --config-name ablation_v50 \
             export.outdir="${OUTDIR}/${{ matrix.preset }}" \
             ${EXTRA} 2>&1 | tee "ablate_${{ matrix.preset }}.log"
+          echo "::endgroup::"
+
+      - name: Post run summary
+        if: always()
+        run: |
+          {
+            echo "### Ablation Summary — \`${{ matrix.preset }}\`"
+            if [ -f "ablate_${{ matrix.preset }}.log" ]; then
+              echo
+              echo "<details><summary>Last 50 log lines</summary>"
+              echo
+              tail -n 50 "ablate_${{ matrix.preset }}.log" | sed -e 's/</\&lt;/g' -e 's/>/\&gt;/g'
+              echo
+              echo "</details>"
+            else
+              echo
+              echo "_No log produced (skipped or failed before run step)._"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Collect artifacts
         if: always()
@@ -126,7 +179,9 @@ jobs:
         with:
           name: ablation-${{ matrix.preset }}
           path: |
+            skip_${{ matrix.preset }}.txt
             ablate_${{ matrix.preset }}.log
             outputs/ablations/${{ matrix.preset }}/**
           if-no-files-found: ignore
           retention-days: 7
+```
