@@ -1,25 +1,42 @@
 {
+  "$schema": "https://github.com/svg/svgo/raw/main/schema/svgo.json",
   "multipass": true,
+  "precision": 3,
   "plugins": [
-    "removeDoctype",
-    "removeXMLProcInst",
-    "removeComments",
-    "removeMetadata",
-    "removeEditorsNSData",
-    "cleanupAttrs",
-    "minifyStyles",
-    "convertStyleToAttrs",
-    "cleanupIDs",
-    "removeUselessDefs",
-    "cleanupNumericValues",
-    "convertColors",
-    "removeUnknownsAndDefaults",
-    "removeNonInheritableGroupAttrs",
-    "removeUselessStrokeAndFill",
-    "removeUnusedNS",
-    "collapseGroups",
-    "convertShapeToPath",
-    "mergePaths",
-    "sortAttrs"
+    {
+      "name": "preset-default",
+      "params": {
+        "overrides": {
+          "cleanupIds": {
+            "remove": true,
+            "minify": true,
+            "prefix": "smv50-"
+          },
+          "removeViewBox": false,
+          "convertColors": {
+            "currentColor": true
+          },
+          "sortAttrs": {
+            "xmlnsOrder": "alphabetical"
+          }
+        }
+      }
+    },
+    {
+      "name": "removeDimensions",
+      "active": true
+    },
+    {
+      "name": "removeXMLNS",
+      "active": false
+    },
+    {
+      "name": "prefixIds",
+      "params": {
+        "prefix": "spectramind",
+        "delimiter": "-",
+        "force": false
+      }
+    }
   ]
 }
