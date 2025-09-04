@@ -2,26 +2,28 @@
 # .dockerignore — SpectraMind V50 (NeurIPS 2025 Ariel Data Challenge)
 # ------------------------------------------------------------------------------
 # Purpose:
-#   • Prevent unnecessary files from bloating Docker images
+#   • Keep Docker build context lean (faster, reproducible, CI-safe)
 #   • Mirror .gitignore + .dvcignore for consistency
-#   • Keep Docker context lean, CI-safe, and reproducible
-#   • Ensure only source + configs + required assets make it into the image
+#   • Exclude ephemeral data, secrets, and generated artifacts
+#   • Only source code, configs, and minimal assets make it into images
 # ==============================================================================
 
-# ----------------------------------------------------------------------
-# Python build & cache
+# ===== Python build & cache =====
 __pycache__/
 *.py[cod]
 *.pyd
 *.so
+*.dll
+*.dylib
 *.egg-info/
 *.egg
 *.whl
 *.pkl
 *.dill
+*.prof
+*.lprof
 
-# ----------------------------------------------------------------------
-# Virtual environments & package managers
+# ===== Virtual environments & package managers =====
 .venv/
 venv/
 env/
@@ -32,31 +34,34 @@ pip-wheel-metadata/
 .cache/
 .python-version
 
-# ----------------------------------------------------------------------
-# IDE/editor settings
+# ===== IDE/editor settings =====
 .vscode/
 .idea/
 *.swp
 *.swo
+*.swn
+*.orig
 
-# ----------------------------------------------------------------------
-# OS / system junk
+# ===== OS/system junk =====
 .DS_Store
 Thumbs.db
 Desktop.ini
 
-# ----------------------------------------------------------------------
-# Logs & temporary artifacts
+# ===== Logs & temp files =====
 logs/
+run_logs/
 *.log
 *.tmp
 *.bak
 *.old
 *.pid
 *.lock
+*.trace
+*.out
+*.err
+v50_debug_log.md
 
-# ----------------------------------------------------------------------
-# Intermediate & scratch outputs (pipeline-generated)
+# ===== Intermediate & scratch outputs (pipeline-generated) =====
 outputs/checkpoints/
 outputs/intermediate/
 outputs/temp/
@@ -67,48 +72,54 @@ outputs/sandbox/
 scratch/
 .simulations/
 ray_results/
+ray_tune/
+optuna/
 optuna_study/
+lightning_logs/
 
-# ----------------------------------------------------------------------
-# Model bundles & artifacts (regenerable by pipeline)
+# ===== Model bundles & artifacts (regenerable) =====
 *.ckpt
 *.pth
 *.pt
+*.safetensors
 *.onnx
 *.h5
+*.tar
 *.tar.gz
+*.tgz
 *.mlmodel
+models/
+checkpoints/
+artifacts/
+!models/.gitkeep
+!artifacts/.gitkeep
 
-# ----------------------------------------------------------------------
-# Kaggle / competition specifics
-.kaggle/
-kaggle.json
+# ===== Data (handled by Kaggle/DVC, never baked in) =====
+data/
+datasets/
 input/
 working/
+.kaggle/
 .kernels/
 kernel-metadata.json
+!data/.gitkeep
 
-# Kaggle notebooks (not needed inside Docker images)
+# ===== Kaggle notebooks/checkpoints (excluded from image) =====
 *.ipynb
 .ipynb_checkpoints/
 notebooks/.ipynb_checkpoints/
 
-# ----------------------------------------------------------------------
-# Hugging Face / ML frameworks caches
+# ===== Hugging Face / ML framework caches =====
 .huggingface/
 transformers_cache/
 datasets/
-models/
 wandb/
 mlruns/
 tensorboard/
 tb_logs/
-lightning_logs/
-ray_tune/
-optuna/
+comet-ml/
 
-# ----------------------------------------------------------------------
-# GUI / UX build artifacts
+# ===== GUI/UX build artifacts =====
 gui/.cache/
 gui/dist/
 gui/build/
@@ -123,16 +134,11 @@ assets/**/*.svg
 assets/**/*.jpg
 assets/**/*.jpeg
 assets/**/*.gif
+assets/**/*.webp
+assets/**/*.mp4
+assets/**/*.webm
 
-# ----------------------------------------------------------------------
-# DVC internals (host-managed; not shipped into containers)
-.dvc/cache/
-.dvc/tmp/
-.dvc/plots/
-.dvc/config.local
-
-# ----------------------------------------------------------------------
-# Diagnostics, reports & dashboards (reproducible)
+# ===== Diagnostics, reports & dashboards =====
 outputs/diagnostics/
 reports/
 dashboards/
@@ -145,31 +151,30 @@ outputs/**/*.jpeg
 outputs/**/*.gif
 outputs/**/*.pdf
 outputs/**/*.csv
+outputs/**/*.parquet
+outputs/**/*.feather
 outputs/**/*.json
 outputs/**/*.md
+diagnostic_summary.json
+pipeline_consistency_report.json
+run_hash_summary_v50.json
+version_manifest.json
+manifest.json
+config_snapshot.yaml
+log_table.*
 
-# ----------------------------------------------------------------------
-# Submission bundles (reproducible by pipeline)
+# ===== Submission bundles (reproducible by pipeline) =====
 outputs/submission.csv
 outputs/submission.zip
 outputs/submission_bundle.zip
 outputs/submission/**/*.zip
 outputs/submission/**/*.csv
 
-# ----------------------------------------------------------------------
-# Generated configs & manifests
+# ===== Hydra & multirun outputs =====
 hydra_outputs/
 multirun/
-run_logs/
-manifest.json
-diagnostic_summary.json
-run_hash_summary_v50.json
-version_manifest.json
-pipeline_consistency_report.json
-config_snapshot.yaml
 
-# ----------------------------------------------------------------------
-# Secrets & local creds (must never leak into containers)
+# ===== Secrets & local creds (must never leak) =====
 *.env
 .env*
 .envrc
@@ -177,47 +182,55 @@ config_snapshot.yaml
 .gcloud/
 .azure/
 secrets.yaml
+secrets.yml
 secrets.json
 credentials.json
 token.json
 hf_token.txt
+gcloud.json
+azure_credentials.json
+ssh_known_hosts
+*.pem
+*.key
 
-# ----------------------------------------------------------------------
-# Build system artifacts
+# ===== Build/test system artifacts =====
 dist/
 build/
 .eggs/
 coverage/
 .coverage*
-pytest_cache/
+htmlcov/
+.pytest_cache/
 .ruff_cache/
 .mypy_cache/
 .tox/
 .nox/
-htmlcov/
 
-# ----------------------------------------------------------------------
-# Git internals
+# ===== Git internals =====
 .git/
 .gitignore
 .gitattributes
 .github/
 
-# ----------------------------------------------------------------------
-# Data folders (kept on host/DVC, not baked into images)
-data/
-datasets/
-models/   # runtime models pulled dynamically (HF/DVC/Kaggle)
-
-# ----------------------------------------------------------------------
-# Misc (local-only, CI/CD overrides, dev tools)
+# ===== Misc (local-only/CI overrides) =====
 Dockerfile.local
 Dockerfile.dev
 docker-compose*.yml
 Makefile.local
 
-# ----------------------------------------------------------------------
-# SBOMs / compliance outputs
+# ===== SBOMs / compliance outputs =====
 *.sbom.json
+*.sbom.spdx
 *.cyclonedx.json
-*.spdx
+sbom/
+codeql-db/
+trivy-report.json
+grype-report.json
+syft-output.json
+
+# ===== Keep essentials =====
+!outputs/.gitkeep
+!assets/.gitkeep
+!models/.gitkeep
+!data/.gitkeep
+!artifacts/.gitkeep
