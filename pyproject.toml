@@ -255,7 +255,7 @@ Tooling Configs
 ==============================================================================
 
 [tool.ruff]
-line-length = 100            # a touch wider for scientific code lines
+line-length = 100
 target-version = “py310”
 src = [“src”, “tests”]
 extend-exclude = [“data”, “outputs”, “logs”, “docs”, “notebooks”]
@@ -266,15 +266,15 @@ select = [
 
 docstrings & style (advisory; not too strict)
 
-“D”,           # pydocstyle checks
-“N”,           # pep8-naming
+“D”,
+“N”,
 ]
 ignore = [
-“D100”,“D101”,“D102”,“D103”,“D104”,“D105”,“D107”,  # allow missing high-level docstrings in experiments
+“D100”,“D101”,“D102”,“D103”,“D104”,“D105”,“D107”,
 ]
 per-file-ignores = {
-“tests/” = [“S101”, “D”],              # allow asserts & skip docstyle in tests
-“notebooks/” = [“E402”,“F401”,“D”],    # import order, unused imports, docstyle in notebooks
+“tests/” = [“S101”, “D”],
+“notebooks/” = [“E402”,“F401”,“D”],
 }
 
 [tool.ruff.lint.isort]
