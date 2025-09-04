@@ -1,6 +1,6 @@
 # .dvc/plots.yaml
 # ==============================================================================
-# SpectraMind V50 — DVC Plots Configuration (Upgraded)
+# SpectraMind V50 — DVC Plots Configuration (Upgraded, Challenge-Grade)
 # ------------------------------------------------------------------------------
 # Purpose
 #   Centralize all plot definitions used by `dvc plots show/diff` for CI and local dev.
@@ -10,35 +10,29 @@
 #     dvc plots diff  --targets .dvc/plots.yaml HEAD~1
 #
 # Notes
-#   • DVC supports CSV/TSV/JSON. For JSON, fields must be addressable as keys.
-#   • Each plot entry below declares x/y columns/keys and a vega-lite template.
+#   • DVC supports CSV/TSV/JSON. For JSON, use `fields` to map nested keys to columns.
+#   • Each plot entry declares x/y and a vega-lite template (under plots/templates/vega).
 #   • Paths/globs point to standard SpectraMind V50 outputs written by the CLI.
-#   • To add or rename a plot, keep the "id" unique and "rev_lock" untouched (DVC sets it).
-#
-# Templates
-#   Custom vega-lite templates are stored under: plots/templates/vega/*.json
-#   If a template is not found, DVC falls back to its default scheme.
+#   • Keep plot `id` values unique; DVC will track revs in its own files as needed.
 # ==============================================================================
 
 version: 1
 
+# ------------------------------------------------------------------------------
+# Templates (vega-lite). If missing on disk, DVC falls back to default.
+# ------------------------------------------------------------------------------
 templates:
-  # Line plots (loss/metrics over steps or epochs)
   line:            plots/templates/vega/line.json
   line_dark:       plots/templates/vega/line_dark.json
-  # Scatter with identity guide (for calibration, residual vs sigma, etc.)
   scatter_guide:   plots/templates/vega/scatter_guide.json
-  # Histogram
   hist:            plots/templates/vega/hist.json
-  # Heatmap (e.g., per-bin GLL)
   heatmap:         plots/templates/vega/heatmap.json
 
 # ------------------------------------------------------------------------------
-# Plot groups
-# - Each entry defines a single “target” for DVC plots (file + axes + template).
-# - Use `dvc plots show .dvc/plots.yaml:train_loss` to render a single plot by id.
+# Plot targets
+# Use:  dvc plots show .dvc/plots.yaml:<id>
+#       dvc plots diff  .dvc/plots.yaml:<id> HEAD~1
 # ------------------------------------------------------------------------------
-
 plots:
 
   # ===========================
@@ -46,10 +40,13 @@ plots:
   # ===========================
   - id: train_loss
     title: "Training Loss vs Step"
+    path: outputs/metrics/train_metrics.json
+    # If JSON has nested structure, map fields → columns (example kept here and reused below).
+    # fields:
+    #   step: history[].step
+    #   loss: history[].loss
     x: step
     y: loss
-    # Accept JSON or CSV; the CLI writes JSON by default at this path.
-    path: outputs/metrics/train_metrics.json
     template: line
     x_label: "Step"
     y_label: "Loss"
@@ -57,9 +54,12 @@ plots:
 
   - id: val_loss
     title: "Validation Loss vs Step"
+    path: outputs/metrics/val_metrics.json
+    # fields:
+    #   step: history[].step
+    #   val_loss: history[].val_loss
     x: step
     y: val_loss
-    path: outputs/metrics/val_metrics.json
     template: line
     x_label: "Step"
     y_label: "Val Loss"
@@ -67,9 +67,12 @@ plots:
 
   - id: lr_schedule
     title: "Learning Rate vs Step"
+    path: outputs/metrics/train_metrics.json
+    # fields:
+    #   step: history[].step
+    #   lr:   history[].lr
     x: step
     y: lr
-    path: outputs/metrics/train_metrics.json
     template: line
     x_label: "Step"
     y_label: "LR"
@@ -77,11 +80,24 @@ plots:
 
   - id: gll_over_time
     title: "Gaussian Log-Likelihood vs Step"
+    path: outputs/metrics/val_metrics.json
+    # fields:
+    #   step: history[].step
+    #   gll:  history[].gll
     x: step
     y: gll
-    path: outputs/metrics/val_metrics.json
     template: line
     x_label: "Step"
+    y_label: "GLL (↑ better)"
+    smooth: true
+
+  - id: epoch_gll
+    title: "Validation GLL vs Epoch"
+    path: outputs/metrics/val_metrics.csv
+    x: epoch
+    y: gll
+    template: line
+    x_label: "Epoch"
     y_label: "GLL (↑ better)"
     smooth: true
 
@@ -91,10 +107,19 @@ plots:
   - id: residual_hist
     title: "Residuals Histogram | (μ - y)"
     path: outputs/diagnostics/calibration/residuals.csv
-    y: residual      # column in CSV
+    y: residual
     template: hist
     bins: 60
     x_label: "Residual (μ - y)"
+    y_label: "Count"
+
+  - id: zscore_hist
+    title: "Z-Score Histogram | (μ - y) / σ"
+    path: outputs/diagnostics/calibration/residuals.csv
+    y: z         # expected column: z
+    template: hist
+    bins: 60
+    x_label: "Z-Score"
     y_label: "Count"
 
   - id: sigma_hist
@@ -111,7 +136,7 @@ plots:
     path: outputs/diagnostics/calibration/residuals.csv
     x: sigma
     y: abs_residual
-    template: scatter_guide   # draws y=x guide for visual calibration check
+    template: scatter_guide   # draws y=x guide to check calibration
     x_label: "Predicted σ"
     y_label: "|μ - y|"
 
@@ -130,7 +155,6 @@ plots:
   - id: gll_heatmap
     title: "Per-Bin GLL Heatmap"
     path: outputs/diagnostics/gll_per_bin.csv
-    # Expected columns: bin, step (or epoch), gll
     heatmap:
       x: bin
       y: step
@@ -143,9 +167,19 @@ plots:
     path: outputs/diagnostics/coverage_per_bin.csv
     heatmap:
       x: bin
-      y: threshold      # e.g., 50%, 80%, 90% lines evaluated
+      y: threshold      # e.g., coverage thresholds 50/80/90
       color: coverage
       colorbar_label: "Coverage"
+    template: heatmap
+
+  - id: sigma_per_bin
+    title: "Predicted σ per Bin (latest)"
+    path: outputs/diagnostics/sigma_per_bin.csv
+    heatmap:
+      x: bin
+      y: channel       # e.g., 'FGS1' or 'AIRS'
+      color: sigma
+      colorbar_label: "σ"
     template: heatmap
 
   # ===========================
@@ -171,7 +205,7 @@ plots:
     path: outputs/diagnostics/umap/umap_latents.csv
     x: x
     y: y
-    color: cluster       # optional field; if absent, template ignores
+    color: cluster
     template: scatter_guide
     x_label: "UMAP-1"
     y_label: "UMAP-2"
@@ -186,10 +220,21 @@ plots:
     x_label: "t-SNE-1"
     y_label: "t-SNE-2"
 
+  # ===========================
+  # μ vs σ sanity (scatter)
+  # ===========================
+  - id: mu_sigma_scatter
+    title: "μ vs σ (latest predictions)"
+    path: outputs/diagnostics/calibration/mu_sigma.csv
+    x: mu
+    y: sigma
+    template: scatter_guide
+    x_label: "μ"
+    y_label: "σ"
+
 # ------------------------------------------------------------------------------
-# Globs (optional convenience)
-# You can reference these as `--targets .dvc/plots.yaml:group:<name>`
-# to show all plots in a group at once.
+# Plot groups (convenience)
+# Use: dvc plots show --targets .dvc/plots.yaml:group:<name>
 # ------------------------------------------------------------------------------
 groups:
   training:
@@ -197,14 +242,18 @@ groups:
     - val_loss
     - lr_schedule
     - gll_over_time
+    - epoch_gll
   calibration:
     - residual_hist
+    - zscore_hist
     - sigma_hist
     - residual_vs_sigma
     - reliability_curve
+    - mu_sigma_scatter
   binwise:
     - gll_heatmap
     - coverage_heatmap
+    - sigma_per_bin
   spectral:
     - fft_power
   embedding:
@@ -212,14 +261,12 @@ groups:
     - tsne_latents
 
 # ------------------------------------------------------------------------------
-# Rendering hints
-#   These are generic knobs some templates respect (optional).
-#   DVC ignores unknown keys, so it’s safe to keep them here.
+# Rendering hints (optional; respected by custom templates)
 # ------------------------------------------------------------------------------
 hints:
   dark_mode: false
   point_size: 28
   line_width: 2
   palette: "viridis"
-  # If your CI uses dark backgrounds, set:
+  # If your CI uses dark backgrounds:
   # dark_mode: true
