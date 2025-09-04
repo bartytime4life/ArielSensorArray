@@ -1,7 +1,13 @@
+```yaml
 # .github/workflows/benchmark.yml
-# SpectraMind V50 — Benchmarks (CPU/GPU, timing, throughput, GLL) with artifacts
-# Runs on demand and weekly; builds env via Poetry, exercises CLI, exports reports.
-# Includes optional Docker(GPU) parity smoke with BuildKit cache.
+# ==============================================================================
+# SpectraMind V50 — Benchmarks (CPU/GPU): timing, throughput, GLL, artifacts
+# ------------------------------------------------------------------------------
+# Runs on demand, weekly, and on push to main.
+# • Builds env via Poetry, exercises the `spectramind` CLI, exports reports.
+# • Optional GPU matrix + optional Docker GPU parity smoke (BuildKit cached).
+# • Safe-by-default: GPU parts are opt-in via repo/org variables.
+# ==============================================================================
 
 name: benchmark
 
@@ -13,7 +19,7 @@ on:
         required: false
         type: string
       device:
-        description: "Device override"
+        description: "Device override for on-demand run"
         required: false
         default: "auto"
         type: choice
@@ -36,11 +42,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
+    # GPU matrix entries are enabled only when VARS.ENABLE_GPU_MATRIX == '1'
     strategy:
       fail-fast: false
       matrix:
         python: ["3.11", "3.12"]
         device: ["cpu", "gpu"]
+        include:
+          # Ensure at least one CPU variant always runs
+          - python: "3.11"
+            device: "cpu"
 
     env:
       POETRY_VIRTUALENVS_IN_PROJECT: "true"
@@ -48,8 +59,11 @@ jobs:
       TRANSFORMERS_OFFLINE: "1"
       HF_HUB_OFFLINE: "1"
       HYDRA_FULL_ERROR: "1"
+      # Where benchmarks place per-axis outputs
       BENCH_RESULTS_DIR: benchmarks/${{ matrix.python }}_${{ matrix.device }}
+      # workflow_dispatch override takes precedence; otherwise matrix device
       REQ_DEVICE: ${{ inputs.device && inputs.device || '' }}
+      # Respect GPU selection if actually running GPU axis
       CUDA_VISIBLE_DEVICES: ${{ matrix.device == 'gpu' && '0' || '' }}
 
     steps:
@@ -75,7 +89,7 @@ jobs:
           path: |
             .venv
             ~/.cache/pypoetry
-          key: poetry-${{ runner.os }}-${{ matrix.python }}-${{ hashFiles('poetry.lock') }}
+          key: poetry-${{ runner.os }}-${{ matrix.python }}-${{ hashFiles('**/poetry.lock') }}
           restore-keys: |
             poetry-${{ runner.os }}-${{ matrix.python }}-
 
@@ -84,44 +98,71 @@ jobs:
           poetry env use "${{ steps.setup-py.outputs.python-path }}"
           poetry install --no-interaction
 
-      - name: Show versions
+      - name: Environment info
         run: |
-          python --version
-          poetry --version
-          poetry run python - <<'PY'
-import torch, platform
-print("torch:", torch.__version__)
-print("cuda:", torch.cuda.is_available())
-print("platform:", platform.platform())
-PY
+          echo "Device request (dispatch) : '${{ inputs.device || 'auto' }}'"
+          echo "Matrix device             : '${{ matrix.device }}'"
+          echo "Runner                    : $(uname -a)"
+          echo "Python                    : $(python --version)"
+          echo "Poetry                    : $(poetry --version)"
+          command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi || echo "nvidia-smi not present"
 
-      - name: Fast smoke (CLI selftest)
+      - name: Fast CLI selftest
         run: |
-          poetry run spectramind selftest --fast || exit 1
+          poetry run spectramind selftest --fast
+
+      - name: Gate GPU axis if not enabled
+        if: ${{ matrix.device == 'gpu' && vars.ENABLE_GPU_MATRIX != '1' }}
+        run: |
+          echo "GPU axis skipped (set repo/org variable ENABLE_GPU_MATRIX=1 to enable)."
+          mkdir -p "$BENCH_RESULTS_DIR"
+          echo "skipped" > "$BENCH_RESULTS_DIR/_gpu_matrix_skipped.txt"
 
       - name: Run benchmark (train + diagnostics)
+        if: ${{ !(matrix.device == 'gpu' && vars.ENABLE_GPU_MATRIX != '1') }}
         run: |
           set -e
           mkdir -p "$BENCH_RESULTS_DIR"
           DEV="${REQ_DEVICE:-${{ matrix.device }}}"
-          echo ">>> Using device=$DEV"
-          poetry run spectramind train +training.epochs=1 +benchmark=true ${{
-            inputs.extra_overrides && format('{0}', inputs.extra_overrides) || ''
-          }} --device "$DEV" --outdir "$BENCH_RESULTS_DIR"
-          poetry run spectramind diagnose smoothness --outdir "$BENCH_RESULTS_DIR"
-          poetry run spectramind diagnose dashboard --no-umap --no-tsne --outdir "$BENCH_RESULTS_DIR" || \
-          poetry run spectramind diagnose dashboard --outdir "$BENCH_RESULTS_DIR" || true
 
-      - name: Capture timing & metrics
+          echo ">>> Using device=$DEV"
+          # Minimal training epoch to keep runtime bounded; user can override via dispatch.
+          poetry run spectramind train \
+            +training.epochs=1 +benchmark=true \
+            ${{ inputs.extra_overrides && format('{0}', inputs.extra_overrides) || '' }} \
+            --device "$DEV" --outdir "$BENCH_RESULTS_DIR"
+
+          # Scientific diagnostics (keep fast by default, allow fallback)
+          poetry run spectramind diagnose smoothness --outdir "$BENCH_RESULTS_DIR"
+          poetry run spectramind diagnose dashboard \
+            --no-umap --no-tsne --outdir "$BENCH_RESULTS_DIR" || \
+          poetry run spectramind diagnose dashboard \
+            --outdir "$BENCH_RESULTS_DIR" || true
+
+      - name: Summarize timing & metrics
+        if: always()
         run: |
+          set -e
           {
-            echo "Benchmark summary for py${{ matrix.python }} / ${{ matrix.device }}"
-            date
-            command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi || true
-            echo ""
-            echo "Artifacts in $BENCH_RESULTS_DIR:"
+            echo "# SpectraMind V50 Benchmark"
+            echo
+            echo "- Axis         : py=${{ matrix.python }}, dev=${{ matrix.device }}"
+            echo "- Date (UTC)   : $(date -u +'%Y-%m-%d %H:%M:%S')"
+            echo "- Runner       : $(uname -a)"
+            echo
+            command -v nvidia-smi >/dev/null 2>&1 && { echo "## nvidia-smi"; nvidia-smi; echo; } || true
+            echo "## Directory"
+            echo "\`$BENCH_RESULTS_DIR\`"
+            echo
+            if [ -f "$BENCH_RESULTS_DIR/metrics.json" ]; then
+              echo "## metrics.json (truncated)"
+              jq 'del(.large_arrays) | . ' "$BENCH_RESULTS_DIR/metrics.json" | head -n 200 || true
+            fi
+            echo
+            echo "## Files"
             ls -lh "$BENCH_RESULTS_DIR" || true
-          } > "$BENCH_RESULTS_DIR/summary.txt"
+          } > "$BENCH_RESULTS_DIR/summary.md"
+          cat "$BENCH_RESULTS_DIR/summary.md" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -133,7 +174,7 @@ PY
 
   # Optional container parity: build Docker image and run a GPU smoke selftest inside it.
   docker-gpu:
-    name: Dockerized GPU Smoke • CUDA (with BuildKit cache)
+    name: Dockerized GPU Smoke • CUDA (BuildKit cache)
     if: ${{ vars.DOCKER_GPU == '1' }} # opt-in via repo/org variable
     runs-on: ubuntu-latest
     timeout-minutes: 35
@@ -161,9 +202,9 @@ PY
         run: |
           sudo apt-get update -y
           sudo apt-get install -y docker.io
-          sudo systemctl start docker
-          distribution=$(. /etc/os-release;echo $ID$VERSION_ID) && \
-          curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg && \
+          sudo systemctl enable --now docker
+          distribution=$(. /etc/os-release;echo $ID$VERSION_ID)
+          curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
           curl -fsSL https://nvidia.github.io/libnvidia-container/$distribution/libnvidia-container.list | \
             sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
             sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
@@ -214,8 +255,8 @@ PY
           mkdir -p aggregated
           echo "# SpectraMind V50 Benchmark Report" > aggregated/report.md
           echo "" >> aggregated/report.md
-          if ls benchmarks/*/summary.txt >/dev/null 2>&1; then
-            for f in benchmarks/*/summary.txt; do
+          if ls benchmarks/*/summary.md >/dev/null 2>&1; then
+            for f in benchmarks/*/summary.md; do
               axis="$(basename "$(dirname "$f")")"
               echo "## $axis" >> aggregated/report.md
               cat "$f" >> aggregated/report.md
@@ -231,3 +272,4 @@ PY
           name: benchmark-aggregated
           path: aggregated/report.md
           retention-days: 60
+```
