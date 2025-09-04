@@ -1,156 +1,177 @@
-# ==============================================================================
+==============================================================================
 
-# SpectraMind V50 — Git Attributes for DVC Integration (Upgraded)
+SpectraMind V50 — Git Attributes for DVC Integration (Upgraded)
 
-# ------------------------------------------------------------------------------
+——————————————————————————
 
-# Purpose:
+Purpose:
 
-# • Normalize text handling cross-platform (LF; avoid CRLF drift)
+• Normalize text handling cross-platform (LF; avoid CRLF drift)
 
-# • Keep DVC-managed data/artifacts out of Git LFS & diff/merge filters
+• Keep DVC-managed data/artifacts out of Git LFS & diff/merge filters
 
-# • Reserve Git LFS ONLY for human-facing docs/media (never pipeline data)
+• Reserve Git LFS ONLY for human-facing docs/media (never pipeline data)
 
-# • Produce clean diffs/merges in CI, Kaggle, and local dev
+• Produce clean diffs/merges in CI, Kaggle, and local dev
 
-#
 
-# Placement:
 
-# Save this file at the REPO ROOT as `.gitattributes`
+Placement:
 
-# ==============================================================================
+Save this file at the REPO ROOT as .gitattributes
 
-# ───────────────────────── Core Text Defaults ─────────────────────────
+==============================================================================
 
-* text=auto eol=lf
+───────────────────────── Core Text Defaults ─────────────────────────
+	•	text=auto eol=lf
 
-# Common text formats (always text; normalized to LF)
+Common text formats (always text; normalized to LF)
 
-\*.md      text
-\*.txt     text
-\*.csv     text
-\*.tsv     text
-\*.json    text
-\*.jsonl   text
-\*.yaml    text
-\*.yml     text
-\*.toml    text
-\*.ini     text
-\*.cfg     text
-\*.conf    text
-\*.py      text
-\*.pyi     text
-\*.ipynb   text
-\*.sh      text
-\*.bash    text
-\*.zsh     text
-\*.mmd     text
+*.md      text
+*.txt     text
+*.csv     text
+*.tsv     text
+*.json    text
+*.jsonl   text
+*.yaml    text
+*.yml     text
+*.toml    text
+*.ini     text
+*.cfg     text
+*.conf    text
+*.py      text
+*.pyi     text
+*.ipynb   text
+*.sh      text
+*.bash    text
+*.zsh     text
+*.mmd     text
 Makefile  text
-\*.mk      text
+*.mk      text
 Dockerfile text
 
-# DVC pipeline metadata (ALWAYS text; NEVER LFS)
+DVC pipeline metadata (ALWAYS text; NEVER LFS)
 
-dvc.yaml     text
-dvc.lock     text
-\*.dvc        text
-.dvcignore   text
+dvc.yaml     text -filter
+dvc.lock     text -filter
+*.dvc        text -filter
+.dvcignore   text -filter
 
-# Keep DVC’s own control area visible & textual
+Keep DVC’s own control area visible & textual
 
-.dvc/config  text
-.dvc/\*       text
+.dvc/config  text -filter
+.dvc/*       text -filter
 
-# ───────────────────────── DVC-Managed Data/Artifacts ─────────────────────────
+───────────────────────── DVC-Managed Data/Artifacts ─────────────────────────
 
-# Disable LFS, custom diff, and merge drivers on DVC-tracked trees.
+Disable LFS, custom diff, and merge drivers on DVC-tracked trees.
 
-# (Data lives in DVC cache/remote; Git only versions lightweight pointers.)
+(Data lives in DVC cache/remote; Git only versions lightweight pointers.)
 
-data/\*\*        -filter -diff -merge -text
-outputs/\*\*     -filter -diff -merge -text
-models/\*\*      -filter -diff -merge -text
-artifacts/\*\*   -filter -diff -merge -text
-logs/\*\*        -filter -diff -merge -text
+data/**        -filter -diff -merge -text
+outputs/**     -filter -diff -merge -text
+models/**      -filter -diff -merge -text
+artifacts/**   -filter -diff -merge -text
+logs/**        -filter -diff -merge -text
+diagnostics/** -filter -diff -merge -text
+predictions/** -filter -diff -merge -text
+submission/**  -filter -diff -merge -text
+submissions/** -filter -diff -merge -text
+aggregated/**  -filter -diff -merge -text
+benchmarks/**  -filter -diff -merge -text
 
-# Extra safety: common scientific binaries that should never be LFS here
+Extra safety: common scientific binaries that should never be LFS here
 
-# (Most will be under DVC; these patterns prevent accidental LFS capture)
+(Most will be under DVC; these patterns prevent accidental LFS capture)
 
-\*.npz          -filter -diff -merge -text
-\*.npy          -filter -diff -merge -text
-\*.pt           -filter -diff -merge -text
-\*.pth          -filter -diff -merge -text
-\*.onnx         -filter -diff -merge -text
-\*.ckpt         -filter -diff -merge -text
-\*.h5           -filter -diff -merge -text
-\*.hd5          -filter -diff -merge -text
-\*.hdf5         -filter -diff -merge -text
-\*.fits         -filter -diff -merge -text
-\*.fz           -filter -diff -merge -text
+*.npz  -filter -diff -merge -text
+*.npy  -filter -diff -merge -text
+*.pt   -filter -diff -merge -text
+*.pth  -filter -diff -merge -text
+*.onnx -filter -diff -merge -text
+*.ckpt -filter -diff -merge -text
+*.h5   -filter -diff -merge -text
+*.hd5  -filter -diff -merge -text
+*.hdf5 -filter -diff -merge -text
+*.fits -filter -diff -merge -text
+*.fz   -filter -diff -merge -text
+*.parquet -filter -diff -merge -text
+*.feather -filter -diff -merge -text
+*.gz   -filter -diff -merge -text
+*.xz   -filter -diff -merge -text
+*.zip  -filter -diff -merge -text
+*.tar  -filter -diff -merge -text
+*.tar.gz -filter -diff -merge -text
 
-# ───────────────────────── Optional: Git LFS for Docs/Media ───────────────────
+───────────────────────── Optional: Git LFS for Docs/Media ───────────────────
 
-# Human-facing assets only. Do NOT use LFS for pipeline data.
+Human-facing assets only. Do NOT use LFS for pipeline data.
 
-# Enable once per machine: `git lfs install`
+Enable once per machine: git lfs install
 
-docs/**/\*.png  filter=lfs diff=lfs merge=lfs -text
-docs/**/*.jpg  filter=lfs diff=lfs merge=lfs -text
-docs/\*\*/*.jpeg filter=lfs diff=lfs merge=lfs -text
-docs/**/\*.gif  filter=lfs diff=lfs merge=lfs -text
-docs/**/*.webp filter=lfs diff=lfs merge=lfs -text
-docs/\*\*/*.svg  filter=lfs diff=lfs merge=lfs -text
-docs/**/\*.pdf  filter=lfs diff=lfs merge=lfs -text
-docs/**/*.mp4  filter=lfs diff=lfs merge=lfs -text
-docs/\*\*/*.mov  filter=lfs diff=lfs merge=lfs -text
-docs/\*\*/\*.avi  filter=lfs diff=lfs merge=lfs -text
+docs//*.png   filter=lfs diff=lfs merge=lfs -text
+docs//.jpg   filter=lfs diff=lfs merge=lfs -text
+docs/**/.jpeg  filter=lfs diff=lfs merge=lfs -text
+docs//*.gif   filter=lfs diff=lfs merge=lfs -text
+docs//.webp  filter=lfs diff=lfs merge=lfs -text
+docs/**/.svg   filter=lfs diff=lfs merge=lfs -text
+docs//*.pdf   filter=lfs diff=lfs merge=lfs -text
+docs//.mp4   filter=lfs diff=lfs merge=lfs -text
+docs/**/.mov   filter=lfs diff=lfs merge=lfs -text
+docs/**/*.avi   filter=lfs diff=lfs merge=lfs -text
 
-# Static site / dashboards (if published)
+Static site / dashboards (if published)
 
-site/**/\*.png   filter=lfs diff=lfs merge=lfs -text
-site/**/*.jpg   filter=lfs diff=lfs merge=lfs -text
-site/\*\*/*.jpeg  filter=lfs diff=lfs merge=lfs -text
-site/**/\*.gif   filter=lfs diff=lfs merge=lfs -text
-site/**/*.webp  filter=lfs diff=lfs merge=lfs -text
-site/\*\*/*.svg   filter=lfs diff=lfs merge=lfs -text
-site/**/\*.pdf   filter=lfs diff=lfs merge=lfs -text
-site/**/*.mp4   filter=lfs diff=lfs merge=lfs -text
-site/\*\*/*.mov   filter=lfs diff=lfs merge=lfs -text
-site/\*\*/\*.avi   filter=lfs diff=lfs merge=lfs -text
+site//*.png   filter=lfs diff=lfs merge=lfs -text
+site//.jpg   filter=lfs diff=lfs merge=lfs -text
+site/**/.jpeg  filter=lfs diff=lfs merge=lfs -text
+site//*.gif   filter=lfs diff=lfs merge=lfs -text
+site//.webp  filter=lfs diff=lfs merge=lfs -text
+site/**/.svg   filter=lfs diff=lfs merge=lfs -text
+site//*.pdf   filter=lfs diff=lfs merge=lfs -text
+site//.mp4   filter=lfs diff=lfs merge=lfs -text
+site/**/.mov   filter=lfs diff=lfs merge=lfs -text
+site/**/*.avi   filter=lfs diff=lfs merge=lfs -text
 
-# Mermaid renders (optional LFS if large)
+Mermaid renders (optional LFS if large, but prefer ignoring/deriving)
 
-outputs/diagrams/**/\*.png filter=lfs diff=lfs merge=lfs -text
-outputs/diagrams/**/\*.svg filter=lfs diff=lfs merge=lfs -text
+outputs/diagrams//*.png filter=lfs diff=lfs merge=lfs -text
+outputs/diagrams//*.svg filter=lfs diff=lfs merge=lfs -text
 
-# ───────────────────────── Safety Rails ─────────────────────────
+───────────────────────── Safety Rails ─────────────────────────
 
-# Never let Git LFS or drivers intercept DVC/Git config & pipeline controls
+Never let Git LFS or drivers intercept DVC/Git config & pipeline controls
 
-\*.dvc           -filter -diff -merge
-dvc.yaml        -filter -diff -merge
-dvc.lock        -filter -diff -merge
-.dvc/config     -filter -diff -merge
-.gitattributes  -filter -diff -merge
-.gitignore      -filter -diff -merge
+*.dvc         -filter -diff -merge
+dvc.yaml      -filter -diff -merge
+dvc.lock      -filter -diff -merge
+.dvc/config   -filter -diff -merge
+.gitattributes -filter -diff -merge
+.gitignore    -filter -diff -merge
 
-# Guard common lock/state files to minimize merge noise (keep text, default merge)
+Guard common lock/state files to minimize merge noise (keep text, default merge disabled)
 
-poetry.lock     text -filter -diff -merge
-package-lock.json text -filter -diff -merge
-yarn.lock       text -filter -diff -merge
+poetry.lock        text -filter -diff -merge
+package-lock.json  text -filter -diff -merge
+yarn.lock          text -filter -diff -merge
+Pipfile.lock       text -filter -diff -merge
 
-# ───────────────────────── GitHub Linguist Hints (Optional) ───────────────────
+Kaggle kernel mounts (never LFS/diff/merge)
 
-# Keep repo language stats focused on source, not generated artifacts
+kaggle_work/**     -filter -diff -merge -text
+kaggle_output/**   -filter -diff -merge -text
+/kaggle/working/** -filter -diff -merge -text
+/kaggle/temp/**    -filter -diff -merge -text
 
-outputs/\*\* linguist-generated
-benchmarks/\*\* linguist-generated
-aggregated/\*\* linguist-generated
-docs/site/\*\* linguist-generated
-diagrams/out/\*\* linguist-generated
+───────────────────────── GitHub Linguist Hints (Optional) ───────────────────
 
-# ==============================================================================
+Keep repo language stats focused on source, not generated artifacts
+
+outputs/**        linguist-generated
+benchmarks/**     linguist-generated
+aggregated/**     linguist-generated
+docs/site/**      linguist-generated
+diagrams/out/**   linguist-generated
+diagrams/build/** linguist-generated
+
+==============================================================================
