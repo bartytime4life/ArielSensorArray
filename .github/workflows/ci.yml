@@ -3,10 +3,12 @@
 # SpectraMind V50 — GitHub Actions CI (hardened, fast, reproducible)
 # - Hygiene (pre-commit + mypy + pytest) on a Python matrix (3.11, 3.12)
 # - Deterministic env via Poetry with caching (pip/poetry/.venv/pre-commit/mypy)
+# - SVG optimization gate (SVGO v3) with auto-fix on main, fail-on-PR if dirty
+# - Changes filter to avoid running heavy jobs for docs/assets-only changes
 # - Optional DVC pull; CLI smoke (selftest + minimal diagnostics)
 # - Optional predict artifact, scheduled/dispatch ablation, guarded Kaggle submit
 # - Optional Docker(GPU) parity smoke with BuildKit cache
-# - Concurrency, minimal permissions, explicit timeouts, paths-ignore
+# - Concurrency, minimal permissions, explicit timeouts
 # ==============================================================================
 
 name: CI
@@ -14,18 +16,8 @@ name: CI
 on:
   push:
     branches: [ "main" ]
-    paths-ignore:
-      - "**/*.md"
-      - "docs/**"
-      - "assets/**"
-      - ".github/ISSUE_TEMPLATE/**"
   pull_request:
     branches: [ "**" ]
-    paths-ignore:
-      - "**/*.md"
-      - "docs/**"
-      - "assets/**"
-      - ".github/ISSUE_TEMPLATE/**"
   workflow_dispatch:
     inputs:
       run_ablation_on_push:
@@ -77,13 +69,120 @@ env:
   STRICT_MYPY: "0"
 
 # ------------------------------------------------------------------------------
-# 1) Hygiene: lint/format/type/tests (matrix)
+# 0) Changes filter — decide if we need heavy jobs; always run on PRs/pushes
 # ------------------------------------------------------------------------------
 jobs:
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+      svg: ${{ steps.filter.outputs.svg }}
+      docs: ${{ steps.filter.outputs.docs }}
+      assets: ${{ steps.filter.outputs.assets }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          filters: |
+            code:
+              - 'src/**'
+              - 'tests/**'
+              - 'pyproject.toml'
+              - 'poetry.lock'
+              - '**/*.py'
+              - '.pre-commit-config.yaml'
+              - '.mypy.ini'
+              - '.flake8'
+              - '.github/workflows/**'
+              - '!docs/**'
+              - '!assets/**'
+            svg:
+              - 'docs/**/*.svg'
+              - 'assets/**/*.svg'
+              - 'assets/diagrams/**/*.svg'
+              - '.svgo.json'
+            docs:
+              - '**/*.md'
+              - 'docs/**'
+            assets:
+              - 'assets/**'
+
+  # ----------------------------------------------------------------------------
+  # 0.5) SVG Optimize gate — fail PRs if SVGs not optimized; auto-fix on main
+  # ----------------------------------------------------------------------------
+  svg:
+    name: SVG Optimize (gate)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: changes
+    if: |
+      needs.changes.outputs.svg == 'true' ||
+      github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install SVGO (pinned)
+        run: |
+          npm init -y >/dev/null 2>&1
+          npm install svgo@^3.3.2 --save-dev
+
+      - name: Optimize SVGs in-place (if .svgo.json exists)
+        run: |
+          if [ -f ".svgo.json" ]; then
+            npx svgo -c .svgo.json -f assets/diagrams -o assets/diagrams || true
+            npx svgo -c .svgo.json -f docs -o docs || true
+          else
+            echo "No .svgo.json found; skipping."
+          fi
+
+      - name: Fail PR if changes required
+        if: github.event_name == 'pull_request'
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "❌ SVGs are not optimized. Run 'make optimize-svg' locally (uses .svgo.json)."
+            git --no-pager diff --stat
+            exit 1
+          fi
+
+      - name: Auto-commit on main (optimize SVGs)
+        if: github.ref == 'refs/heads/main'
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            git config user.name  "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add assets/diagrams docs || true
+            git commit -m "chore(svg): optimize SVGs via CI"
+            git push
+          else
+            echo "SVGs already optimized."
+          fi
+
+  # ----------------------------------------------------------------------------
+  # 1) Hygiene: lint/format/type/tests (matrix)
+  #     - Skips on docs/assets-only changes to save minutes, still runs on PRs with code
+  # ----------------------------------------------------------------------------
   hygiene:
     name: Hygiene (pre-commit + mypy + pytest) • py${{ matrix.py }}
     runs-on: ubuntu-latest
     timeout-minutes: 35
+    needs: [changes, svg]
+    if: |
+      (needs.changes.outputs.code == 'true') ||
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
@@ -161,6 +260,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 50
     needs: hygiene
+    if: always()  # still collect diagnostics even if one hygiene shard fails
     steps:
       - name: Checkout
         uses: actions/checkout@v4
