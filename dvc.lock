@@ -1,280 +1,373 @@
-# ==============================================================================
-# dvc.lock — SpectraMind V50 (ArielSensorArray)
-# ------------------------------------------------------------------------------
-# PURPOSE
-#   Reproducible, cacheable, end-to-end pipeline orchestration with DVC.
-#   Hashes/sizes here are placeholders; they’ll be refreshed by the first
-#   `dvc repro` or any stage run. Keep under version control.
-#
-# CONVENTIONS
-#   • All logs/plots/metrics are materialized as stage outputs for DVC tracking.
-#   • Directory outputs mark `dir: true` and carry nfiles/size for quick diffs.
-#   • CLI is the single source of truth for execution (Typer/Hydra-backed).
-#   • Stages are DAG-linked via `deps`/`outs` to ensure minimal recompute.
-#
-# NOTES
-#   • If you add/rename scripts or configs, update the corresponding deps here.
-#   • Prefer JSON for metrics to enable structured comparisons in CI.
-#   • Prefer PNG/HTML for plots and reports; DVC can diff/track directories too.
-# ==============================================================================
+==============================================================================
 
-schema: '2.0'
+dvc.lock — SpectraMind V50 (ArielSensorArray, Ultimate Upgrade)
+
+——————————————————————————
+
+PURPOSE
+
+Reproducible, cacheable, end-to-end pipeline orchestration with DVC.
+
+Hashes/sizes are placeholders; DVC will refresh them on the first run.
+
+
+
+CONVENTIONS
+
+• All logs/plots/metrics are materialized as stage outputs for DVC tracking.
+
+• Directory outputs mark dir: true and carry nfiles/size for quick diffs.
+
+• CLI (Typer/Hydra) is the single source of truth for execution semantics.
+
+• Stages are DAG-linked via deps/outs to ensure minimal recompute.
+
+
+
+COMPATIBILITY
+
+• Matches the upgraded dvc.yaml stages: selftest → calibrate → train → predict
+
+→ diagnostics → bundle → submit → analyze_log → package_artifacts
+
+• Paths aligned with config/config_v50.yaml and outputs/* layout.
+
+==============================================================================
+
+schema: ‘2.0’
+
 stages:
 
-  # ---------------------------------------------------------------------------
-  # 0) SELFTEST / PRE-FLIGHT — fast integrity checks (shapes, files, CLI map)
-  # ---------------------------------------------------------------------------
-  selftest:
-    cmd: poetry run spectramind test --fast --out logs/selftest
-    deps:
-      - path: src/selftest.py
-        md5: 00000000000000000000000000000000
-      - path: src/cli/spectramind.py
-        md5: 00000000000000000000000000000000
-      - path: configs
-        md5: 00000000000000000000000000000000
-        dir: true
-    outs:
-      - path: logs/selftest
-        md5: 00000000000000000000000000000000
-        dir: true
-        nfiles: 0
-        size: 0
-    metrics:
-      - path: logs/selftest/report.json
-        md5: 00000000000000000000000000000000
-        metric: true
-      - path: logs/selftest/report.md
-        md5: 00000000000000000000000000000000
+—————————————————————————
 
-  # ---------------------------------------------------------------------------
-  # 1) CALIBRATION — raw→science-ready data (bias, dark, flat, wavelength)
-  # ---------------------------------------------------------------------------
-  calibrate:
-    cmd: poetry run spectramind calibrate \
-           --input data/raw \
-           --output data/calibrated \
-           --config configs/calibration.yaml \
-           --log logs/calibration.log
-    deps:
-      - path: data/raw
-        md5: 00000000000000000000000000000000
-        dir: true
-      - path: configs/calibration.yaml
-        md5: 00000000000000000000000000000000
-      - path: src/pipeline/calibration_pipeline.py
-        md5: 00000000000000000000000000000000
-    outs:
-      - path: data/calibrated
-        md5: 00000000000000000000000000000000
-        dir: true
-        nfiles: 0
-        size: 0
-      - path: logs/calibration.log
-        md5: 00000000000000000000000000000000
-    metrics:
-      - path: logs/calibration.json
-        md5: 00000000000000000000000000000000
-        metric: true
-    plots:
-      - path: logs/calibration_plots
-        md5: 00000000000000000000000000000000
-        dir: true
-        plot: true
-        nfiles: 0
-        size: 0
+0) SELFTEST / PRE-FLIGHT — fast integrity checks (shapes, files, CLI map)
 
-  # ---------------------------------------------------------------------------
-  # 2) TRAIN — fit SpectraMind V50 (FGS1 Mamba + AIRS GNN + decoders)
-  # ---------------------------------------------------------------------------
-  train:
-    cmd: poetry run spectramind train \
-           --config configs/config_v50.yaml \
-           --data data/calibrated \
-           --out outputs/model \
-           --log logs/train.log
-    deps:
-      - path: data/calibrated
-        md5: 00000000000000000000000000000000
-        dir: true
-      - path: configs/config_v50.yaml
-        md5: 00000000000000000000000000000000
-      - path: src/train/train_v50.py
-        md5: 00000000000000000000000000000000
-      - path: src/models/fgs1_mamba.py
-        md5: 00000000000000000000000000000000
-      - path: src/models/airs_gnn.py
-        md5: 00000000000000000000000000000000
-      - path: src/models/multi_scale_decoder.py
-        md5: 00000000000000000000000000000000
-    outs:
-      - path: outputs/model
-        md5: 00000000000000000000000000000000
-        dir: true
-        nfiles: 0
-        size: 0
-      - path: logs/train.log
-        md5: 00000000000000000000000000000000
-    metrics:
-      - path: outputs/model/metrics.json
-        md5: 00000000000000000000000000000000
-        metric: true
-    plots:
-      - path: outputs/model/loss_curve.png
-        md5: 00000000000000000000000000000000
-        plot: true
-      - path: outputs/model/val_metrics.png
-        md5: 00000000000000000000000000000000
-        plot: true
+—————————————————————————
 
-  # ---------------------------------------------------------------------------
-  # 3) PREDICT — run inference over calibrated datasets
-  # ---------------------------------------------------------------------------
-  predict:
-    cmd: poetry run spectramind predict \
-           --model outputs/model \
-           --data data/calibrated \
-           --out outputs/predictions \
-           --log logs/predict.log
-    deps:
-      - path: outputs/model
-        md5: 00000000000000000000000000000000
-        dir: true
-      - path: data/calibrated
-        md5: 00000000000000000000000000000000
-        dir: true
-      - path: src/predict/predict_v50.py
-        md5: 00000000000000000000000000000000
-    outs:
-      - path: outputs/predictions
-        md5: 00000000000000000000000000000000
-        dir: true
-        nfiles: 0
-        size: 0
-      - path: logs/predict.log
-        md5: 00000000000000000000000000000000
-    metrics:
-      - path: outputs/predictions/summary.json
-        md5: 00000000000000000000000000000000
-        metric: true
+selftest:
+cmd: poetry run spectramind selftest || poetry run spectramind selftest –deep
+deps:
+- path: src/selftest.py
+md5: 00000000000000000000000000000000
+- path: src/cli/spectramind.py
+md5: 00000000000000000000000000000000
+- path: config
+md5: 00000000000000000000000000000000
+dir: true
+outs:
+- path: logs/selftest
+md5: 00000000000000000000000000000000
+dir: true
+nfiles: 0
+size: 0
+metrics:
+- path: logs/selftest.json
+md5: 00000000000000000000000000000000
+metric: true
 
-  # ---------------------------------------------------------------------------
-  # 4) DIAGNOSTICS — SHAP/symbolic overlays, UMAP/t-SNE, HTML dashboard
-  # ---------------------------------------------------------------------------
-  diagnostics:
-    cmd: poetry run spectramind diagnose dashboard \
-           --pred outputs/predictions \
-           --out outputs/diagnostics \
-           --html outputs/diagnostics/report.html \
-           --log logs/diagnostics.log
-    deps:
-      - path: outputs/predictions
-        md5: 00000000000000000000000000000000
-        dir: true
-      - path: src/diagnostics/generate_html_report.py
-        md5: 00000000000000000000000000000000
-      - path: src/diagnostics/generate_diagnostic_summary.py
-        md5: 00000000000000000000000000000000
-      - path: src/diagnostics/shap_overlay.py
-        md5: 00000000000000000000000000000000
-      - path: src/diagnostics/plot_umap_v50.py
-        md5: 00000000000000000000000000000000
-      - path: src/diagnostics/plot_tsne_interactive.py
-        md5: 00000000000000000000000000000000
-      - path: src/diagnostics/symbolic_influence_map.py
-        md5: 00000000000000000000000000000000
-    outs:
-      - path: outputs/diagnostics
-        md5: 00000000000000000000000000000000
-        dir: true
-        nfiles: 0
-        size: 0
-      - path: outputs/diagnostics/report.html
-        md5: 00000000000000000000000000000000
-      - path: logs/diagnostics.log
-        md5: 00000000000000000000000000000000
-    metrics:
-      - path: outputs/diagnostics/diagnostic_summary.json
-        md5: 00000000000000000000000000000000
-        metric: true
-    plots:
-      - path: outputs/diagnostics/plots
-        md5: 00000000000000000000000000000000
-        dir: true
-        plot: true
-        nfiles: 0
-        size: 0
+—————————————————————————
 
-  # ---------------------------------------------------------------------------
-  # 5) SUBMISSION — bundle manifest + zip for leaderboard upload
-  # ---------------------------------------------------------------------------
-  submit:
-    cmd: poetry run spectramind submit \
-           --pred outputs/predictions \
-           --bundle outputs/submission/bundle.zip \
-           --meta outputs/submission/manifest.json \
-           --log logs/submit.log
-    deps:
-      - path: outputs/predictions
-        md5: 00000000000000000000000000000000
-        dir: true
-      - path: src/cli/cli_submit.py
-        md5: 00000000000000000000000000000000
-    outs:
-      - path: outputs/submission/bundle.zip
-        md5: 00000000000000000000000000000000
-        size: 0
-      - path: outputs/submission/manifest.json
-        md5: 00000000000000000000000000000000
-      - path: logs/submit.log
-        md5: 00000000000000000000000000000000
-    metrics:
-      - path: outputs/submission/manifest.json
-        md5: 00000000000000000000000000000000
-        metric: true
+1) CALIBRATION — raw→science-ready data (ADC, dark, flat, CDS, nonlinearity)
 
-  # ---------------------------------------------------------------------------
-  # 6) ANALYZE LOG — parse v50_debug_log.md for table/CSV (runtime analytics)
-  # ---------------------------------------------------------------------------
-  analyze_log:
-    cmd: poetry run spectramind analyze-log \
-           --in logs/v50_debug_log.md \
-           --md outputs/diagnostics/log_table.md \
-           --csv outputs/diagnostics/log_table.csv
-    deps:
-      - path: logs/v50_debug_log.md
-        md5: 00000000000000000000000000000000
-      - path: src/cli/cli_analyze_log.py
-        md5: 00000000000000000000000000000000
-    outs:
-      - path: outputs/diagnostics/log_table.md
-        md5: 00000000000000000000000000000000
-      - path: outputs/diagnostics/log_table.csv
-        md5: 00000000000000000000000000000000
+—————————————————————————
 
-  # ---------------------------------------------------------------------------
-  # 7) PACKAGE ARTIFACTS — optional tarball for archival (CI-friendly)
-  # ---------------------------------------------------------------------------
-  package_artifacts:
-    cmd: tar -czf outputs/artifacts.tar.gz \
-            outputs/model \
-            outputs/predictions \
-            outputs/diagnostics \
-            outputs/submission
-    deps:
-      - path: outputs/model
-        md5: 00000000000000000000000000000000
-        dir: true
-      - path: outputs/predictions
-        md5: 00000000000000000000000000000000
-        dir: true
-      - path: outputs/diagnostics
-        md5: 00000000000000000000000000000000
-        dir: true
-      - path: outputs/submission
-        md5: 00000000000000000000000000000000
-        dir: true
-    outs:
-      - path: outputs/artifacts.tar.gz
-        md5: 00000000000000000000000000000000
-        size: 0
+calibrate:
+cmd: poetry run spectramind calibrate 
+–config-dir config 
+–config-name config_v50.yaml 
+–input ${params.data.fgs1_path} ${params.data.airs_path} 
+–output ${params.data.calibration_path} 
+–log logs/calibration.log 
+–json logs/calibration.json
+deps:
+- path: ${params.data.fgs1_path}
+md5: 00000000000000000000000000000000
+- path: ${params.data.airs_path}
+md5: 00000000000000000000000000000000
+- path: config/config_v50.yaml
+md5: 00000000000000000000000000000000
+- path: src/pipeline/calibration_pipeline.py
+md5: 00000000000000000000000000000000
+outs:
+- path: ${params.data.calibration_path}
+md5: 00000000000000000000000000000000
+dir: true
+nfiles: 0
+size: 0
+- path: logs/calibration.log
+md5: 00000000000000000000000000000000
+metrics:
+- path: logs/calibration.json
+md5: 00000000000000000000000000000000
+metric: true
+plots:
+- path: logs/calibration_plots
+md5: 00000000000000000000000000000000
+dir: true
+plot: true
+nfiles: 0
+size: 0
+
+—————————————————————————
+
+2) TRAIN — fit SpectraMind V50 (FGS1 Mamba + AIRS GNN + multi-scale decoder)
+
+—————————————————————————
+
+train:
+cmd: poetry run spectramind train 
+–config-dir config 
+–config-name config_v50.yaml 
+data.mode=${params.data.mode} 
+training.epochs=${params.training.epochs} 
+training.batch_size=${params.training.batch_size} 
+training.lr=${params.training.lr} 
+training.seed=${params.training.seed} 
+model.encoder=${params.model.encoder} 
+model.gnn=${params.model.gnn} 
+model.decoder=${params.model.decoder} 
+data.calibration_path=${params.data.calibration_path} 
++outputs.dir=outputs/models
+deps:
+- path: ${params.data.calibration_path}
+md5: 00000000000000000000000000000000
+dir: true
+- path: config/config_v50.yaml
+md5: 00000000000000000000000000000000
+- path: src/train/train_v50.py
+md5: 00000000000000000000000000000000
+- path: src/models/fgs1_mamba.py
+md5: 00000000000000000000000000000000
+- path: src/models/airs_gnn.py
+md5: 00000000000000000000000000000000
+- path: src/models/multi_scale_decoder.py
+md5: 00000000000000000000000000000000
+outs:
+- path: outputs/models
+md5: 00000000000000000000000000000000
+dir: true
+nfiles: 0
+size: 0
+- path: logs/train.log
+md5: 00000000000000000000000000000000
+metrics:
+- path: outputs/models/metrics.json
+md5: 00000000000000000000000000000000
+metric: true
+plots:
+- path: outputs/models/loss_curve.csv
+md5: 00000000000000000000000000000000
+plot: true
+
+—————————————————————————
+
+3) PREDICT — run inference over calibrated datasets (μ, σ, submission)
+
+—————————————————————————
+
+predict:
+cmd: poetry run spectramind predict 
+–config-dir config 
+–config-name config_v50.yaml 
+data.mode=${params.data.mode} 
+–model outputs/models 
+–input ${params.data.calibration_path} 
+–output outputs/predictions
+deps:
+- path: outputs/models
+md5: 00000000000000000000000000000000
+dir: true
+- path: ${params.data.calibration_path}
+md5: 00000000000000000000000000000000
+dir: true
+- path: config/config_v50.yaml
+md5: 00000000000000000000000000000000
+- path: src/predict/predict_v50.py
+md5: 00000000000000000000000000000000
+outs:
+- path: outputs/predictions
+md5: 00000000000000000000000000000000
+dir: true
+nfiles: 0
+size: 0
+- path: logs/predict.log
+md5: 00000000000000000000000000000000
+metrics:
+- path: outputs/predictions/summary.json
+md5: 00000000000000000000000000000000
+metric: true
+plots:
+- path: outputs/predictions/uncertainty_hist.csv
+md5: 00000000000000000000000000000000
+plot: true
+
+—————————————————————————
+
+4) DIAGNOSTICS — SHAP/symbolic overlays, UMAP/t-SNE, HTML dashboard
+
+—————————————————————————
+
+diagnostics:
+cmd: poetry run spectramind diagnose dashboard 
+–config-dir config 
+–config-name config_v50.yaml 
+data.mode=${params.data.mode} 
+–pred outputs/predictions 
+–out outputs/diagnostics 
+–html-out outputs/diagnostics/report.html
+deps:
+- path: outputs/predictions
+md5: 00000000000000000000000000000000
+dir: true
+- path: config/config_v50.yaml
+md5: 00000000000000000000000000000000
+- path: src/diagnostics/generate_html_report.py
+md5: 00000000000000000000000000000000
+- path: src/diagnostics/generate_diagnostic_summary.py
+md5: 00000000000000000000000000000000
+- path: src/diagnostics/shap_overlay.py
+md5: 00000000000000000000000000000000
+- path: src/diagnostics/plot_umap_v50.py
+md5: 00000000000000000000000000000000
+- path: src/diagnostics/plot_tsne_interactive.py
+md5: 00000000000000000000000000000000
+- path: src/diagnostics/symbolic_influence_map.py
+md5: 00000000000000000000000000000000
+outs:
+- path: outputs/diagnostics
+md5: 00000000000000000000000000000000
+dir: true
+nfiles: 0
+size: 0
+- path: outputs/diagnostics/report.html
+md5: 00000000000000000000000000000000
+- path: logs/diagnostics.log
+md5: 00000000000000000000000000000000
+metrics:
+- path: outputs/diagnostics/diagnostic_summary.json
+md5: 00000000000000000000000000000000
+metric: true
+plots:
+- path: outputs/diagnostics/plots
+md5: 00000000000000000000000000000000
+dir: true
+plot: true
+nfiles: 0
+size: 0
+
+—————————————————————————
+
+5) BUNDLE — reproducible bundle (manifests + diagnostics + predictions)
+
+—————————————————————————
+
+bundle:
+cmd: poetry run spectramind repro-snapshot || true && 
+python - <<‘PY’\nimport os, tarfile, time, pathlib, json\nOUT=‘outputs/bundles’\npathlib.Path(OUT).mkdir(parents=True, exist_ok=True)\nrunid=time.strftime(’%Y%m%dT%H%M%SZ’, time.gmtime())\nbundle=os.path.join(OUT, f’spectramind_ci_bundle_{runid}.tar.gz’)\nwith tarfile.open(bundle, ‘w:gz’) as tar:\n    for p in [‘outputs/diagnostics’,‘outputs/predictions’,‘outputs/log_table.md’,‘outputs/log_table.csv’,‘outputs/manifests’]:\n        if os.path.exists(p):\n            tar.add(p, arcname=os.path.basename(p))\nprint(‘Bundle:’, bundle)\nmeta={‘bundle’: bundle, ‘ts_utc’: time.strftime(’%Y-%m-%dT%H:%M:%SZ’, time.gmtime())}\npathlib.Path(‘outputs/submission’).mkdir(parents=True, exist_ok=True)\nwith open(‘outputs/submission/manifest.json’,‘w’) as f: json.dump(meta,f,indent=2)\nPY
+deps:
+- path: outputs/diagnostics
+md5: 00000000000000000000000000000000
+dir: true
+- path: outputs/predictions
+md5: 00000000000000000000000000000000
+dir: true
+outs:
+- path: outputs/bundles
+md5: 00000000000000000000000000000000
+dir: true
+nfiles: 0
+size: 0
+- path: outputs/submission/manifest.json
+md5: 00000000000000000000000000000000
+metrics:
+- path: outputs/submission/manifest.json
+md5: 00000000000000000000000000000000
+metric: true
+
+—————————————————————————
+
+6) SUBMISSION — bundle zip for leaderboard upload
+
+—————————————————————————
+
+submit:
+cmd: poetry run spectramind submit 
+–config-dir config 
+–config-name config_v50.yaml 
+data.mode=${params.data.mode} 
+–pred outputs/predictions 
+–bundle outputs/submission/bundle.zip 
+–meta outputs/submission/manifest.json 
+–validate ${params.submission.validate_before_zip}
+deps:
+- path: outputs/predictions
+md5: 00000000000000000000000000000000
+dir: true
+- path: outputs/submission/manifest.json
+md5: 00000000000000000000000000000000
+- path: src/cli/cli_submit.py
+md5: 00000000000000000000000000000000
+- path: config/config_v50.yaml
+md5: 00000000000000000000000000000000
+outs:
+- path: outputs/submission/bundle.zip
+md5: 00000000000000000000000000000000
+size: 0
+- path: logs/submit.log
+md5: 00000000000000000000000000000000
+metrics:
+- path: outputs/submission/manifest.json
+md5: 00000000000000000000000000000000
+metric: true
+
+—————————————————————————
+
+7) ANALYZE LOG — parse v50_debug_log.md → table/CSV (runtime analytics)
+
+—————————————————————————
+
+analyze_log:
+cmd: poetry run spectramind analyze-log 
+–in logs/v50_debug_log.md 
+–md outputs/diagnostics/log_table.md 
+–csv outputs/diagnostics/log_table.csv
+deps:
+- path: logs/v50_debug_log.md
+md5: 00000000000000000000000000000000
+- path: src/cli/cli_analyze_log.py
+md5: 00000000000000000000000000000000
+outs:
+- path: outputs/diagnostics/log_table.md
+md5: 00000000000000000000000000000000
+- path: outputs/diagnostics/log_table.csv
+md5: 00000000000000000000000000000000
+
+—————————————————————————
+
+8) PACKAGE ARTIFACTS — tarball for archival (CI-friendly)
+
+—————————————————————————
+
+package_artifacts:
+cmd: tar -czf outputs/artifacts.tar.gz 
+outputs/models 
+outputs/predictions 
+outputs/diagnostics 
+outputs/submission
+deps:
+- path: outputs/models
+md5: 00000000000000000000000000000000
+dir: true
+- path: outputs/predictions
+md5: 00000000000000000000000000000000
+dir: true
+- path: outputs/diagnostics
+md5: 00000000000000000000000000000000
+dir: true
+- path: outputs/submission
+md5: 00000000000000000000000000000000
+dir: true
+outs:
+- path: outputs/artifacts.tar.gz
+md5: 00000000000000000000000000000000
+size: 0
