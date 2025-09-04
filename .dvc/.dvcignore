@@ -1,246 +1,278 @@
-# ==============================================================================
+==============================================================================
 
-# SpectraMind V50 — DVC Ignore Rules (Upgraded, Mission-Grade)
+SpectraMind V50 — .gitignore (Paired with .dvcignore, Mission-Grade)
 
-# ------------------------------------------------------------------------------
+——————————————————————————
 
-# Purpose:
+Purpose:
 
-# • Prevent DVC from scanning/adding ephemeral, environment, or rebuildable files
+• Keep Git history clean: commit only code, configs, and DVC pointers
 
-# • Keep the DVC DAG clean, reproducible, and Kaggle/CI-safe
+• Prevent committing large artifacts/data; DVC manages data & models
 
-# • Complements .gitignore — these patterns affect only DVC’s file discovery
+• Mirror .dvcignore intent while adding Git-specific exclusions
 
-#
 
-# Notes:
 
-# • DO NOT ignore real datasets/models that you intend to manage with DVC.
+Notes:
 
-# • Keep dvc.yaml, dvc.lock, and \*.dvc visible to DVC (never ignore them).
+• Always commit: dvc.yaml, dvc.lock, *.dvc, .dvc/config (no secrets here)
 
-# • Prefer storing true datasets under data/ and registering via `dvc add`.
+• Data/models: store blobs in DVC remote, keep pointers (*.dvc) in Git
 
-# ==============================================================================
+• Kaggle has no internet; never rely on remote pulls in kernels
 
-# ───────────────────────── Core DVC/Repo Safety ─────────────────────────
+==============================================================================
 
-# Keep DVC’s own control files visible
+───────────────────────── Core DVC/Git Safety ─────────────────────────
+
+Keep DVC control & pointers tracked
 
 !.dvc/
+!.dvc/config
+!.dvc/config.local
 !.dvcignore
 !dvc.yaml
 !dvc.lock
-!\*.dvc
+!*.dvc
 
-# ───────────────────────── Python Build Artifacts ─────────────────────────
+Ignore DVC runtime internals (DVC also auto-writes its own .gitignore under .dvc/)
 
-\*\*/**pycache**/
-\*\*/*.pyc
-\*\*/*.pyo
-\*\*/*.pyd
-\*\*/*.so
-\*\*/*.dll
-\*\*/*.dylib
-\*\*/\*.egg-info/
-\*.egg
+.dvc/cache/**
+.dvc/tmp/**
+.dvc/experiments/**
+.dvc/logs/**
+.dvc/plots/tmp/**
+.dvc/state
+.dvc/updater
+
+───────────────────────── Data / Models (Git) ─────────────────────────
+
+Blobs live in DVC remote; keep pointers (*.dvc) only
+
+data/**
+models/**
+
+but never ignore the DVC pointer files themselves
+
+!/.dvc
+!*.dvc
+
+───────────────────────── Python Build Artifacts ──────────────────────
+
+**/pycache/
+**/.pyc
+**/.pyo
+**/.pyd
+**/.so
+**/.dll
+**/.dylib
+**/*.egg-info/
+*.egg
 build/
 dist/
 .eggs/
-\*.pkl
-\*.dill
-\*.whl
+*.pkl
+*.dill
+*.whl
 
-# ───────────────────────── Notebooks / Editors / Lint ────────────────────
+───────────────────────── Notebooks / Editors / Lint ──────────────────
 
-\*\*/.ipynb\_checkpoints/
-\*\*/*.ipynb\~        # temp saves
-\*\*/*.swp
-\*\*/*.swo
-\*\*/*.tmp
-\*\*/*.bak
-\*\*/*.orig
-\*\*/\*.rej
-.mypy\_cache/
-.pytest\_cache/
-.ruff\_cache/
+**/.ipynb_checkpoints/
+**/.ipynb~
+**/.swp
+**/.swo
+**/.tmp
+**/.bak
+**/.orig
+**/.rej
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
 .coverage
+.coverage.
 htmlcov/
 
-# ───────────────────────── OS / IDE Noise ────────────────────────────────
+───────────────────────── OS / IDE Noise ──────────────────────────────
 
-.DS\_Store
+.DS_Store
 Thumbs.db
 Desktop.ini
-.idea/\*\*
-.vscode/\*\*
-\*.log
+.idea/**
+.vscode/**
+*.log
 
-# ───────────────────────── Environment / Dependency Files ────────────────
+───────────────────────── Environment / Dependency Files ──────────────
 
-.venv/\*\*
-venv/\*\*
-env/\*\*
-ENV/\*\*
+.venv/**
+venv/**
+env/**
+ENV/**
 .conda/
-.conda\_env/
+.conda_env/
+
+lockfiles/manifests (tracked elsewhere; do not commit local env churn)
+
 poetry.lock
 poetry.toml
 Pipfile
 Pipfile.lock
-requirements\*.txt
+requirements*.txt
 pyproject.toml
 
-# Local caches
+Local caches
 
-.cache/\*\*
-**/.cache/**
+.cache/**
+/.cache/
 pip-wheel-metadata/
 site-packages/
 
-# ───────────────────────── Logs & Run Artifacts (Rebuildable) ────────────
+Dotenv / secrets (never commit secrets)
 
-logs/\*\*
-wandb/\*\*                 # W\&B run logs
-mlruns/\*\*                # MLflow tracking runs
-tensorboard/\*\*           # TensorBoard events
+.env
+.env.*
+!.env.example
+
+───────────────────────── Logs & Run Artifacts (Rebuildable) ──────────
+
+logs/**
+wandb/**                 # W&B run logs
+mlruns/**                # MLflow tracking runs
+tensorboard/**           # TensorBoard events
 events.jsonl
-v50\_debug\_log.md
-run\_hash\_summary\_v50.json
-outputs/diagrams/\*\*
-outputs/tmp/\*\*
-outputs/**/tmp/**
-outputs/**/scratch/**
+v50_debug_log.md
+run_hash_summary_v50.json
 
-# Keep all general outputs rebuildable and out of DVC unless explicitly added
+Generated diagrams & scratch
 
-outputs/\*\*
+outputs/diagrams/**
+outputs/tmp/**
+outputs//tmp/
+outputs//scratch/
 
-# ───────────────────────── Diagnostics & Reports (Derived) ───────────────
+Treat all outputs as derived unless explicitly whitelisted
 
-diagnostics/\*\*
-reports/\*\*
-aggregated/\*\*
-benchmarks/\*\*
-artifacts/\*\*
-submissions/\*\*
-submission/\*\*
-predictions/\*\*
+outputs/**
 
-# Project-convention subfolders (often nested under outputs/)
+───────────────────────── Diagnostics & Reports (Derived) ─────────────
 
-**/diagnostics/**
-**/predictions/**
-**/submission/**
-**/reports/**
-**/aggregated/**
-**/benchmarks/**
-**/artifacts/**
+diagnostics/**
+reports/**
+aggregated/**
+benchmarks/**
+artifacts/**
+submissions/**
+submission/**
+predictions/**
 
-# ───────────────────────── GUI / Frontend Build Artifacts ────────────────
+Project-convention subfolders (often nested under outputs/)
 
-node\_modules/\*\*
-.npm/\*\*
-bower\_components/\*\*
-.next/\*\*
-.out/\*\*
-dist/\*\*
-build/\*\*
-coverage/\*\*
+/diagnostics/
+/predictions/
+/submission/
+/reports/
+/aggregated/
+/benchmarks/
+/artifacts/
 
-# Static sites / docs builds
+───────────────────────── GUI / Frontend Build Artifacts ──────────────
 
-site/\*\*
-docs/site/\*\*
-docs/build/\*\*
-docs/\_build/\*\*
+node_modules/**
+.npm/**
+bower_components/**
+.next/**
+.out/**
+dist/**
+build/**
+coverage/**
 
-# Mermaid outputs (rendered images)
+Static sites / docs builds
 
-**/\*.mmd.cache
-assets/diagrams/**/render-cache/\*\*
-outputs/diagrams/\*\*
-diagrams/out/\*\*
-diagrams/build/\*\*
+site/**
+docs/site/**
+docs/build/**
+docs/_build/**
 
-# ───────────────────────── Containers / Docker / Compose ─────────────────
+Mermaid outputs (rendered images)
 
-.docker-build-cache/\*\*
-docker-cache/\*\*
-\*.dockerlayer
+/*.mmd.cache
+assets/diagrams//render-cache/**
+outputs/diagrams/**
+diagrams/out/**
+diagrams/build/**
 
-# Compose state and transient volumes (if persisted locally)
+───────────────────────── Containers / Docker / Compose ───────────────
 
-compose-data/\*\*
-compose-logs/\*\*
+.docker-build-cache/**
+docker-cache/**
+*.dockerlayer
 
-# ───────────────────────── CI / Tox / Nox / Misc Tooling ─────────────────
+Compose state and transient volumes (if persisted locally)
 
-.tox/\*\*
-.nox/\*\*
-.mermaid-temp/\*\*
-.pre-commit-cache/\*\*
-precommit-cache/\*\*
-.sbom/\*\*
-sbom/\*\*
+compose-data/**
+compose-logs/**
 
-# Security scan outputs
+───────────────────────── CI / Tox / Nox / Misc Tooling ───────────────
 
-trivy-report.\*
-grype-report.\*
-syft-report.\*
+.tox/**
+.nox/**
+.mermaid-temp/**
+.pre-commit-cache/**
+precommit-cache/**
+.sbom/**
+sbom/**
 
-# CycloneDX/SPDX artifacts (rebuildable)
+Security scan outputs
 
-\*\*/sbom.json
-\*\*/sbom.xml
-\*\*/*.spdx.json
-\*\*/*.cdx.json
+trivy-report.*
+grype-report.*
+syft-report.*
 
-# ───────────────────────── Kaggle / Challenge Ephemera ───────────────────
+CycloneDX/SPDX artifacts (rebuildable)
 
-kaggle\_work/\*\*
-kaggle\_notebooks/\*\*
-kaggle\_submissions/\*\*
-kaggle\_cache/\*\*
-kaggle\_output/\*\*
-kaggle\_artifacts/\*\*
+**/sbom.json
+**/sbom.xml
+**/.spdx.json
+**/.cdx.json
 
-# ───────────────────────── CUDA / GPU Diagnostics (Ephemeral) ────────────
+───────────────────────── Kaggle / Challenge Ephemera ─────────────────
 
-nvidia-logs/\*\*
-\*\*/nvidia-smi.txt
-\*\*/cuda-report.txt
+kaggle_work/**
+kaggle_notebooks/**
+kaggle_submissions/**
+kaggle_cache/**
+kaggle_output/**
+kaggle_artifacts/**
+/kaggle/working/**
+/kaggle/temp/**
 
-# ───────────────────────── Temporary & Swap Areas ────────────────────────
+───────────────────────── CUDA / GPU Diagnostics (Ephemeral) ──────────
 
-tmp/\*\*
-temp/\*\*
-scratch/\*\*
-**/.trash/**
-**/.tmp/**
-\*\*/.DS\_Store
-\*.tmp
-\*.bak
-\*.temp
+nvidia-logs/**
+**/nvidia-smi.txt
+**/cuda-report.txt
 
-# ───────────────────────── Data / Models — Guardrails ────────────────────
+───────────────────────── Temporary & Swap Areas ──────────────────────
 
-# Keep REAL datasets/models visible to DVC (do NOT ignore these by default).
+tmp/**
+temp/**
+scratch/**
+/.trash/
+/.tmp/
+*.tmp
+*.bak
+*.temp
 
-# If you must exclude a specific derived subset, add a precise pattern below.
+───────────────────────── Whitelist Control Files (Final Guard) ───────
 
-# data/\*\*            ← typically MANAGED by DVC (do not ignore)
+!.dvc/
+!.dvc/config
+!.dvc/config.local
+!.dvcignore
+!dvc.yaml
+!dvc.lock
+!*.dvc
 
-# models/\*\*          ← typically MANAGED by DVC (do not ignore)
+==============================================================================
 
-# ───────────────────────── Safety Notes ───────────────────────────────────
-
-# • DVC will ignore these patterns; Git may still see them unless also in .gitignore.
-
-# • Never add real datasets/models to .dvcignore unless you intend to keep them external.
-
-# • Prefer `dvc add data/...` and `dvc.yaml` stages for controlled artifacts.
-
-# ==============================================================================
+End of .gitignore (keep in lockstep with .dvcignore; prefer precise whitelists)
