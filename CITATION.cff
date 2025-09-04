@@ -1,88 +1,89 @@
 cff-version: 1.2.0
-message: “If you use this software, please cite it as below.”
+message: "If you use this software, please cite it as below."
 type: software
 
-title: “SpectraMind V50 — Neuro-symbolic, Physics-informed Exoplanet Spectroscopy Pipeline”
+title: "SpectraMind V50 — Neuro-symbolic, Physics-informed Exoplanet Spectroscopy Pipeline"
 
 abstract: >-
-SpectraMind V50 is a mission-grade, CLI-first, neuro-symbolic, physics-informed AI pipeline
-for the NeurIPS 2025 Ariel Data Challenge. It integrates a long-sequence Structured State-Space
-Model (SSM) for time-series (FGS1) with a molecule- and wavelength-aware Graph Neural Network (GNN)
-for AIRS spectra, trained with Gaussian log-likelihood plus symbolic/physics constraints. The system
-emphasizes NASA-grade reproducibility through Hydra configs, DVC/lakeFS data versioning, CI workflows,
-Docker/Poetry environments, and deterministic self-tests. Outputs include per-wavelength μ and σ with
-diagnostics (UMAP/t-SNE, SHAP, symbolic overlays, FFT, calibration maps) and leaderboard-ready Kaggle
-submissions. All functionality is orchestrated through a unified Typer CLI with integrated logging,
-symbolic validation, and diagnostics dashboards.
+  SpectraMind V50 is a mission-grade, CLI-first, neuro-symbolic, physics-informed AI pipeline
+  for the NeurIPS 2025 Ariel Data Challenge. It integrates a long-sequence Structured State-Space
+  Model (SSM) for time-series (FGS1) with a molecule- and wavelength-aware Graph Neural Network (GNN)
+  for AIRS spectra, trained with Gaussian log-likelihood plus symbolic/physics constraints. The system
+  emphasizes NASA-grade reproducibility through Hydra configs, DVC/lakeFS data versioning, CI workflows,
+  Docker/Poetry environments, and deterministic self-tests. Outputs include per-wavelength μ and σ with
+  diagnostics (UMAP/t-SNE, SHAP, symbolic overlays, FFT, calibration maps) and leaderboard-ready Kaggle
+  submissions. All functionality is orchestrated through a unified Typer CLI with integrated logging,
+  symbolic validation, and diagnostics dashboards.
 
-version: “0.3.0”
-date-released: “2025-08-21”
+version: "0.3.0"
+date-released: "2025-08-21"
 license: Apache-2.0
 
-repository-code: “https://github.com/bartytime4life/SpectraMindV50”
-repository-artifact: “https://zenodo.org/record/1234567”
-url: “https://github.com/bartytime4life/SpectraMindV50”
+repository-code: "https://github.com/bartytime4life/SpectraMindV50"
+repository-artifact: "https://zenodo.org/record/1234567"
+url: "https://github.com/bartytime4life/SpectraMindV50"
 
 identifiers:
-	•	type: doi
-value: “10.5281/zenodo.1234567”
-description: “DOI for archived release (Zenodo)”
-	•	type: url
-value: “https://www.kaggle.com/competitions/ariel-data-challenge-2025”
-description: “Kaggle competition context”
-	•	type: url
-value: “https://arxiv.org/abs/2508.12345”
-description: “Preprint / arXiv reference”
+  - type: doi
+    value: "10.5281/zenodo.1234567"
+    description: "DOI for archived release (Zenodo)"
+  - type: url
+    value: "https://www.kaggle.com/competitions/ariel-data-challenge-2025"
+    description: "Kaggle competition context"
+  - type: url
+    value: "https://arxiv.org/abs/2508.12345"
+    description: "Preprint / arXiv reference"
 
 keywords:
-	•	NeurIPS 2025
-	•	Ariel
-	•	exoplanets
-	•	transmission spectroscopy
-	•	Gaussian log-likelihood
-	•	uncertainty quantification
-	•	neuro-symbolic AI
-	•	state-space models
-	•	graph neural networks
-	•	Hydra
-	•	DVC
-	•	reproducibility
-	•	Kaggle
-	•	CLI
-	•	symbolic AI
-	•	astrophysics
-	•	calibration
-	•	SHAP
-	•	UMAP
-	•	t-SNE
-	•	conformal prediction
-	•	physics-informed ML
+  - NeurIPS 2025
+  - Ariel
+  - exoplanets
+  - transmission spectroscopy
+  - Gaussian log-likelihood
+  - uncertainty quantification
+  - neuro-symbolic AI
+  - state-space models
+  - graph neural networks
+  - Hydra
+  - DVC
+  - reproducibility
+  - Kaggle
+  - CLI
+  - symbolic AI
+  - astrophysics
+  - calibration
+  - SHAP
+  - UMAP
+  - t-SNE
+  - conformal prediction
+  - physics-informed ML
+  - Master Coder Protocol (MCP)
 
 authors:
-	•	given-names: “Andy”
-family-names: “Barta”
-orcid: “https://orcid.org/0000-0002-1825-0097”
-email: “andrew.barta@example.com”
-affiliation: “SpectraMind Research / NeurIPS 2025 Ariel Data Challenge”
-	•	name: “SpectraMind V50 Team”
-affiliation: “SpectraMind Research / NeurIPS 2025 Ariel Challenge”
+  - given-names: "Andy"
+    family-names: "Barta"
+    orcid: "https://orcid.org/0000-0002-1825-0097"
+    email: "andrew.barta@example.com"
+    affiliation: "SpectraMind Research / NeurIPS 2025 Ariel Data Challenge"
+  - name: "SpectraMind V50 Team"
+    affiliation: "SpectraMind Research / NeurIPS 2025 Ariel Challenge"
 
 contact:
-	•	name: “Andy Barta”
-email: “andrew.barta@example.com”
+  - name: "Andy Barta"
+    email: "andrew.barta@example.com"
 
 preferred-citation:
-type: article
-title: “SpectraMind V50: A Neuro-symbolic, Physics-informed Pipeline for the NeurIPS 2025 Ariel Data Challenge”
-authors:
-- given-names: “Andy”
-family-names: “Barta”
-orcid: “https://orcid.org/0000-0002-1825-0097”
-affiliation: “SpectraMind Research”
-- name: “SpectraMind V50 Team”
-affiliation: “SpectraMind Research / NeurIPS 2025 Ariel Challenge”
-journal: “NeurIPS 2025 Ariel Data Challenge (Competitions Track)”
-year: 2025
-publisher: “NeurIPS”
-doi: “10.5281/zenodo.1234567”
-url: “https://github.com/bartytime4life/SpectraMindV50”
+  type: article
+  title: "SpectraMind V50: A Neuro-symbolic, Physics-informed Pipeline for the NeurIPS 2025 Ariel Data Challenge"
+  authors:
+    - given-names: "Andy"
+      family-names: "Barta"
+      orcid: "https://orcid.org/0000-0002-1825-0097"
+      affiliation: "SpectraMind Research"
+    - name: "SpectraMind V50 Team"
+      affiliation: "SpectraMind Research / NeurIPS 2025 Ariel Challenge"
+  journal: "NeurIPS 2025 Ariel Data Challenge (Competitions Track)"
+  year: 2025
+  publisher: "NeurIPS"
+  doi: "10.5281/zenodo.1234567"
+  url: "https://github.com/bartytime4life/SpectraMindV50"
