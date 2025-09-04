@@ -1,99 +1,90 @@
-# Security Policy — SpectraMind V50 (ArielSensorArray)
+Security Policy — SpectraMind V50 (ArielSensorArray)
 
-Mission-grade security for a mission-grade, CLI-first research pipeline. This document explains **what we support**, **how to report vulnerabilities**, **what’s in/out of scope**, and **how we disclose and patch**—with timelines that align to research competitions and reproducible science.
+Mission-grade security for a mission-grade, CLI-first research pipeline.
+This policy defines supported versions, reporting channels, scope, SLAs, disclosure, supply-chain controls, and operator playbooks aligned with scientific reproducibility and competition timelines.
+	•	Policy ID: SEC-SPC-V50-001
+	•	Current Policy Version: 1.2.0
+	•	Applies To: All first-party code, builds, containers, CI/CD, and published artifacts in the SpectraMind V50 repository unless superseded by a component-specific addendum.
+	•	Last updated: 2025-08-31 (America/Chicago)
 
----
+⸻
 
-## Supported Versions
+1) Supported Versions
 
-SpectraMind uses semantic versioning. We maintain one **Active** line (feature + security), one **LTS** line (security-only), and retire older branches.
+We use semantic versioning and maintain one Active line (features + security), one LTS line (security-only), and retire older branches for archival reproducibility.
 
-| Branch / Version line                     | Status     | Fixes Provided               | Planned EOL\*                   |
-| ----------------------------------------- | ---------- | ---------------------------- | ------------------------------- |
-| **0.50.x** (current best: `v0.50.0-best`) | **Active** | Security + critical features | \~6 months after next minor     |
-| **0.49.x**                                | **LTS**    | Security fixes only          | When 0.51.x is stable + 60 days |
-| **< 0.49**                                | **EOL**    | No fixes                     | Repro only (archival)           |
+Branch / Version line	Status	Fixes Provided	Planned EOL*
+0.50.x (current best: v0.50.0-best)	Active	Security + critical features	~6 months after next minor (0.51) ships
+0.49.x	LTS	Security fixes only	0.51.x “stable” + 60 days
+< 0.49	EOL	No fixes	Repro only (archival)
 
-\* We align EOL with competition milestones and will communicate any changes in the CHANGELOG and Release notes.
+*EOL is aligned with competition gates; any changes are posted in CHANGELOG.md and Release Notes.
 
-**Notes**
+Rules
+	•	Security fixes land on the highest maintained line, then backported to LTS if practical.
+	•	Containers, notebooks, and CI workflows inherit the repo’s line status.
 
-* All security fixes are released on the **highest maintained line** first, then backported to LTS if practical.
-* Containers and CI workflows inherit the repo’s line status.
+⸻
 
----
+2) How to Report a Vulnerability (Private Only)
 
-## How to Report a Vulnerability
+Preferred: GitHub Private Advisory
+	1.	Repo → Security → Report a vulnerability.
+	2.	Include a clear description, minimal PoC, affected versions/commits/tags, and impact.
+	3.	Add logs, configs (scrubbed), and environment details.
 
-**Please use a private channel**. Do **not** open public issues for suspected vulnerabilities.
+Alternative: Email (encrypted preferred)
+	•	To: security [at] 
+	•	Subject: Security: <short summary>
+	•	For encryption, request our PGP key in the advisory thread, or include your public key.
 
-### Preferred: GitHub Private Advisory
+Acknowledgement SLA: ≤ 2 business days (see §4).
 
-1. Go to the repository → **Security** tab → **Report a vulnerability**.
-2. Provide a clear description, reproduction steps, and impact assessment (see template below).
-3. Add logs, minimal PoCs, and affected commit(s)/tag(s) if possible.
+⸻
 
-### Alternative: Email (encrypted preferred)
+3) Scope
 
-* Send to: **security (at) project maintainers** *(replace with your team alias)*
-* Subject: `Security: <short summary>`
-* If you need encryption, attach a PGP key or request ours in the advisory thread.
+In-Scope
+	•	Core pipeline: src/** (encoders/decoders, calibration, diagnostics, symbolic layers).
+	•	CLI & entrypoints: Typer commands (spectramind …), selftest.py, submission/packaging tools.
+	•	API & server: src/server/** (FastAPI, artifact serving, CLI bridge).
+	•	GUI & docs: src/gui/**, docs site if it renders local/served artifacts.
+	•	Build/runtime: Dockerfiles, docker-compose.yml, GitHub Actions, Make targets consumed by users.
+	•	Configs & scripts: config/**, configs/**, bin/**, scripts/**, manifests and run hashes.
 
-We acknowledge receipt within **2 business days** (see SLA below).
+Out-of-Scope (unless you can prove an exploit path through SpectraMind)
+	•	Pure third-party vulnerabilities without a SpectraMind attack path.
+	•	DoS via unrealistic inputs or self-inflicted local misconfiguration.
+	•	Social engineering, phishing, attacks on maintainers’ personal accounts.
+	•	Self-XSS in locally edited, static HTML artifacts.
+	•	Kaggle platform issues (report to Kaggle).
 
----
+⸻
 
-## Coordinated Disclosure & SLAs
+4) Coordinated Disclosure & SLAs
 
-We follow responsible/coordinated disclosure principles.
+We follow responsible disclosure with a bias for rapid mitigation when research milestones are at risk.
 
-**Timeline (targets, not guarantees):**
+Timeline targets (not guarantees):
+	•	Triage & Acknowledgement: ≤ 2 business days
+	•	Initial Technical Assessment: ≤ 7 days with provisional CVSS v3.1 base score
+	•	Critical/High Fix or Mitigation: ≤ 30 days (faster if exploitation suspected/observed)
+	•	Medium/Low Fix or Mitigation: ≤ 90 days
+	•	Public Advisory: within 7 days of patch release or per agreed embargo lift
 
-* **Triage & Acknowledgement:** ≤ **2 business days**
-* **Initial Assessment:** ≤ **7 days** with provisional CVSS v3.1 score and scope
-* **Fix or Mitigation for Critical/High:** ≤ **30 days** (expedited if actively exploited)
-* **Fix or Mitigation for Medium/Low:** ≤ **90 days**
-* **Advisory Publication:** Within **7 days** of a patch release or after a mutually agreed embargo
+Embargo
+If exploitation risk is high, we coordinate a short embargo to ship mitigations (e.g., config flags, CI rules, container base pin/patch) before full code changes.
 
-**Embargo:** If exploitation appears likely, we coordinate a short embargo to allow patching. We may ship mitigations (config flags, CI rules, container patches) before a full code fix.
+⸻
 
----
+5) Severity & Prioritization
+	•	Primary rubric: CVSS v3.1 (base + temporal/environmental when relevant).
+	•	Priority modifiers: exploit in the wild, data sensitivity (tokens, credentials), supply-chain blast radius, and competition timing.
 
-## Scope
+⸻
 
-### In-Scope
+6) What a Good Report Includes (Template)
 
-* **Core pipeline code:** `src/**` (encoders/decoders, diagnostics, symbolic layers)
-* **CLI & entrypoints:** `spectramind …` (Typer), `selftest.py`, packaging, submission tooling
-* **Server & API:** `src/server/**` (FastAPI, artifact serving, CLI bridge)
-* **GUI (read-only dashboards):** `src/gui/**` and docs site if it loads local/served artifacts
-* **Build & runtime:** Dockerfiles, `docker-compose.yml`, GitHub Actions, Make targets that ship to users
-* **Configs & scripts:** `configs/**`, `bin/**`, `scripts/**`, reproducibility manifests
-
-### Out-of-Scope (unless leading to a real exploit in our environment)
-
-* **Third-party vulnerabilities** with no demonstrated exploit path via SpectraMind
-* **Denial of Service** via impractically large inputs or self-inflicted misconfiguration on local machines
-* **Social engineering**, phishing, or attacks on maintainers’ personal accounts
-* **Self-XSS** in local-only artifacts you hand-edit
-* **Kaggle platform issues** (report to Kaggle)
-
----
-
-## Severity & Scoring
-
-We use **CVSS v3.1** (base score + temporal/environmental where appropriate). We may reprioritize based on:
-
-* Exploitability (public PoC, active exploitation)
-* Data sensitivity (e.g., credentials, submission tokens)
-* Supply-chain blast radius (CI/CD, container bases)
-* Competition timing (risk to participants & reproducibility)
-
----
-
-## What a Good Report Includes (Template)
-
-```
 Title: <concise name>
 Version(s): <tag/commit range, container tag, workflow sha>
 Component: <CLI | API | GUI | Docker | CI | Config | Diagnostics | Symbolic>
@@ -119,84 +110,122 @@ Workarounds/Mitigations (if any):
 
 Additional context/logs:
 <stderr/stdout, screenshots, hashes>
-```
 
----
 
-## Patch, Backport, and Disclosure Process
+⸻
 
-1. **Private fix branch** with restricted reviewers. Security-relevant commits reference the private advisory ID.
-2. **Tests** added: regression + minimal PoC harness if safe.
-3. **Fix release** on the **highest maintained line** (e.g., `0.50.x`) with a version bump (`0.50.1`), then **backport** to LTS where feasible.
-4. **Release notes** include a short description, affected versions, and thanks (credit) if desired.
-5. **Public advisory** (GitHub Security Advisory) with CVSS, affected versions, and mitigation steps.
-6. **Artifacts** (containers, SBOMs) rebuilt and signed where supported.
+7) Patch, Backport, and Disclosure
+	1.	Private fix branch referencing the private advisory ID; restricted reviewers only.
+	2.	Tests: regression + minimal PoC harness (safe to run in CI).
+	3.	Release: bump highest maintained line (e.g., 0.50.1), then backport to LTS when feasible.
+	4.	Release Notes: affected versions, impact summary, mitigation, and optional researcher credit.
+	5.	Advisory: publish GitHub Security Advisory with CVSS, affected versions, mitigation.
+	6.	Artifacts: images and SBOMs rebuilt; digests pinned where supported.
 
----
+⸻
 
-## Supply Chain & Dependencies
+8) Supply Chain & Dependencies
+	•	SBOM: make sbom → outputs/sbom/spdx_<RUN_ID>.json (CycloneDX/SPDX via syft; optional grype scan).
+	•	Vuln Scans: make security runs pip-audit; optional Bandit static analysis for src/.
+	•	Pinning: poetry.lock for Python deps; container bases pinned by tag or digest in CI; GitHub Actions pinned by SHA when feasible.
+	•	Updates: Dependabot/Renovate for dependency bumps; human review required for security-relevant changes.
+	•	Provenance: reproducible CLI/Make targets; run manifests (outputs/manifests/ci_run_manifest_*.json); config hashes (run_hash_summary_v50.json).
+	•	Rebuild Triggers: On advisory publication, containers and notebooks rebuilt in CI (Kaggle image notes where applicable).
 
-* **SBOM:** Generate CycloneDX SBOM via `make sbom` (writes to `outputs/sbom.json`).
-* **Vuln Scans:** `make audit` runs pip-audit (and optionally grype/trivy if installed).
-* **Pinning:** Python deps pinned in `poetry.lock`; Docker bases pinned by digest or exact tag in CI where possible.
-* **Updates:** We use automated checks (Dependabot/renovate) and human review for security-relevant bumps.
-* **Build provenance:** Reproducible Make/CLI, run manifests (`outputs/manifests/run_manifest_*.json`), and config hashes (`run_hash_summary_v50.json`).
+⸻
 
----
+9) Secrets & Credentials
+	•	Never commit secrets. Use environment variables and an optional .env (locally).
+	•	Rotation: If a secret is exposed (e.g., Kaggle token), rotate immediately and note in the advisory thread.
+	•	Validation: make validate-env enforces local env schema if scripts/validate_env.py is present.
+	•	Least privilege: use short-lived tokens (OIDC) and minimal scopes in CI.
 
-## Secrets & Credentials
+⸻
 
-* **Do not commit secrets.** Use `.env` files and environment variables.
-* **Rotation:** If a secret is exposed (e.g., Kaggle token), rotate immediately and notify in the advisory thread.
-* **Validation:** `make validate-env` can enforce local env schema (if `scripts/validate_env.py` present).
+10) Hardening Guidance (Operators & Contributors)
+	•	Containers: run with least privilege; mount only required volumes; prefer --read-only where compatible.
+	•	Network: bind API/UI to localhost in dev; restrict ingress in shared environments.
+	•	CLI usage: avoid untrusted configs/overrides; keep spectramind selftest green; verify hashes and manifests.
+	•	Artifacts: serve dashboards read-only; disallow uploads in production contexts without sandboxing.
+	•	CI: restrict workflow permissions; pin external actions; rotate tokens on policy or team changes.
 
----
+⸻
 
-## Hardening Guidance (Recommended)
+11) Safe Harbor
 
-* **Containers:** Run with least privilege; map only needed volumes; prefer `--read-only` where possible.
-* **Network:** Expose API/UI only to trusted hosts; prefer 127.0.0.1 during development.
-* **CLI:** Avoid running untrusted configs; review overrides; keep `selftest` green.
-* **Artifacts:** Serve dashboards read-only; never accept file uploads in production without additional sandboxing.
-* **CI:** Use OIDC or short-lived tokens; restrict workflow permissions; pin actions by SHA.
+We will not pursue action provided you:
+	•	Act in good faith; avoid privacy violations and data destruction.
+	•	Do not exploit beyond proof-of-existence.
+	•	Use private reporting channels and respect coordinated disclosure timelines.
+	•	Follow applicable laws.
 
----
+When in doubt, contact us via the private advisory channel first.
 
-## Safe Harbor
+⸻
 
-We will not pursue civil or criminal action, or ask law enforcement to investigate you, **provided that** you:
+12) Bug Bounty
 
-* Make a **good-faith** effort to avoid privacy violations and data destruction.
-* Do not exploit a vulnerability beyond what is necessary to prove it exists.
-* Use the **private reporting channels** above and **do not disclose** until we complete remediation or agree on a coordinated timeline.
-* Follow applicable laws.
+No paid bounty at this time. We happily provide researcher credit in release notes/advisories (opt-in).
 
-If in doubt, contact us first via the private advisory channel.
+⸻
 
----
+13) Contacts & Status
+	•	Primary channel (preferred): GitHub → Security → Report a vulnerability
+	•	Alternative: security [at] <your-team-alias> (PGP available upon request)
+	•	Status updates: posted within the private advisory thread (ack → triage → fix → release).
+	•	Public comms: Release Notes + GitHub Security Advisory upon patch.
 
-## No Bug Bounty (for now)
+⸻
 
-We **do not** run a paid bounty program. We’re happy to **credit** reporters in release notes/advisories (opt-in).
+14) Fast Mitigation Playbook (Operators)
 
----
+If a critical advisory lands:
+	1.	Containers: pull fixed tags/digests and redeploy.
+	2.	Python envs: upgrade to patched 0.50.x/LTS; rebuild virtualenvs.
+	3.	Configs: apply temporary hardening flags from the advisory (e.g., --no-open dashboards, disable live endpoints).
+	4.	CI: rotate tokens; run make security sbom; validate ci_run_manifest_*.json.
+	5.	Artifacts: regenerate dashboards with fixed code to avoid serving vulnerable bundles.
+	6.	Notebook/Kaggle: re-run with patched environment; ensure competition submission tokens/secrets are rotated.
 
-## Contact & Updates
+⸻
 
-* **Primary:** GitHub **Security → Report a vulnerability** (preferred)
-* **Status updates:** We’ll post progress (ack → triage → fix → release) inside the advisory thread.
-* **Public comms:** On patch release, we publish release notes and a GitHub Security Advisory.
+15) Policy Lifecycle & Governance
+	•	Owner: Security Maintainer (delegated by Project Lead).
+	•	Review cadence: Quarterly or after any high-severity advisory.
+	•	Change control: Propose updates via PR; tag security-policy label; require approval from Owner + one core maintainer; bump Policy Version and update date.
+	•	Records: Keep advisory IDs, CVSS, and patch links in SECURITY-ADVISORIES.md (redacted if under embargo).
 
----
+⸻
 
-## Appendix: Fast Mitigation Playbook (for Operators)
+16) Quick Reference (Cheat-Sheet)
+	•	Report privately → GitHub Security Advisory
+	•	Acknowledge: ≤2 business days
+	•	Critical/High fix: ≤30 days
+	•	Tools: make security (pip-audit/Bandit), make sbom (syft/grype), make ci (hardened pipeline)
+	•	Proof safely; do not publish until coordinated release
+	•	Containers & actions: prefer pinned tags/SHAs
 
-* **Containers:** Rebuild and redeploy the fixed tag; prefer digest-pinned images.
-* **Pip installs:** Update to the patched `0.50.x` or LTS version; re-create venvs.
-* **Configs:** Apply temporary hardening flags from the advisory (e.g., disable live API endpoints, switch to `--no-open` dashboard mode).
-* **CI:** Rotate tokens; re-run `make audit sbom`.
-* **Artifacts:** Regenerate dashboards with fixed code to avoid serving vulnerable bundles.
+⸻
 
----
+Appendix A — Minimal Triage Matrix
 
-*Last updated:* 2025-08-31 (America/Chicago)
+Severity	Example Impact	Target Response
+Critical	RCE, secret extraction, supply-chain compromise	Acknowledge ≤2d; fix ≤30d (faster)
+High	Privilege escalation, auth bypass	Acknowledge ≤2d; fix ≤30d
+Medium	SSRF, partial info leak, sandbox escape (limited)	Acknowledge ≤2d; fix ≤90d
+Low	Best-practice violation, minor misconfig	Acknowledge ≤2d; fix ≤90d
+
+
+⸻
+
+Appendix B — Secure Development Guidelines (Snapshot)
+	•	Inputs: validate file headers and shapes; enforce MIME/extension allow-lists for artifact loaders.
+	•	Paths: resolve and confine to ARTIFACTS_DIR/LOGS_DIR; prevent .. traversal; never use untrusted --outdir without checks.
+	•	Subprocess: avoid shell=True; pass explicit lists; sanitize env; capture return codes.
+	•	Logging: avoid secrets; scrub tokens and PII; prefer structured JSON for security-relevant events.
+	•	Crypto: use vetted libs; avoid custom primitives; pin versions for cryptography/TLS stacks in containers.
+	•	Web/API: CORS least-privilege; disable auto-directory listings; rate-limit sensitive endpoints if exposed.
+	•	Notebooks: treat as code; disable arbitrary file writes in shared environments; pin kernels and images.
+	•	Reviews: security review required for changes to auth, network exposure, artifact serving, or container entrypoints.
+
+⸻
