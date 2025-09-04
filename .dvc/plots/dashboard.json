@@ -1,0 +1,15 @@
+{
+  "title": "SpectraMind V50 — Diagnostics Dashboard",
+  "description": "Unified view of training curves, metrics, calibration, symbolic violations, and FFT.",
+  "panels": [
+    { "file": "loss.json",        "title": "Loss (Train vs. Val)" },
+    { "file": "metrics.json",     "title": "Core Metrics (GLL/RMSE/MAE/Entropy/Coverage)" },
+    { "file": "calibration.json", "title": "Uncertainty Calibration (σ vs |μ−y|)" },
+    { "file": "symbolic.json",    "title": "Symbolic Constraint Violations (per-bin)" },
+    { "file": "fft.json",         "title": "FFT Power Spectrum" }
+  ],
+  "notes": [
+    "Render via DVC by passing all panel files at once.",
+    "Intended for use with a Make target or CLI one-liner."
+  ]
+}
