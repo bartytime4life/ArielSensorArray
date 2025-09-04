@@ -1,28 +1,36 @@
+# .dvc/config.local
 # ==============================================================================
-# SpectraMind V50 — DVC Local Config Override (Upgraded)
+# SpectraMind V50 — DVC Local Config Override (Upgraded, NASA-grade)
 # ------------------------------------------------------------------------------
 # Purpose:
 #   • Offline-first defaults (no cloud creds required)
 #   • Shared group cache for collaborative speed-ups (NAS / shared SSD)
 #   • Seamless opt-in to cloud remotes without committing secrets
 #   • CI/Kaggle friendly; never leaks credentials into Git
+# Notes:
+#   • This file is LOCAL ONLY and should NOT be committed.
+#   • Override safely via env at runtime (e.g., DVC_REMOTE_STORAGE/DVC_REMOTE_DEFAULT).
 # ==============================================================================
 
 [core]
 # Default remote for pulls/pushes (switch with: `dvc remote default <name>`)
 remote = storage
-autostage = true          ; auto add/commit .dvc/.gitignore changes
-jobs = 4                  ; parallel threads for fetch/push/status
-no_scm = false            ; we use Git for reproducibility
-analytics = false         ; disable telemetry on CI
-check_update = false      ; avoid network checks on air-gapped runners
+autostage = true                 ; auto add/commit .dvc/.gitignore changes
+jobs = 4                         ; parallel threads for fetch/push/status
+no_scm = false                   ; we use Git for reproducibility
+analytics = false                ; disable telemetry on CI
+check_update = false             ; avoid network checks on air-gapped runners
+loglevel = info                  ; keep CI output readable
+hardlink_lock = true             ; reduce lock contention on shared/NFS
+hardlink_lock_timeout = 30       ; seconds
 
 [cache]
 # Fast, safe link strategy: try reflink; fall back to hardlink/symlink; copy last
 type = reflink,hardlink,symlink,copy
 shared = group
 dir = .dvc/cache
-protected = true          ; prevent accidental workspace edits of cached files
+protected = true                 ; prevent workspace edits of cached files
+# checksum is md5 by default; keep default for compatibility
 
 [state]
 # Reduce lock contention on shared FS and speed up large DAG scans
@@ -31,7 +39,7 @@ sqlite_timeout = 5000
 update_lock = true
 
 [experiments]
-auto_push = false                 ; keep local by default (avoid accidental remote writes)
+auto_push = false                ; keep local by default (avoid accidental remote writes)
 temp_dir = .dvc/tmp/experiments
 run_cache = true
 
@@ -56,8 +64,8 @@ verify = true
 # ───────────────────────── Optional Cloud remotes (opt-in) ─────────────────────
 # NOTE: Disabled by default. To use one:
 #   • Set creds via environment/CLI (never commit them)
-#   • Select as default: `dvc remote default s3` (or gcs/azure)
-#
+#   • Select as default: `dvc remote default s3` (or gcs/azure/gdrive/http)
+
 # S3 (AWS/MinIO). Provide creds/endpoint via env or AWS profile.
 [remote "s3"]
 type = s3
@@ -80,17 +88,26 @@ url = azure://spectramindv50/container
 # Env: AZURE_STORAGE_CONNECTION_STRING or
 #      AZURE_STORAGE_ACCOUNT / AZURE_STORAGE_KEY
 
-# ───────────────────────── Push/pull hardening & timeouts ──────────────────────
-[feature "push"]
-retries = 3
-jobs = 2
+# Google Drive (service account or OAuth; keep keys out of Git).
+[remote "gdrive"]
+type = gdrive
+url = gdrive://root/spectramind-v50-dvc
+# gdrive_use_service_account = true
+# gdrive_service_account_json_file_path = /secure/path/sa.json
 
-[feature "fetch"]
-retries = 3
-jobs = 4
-timeout = 120
+# Generic HTTP(s) remote (read-only by default).
+[remote "http"]
+type = http
+url = https://artifacts.your.domain/spectramind-v50-dvc
+# auth via netrc/headers env; keep tokens out of Git
+
+# ───────────────────────── Push/pull hardening & timeouts ──────────────────────
+# Prefer per-remote jobs config when using cloud endpoints; defaults fall back to [core].jobs.
+# Example:
+# [remote "s3"]
+# jobs = 2
+# verify = true
 
 # ───────────────────────── Kaggle/CI quality-of-life defaults ──────────────────
 # On ephemeral runners, keep everything local and quiet by default.
-[core.ui]
-loglevel = info
+# (DVC_LOGLEVEL can still override at runtime.)
