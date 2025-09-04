@@ -1,3 +1,4 @@
+```yaml
 # .github/workflows/ci.yml
 # ==============================================================================
 # SpectraMind V50 — GitHub Actions CI (hardened, fast, reproducible)
@@ -37,8 +38,7 @@ on:
         required: false
         type: string
   schedule:
-    # Weekly: Sundays 12:00 UTC (06:00 America/Chicago during DST / 07:00 CST)
-    - cron: "0 12 * * 0"
+    - cron: "0 12 * * 0"  # Sundays 12:00 UTC (06:00/07:00 America/Chicago)
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -76,6 +76,8 @@ jobs:
     name: Detect Changes
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
     outputs:
       code: ${{ steps.filter.outputs.code }}
       svg: ${{ steps.filter.outputs.svg }}
@@ -133,6 +135,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: 'npm'
 
       - name: Install SVGO (pinned)
         run: |
@@ -172,7 +175,6 @@ jobs:
 
   # ----------------------------------------------------------------------------
   # 1) Hygiene: lint/format/type/tests (matrix)
-  #     - Skips on docs/assets-only changes to save minutes, still runs on PRs with code
   # ----------------------------------------------------------------------------
   hygiene:
     name: Hygiene (pre-commit + mypy + pytest) • py${{ matrix.py }}
@@ -187,6 +189,8 @@ jobs:
       fail-fast: false
       matrix:
         py: ["3.11", "3.12"]
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -261,6 +265,8 @@ jobs:
     timeout-minutes: 50
     needs: hygiene
     if: always()  # still collect diagnostics even if one hygiene shard fails
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -310,18 +316,8 @@ jobs:
       - name: Minimal diagnostics
         run: |
           poetry run spectramind diagnose smoothness --outdir outputs/diagnostics-ci
-          # Prefer minimal dashboard; fall back to full if flags unsupported
           poetry run spectramind diagnose dashboard --no-umap --no-tsne --outdir outputs/diagnostics-ci || \
           poetry run spectramind diagnose dashboard --outdir outputs/diagnostics-ci || true
-
-      - name: Node/Mermaid diagrams (optional)
-        run: |
-          if command -v npm >/dev/null 2>&1 && [ -f package.json ]; then
-            make node-ci || true
-            make node-diagrams || true
-          else
-            echo "Skipping node/mermaid (npm or package.json not found)"
-          fi
 
       - name: Upload smoke artifacts
         if: always()
@@ -344,6 +340,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     needs: smoke
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -379,6 +377,8 @@ jobs:
     if: |
       github.event_name == 'schedule' ||
       (github.event_name == 'workflow_dispatch' && inputs.run_ablation_on_push == 'true')
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -420,6 +420,8 @@ jobs:
     env:
       KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
       KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+    permissions:
+      contents: read
     steps:
       - name: Fail early if secrets missing
         run: |
@@ -466,6 +468,8 @@ jobs:
       BUILDKIT_CACHE_TO: /tmp/.buildx-cache-new
       BUILDKIT_CACHE_FROM: /tmp/.buildx-cache
       IMAGE_TAG: spectramindv50:ci
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -520,3 +524,4 @@ jobs:
             -v "$PWD":/workspace -w /workspace \
             ${{ env.IMAGE_TAG }} \
             bash -lc 'which spectramind || true; spectramind selftest --fast || exit 1'
+```
