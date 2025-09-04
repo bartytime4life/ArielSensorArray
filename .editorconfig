@@ -3,7 +3,6 @@
 # Purpose: Enforce consistent style across IDEs, CI, Kaggle, and Docker builds.
 # Reference: https://editorconfig.org/
 # ==============================================================================
-
 root = true
 
 # ========= Global defaults =========
@@ -14,6 +13,7 @@ insert_final_newline = true
 trim_trailing_whitespace = true
 indent_style = space
 indent_size = 4
+max_line_length = 88     # aligns with Black / Hydra configs
 
 # ========= Markdown / Docs =========
 [*.{md,rst}]
@@ -88,3 +88,20 @@ insert_final_newline = false
 [*.{tsv,txt}]
 indent_size = 2
 insert_final_newline = true
+
+# ========= CI / Tests / Reports =========
+[*.{ndjson,jsonl}]
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.html]
+indent_size = 2
+insert_final_newline = true
+
+# ========= Special Cases =========
+[*.env]
+insert_final_newline = true
+trim_trailing_whitespace = false
+
+[migrations/*]
+insert_final_newline = false
