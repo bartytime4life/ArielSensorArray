@@ -1,11 +1,15 @@
-# SpectraMind V50 — pre-commit suite (code quality, security, notebooks, docs)
+# SpectraMind V50 — pre-commit suite (code quality, security, notebooks, docs, SVG)
 # Run locally:  pre-commit install && pre-commit run --all-files
 # CI tip:       pre-commit run --all-files (as a separate step)
+# Notes:
+# - Python tooling targets 3.12 by default (works with 3.11 as well).
+# - SVG optimization uses SVGO v3 via a local hook (requires Node.js >= 20).
+# - Ruff handles fast lint/format; Black/Isort kept for exact style parity (CI and notebooks via nbQA).
 
-minimum_pre_commit_version: "3.5.0"
+minimum_pre_commit_version: "3.7.0"
 
 default_language_version:
-  python: python3.11
+  python: python3.12
 
 repos:
   # ── EditorConfig enforcement ────────────────────────────────────────────────
@@ -24,11 +28,12 @@ repos:
             .*\.log$
           )
 
-  # ── Python lint/format ─────────────────────────────────────────────────────
+  # ── Python lint/format (Ruff + Black + Isort) ──────────────────────────────
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.6.9
     hooks:
       - id: ruff
+        # Use pyproject.toml for configuration; fail if fixes were needed (to enforce clean tree).
         args: [--fix, --exit-non-zero-on-fix]
       - id: ruff-format
 
@@ -44,12 +49,12 @@ repos:
       - id: isort
         args: ["--profile", "black", "--line-length=88"]
 
-  # Upgrade Python syntax to current target (safe transforms; complements Ruff)
+  # Upgrade Python syntax (safe transforms; complements Ruff modernization)
   - repo: https://github.com/asottile/pyupgrade
     rev: v3.15.1
     hooks:
       - id: pyupgrade
-        args: ["--py310-plus"]
+        args: ["--py311-plus"]
 
   # ── Type checking (fast fail for obvious issues) ────────────────────────────
   - repo: https://github.com/pre-commit/mirrors-mypy
@@ -73,7 +78,7 @@ repos:
         args: ["--line-length=88"]
       - id: nbqa-isort
         args: ["--profile", "black", "--line-length=88"]
-      # Optional: mypy for notebooks (enable if notebook code is typed)
+      # Optional: enable if notebook code is typed
       # - id: nbqa-mypy
       #   args: [--strict, --ignore-missing-imports]
 
@@ -108,10 +113,20 @@ repos:
       - id: name-tests-test
         args: ["--pytest"]
       - id: pretty-format-json
-        args: ["--autofix", "--no-ensure-ascii", "--no-sort-keys"]
+        args: ["--autofix", "--no-ensure-ascii", "--no-sort-keys", "--indent=2"]
         files: "\\.json$"
       - id: trailing-whitespace
         exclude: \.md$           # keep Markdown spacing when needed
+
+  # ── Spelling/typos (lightweight) ────────────────────────────────────────────
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.3.0
+    hooks:
+      - id: codespell
+        args: [
+          "--ignore-words-list=nd,teh,ba,parm,fo,adress,ot,crate",  # extend as needed
+          "--skip=*.svg,*.lock,*.json,*.yml,*.yaml,*.ipynb,docs/_build/*"
+        ]
 
   # ── Docs & config formatting ────────────────────────────────────────────────
   - repo: https://github.com/executablebooks/mdformat
@@ -144,7 +159,7 @@ repos:
         name: check-jsonschema (generic)
         files: "\\.(json|ya?ml)$"
 
-  # Format Markdown / JSON / YAML consistently (Prettier for docs/config)
+  # Format Markdown / JSON / YAML (Prettier for docs/config; complements mdformat)
   - repo: https://github.com/pre-commit/mirrors-prettier
     rev: v3.3.3
     hooks:
@@ -200,8 +215,30 @@ repos:
     rev: v1.7.3
     hooks:
       - id: actionlint
-      name: actionlint (GitHub Actions linter)
-      files: ^\.github/workflows/.*\.ya?ml$
+        name: actionlint (GitHub Actions linter)
+        files: ^\.github/workflows/.*\.ya?ml$
+
+  # ── Poetry integrity (sanity checks) ────────────────────────────────────────
+  - repo: local
+    hooks:
+      - id: poetry-check
+        name: poetry check (pyproject/lock integrity)
+        entry: bash -c 'poetry --version >/dev/null 2>&1 && poetry check && poetry lock --check'
+        language: system
+        pass_filenames: false
+        files: ^(pyproject\.toml|poetry\.lock)$
+
+  # ── SVG optimization (SVGO v3 via Node >= 20) ──────────────────────────────
+  - repo: local
+    hooks:
+      - id: svgo-optimize
+        name: svgo optimize (docs/assets SVG)
+        entry: bash -lc 'command -v npx >/dev/null 2>&1 && [ -f .svgo.json ] && npx svgo -c .svgo.json -f docs -o docs && npx svgo -c .svgo.json -f assets/diagrams -o assets/diagrams || true'
+        language: system
+        pass_filenames: false
+        files: "\\.svg$"
+        additional_dependencies: []  # uses global npx; CI installs in job
+        stages: [commit]
 
   # ── Local hooks (repo-managed) ─────────────────────────────────────────────
   - repo: local
@@ -216,7 +253,7 @@ repos:
 
 ci:
   autofix_prs: true
-  autoupdate_schedule: quarterly
+  autoupdate_schedule: monthly
 
 # Global excludes to keep hooks fast & non-noisy
 exclude: |
