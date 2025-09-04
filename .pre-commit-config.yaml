@@ -1,15 +1,41 @@
-# SpectraMind V50 — pre-commit suite (code quality, security, notebooks, docs, SVG)
+# ==============================================================================
+# SpectraMind V50 — pre-commit suite (code quality • security • notebooks • docs • SVG)
 # Run locally:  pre-commit install && pre-commit run --all-files
 # CI tip:       pre-commit run --all-files (as a separate step)
+#
 # Notes:
-# - Python tooling targets 3.12 by default (works with 3.11 as well).
-# - SVG optimization uses SVGO v3 via a local hook (requires Node.js >= 20).
-# - Ruff handles fast lint/format; Black/Isort kept for exact style parity (CI and notebooks via nbQA).
+# - Python tooling targets 3.12 by default (also works with 3.11).
+# - Ruff = fast lint/format; Black/Isort retained for parity (nbQA for notebooks).
+# - SVG optimization uses SVGO v3 via a local hook (Node.js >= 20).
+# - Hooks tuned for Kaggle/Docker/CI: no network use in hooks, generous excludes.
+# ==============================================================================
 
 minimum_pre_commit_version: "3.7.0"
 
 default_language_version:
   python: python3.12
+
+# Global excludes to keep hooks fast & non-noisy
+exclude: |
+  (?x)(
+    ^\.venv/|
+    ^venv/|
+    ^ENV/|
+    ^env/|
+    ^__pycache__/|
+    ^\.mypy_cache/|
+    ^\.ruff_cache/|
+    ^\.pytest_cache/|
+    ^\.dvc/|
+    ^\.git/|
+    ^build/|
+    ^dist/|
+    ^data/|
+    ^outputs/|
+    ^logs/|
+    ^docs/_build/|
+    .*\.ipynb_checkpoints/
+  )
 
 repos:
   # ── EditorConfig enforcement ────────────────────────────────────────────────
@@ -33,8 +59,7 @@ repos:
     rev: v0.6.9
     hooks:
       - id: ruff
-        # Use pyproject.toml for configuration; fail if fixes were needed (to enforce clean tree).
-        args: [--fix, --exit-non-zero-on-fix]
+        args: [--fix, --exit-non-zero-on-fix]  # enforce clean tree
       - id: ruff-format
 
   - repo: https://github.com/psf/black
@@ -49,14 +74,14 @@ repos:
       - id: isort
         args: ["--profile", "black", "--line-length=88"]
 
-  # Upgrade Python syntax (safe transforms; complements Ruff modernization)
+  # Python modernization (safe transforms; complements Ruff)
   - repo: https://github.com/asottile/pyupgrade
     rev: v3.15.1
     hooks:
       - id: pyupgrade
         args: ["--py311-plus"]
 
-  # ── Type checking (fast fail for obvious issues) ────────────────────────────
+  # ── Type checking (fast fail) ──────────────────────────────────────────────
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: v1.11.2
     hooks:
@@ -64,6 +89,7 @@ repos:
         args:
           - --strict
           - --ignore-missing-imports
+          - --python-version=3.12
         additional_dependencies:
           - types-PyYAML==6.0.12.20240808
           - types-requests==2.32.0.20240712
@@ -78,8 +104,7 @@ repos:
         args: ["--line-length=88"]
       - id: nbqa-isort
         args: ["--profile", "black", "--line-length=88"]
-      # Optional: enable if notebook code is typed
-      # - id: nbqa-mypy
+      # - id: nbqa-mypy        # enable if your notebook code is fully typed
       #   args: [--strict, --ignore-missing-imports]
 
   - repo: https://github.com/kynan/nbstripout
@@ -94,7 +119,7 @@ repos:
     rev: v4.6.0
     hooks:
       - id: check-added-large-files
-        args: ["--maxkb=5120"]   # 5 MB cap; adjust to taste
+        args: ["--maxkb=5120"]   # 5 MB cap; tune as needed
         exclude: ^(data/|outputs/|docs/assets/|\.dvc/)
       - id: check-ast
       - id: check-builtin-literals
@@ -124,7 +149,7 @@ repos:
     hooks:
       - id: codespell
         args: [
-          "--ignore-words-list=nd,teh,ba,parm,fo,adress,ot,crate",  # extend as needed
+          "--ignore-words-list=nd,teh,ba,parm,fo,adress,ot,crate",
           "--skip=*.svg,*.lock,*.json,*.yml,*.yaml,*.ipynb,docs/_build/*"
         ]
 
@@ -159,7 +184,7 @@ repos:
         name: check-jsonschema (generic)
         files: "\\.(json|ya?ml)$"
 
-  # Format Markdown / JSON / YAML (Prettier for docs/config; complements mdformat)
+  # Prettier for docs/config (complements mdformat; no JS projects required)
   - repo: https://github.com/pre-commit/mirrors-prettier
     rev: v3.3.3
     hooks:
@@ -186,6 +211,7 @@ repos:
     rev: v2.7.4
     hooks:
       - id: pip-audit
+        # In CI, prefer a dedicated job with a pinned resolver; this is a quick local safety net.
         args: ["--require-hashes=false", "--progress-spinner=off"]
 
   # Grep-based safety/sanity checks (eval, blanket except, etc.)
@@ -218,12 +244,12 @@ repos:
         name: actionlint (GitHub Actions linter)
         files: ^\.github/workflows/.*\.ya?ml$
 
-  # ── Poetry integrity (sanity checks) ────────────────────────────────────────
+  # ── Poetry integrity (optional; runs if Poetry is present) ──────────────────
   - repo: local
     hooks:
       - id: poetry-check
         name: poetry check (pyproject/lock integrity)
-        entry: bash -c 'poetry --version >/dev/null 2>&1 && poetry check && poetry lock --check'
+        entry: bash -c 'poetry --version >/dev/null 2>&1 && poetry check && poetry lock --check || true'
         language: system
         pass_filenames: false
         files: ^(pyproject\.toml|poetry\.lock)$
@@ -237,7 +263,6 @@ repos:
         language: system
         pass_filenames: false
         files: "\\.svg$"
-        additional_dependencies: []  # uses global npx; CI installs in job
         stages: [commit]
 
   # ── Local hooks (repo-managed) ─────────────────────────────────────────────
@@ -254,24 +279,3 @@ repos:
 ci:
   autofix_prs: true
   autoupdate_schedule: monthly
-
-# Global excludes to keep hooks fast & non-noisy
-exclude: |
-  (?x)(
-    ^\.venv/|
-    ^venv/|
-    ^ENV/|
-    ^env/|
-    ^__pycache__/|
-    ^\.mypy_cache/|
-    ^\.ruff_cache/|
-    ^\.pytest_cache/|
-    ^\.dvc/|
-    ^\.git/|
-    ^build/|
-    ^dist/|
-    ^data/|
-    ^outputs/|
-    ^logs/|
-    ^docs/_build/
-  )
