@@ -1,0 +1,73 @@
+name: SVG Optimize
+
+on:
+  pull_request:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    name: Lint SVGs
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install SVGO
+        run: |
+          npm init -y
+          npm install svgo@^3.3.2 --save-dev
+
+      - name: Optimize SVGs (dry-run)
+        run: |
+          npx svgo -c .svgo.json -f assets/diagrams -o .svgo-tmp || true
+          npx svgo -c .svgo.json -f docs -o .svgo-tmp || true
+          # now optimize in-place and check diff
+          npx svgo -c .svgo.json -f assets/diagrams -o assets/diagrams || true
+          npx svgo -c .svgo.json -f docs -o docs || true
+          git diff --name-only --exit-code || (echo "❌ SVGs not optimized. Run 'make optimize-svg' locally." && exit 1)
+
+  fix:
+    name: Auto-fix SVGs
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install SVGO
+        run: |
+          npm init -y
+          npm install svgo@^3.3.2 --save-dev
+
+      - name: Optimize SVGs in-place
+        run: |
+          npx svgo -c .svgo.json -f assets/diagrams -o assets/diagrams || true
+          npx svgo -c .svgo.json -f docs -o docs || true
+
+      - name: Commit & Push
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add assets/diagrams docs
+            git commit -m "chore(svg): optimize SVGs via CI"
+            git push
+          else
+            echo "No changes to commit."
+          fi
