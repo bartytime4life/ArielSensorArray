@@ -1,4 +1,5 @@
 name: "Dependabot Auto-Merge"
+
 on:
   pull_request_target:
     types: [opened, edited, labeled, synchronize]
@@ -6,61 +7,140 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  actions: read
+  checks: read
+
+concurrency:
+  group: dependabot-automerge-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   automerge:
+    name: Decide & (auto-)merge Dependabot PR
     if: github.actor == 'dependabot[bot]'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+
     steps:
+      - name: Checkout (safe depth)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
       - name: Fetch Dependabot metadata
         id: meta
         uses: dependabot/fetch-metadata@v2
         with:
           github-token: "${{ secrets.GITHUB_TOKEN }}"
 
-      - name: Decide if this PR is eligible for auto-merge
+      - name: Decide eligibility
         id: decide
+        shell: bash
+        env:
+          LABELS_JSON: ${{ toJson(github.event.pull_request.labels.*.name) }}
+          ECO: ${{ steps.meta.outputs.package-ecosystem }}
+          UPDATE_TYPE: ${{ steps.meta.outputs.update-type }}
+          SECURITY_ADVISORY_SEVERITY: ${{ steps.meta.outputs.security-advisory-severity }}
+          DEP_NAMES: ${{ steps.meta.outputs.dependency-names }}
         run: |
-          labels="${{ toJson(github.event.pull_request.labels.*.name) }}"
-          has_label() { echo "$labels" | grep -qi "\"$1\""; }
+          set -euo pipefail
 
-          ELIGIBLE="false"
+          has_label() { echo "$LABELS_JSON" | grep -qi "\"$1\""; }
 
-          # 1) Explicit opt-in via label
+          eligible="false"
+          reason="not-eligible"
+          mode="squash"
+
+          echo "ecosystem=$ECO"
+          echo "update_type=$UPDATE_TYPE"
+          echo "security_severity=$SECURITY_ADVISORY_SEVERITY"
+          echo "deps=$DEP_NAMES"
+          echo "labels=$LABELS_JSON"
+
+          # --- Rule 0: explicit opt-in label wins --------------------------------
           if has_label "automerge-candidate"; then
-            ELIGIBLE="true"
+            eligible="true"; reason="label-automerge-candidate"
           fi
 
-          # 2) Dev-tools on pip (black/ruff/isort/mypy/pre-commit/nbqa/pytest*)
-          if [ "${{ steps.meta.outputs.package-ecosystem }}" = "pip" ]; then
-            pkgs="${{ steps.meta.outputs.dependency-names }}"
-            if echo "$pkgs" | grep -Eq '(black|ruff|isort|mypy|pre-commit|nbqa|pytest)'; then
-              ELIGIBLE="true"
-            fi
-          fi
-
-          # 3) Patch/minor updates to GitHub Actions are safe to auto-merge
-          if [ "${{ steps.meta.outputs.package-ecosystem }}" = "github-actions" ]; then
-            case "${{ steps.meta.outputs.update-type }}" in
-              version-update:semver-patch|version-update:semver-minor)
-                ELIGIBLE="true"
-              ;;
+          # --- Rule 1: Security updates -----------------------------------------
+          # Auto-merge only LOW/MODERATE. HIGH/CRITICAL requires human review.
+          if [ "${SECURITY_ADVISORY_SEVERITY:-}" != "" ] && [ "$eligible" != "true" ]; then
+            case "${SECURITY_ADVISORY_SEVERITY,,}" in
+              low|moderate)
+                eligible="true"; reason="security-${SECURITY_ADVISORY_SEVERITY}"
+                ;;
+              high|critical)
+                eligible="false"; reason="security-${SECURITY_ADVISORY_SEVERITY}-manual"
+                ;;
             esac
           fi
 
-          echo "eligible=$ELIGIBLE" >> "$GITHUB_OUTPUT"
+          # --- Rule 2: GitHub Actions updates (semver) ---------------------------
+          if [ "$eligible" != "true" ] && [ "$ECO" = "github-actions" ]; then
+            case "$UPDATE_TYPE" in
+              version-update:semver-patch|version-update:semver-minor)
+                eligible="true"; reason="gha-semver-minor-or-patch"
+                ;;
+            esac
+          fi
 
-      # Optional: auto-approve to satisfy branch protection (if allowed)
+          # --- Rule 3: pip dev-tooling (safe auto-merge) -------------------------
+          # Black/Ruff/Isort/Mypy/Pre-commit/NBQA/Pytest (any plugin) are safe.
+          if [ "$eligible" != "true" ] && [ "$ECO" = "pip" ]; then
+            if echo "$DEP_NAMES" | grep -Eqi '(black|ruff|isort|mypy|pre-commit|nbqa|pytest)'; then
+              eligible="true"; reason="pip-dev-tooling"
+            fi
+          fi
+
+          # --- Rule 4: npm/yarn dev-only tooling (optional – disabled by default) -
+          # Uncomment below if you want JS dev-tool upgrades to auto-merge too.
+          # if [ "$eligible" != "true" ] && [ "$ECO" = "npm" ]; then
+          #   if echo "$DEP_NAMES" | grep -Eqi '(eslint|prettier|typescript|vitest|jest)'; then
+          #     eligible="true"; reason="npm-dev-tooling"
+          #   fi
+          # fi
+
+          # --- Rule 5: allow label-based opt-out ---------------------------------
+          if has_label "no-automerge"; then
+            eligible="false"; reason="label-no-automerge"
+          fi
+
+          echo "eligible=$eligible" >> "$GITHUB_OUTPUT"
+          echo "reason=$reason"     >> "$GITHUB_OUTPUT"
+          echo "mode=$mode"         >> "$GITHUB_OUTPUT"
+
+      - name: Comment decision
+        if: always()
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          token: "${{ secrets.GITHUB_TOKEN }}"
+          issue-number: ${{ github.event.pull_request.number }}
+          body: |
+            **Dependabot Auto-Merge:** `eligible=${{ steps.decide.outputs.eligible }}` • reason=`${{ steps.decide.outputs.reason }}`
+            _This bot enables GitHub auto-merge for safe categories (labels, dev tooling, GHA patch/minor, and LOW/MODERATE security)._
+
+      # Optional: auto-approve to satisfy branch protections (if allowed)
       - name: Auto-approve
         if: steps.decide.outputs.eligible == 'true'
         uses: hmarr/auto-approve-action@v4
         with:
           github-token: "${{ secrets.GITHUB_TOKEN }}"
 
+      # Enable GitHub native auto-merge (waits for required checks)
       - name: Enable GitHub auto-merge (squash)
         if: steps.decide.outputs.eligible == 'true'
         uses: peter-evans/enable-pull-request-automerge@v3
         with:
           token: "${{ secrets.GITHUB_TOKEN }}"
           pull-request-number: ${{ github.event.pull_request.number }}
-          merge-method: squash
+          merge-method: ${{ steps.decide.outputs.mode }}
+
+      # Optional: add a tracking label when queued for automerge
+      - name: Add label automerge-queued
+        if: steps.decide.outputs.eligible == 'true'
+        uses: actions-ecosystem/action-add-labels@v1
+        with:
+          github_token: "${{ secrets.GITHUB_TOKEN }}"
+          labels: |
+            automerge-queued
+```
