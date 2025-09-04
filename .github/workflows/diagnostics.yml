@@ -1,9 +1,13 @@
 # .github/workflows/diagnostics.yml
 # ==============================================================================
-# SpectraMind V50 — Diagnostics Workflow (Upgraded)
+# SpectraMind V50 — Diagnostics Workflow (Upgraded, CI-safe)
 # Generates HTML dashboards & diagnostic artifacts (UMAP/t-SNE*, GLL heatmaps,
-# SHAP*, symbolic overlays). Defaults to a CI-safe "light" run; you can supply
-# extra Hydra overrides in workflow_dispatch. (*heavy diagnostics may be skipped)
+# SHAP*, symbolic overlays). Defaults to a CI-safe "light" run; extra Hydra
+# overrides accepted via workflow_dispatch. (*heavy diagnostics may be skipped)
+# - Python matrix (3.11, 3.12), Poetry in-project venv cache
+# - Changes filter to skip heavy runs for docs/assets-only changes
+# - Optional fast ablation + leaderboard attachment
+# - Aggregated diagnostics index artifact
 # ==============================================================================
 
 name: diagnostics
@@ -43,6 +47,10 @@ concurrency:
   group: diagnostics-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+defaults:
+  run:
+    shell: bash -euxo pipefail
+
 env:
   POETRY_VIRTUALENVS_IN_PROJECT: "true"
   POETRY_NO_INTERACTION: "1"
@@ -57,11 +65,52 @@ env:
   DIAG_DIR: "outputs/diagnostics"
 
 jobs:
+  # --------------------------------------------------------------------------
+  # 0) Changes filter — avoid heavy jobs on docs/assets-only changes for PR/push
+  # --------------------------------------------------------------------------
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+      docs: ${{ steps.filter.outputs.docs }}
+      assets: ${{ steps.filter.outputs.assets }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          filters: |
+            code:
+              - 'src/**'
+              - 'configs/**'
+              - 'pyproject.toml'
+              - 'poetry.lock'
+              - '**/*.py'
+              - '.github/workflows/**'
+              - '!docs/**'
+              - '!assets/**'
+            docs:
+              - 'docs/**'
+              - '**/*.md'
+            assets:
+              - 'assets/**'
+
+  # --------------------------------------------------------------------------
+  # 1) Build diagnostics (matrix). Skip on docs/assets-only changes for PR/push.
+  # --------------------------------------------------------------------------
   build:
     name: Diagnostics • py${{ matrix.python }}
+    needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 60
-
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule' ||
+      needs.changes.outputs.code == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -147,8 +196,7 @@ PY
         run: |
           PRESET="${{ github.event.inputs.preset }}"
           if [ -z "$PRESET" ]; then
-            # PRs default to light, pushes/schedule default to light unless specified
-            if [ "${{ github.event_name }}" = "pull_request" ]; then PRESET="light"; else PRESET="light"; fi
+            PRESET="light"
           fi
           EXTRA="${{ github.event.inputs.extra_overrides }}"
           [ -z "$EXTRA" ] && EXTRA="${DEFAULT_OVERRIDES}"
@@ -172,21 +220,21 @@ PY
 
       - name: Generate diagnostics — dashboard (HTML)
         run: |
-          # PRs skip heavy embeddings by default; on pushes/schedule try full then fallback
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            poetry run spectramind diagnose dashboard --no-umap --no-tsne --outdir "${ARTIFACT_DIR}" \
-              2>&1 | tee -a "${ARTIFACT_DIR}/diagnostics.log"
-          else
+          # PRs/pushes default to CI-light; schedule/dispatch may try full then fallback
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             poetry run spectramind diagnose dashboard --outdir "${ARTIFACT_DIR}" \
               2>&1 | tee -a "${ARTIFACT_DIR}/diagnostics.log" || \
             poetry run spectramind diagnose dashboard --no-umap --no-tsne --outdir "${ARTIFACT_DIR}" \
               2>&1 | tee -a "${ARTIFACT_DIR}/diagnostics.log" || true
+          else
+            poetry run spectramind diagnose dashboard --no-umap --no-tsne --outdir "${ARTIFACT_DIR}" \
+              2>&1 | tee -a "${ARTIFACT_DIR}/diagnostics.log"
           fi
 
       - name: Node/Mermaid diagrams (optional)
         run: |
           if command -v npm >/dev/null 2>&1 && [ -f package.json ]; then
-            npm ci
+            npm ci || npm i
             if make -q node-diagrams 2>/dev/null; then make node-diagrams; fi
             mkdir -p "${ARTIFACT_DIR}/diagrams"
             cp -a outputs/diagrams/* "${ARTIFACT_DIR}/diagrams/" 2>/dev/null || true
@@ -196,7 +244,7 @@ PY
 
       - name: Collate artifacts
         run: |
-          # Prefer artifacts produced into DIAG_DIR or ARTIFACT_DIR; copy to ARTIFACT_DIR
+          # Prefer artifacts in DIAG_DIR or ARTIFACT_DIR; copy to ARTIFACT_DIR
           for p in \
             "${DIAG_DIR}"/*.{html,png,svg,json,csv} \
             "${ARTIFACT_DIR}"/*.{html,png,svg,json,csv} \
@@ -231,6 +279,9 @@ PY
           if-no-files-found: warn
           retention-days: 30
 
+  # --------------------------------------------------------------------------
+  # 2) Optional fast ablation pass, attached to diagnostics (sched/dispatch)
+  # --------------------------------------------------------------------------
   ablate:
     name: Ablation Leaderboard (scheduled/manual)
     needs: build
@@ -252,7 +303,6 @@ PY
           poetry install --no-interaction --no-ansi --without dev
       - name: Run ablation (fast grid)
         run: |
-          # Keep CI-safe; rely on your ablation config guardrails/timebox
           poetry run spectramind ablate \
             ablation=fast_eval \
             +grid.enable=false \
@@ -269,10 +319,14 @@ PY
           if-no-files-found: ignore
           retention-days: 30
 
+  # --------------------------------------------------------------------------
+  # 3) Aggregate artifact index for convenient browsing in Actions UI
+  # --------------------------------------------------------------------------
   aggregate:
     name: Aggregate Diagnostics Index
     needs: [build]
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     if: always()
     steps:
       - name: Download diagnostics artifacts
@@ -305,3 +359,4 @@ PY
           path: aggregated/DIAGNOSTICS_INDEX.md
           if-no-files-found: warn
           retention-days: 30
+```
