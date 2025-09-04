@@ -1,32 +1,46 @@
+# .dvc/config
 # ==============================================================================
-# SpectraMind V50 — DVC Global Config (multi-cloud, hardened)
+# SpectraMind V50 — DVC Global Config (multi-cloud, hardened, CI/Kaggle-safe)
+# ------------------------------------------------------------------------------
+# Policy:
+#   • Default = S3 (“storage”), but fully portable: local/GCS/Azure/GDrive/HTTP mirrors
+#   • No secrets in Git — use env/profile/runner secrets only
+#   • High-concurrency pulls, conservative pushes (to avoid rate limits)
+#   • Zero-copy cache links where supported; safe fallbacks everywhere else
 # ==============================================================================
 
 [core]
-remote = storage               ; default remote (switch via `dvc remote default <name>`)
-autostage = true               ; auto add/commit .dvc file changes
-jobs = 8                       ; parallel threads for fetch/push/status
-no_scm = false                 ; keep Git integration for reproducibility
-analytics = false              ; disable telemetry (CI/air-gapped friendly)
-check_update = false           ; avoid network version checks on CI
-hardlink_lock = true           ; robust locking on shared FS
+remote = storage                 ; default remote (switch via `dvc remote default <name>`)
+autostage = true                 ; auto add/commit .dvc changes
+jobs = 8                         ; parallel threads for fetch/push/status
+no_scm = false                   ; keep Git integration for reproducibility
+analytics = false                ; disable telemetry (CI/air-gapped friendly)
+check_update = false             ; avoid network version checks on CI
+hardlink_lock = true             ; robust locking on shared/NFS filesystems
+loglevel = info                  ; readable logs on CI
 
 [cache]
-# Prefer zero-copy links where possible; fall back safely
+# Prefer zero-copy links; fall back safely if FS doesn’t support reflink/hardlink/symlink
 type = reflink,hardlink,symlink,copy
 shared = group
 dir = .dvc/cache
-protected = true
+protected = true                 ; prevent accidental workspace writes
 
 [experiments]
-auto_push = true
+auto_push = true                 ; push exp cache to the default remote automatically
 temp_dir = .dvc/tmp/experiments
 run_cache = true
 
 [plots]
 template_dir = .dvc/plots/templates
 
-# ───────────────────────── Primary Cloud Remote (S3) ─────────────────────────
+# ------------------------------------------------------------------------------
+# Primary Cloud Remote (S3)  —  Production-grade, encrypted, verified
+# Provide creds via environment/profile; NEVER commit them:
+#   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN
+# Optional runtime override, do not commit:
+#   DVC_AWS_ENDPOINT=https://minio.example  DVC_AWS_REGION=us-east-1  dvc push
+# ------------------------------------------------------------------------------
 [remote "storage"]
 type = s3
 url = s3://spectramind-v50-dvc-storage
@@ -34,43 +48,78 @@ region = us-east-1
 endpointurl = https://s3.amazonaws.com
 acl = bucket-owner-full-control
 verify = true
-# Credentials are provided via environment or AWS profile (never commit secrets):
-#   export AWS_ACCESS_KEY_ID=... ; export AWS_SECRET_ACCESS_KEY=... ; export AWS_SESSION_TOKEN=...
-# Optional per-process override (do not commit):
-#   DVC_AWS_ENDPOINT=https://minio.your.domain  DVC_AWS_REGION=us-east-1 dvc push
+# Server-side encryption (opt-in, set via env in CI/secrets if required)
+# sse = AES256
+# sse_kms_key_id = arn:aws:kms:us-east-1:123456789012:key/...
+# Tuning (safe defaults — uncomment to tune big artifact perf)
+# multipart_threshold = 64MB
+# multipart_chunksize = 64MB
+# max_pool_connections = 50
+# listobjects = auto
 
-# ───────────────────────── CI / Mirror Remote (Optional) ─────────────────────
+# ------------------------------------------------------------------------------
+# CI Mirror (S3, optional) — fast cache fan-out for pipelines
+# ------------------------------------------------------------------------------
 [remote "ci-mirror"]
 type = s3
 url = s3://spectramind-v50-dvc-ci
 region = us-east-1
 endpointurl = https://s3.amazonaws.com
 verify = true
+# You can swap defaults without editing Git:
+#   DVC_REMOTE_DEFAULT=ci-mirror  dvc pull
 
-# ───────────────────────── Local / Air-gap Remote ────────────────────────────
+# ------------------------------------------------------------------------------
+# Local / Air-gapped Remote — useful for laptops or on-prem runners
+# ------------------------------------------------------------------------------
 [remote "local"]
 type = local
 url = ../.dvc-storage
 verify = true
 
-# ───────────────────────── Google Cloud Storage (Optional) ───────────────────
+# ------------------------------------------------------------------------------
+# Google Cloud Storage (optional)
+# Auth via ADC (gcloud) or env:
+#   GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json
+#   GOOGLE_CLOUD_PROJECT=your-project-id
+# ------------------------------------------------------------------------------
 [remote "gcs"]
 type = gcs
 url = gs://spectramind-v50-dvc
-# Auth: Application Default Credentials (gcloud) or env:
-#   export GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json
-#   export GOOGLE_CLOUD_PROJECT=your-project-id
 
-# ───────────────────────── Azure Blob Storage (Optional) ─────────────────────
-[remote "azure"]
-type = azure
-url = azure://spectramindv50/container
+# ------------------------------------------------------------------------------
+# Azure Blob Storage (optional)
 # Auth via env or `az login`:
 #   AZURE_STORAGE_CONNECTION_STRING=...
 #   — or —
 #   AZURE_STORAGE_ACCOUNT=...  AZURE_STORAGE_KEY=...
+# ------------------------------------------------------------------------------
+[remote "azure"]
+type = azure
+url = azure://spectramindv50/container
 
-# ───────────────────────── Push/Fetch hardening & timeouts ───────────────────
+# ------------------------------------------------------------------------------
+# Google Drive (optional; service account or OAuth — keep keys out of Git)
+# ------------------------------------------------------------------------------
+[remote "gdrive"]
+type = gdrive
+url = gdrive://root/spectramind-v50-dvc
+# gdrive_use_service_account = true
+# gdrive_service_account_json_file_path = /secure/path/sa.json
+
+# ------------------------------------------------------------------------------
+# Generic HTTP(s) (optional; usually read-only)
+# Auth via .netrc or header env; do NOT commit tokens
+# ------------------------------------------------------------------------------
+[remote "http"]
+type = http
+url = https://artifacts.example.org/spectramind-v50-dvc
+# headers = Authorization: Bearer ${DVC_HTTP_TOKEN}
+
+# ------------------------------------------------------------------------------
+# Push/Fetch hardening & timeouts
+# • Pushing is more conservative to avoid throttling; fetching is parallelized
+# ------------------------------------------------------------------------------
 [feature "push"]
 retries = 3
 jobs = 2
@@ -79,3 +128,11 @@ jobs = 2
 retries = 3
 jobs = 8
 timeout = 120
+
+# ==============================================================================
+# Usage Tips
+#   • Change default remote without editing config:  DVC_REMOTE_DEFAULT=gcs dvc pull
+#   • Override S3 endpoint at runtime (MinIO/testing):  DVC_AWS_ENDPOINT=... dvc push
+#   • Air-gapped/dev:  dvc remote default local
+#   • Experiments:  dvc exp run -S optim.lr=3e-4  && dvc exp push
+# ==============================================================================
