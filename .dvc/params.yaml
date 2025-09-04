@@ -1,6 +1,6 @@
 # .dvc/params.yaml
 # ==============================================================================
-# SpectraMind V50 — Parameter Tracking for DVC (Upgraded)
+# SpectraMind V50 — Parameter Tracking for DVC (Upgraded, Challenge-Grade)
 # ------------------------------------------------------------------------------
 # Single source of truth for hyperparameters and pipeline knobs.
 # Shared by Hydra configs, Typer CLI, and DVC stages to guarantee
@@ -14,11 +14,14 @@ run:
   project: spectramind_v50
   tag: ""                        # Optional freeform tag appended to run hash
   seed: 1337                     # Global RNG seed (torch, numpy, python, cuda)
+  seed_workers: true             # torch DataLoader worker_init_fn with global seed
   deterministic: true            # Enable cudnn_deterministic, disable benchmark
+  cudnn_benchmark: false
   hash_inputs: true              # Include params + data manifest in run hash
   env_capture: true              # Persist env (pip freeze, git sha, cuda, drivers)
   save_dir: outputs              # Root for all pipeline artifacts
   time_fmt: "%Y%m%d-%H%M%S"     # Timestamp format for run folders
+  resume_policy: "safe"          # safe|force|none (shape & hash checks)
 
 logging:
   level: INFO
@@ -27,21 +30,31 @@ logging:
   mlflow:
     enable: false
     uri: ""
+    experiment: spectramind_v50
+    run_name_from_hash: true
   rich_console: true
   log_interval: 50               # Steps between train logs
   val_interval: 1                # Epochs between validations
+  keep_console_quiet_in_ci: true
 
 # -------------
 # Data & Paths
 # -------------
 data:
+  # Input trees
   fgs1_path: data/raw/fgs1/
   airs_path: data/raw/airs/
+  # Derived/calibrated outputs
   calibration_path: data/processed/calibration/
   processed_path: data/processed/
   cache_path: data/.cache/
   splits_file: data/splits/splits_v50.json
+  manifest_file: data/manifest.jsonl         # hashed for run reproducibility
+  # Shapes / constants
   bins: 283
+  fgs1_bin_factor: 360                        # ~135k / 360 ≈ 375 steps
+  airs_bin_factor: 30                         # ~11.3k / 30 ≈ 377 steps
+  # Loader
   split_seed: 2025
   num_workers: 4
   pin_memory: true
@@ -55,6 +68,8 @@ data:
   jitter_strength: 0.5           # Relative amplitude (0..1)
   normalize_mu: true             # Normalize spectra target μ
   normalize_sigma: false         # Keep σ in native units unless calibrating
+  allow_missing: false           # Fail-fast if any required files missing
+  dtype: "float32"               # I/O dtype for persisted arrays
 
 # -----------------------------
 # DataLoader & Batch Composition
@@ -65,31 +80,42 @@ loader:
   shuffle: true
   drop_last: true
   collate: default               # or "packed", "padded"
+  pad_to_multiple: 16            # if using packed/padded variants
 
 # --------------
 # Training Setup
 # --------------
 training:
   epochs: 100
-  device: cuda
+  device: cuda                   # cuda|cpu|auto
   amp: true                      # torch.cuda.amp autocast
+  amp_dtype: "bf16"              # fp16|bf16 (bf16 preferred on A100)
   grad_clip_norm: 1.0
+  zero_grad: "set_to_none"       # faster gradient zeroing
   find_unused_parameters: false
   sync_batchnorm: false
+  ddp:
+    enable: false
+    backend: "nccl"
+    static_graph: true
   ema:
     enable: true
     decay: 0.999
+    warmup: 500                  # steps to skip EMA or linearly ramp
   early_stop:
     enable: true
     patience: 15
     metric: val/gll              # Lower better unless noted
     mode: min
+    min_delta: 0.0
   checkpoint:
     enable: true
     dir: outputs/checkpoints
     interval_epochs: 5
     keep_last: 3
     best_metric: val/gll
+    save_best_only: true
+    atomic_write: true
   resume:
     auto: true                   # Auto resume last run if shapes/config match
     path: ""                     # Manual override
@@ -103,11 +129,20 @@ optim:
   betas: [0.9, 0.999]
   eps: 1.0e-08
   weight_decay: 0.01
+  grad_centralization: false
+  lookahead:
+    enable: false
+    alpha: 0.5
+    k: 5
   scheduler:
-    name: cosine
+    name: cosine                 # cosine|onecycle|plateau
     warmup_epochs: 5
     min_lr_mult: 0.1             # Final LR = base_lr * min_lr_mult
     t_mult: 1.0
+    plateau:
+      patience: 5
+      factor: 0.5
+      min_lr: 1.0e-6
   # Optional second stage fine-tuning (e.g., with lower LR)
   stage2:
     enable: false
@@ -124,6 +159,7 @@ model:
   sigma_head: flow_uncertainty   # Flow-based σ head for uncertainty
   latent_dim: 256
   layers: 12
+  heads: 8
   dropout: 0.10
   residual: true
   attention_fusion: true
@@ -136,13 +172,15 @@ model:
   asymmetry_loss: true
   asymmetry_weight: 0.02
   nonnegativity_clamp: true
+  # FGS1-first emphasis
+  fgs1_weight: 58.0              # Weighted GLL term for channel 0 (metric parity)
 
 # -----------------
 # Calibration (UQ)
 # -----------------
 calibration:
   enable: true
-  method: corel                  # Conformal calibration with relational GNN
+  method: corel                  # corel|temp_scale|none
   per_bin: true
   coverage_target: 0.90
   temperature_scaling: true
@@ -157,6 +195,7 @@ calibration:
     layers: 3
     dropout: 0.10
     alpha: 0.05                  # (1 - coverage_target)
+    spectral_pos_enc: true
   plots: true
   save_csv: outputs/calibration/per_bin.csv
   summary_json: outputs/calibration/summary.json
@@ -182,6 +221,7 @@ diagnostics:
   save_artifacts: outputs/diagnostics/
   html_report: outputs/diagnostics/report.html
   summary_json: outputs/diagnostics/diagnostic_summary.json
+  log_images: false              # optionally store sample overlays
 
 # -----------------
 # Evaluation / E2E
@@ -196,6 +236,10 @@ eval:
   ensemble:
     enable: false
     members: []                  # Paths to member checkpoints
+  export:
+    save_numpy: true
+    save_csv: true
+    dir: outputs/predictions/
 
 # -----------------
 # Submission Bundle
@@ -221,6 +265,9 @@ ci:
   violation_threshold: 0.05      # Max allowed symbolic violation rate
   log_jsonl: logs/ci_events.jsonl
   dvc_remote: "origin"           # Expected default DVC remote name
+  artifacts:
+    keep_last_runs: 5
+    compress_html: true
 
 # -----------------
 # Ablations / Sweeps
@@ -234,3 +281,15 @@ ablate:
   max_trials: 12
   selection_metric: val/gll
   selection_mode: min
+
+# -----------------
+# Sanity Guards (fail-fast)
+# -----------------
+guards:
+  assert_nonneg_mu: true
+  clamp_mu_min: 0.0
+  max_sigma: 10.0                # defensive upper bound (unit-scale)
+  allow_nan_inputs: false
+  allow_nan_outputs: false
+  stop_on_exploding_loss: true
+  exploding_loss_threshold: 1.0e6
