@@ -1,0 +1,49 @@
+{
+  "$schema": "https://github.com/iterative/dvc-schemas/blob/main/schemas/plots/data_series.v2.schema.json",
+  "title": "Autocorrelation Diagnostics",
+  "description": "Lag vs. autocorrelation coefficient for μ spectra or residual signals. Used to detect periodic noise and temporal correlation.",
+  "x": "lag",
+  "y": "autocorr",
+  "x_label": "Lag (timesteps or bins)",
+  "y_label": "Autocorrelation Coefficient",
+  "x_type": "linear",
+  "y_type": "linear",
+  "show_legend": true,
+  "smooth": false,
+  "markers": true,
+  "lines": true,
+  "style": {
+    "line": {
+      "width": 2
+    },
+    "marker": {
+      "size": 4
+    }
+  },
+  "fields": {
+    "lag": {
+      "title": "Lag",
+      "type": "number",
+      "description": "Autocorrelation lag (timesteps or spectral bins)."
+    },
+    "autocorr": {
+      "title": "Autocorrelation",
+      "type": "number",
+      "description": "Autocorrelation coefficient at given lag."
+    }
+  },
+  "examples": [
+    {
+      "lag": 0,
+      "autocorr": 1.0
+    },
+    {
+      "lag": 1,
+      "autocorr": 0.72
+    },
+    {
+      "lag": 2,
+      "autocorr": 0.53
+    }
+  ]
+}
