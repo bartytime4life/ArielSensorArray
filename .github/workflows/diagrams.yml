@@ -3,20 +3,15 @@
 # SpectraMind V50 (NeurIPS 2025 Ariel Data Challenge)
 # ------------------------------------------------------------------------------
 # Purpose:
-#   • Automatically render all Mermaid diagrams in docs/diagrams/*.md
+#   • Automatically render Mermaid diagrams from docs/diagrams/*.md|*.mmd
 #   • Export diagrams to SVG + PNG for embedding in README/docs
-#   • Keep docs/diagrams/*.svg tracked in Git for CI/CD + dashboard sync
-#   • Ensure diagrams are reproducible, versioned, and CI-validated
-#
-# Triggers:
-#   • On push/PR to main/docs branches
-#   • On manual workflow dispatch
+#   • Optionally optimize SVGs (SVGO) and commit back on protected branches
+#   • Keep output reproducible (pinned CLI), cached, and CI-validated
 #
 # Outputs:
-#   • ./docs/diagrams/*.svg + *.png
-#   • Commit back via GitHub Actions bot (if enabled)
+#   • docs/diagrams/rendered/*.svg + *.png  (artifact)
+#   • Optional commit: docs/diagrams/*.svg + *.png
 # ==============================================================================
-
 name: Render Mermaid Diagrams
 
 on:
@@ -24,16 +19,49 @@ on:
     branches: [ main, docs, develop ]
     paths:
       - "docs/diagrams/**.md"
+      - "docs/diagrams/**.mmd"
+      - ".svgo.json"
       - ".github/workflows/diagrams.yml"
   pull_request:
     branches: [ main, docs ]
     paths:
       - "docs/diagrams/**.md"
+      - "docs/diagrams/**.mmd"
+      - ".svgo.json"
   workflow_dispatch:
+    inputs:
+      theme:
+        description: "Mermaid theme (default: neutral)"
+        required: false
+        default: "neutral"
+      background:
+        description: "Background (default: transparent)"
+        required: false
+        default: "transparent"
+      commit_back:
+        description: "Commit rendered diagrams back on this run?"
+        required: false
+        default: "false"
+        type: choice
+        options: ["false", "true"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: diagrams-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   render-mermaid:
+    name: Render Mermaid
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      THEME: ${{ inputs.theme || 'neutral' }}
+      BG: ${{ inputs.background || 'transparent' }}
+      OUT_DIR: docs/diagrams/rendered
 
     steps:
       # -------------------------------
@@ -45,32 +73,74 @@ jobs:
           fetch-depth: 0
 
       # -------------------------------
-      # Setup Node + Mermaid CLI
+      # Setup Node + Mermaid CLI + SVGO
       # -------------------------------
-      - name: Setup Node.js
+      - name: Setup Node.js (20.x)
         uses: actions/setup-node@v4
         with:
           node-version: "20"
+          cache: "npm"
 
-      - name: Install Mermaid CLI
-        run: npm install -g @mermaid-js/mermaid-cli
+      - name: Install Mermaid CLI + SVGO (pinned)
+        run: |
+          npm init -y >/dev/null 2>&1
+          npm i -D @mermaid-js/mermaid-cli@^10.9.0 svgo@^3.3.2
+          echo "mmdc: $(npx mmdc -V || true)"
+          echo "svgo: $(npx svgo -v || true)"
 
       # -------------------------------
       # Render Mermaid diagrams
+      # Supports:
+      #   - docs/diagrams/*.mmd (native)
+      #   - docs/diagrams/*.md  (extracts ```mermaid blocks)
       # -------------------------------
       - name: Find and render diagrams
         run: |
-          mkdir -p docs/diagrams/rendered
-          for file in docs/diagrams/*.md; do
-            base=$(basename "$file" .md)
-            # extract mermaid code blocks → .mmd
-            awk '/```mermaid/{flag=1;next}/```/{flag=0}flag' "$file" > docs/diagrams/$base.mmd || true
-            if [ -s docs/diagrams/$base.mmd ]; then
-              echo "Rendering $base.mmd → SVG+PNG"
-              mmdc -i docs/diagrams/$base.mmd -o docs/diagrams/rendered/$base.svg
-              mmdc -i docs/diagrams/$base.mmd -o docs/diagrams/rendered/$base.png
+          set -euo pipefail
+          mkdir -p "$OUT_DIR"
+
+          # Extract .mmd from .md with mermaid fences, then render
+          shopt -s nullglob
+          for md in docs/diagrams/*.md; do
+            base=$(basename "$md" .md)
+            tmp="docs/diagrams/${base}.mmd"
+            # extract mermaid code blocks → .mmd (if any)
+            awk '/```mermaid/{flag=1;next}/```/{flag=0}flag' "$md" > "$tmp" || true
+            # render only if non-empty extraction
+            if [ -s "$tmp" ]; then
+              echo "::group::Rendering (from .md) $base"
+              npx mmdc -i "$tmp" -o "$OUT_DIR/$base.svg" -b "$BG" -t "$THEME"
+              npx mmdc -i "$tmp" -o "$OUT_DIR/$base.png" -b "$BG" -t "$THEME"
+              echo "::endgroup::"
+            else
+              rm -f "$tmp"
             fi
           done
+
+          # Render any native .mmd directly
+          for mmd in docs/diagrams/*.mmd; do
+            base=$(basename "$mmd" .mmd)
+            echo "::group::Rendering (from .mmd) $base"
+            npx mmdc -i "$mmd" -o "$OUT_DIR/$base.svg" -b "$BG" -t "$THEME"
+            npx mmdc -i "$mmd" -o "$OUT_DIR/$base.png" -b "$BG" -t "$THEME"
+            echo "::endgroup::"
+          done
+
+          # List results
+          echo "Rendered files:"
+          ls -lh "$OUT_DIR" || true
+
+      # -------------------------------
+      # Optimize SVGs (if .svgo.json present)
+      # -------------------------------
+      - name: Optimize SVGs with SVGO
+        run: |
+          if [ -f ".svgo.json" ] && compgen -G "$OUT_DIR/*.svg" > /dev/null; then
+            echo "Optimizing SVGs per .svgo.json"
+            npx svgo -c .svgo.json -f "$OUT_DIR" -o "$OUT_DIR" || true
+          else
+            echo "No .svgo.json or no SVGs — skipping SVGO."
+          fi
 
       # -------------------------------
       # Upload artifacts for inspection
@@ -83,13 +153,32 @@ jobs:
 
       # -------------------------------
       # Optional: Commit back rendered diagrams
+      #   - Always try on push to main/docs
+      #   - Or when workflow_dispatch commit_back=true
       # -------------------------------
-      - name: Commit rendered diagrams
-        if: github.ref == 'refs/heads/main'
+      - name: Prepare commit (copy into docs/diagrams/)
+        if: |
+          github.ref == 'refs/heads/main' ||
+          github.ref == 'refs/heads/docs' ||
+          (github.event_name == 'workflow_dispatch' && inputs.commit_back == 'true')
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          cp docs/diagrams/rendered/* docs/diagrams/
-          git add docs/diagrams/*.svg docs/diagrams/*.png
-          git commit -m "ci(diagrams): update rendered Mermaid diagrams [skip ci]" || echo "No changes to commit"
-          git push
+          cp -a "$OUT_DIR/." docs/diagrams/
+          git status --porcelain
+
+      - name: Commit rendered diagrams
+        if: |
+          github.ref == 'refs/heads/main' ||
+          github.ref == 'refs/heads/docs' ||
+          (github.event_name == 'workflow_dispatch' && inputs.commit_back == 'true')
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            git config user.name  "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add docs/diagrams/*.svg docs/diagrams/*.png
+            git commit -m "ci(diagrams): update rendered Mermaid diagrams [skip ci]" || true
+            git push
+          else
+            echo "No diagram changes to commit."
+          fi
