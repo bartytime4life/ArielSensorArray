@@ -1,10 +1,13 @@
+```yaml
 # .github/workflows/bandit.yml
 # ==============================================================================
 # SpectraMind V50 — Python Security Lint (Bandit)
-# Runs Bandit across the repo (recursive) to detect common security issues.
-# - Uploads SARIF to GitHub Code Scanning (Security > Code scanning alerts)
-# - Optional hard-fail on findings at/above a chosen severity threshold
-# - Honors local config if present: bandit.yaml or [tool.bandit] in pyproject.toml
+# ------------------------------------------------------------------------------
+# Runs Bandit recursively to detect common security issues.
+# • Uploads SARIF to GitHub Code Scanning (Security > Code scanning alerts)
+# • Optional strict gate: fail the job on findings ≥ chosen severity threshold
+# • Honors local config if present: bandit.yaml / .bandit(.yml|.yaml) or [tool.bandit] in pyproject.toml
+# • Multi-Python matrix for broader coverage
 # ==============================================================================
 
 name: bandit
@@ -98,12 +101,10 @@ jobs:
           # Determine config file (prefer explicit bandit.yaml; fall back to pyproject if [tool.bandit] exists)
           CONFIG_ARG=()
           if [[ -f "bandit.yaml" ]] || [[ -f ".bandit" ]] || [[ -f ".bandit.yml" ]] || [[ -f ".bandit.yaml" ]]; then
-            # Use the first match in this priority list
             for f in bandit.yaml .bandit .bandit.yml .bandit.yaml; do
               if [[ -f "$f" ]]; then CONFIG_ARG=(-c "$f"); break; fi
             done
           else
-            # Check pyproject for [tool.bandit] (Bandit will auto-read it; no -c needed)
             if [[ -f "pyproject.toml" ]] && grep -q "^\[tool\.bandit\]" pyproject.toml; then
               CONFIG_ARG=()
             fi
@@ -112,14 +113,12 @@ jobs:
           # Build exclude argument
           EXCLUDE_ARG=()
           if [[ -n "${EXCLUDES}" ]]; then
-            # Bandit expects comma-separated paths for -x / --exclude
             EXCLUDE_ARG=(-x "${EXCLUDES}")
           fi
 
           # Choose root (scan entire repo)
           TARGET="."
 
-          # Persist for later steps
           printf 'config=%s\n' "${CONFIG_ARG[*]}" >> "$GITHUB_OUTPUT"
           printf 'exclude=%s\n' "${EXCLUDE_ARG[*]}" >> "$GITHUB_OUTPUT"
           printf 'target=%s\n' "${TARGET}" >> "$GITHUB_OUTPUT"
@@ -129,7 +128,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Use SARIF output for upload (Bandit supports sarif format in recent versions)
           bandit -q -r "${{ steps.detect.outputs.target }}" \
             ${{ steps.detect.outputs.config }} \
             ${{ steps.detect.outputs.exclude }} \
@@ -185,3 +183,4 @@ jobs:
           if test -f bandit.sarif; then
             echo "SARIF uploaded to Code Scanning."
           fi
+```
