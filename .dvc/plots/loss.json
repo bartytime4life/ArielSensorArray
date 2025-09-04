@@ -1,0 +1,24 @@
+{
+  "title": "Training and Validation Loss (SpectraMind V50)",
+  "x": "epoch",
+  "y": "loss",
+  "x_label": "Epoch",
+  "y_label": "Gaussian NLL Loss",
+  "lines": [
+    {
+      "y": "train_loss",
+      "label": "Train Loss",
+      "color": "steelblue",
+      "dash": "solid"
+    },
+    {
+      "y": "val_loss",
+      "label": "Validation Loss",
+      "color": "firebrick",
+      "dash": "dash"
+    }
+  ],
+  "template": "line",
+  "smooth": false,
+  "use_marks": true
+}
