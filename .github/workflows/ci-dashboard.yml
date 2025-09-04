@@ -1,13 +1,28 @@
+# .github/workflows/ci-dashboard.yml
 # ==============================================================================
-# SpectraMind V50 — CI Dashboard Publisher
+# SpectraMind V50 — CI Dashboard Publisher (Upgraded)
+# ------------------------------------------------------------------------------
 # Renders a Markdown dashboard with the latest status for core workflows and
-# commits it to docs/CI_DASHBOARD.md. Also posts the table in the job summary.
+# writes it to docs/CI_DASHBOARD.md. Also posts the same table to the job summary
+# and uploads it as an artifact for traceability.
+#
+# Highlights
+#   • Sources the latest run on the target branch for each workflow file.
+#   • Shows status emoji, conclusion, duration, updated time, and a View link.
+#   • Supports manual dispatch, cron cadence, and workflow_run (fan-in) updates.
+#   • Safe commits with [skip ci] to avoid feedback loops.
+#   • Minimal permissions, concurrency guard, and graceful error handling.
 # ==============================================================================
 
 name: ci-dashboard
 
 on:
   workflow_dispatch:
+    inputs:
+      branch:
+        description: "Branch to summarize (default: main)"
+        required: false
+        default: "main"
   schedule:
     - cron: "15 */6 * * *"   # every 6 hours
   workflow_run:
@@ -16,15 +31,27 @@ on:
       - nightly-e2e
       - kaggle-submit
       - sbom-refresh
+      - benchmark
+      - calibration-ci
+      - bandit
+      - pip-audit
+      - ci
+      - tests
+      - lint
     types: [completed]
 
 permissions:
-  contents: write
+  contents: write   # required to commit docs/CI_DASHBOARD.md
+
+concurrency:
+  group: ci-dashboard-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   render:
     name: Build CI Dashboard
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -36,33 +63,55 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
+            /**
+             * Configuration: workflows of interest (title + YAML file name).
+             * TIP: Titles should match how you reference them in status checks.
+             */
             const workflows = [
-              { title: "Diagnostics",   file: "diagnostics.yml" },
-              { title: "Nightly E2E",   file: "nightly-e2e.yml" },
-              { title: "Kaggle Submit", file: "kaggle-submit.yml" },
-              { title: "SBOM Refresh",  file: "sbom-refresh.yml" },
+              { title: "Diagnostics",         file: "diagnostics.yml" },
+              { title: "Nightly E2E",         file: "nightly-e2e.yml" },
+              { title: "Kaggle Submit",       file: "kaggle-submit.yml" },
+              { title: "SBOM Refresh",        file: "sbom-refresh.yml" },
+              { title: "Benchmark",           file: "benchmark.yml" },
+              { title: "Calibration CI",      file: "calibration-ci.yml" },
+              { title: "Security • Bandit",   file: "bandit.yml" },
+              { title: "Security • pip-audit",file: "pip-audit.yml" },
+              { title: "Core CI",             file: "ci.yml" },
+              { title: "Tests",               file: "tests.yml" },
+              { title: "Lint",                file: "lint.yml" }
             ];
 
+            const targetBranch = (core.getInput("branch") || "main").trim();
+
             async function latestRun(file) {
-              const res = await github.rest.actions.listWorkflowRuns({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                workflow_id: file,
-                per_page: 1,
-                branch: "main"
-              });
-              const run = res.data.workflow_runs?.[0];
-              if (!run) return null;
-              return {
-                status: run.status,
-                conclusion: run.conclusion,
-                updated: run.updated_at,
-                url: run.html_url
-              };
+              try {
+                const res = await github.rest.actions.listWorkflowRuns({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  workflow_id: file,
+                  per_page: 1,
+                  branch: targetBranch
+                });
+                const run = res.data.workflow_runs?.[0];
+                if (!run) return null;
+                return {
+                  status: run.status,              // queued | in_progress | completed
+                  conclusion: run.conclusion,      // success | failure | ...
+                  created_at: run.created_at,
+                  updated_at: run.updated_at,
+                  url: run.html_url,
+                  head_sha: run.head_sha
+                };
+              } catch (e) {
+                core.warning(`Failed to query ${file}: ${e.message}`);
+                return null;
+              }
             }
 
-            function statusEmoji(conclusion) {
-              switch (conclusion) {
+            function statusEmoji(run) {
+              if (!run) return "⚪";
+              if (run.status !== "completed") return "🟡"; // queued/in_progress
+              switch (run.conclusion) {
                 case "success": return "🟢";
                 case "neutral":
                 case "skipped": return "🟡";
@@ -73,16 +122,30 @@ jobs:
               }
             }
 
+            function durationISO(a, b) {
+              const start = new Date(a).getTime();
+              const end   = new Date(b).getTime();
+              if (!isFinite(start) || !isFinite(end) || end < start) return "n/a";
+              const ms = end - start;
+              const s  = Math.floor(ms / 1000);
+              const hh = String(Math.floor(s / 3600)).padStart(2, "0");
+              const mm = String(Math.floor((s % 3600) / 60)).padStart(2, "0");
+              const ss = String(s % 60).padStart(2, "0");
+              return `${hh}:${mm}:${ss}`;
+            }
+
             const rows = [];
             for (const w of workflows) {
               const run = await latestRun(w.file);
               if (run) {
                 rows.push({
                   title: w.title,
-                  emoji: statusEmoji(run.conclusion),
+                  emoji: statusEmoji(run),
                   conclusion: run.conclusion ?? "n/a",
-                  updated: new Date(run.updated).toISOString(),
-                  link: run.url
+                  updated: new Date(run.updated_at).toISOString().replace(/\.\d+Z$/, "Z"),
+                  duration: durationISO(run.created_at, run.updated_at),
+                  link: run.url,
+                  sha: run.head_sha.slice(0, 7)
                 });
               } else {
                 rows.push({
@@ -90,24 +153,26 @@ jobs:
                   emoji: "⚪",
                   conclusion: "n/a",
                   updated: "n/a",
-                  link: " "
+                  duration: "n/a",
+                  link: " ",
+                  sha: "—"
                 });
               }
             }
 
-            const now = new Date().toISOString();
+            const now = new Date().toISOString().replace(/\.\d+Z$/, "Z");
             const lines = [];
             lines.push("# 🚦 CI Dashboard");
             lines.push("");
-            lines.push(`_Auto-generated: \`${now}\`_`);
+            lines.push(`_Auto-generated: \`${now}\` · Branch: \`${targetBranch}\`_`);
             lines.push("");
-            lines.push("| Workflow | Status | Conclusion | Updated (UTC) | Link |");
-            lines.push("|---|:---:|:---:|---|---|");
+            lines.push("| Workflow | Status | Conclusion | Duration (hh:mm:ss) | Updated (UTC) | SHA | Link |");
+            lines.push("|---|:---:|:---:|:---:|---|:--:|---|");
             for (const r of rows) {
-              lines.push(`| ${r.title} | ${r.emoji} | ${r.conclusion} | ${r.updated} | [view](${r.link}) |`);
+              lines.push(`| ${r.title} | ${r.emoji} | ${r.conclusion} | ${r.duration} | ${r.updated} | \`${r.sha}\` | [view](${r.link}) |`);
             }
             lines.push("");
-            lines.push("> Legend: 🟢 success · 🟡 skipped/neutral · 🔴 failing/cancelled · ⚪ no data");
+            lines.push("> Legend: 🟢 success · 🟡 in-progress/skipped/neutral · 🔴 failing/cancelled · ⚪ no data");
 
             const fs = require("fs");
             fs.mkdirSync("docs", { recursive: true });
@@ -117,6 +182,7 @@ jobs:
 
       - name: Commit dashboard
         run: |
+          set -e
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add docs/CI_DASHBOARD.md
@@ -128,8 +194,10 @@ jobs:
         with:
           name: ci-dashboard
           path: docs/CI_DASHBOARD.md
+          retention-days: 30
 
       - name: Job summary
         run: |
           echo "## CI Dashboard" >> $GITHUB_STEP_SUMMARY
           echo "${{ steps.gen.outputs.summary }}" >> $GITHUB_STEP_SUMMARY
+```
