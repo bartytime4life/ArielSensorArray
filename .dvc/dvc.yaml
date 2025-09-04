@@ -1,11 +1,12 @@
+# dvc.yaml
 # ==============================================================================
 # SpectraMind V50 — DVC Pipeline (Upgraded, NASA-grade)
 # ------------------------------------------------------------------------------
-# Purpose:
-#   • Defines full end-to-end pipeline for NeurIPS 2025 Ariel Data Challenge
+# Purpose
+#   • Full E2E pipeline for NeurIPS 2025 Ariel Data Challenge
 #   • Stages: calibration → training → prediction → diagnostics → submission
-#   • Hydra config-driven, CLI-first, CI/Kaggle reproducibility
-#   • Uses stage caching so unchanged inputs skip recomputation
+#   • Hydra config–driven, CLI-first, CI/Kaggle reproducibility
+#   • Stage caching to skip unchanged work; explicit params tracking
 # ==============================================================================
 
 stages:
@@ -22,24 +23,101 @@ stages:
       - src/pipeline/calibration_pipeline.py
       - configs/data/calibration.yaml
     outs:
+      - path: data/processed
+        persist: true               # allow iterative updates without invalidation
+    params:
+      - .dvc/params.yaml:
+          - data.fgs1_path
+          - data.airs_path
+          - data.calibration_path
+          - data.processed_path
+          - data.cache_path
+          - data.fgs1_bin_factor
+          - data.airs_bin_factor
+          - data.normalize_mu
+          - data.normalize_sigma
+          - data.jitter_augmentation
+          - data.jitter_strength
+          - run.seed
+          - run.deterministic
+
+  # ───────────────────────── Dataset Splits (optional explicit stage) ─────────────────────────
+  splits:
+    cmd: >
+      poetry run spectramind data split
+      --splits-file data/splits/splits_v50.json
+      --config configs/data/splits.yaml
+    deps:
       - data/processed
+      - src/pipeline/split_dataset.py
+      - configs/data/splits.yaml
+    outs:
+      - path: data/splits/splits_v50.json
+    params:
+      - .dvc/params.yaml:
+          - data.splits_file
+          - data.split_seed
 
   # ───────────────────────── Model Training ─────────────────────────
   train:
     cmd: >
       poetry run spectramind train
       --config configs/training/config_v50.yaml
+    wdir: .
     deps:
       - data/processed
+      - data/splits/splits_v50.json
       - src/train_v50.py
       - configs/training/config_v50.yaml
       - .dvc/params.yaml
     outs:
-      - outputs/models/model_v50.pth
+      # mark as checkpoint to support `dvc exp run` iterative training
+      - path: outputs/models/model_v50.pth
+        checkpoint: true
+      - path: outputs/metrics
+        persist: true
+    params:
+      - .dvc/params.yaml:
+          - run.seed
+          - run.deterministic
+          - loader.batch_size
+          - loader.grad_accum_steps
+          - training.epochs
+          - training.amp
+          - training.grad_clip_norm
+          - training.ema.enable
+          - training.ema.decay
+          - training.early_stop.enable
+          - training.early_stop.patience
+          - optim.name
+          - optim.lr
+          - optim.weight_decay
+          - optim.scheduler.name
+          - optim.scheduler.warmup_epochs
+          - optim.scheduler.min_lr_mult
+          - model.encoder
+          - model.gnn
+          - model.decoder
+          - model.sigma_head
+          - model.latent_dim
+          - model.layers
+          - model.dropout
+          - model.residual
+          - model.attention_fusion
+          - model.symbolic_loss
+          - model.symbolic_weight
+          - model.spectral_smoothness
+          - model.spectral_smoothness_weight
+          - model.asymmetry_loss
+          - model.asymmetry_weight
+          - model.nonnegativity_clamp
+          - model.fgs1_weight
     metrics:
+      # human-readable TSV/CSV or JSON supported; keep small, diff-friendly
       - outputs/metrics/training.tsv
       - outputs/metrics/metrics.tsv
     plots:
+      # minimal direct plots for quick diffs; rich plots defined in .dvc/plots.yaml
       - outputs/metrics/training.tsv
       - outputs/metrics/metrics.tsv
 
@@ -53,28 +131,81 @@ stages:
       - outputs/models/model_v50.pth
       - src/predict_v50.py
       - configs/inference/predict_v50.yaml
+      - .dvc/params.yaml
     outs:
+      - path: outputs/predictions/preds_v50.csv
+        persist: true
+    params:
+      - .dvc/params.yaml:
+          - eval.num_tta
+          - eval.ensemble.enable
+          - eval.ensemble.members
+          - eval.export.save_numpy
+          - eval.export.save_csv
+
+  # ───────────────────────── Calibration (UQ) ─────────────────────────
+  calibrate_uq:
+    cmd: >
+      poetry run spectramind calibrate-uncertainty
+      --config configs/calibration/calibrate_v50.yaml
+    deps:
       - outputs/predictions/preds_v50.csv
+      - src/tools/calibrate_uncertainty.py
+      - configs/calibration/calibrate_v50.yaml
+      - .dvc/params.yaml
+    outs:
+      - path: outputs/calibration/per_bin.csv
+        persist: true
+      - path: outputs/calibration/summary.json
+        persist: true
+    params:
+      - .dvc/params.yaml:
+          - calibration.enable
+          - calibration.method
+          - calibration.per_bin
+          - calibration.coverage_target
+          - calibration.temperature_scaling
+          - calibration.corel.k_neighbors
+          - calibration.corel.hidden_dim
+          - calibration.corel.layers
+          - calibration.corel.dropout
+          - calibration.corel.alpha
+    metrics:
+      - outputs/calibration/summary.json
 
   # ───────────────────────── Diagnostics & Symbolic Analysis ─────────────────────────
   diagnose:
     cmd: >
       poetry run spectramind diagnose dashboard
       --config configs/diagnostics/diagnose_v50.yaml
+      --inputs outputs/predictions/preds_v50.csv
     deps:
       - outputs/predictions/preds_v50.csv
+      - outputs/calibration/summary.json
       - src/tools/generate_html_report.py
       - configs/diagnostics/diagnose_v50.yaml
+      - .dvc/params.yaml
     outs:
-      - outputs/diagnostics/report_v50.html
-      - outputs/diagnostics/diagnostic_summary.json
+      - path: outputs/diagnostics/report_v50.html
+        persist: true
+      - path: outputs/diagnostics/diagnostic_summary.json
+        persist: true
+      - path: outputs/diagnostics
+        persist: true
+    params:
+      - .dvc/params.yaml:
+          - diagnostics.shap
+          - diagnostics.umap
+          - diagnostics.tsne
+          - diagnostics.fft
+          - diagnostics.symbolic
+          - diagnostics.conformal
+          - diagnostics.gll_heatmap
+          - diagnostics.smoothness_map
+          - diagnostics.violation_overlay
     plots:
-      - outputs/diagnostics/binwise.csv
-      - outputs/diagnostics/residuals.csv
-      - outputs/diagnostics/fft.csv
-      - outputs/diagnostics/fft_autocorr.csv
-      - outputs/diagnostics/smoothness.csv
-      - outputs/diagnostics/symbolic_violations.csv
+      # delegate rich layouts to central spec
+      - .dvc/plots.yaml
 
   # ───────────────────────── Submission Packaging ─────────────────────────
   submit:
@@ -84,17 +215,30 @@ stages:
     deps:
       - outputs/predictions/preds_v50.csv
       - outputs/diagnostics/report_v50.html
+      - outputs/diagnostics/diagnostic_summary.json
       - src/cli_submit.py
       - configs/submission/submit_v50.yaml
+      - .dvc/params.yaml
     outs:
-      - outputs/submissions/submission_v50.zip
+      - path: outputs/submissions/submission_v50.zip
+        cache: false              # large artifact; don’t duplicate in cache
+    params:
+      - .dvc/params.yaml:
+          - submission.bundle_dir
+          - submission.bundle_zip
+          - submission.kaggle_format
+          - submission.include_diagnostics
+          - submission.validate_before_zip
+          - submission.versioned
+          - submission.csv_path
+          - submission.manifest_path
     metrics:
       - outputs/metrics/leaderboard.tsv
 
 # ==============================================================================
-# Notes:
-#   • Each stage is Hydra-configurable and CLI-first (`spectramind …`)
-#   • Metrics + plots stored for DVC + CI dashboards
-#   • Kaggle runtime safe: stages cache automatically
-#   • Submission stage bundles diagnostics + validation
+# Tips:
+#   • `dvc repro` rebuilds stages with changed deps/params only.
+#   • Rich plots: `dvc plots show --targets .dvc/plots.yaml:group:training`
+#   • Experiments: `dvc exp run -S optim.lr=0.00035 -S model.symbolic_weight=0.3`
+#   • Kaggle: mark big bundles `cache: false` to avoid inflating DVC cache.
 # ==============================================================================
