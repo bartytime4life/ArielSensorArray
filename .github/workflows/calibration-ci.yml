@@ -1,15 +1,20 @@
+```yaml
 # .github/workflows/calibration-ci.yml
 # ==============================================================================
-# SpectraMind V50 — Calibration CI
-# Runs the calibration pipeline and uploads mission‑grade logs/calibration.json.
-# Requires Poetry + your existing pipeline code (no internet / Kaggle not needed).
+# SpectraMind V50 — Calibration CI (Hydra-safe, Offline, Reproducible)
+# ------------------------------------------------------------------------------
+# Runs the calibration pipeline and uploads mission-grade logs/manifests:
+#   • Produces: logs/calibration.json, outputs/manifests/calibration_manifest.json
+#   • Uses Poetry (.venv in-project) with caching
+#   • Offline by default (HF/Transformers disabled; no network fetches)
+#   • PRs and protected branches; manual dispatch supported
 # ==============================================================================
 
 name: calibration-ci
 
 on:
   push:
-    branches: [ "main", "release/**" ]
+    branches: ["main", "release/**"]
     paths:
       - "src/**"
       - "configs/**"
@@ -17,13 +22,46 @@ on:
       - "poetry.lock"
       - ".github/workflows/calibration-ci.yml"
   pull_request:
-    branches: [ "**" ]
+    branches: ["**"]
+    paths:
+      - "src/**"
+      - "configs/**"
+      - "pyproject.toml"
+      - "poetry.lock"
+      - ".github/workflows/calibration-ci.yml"
   workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: calibration-ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   calibrate:
+    name: Calibrate • py${{ matrix.python }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11"]
+
+    env:
+      # Determinism / offline
+      PYTHONHASHSEED: "0"
+      TRANSFORMERS_OFFLINE: "1"
+      HF_HUB_OFFLINE: "1"
+      DVC_NO_ANALYTICS: "1"
+      MPLBACKEND: "Agg"
+      # Poetry quality-of-life
+      POETRY_VIRTUALENVS_IN_PROJECT: "true"
+      POETRY_NO_INTERACTION: "1"
+      # SpectraMind logging/output dirs
+      SM_LOG_DIR: logs
+      OUTDIR: outputs
 
     steps:
       - name: Checkout
@@ -31,46 +69,87 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up Python
+      - name: Set up Python ${{ matrix.python }}
+        id: setup-py
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python }}
+          cache: "pip"
 
       - name: Install Poetry
         run: |
           python -m pip install --upgrade pip
-          pip install pipx
-          pipx install poetry
+          pip install "poetry==1.8.3"
           poetry --version
 
-      - name: Cache Poetry
+      - name: Cache Poetry & .venv
         uses: actions/cache@v4
         with:
-          path: ~/.cache/pypoetry
-          key: poetry-${{ runner.os }}-${{ hashFiles('**/poetry.lock') }}
+          path: |
+            .venv
+            ~/.cache/pypoetry
+          key: poetry-${{ runner.os }}-${{ matrix.python }}-${{ hashFiles('**/poetry.lock') }}
+          restore-keys: |
+            poetry-${{ runner.os }}-${{ matrix.python }}-
 
       - name: Install dependencies
         run: |
+          poetry env use "${{ steps.setup-py.outputs.python-path }}"
           poetry install --no-interaction --no-ansi
+
+      - name: Print environment summary
+        run: |
+          echo "Python: $(python --version)"
+          echo "Poetry: $(poetry --version)"
+          echo "Runner: $(uname -a)"
+          echo "Offline flags: TRANSFORMERS_OFFLINE=${TRANSFORMERS_OFFLINE}, HF_HUB_OFFLINE=${HF_HUB_OFFLINE}"
 
       - name: Selftest (fast)
         run: |
-          poetry run spectramind test --mode fast
+          poetry run spectramind selftest --fast
 
+      # You can switch to `poetry run spectramind calibrate ...` if your CLI exposes it.
       - name: Run calibration (Hydra config via CI module)
-        env:
-          SM_LOG_DIR: logs
         run: |
+          mkdir -p "${SM_LOG_DIR}" "${OUTDIR}"
           poetry run python -m spectramind_ci.calibrate \
             --config-path configs/calibration \
             --config-name v50.yaml \
-            --log-dir "${SM_LOG_DIR}"
+            --log-dir "${SM_LOG_DIR}" \
+            --outdir "${OUTDIR}"
 
-      - name: Upload calibration log artifacts
+      - name: Summarize calibration outputs
+        if: always()
+        run: |
+          echo "## Calibration CI Summary" >> "$GITHUB_STEP_SUMMARY"
+          date -u +"UTC: %Y-%m-%d %H:%M:%S" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f "logs/calibration.json" ]; then
+            echo "### logs/calibration.json (first 60 lines)" >> "$GITHUB_STEP_SUMMARY"
+            head -n 60 logs/calibration.json | sed -e 's/</\&lt;/g' -e 's/>/\&gt;/g' >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "_logs/calibration.json not found_" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f "outputs/manifests/calibration_manifest.json" ]; then
+            echo "### outputs/manifests/calibration_manifest.json (first 60 lines)" >> "$GITHUB_STEP_SUMMARY"
+            head -n 60 outputs/manifests/calibration_manifest.json | sed -e 's/</\&lt;/g' -e 's/>/\&gt;/g' >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "_outputs/manifests/calibration_manifest.json not found_" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "### Directory tree (logs/ and outputs/)" >> "$GITHUB_STEP_SUMMARY"
+          (command -v tree >/dev/null 2>&1 && tree -a logs outputs || (echo 'tree not installed'; ls -R logs outputs || true)) >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+
+      - name: Upload calibration artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: calibration-logs
+          name: calibration-artifacts
           path: |
             logs/calibration.json
             outputs/manifests/calibration_manifest.json
+            outputs/**/calibration*.*   # optional patterns; keep or remove
+          if-no-files-found: warn
+          retention-days: 14
+```
