@@ -1,0 +1,47 @@
+{
+  "title": "Training Metrics (SpectraMind V50)",
+  "x": "epoch",
+  "x_label": "Epoch",
+  "y_label": "Metric Value",
+  "lines": [
+    {
+      "y": "train_gll",
+      "label": "Train GLL",
+      "color": "steelblue",
+      "dash": "solid"
+    },
+    {
+      "y": "val_gll",
+      "label": "Validation GLL",
+      "color": "firebrick",
+      "dash": "solid"
+    },
+    {
+      "y": "val_rmse",
+      "label": "Validation RMSE",
+      "color": "seagreen",
+      "dash": "dash"
+    },
+    {
+      "y": "val_mae",
+      "label": "Validation MAE",
+      "color": "darkorange",
+      "dash": "dash"
+    },
+    {
+      "y": "val_entropy",
+      "label": "Validation Entropy",
+      "color": "purple",
+      "dash": "dot"
+    },
+    {
+      "y": "val_coverage",
+      "label": "Uncertainty Coverage",
+      "color": "black",
+      "dash": "dot"
+    }
+  ],
+  "template": "line",
+  "smooth": false,
+  "use_marks": true
+}
