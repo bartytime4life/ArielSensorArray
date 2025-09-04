@@ -1,0 +1,26 @@
+{
+  "title": "FFT Power Spectrum (SpectraMind V50)",
+  "x": "frequency",
+  "y": "power",
+  "x_label": "Frequency [1/cadence]",
+  "y_label": "Normalized Power",
+  "lines": [
+    {
+      "y": "fft_power",
+      "label": "FFT Power Spectrum",
+      "color": "seagreen",
+      "dash": "solid"
+    },
+    {
+      "y": "fft_smooth",
+      "label": "Smoothed Spectrum",
+      "color": "steelblue",
+      "dash": "dash"
+    }
+  ],
+  "template": "line",
+  "log_x": false,
+  "log_y": true,
+  "smooth": false,
+  "use_marks": false
+}
