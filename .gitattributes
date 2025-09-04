@@ -1,282 +1,211 @@
 # ==============================================================================
-
 # SpectraMind V50 — .gitattributes (Mission-grade)
-
 # Reproducibility • CI safety • Kaggle export • Cross-platform scientific dev
-
 # ==============================================================================
 
-#
-
-# Notes:
-
-# - Normalize endings, keep scripts LF, allow .bat CRLF for Windows.
-
-# - Treat notebooks as text with nbstripout (outputs stripped on commit).
-
-# - Route large/binary artifacts via Git LFS (models, datasets, archives).
-
-# - Reduce noisy diffs for generated artifacts; mark logs/artifacts as no-merge.
-
-# - Improve GitHub Linguist language stats; mark docs/assets correctly.
-
-# - Provide sane merge behavior for lockfiles and env files.
-
-#
-
-# ==============================================================================
-
-# -----------------------
-
-# Global line endings
-
-# -----------------------
-
-* text=auto eol=lf
+# ------------------------------------------------------------------------------
+# Global line endings (cross-platform)
+# ------------------------------------------------------------------------------
+*                 text=auto eol=lf
 
 # Windows batch files keep CRLF
-
-\*.bat text eol=crlf
+*.bat            text eol=crlf
 
 # Shell / scripts must stay LF
-
-*.sh      text eol=lf
-bin/*\*    text eol=lf
-scripts/\*\* text eol=lf
+*.sh             text eol=lf
+bin/**           text eol=lf
+scripts/**       text eol=lf
 
 # Makefiles / Dockerfiles as text
+*.dockerfile     text
+Dockerfile       text
+Makefile         text
 
-\*.dockerfile text
-Dockerfile   text
-Makefile     text
+# ------------------------------------------------------------------------------
+# Jupyter Notebooks (strip outputs on commit; enable friendly merges if configured)
+#   - Requires: `nbstripout --install` locally
+#   - Optional: nbdime merge driver (`git config --global merge.jupyternotebook.driver nbdime`)
+# ------------------------------------------------------------------------------
+*.ipynb          filter=nbstripout text eol=lf
+# *.ipynb        merge=jupyternotebook
 
-# -----------------------
-
-# Jupyter Notebooks
-
-# -----------------------
-
-# Strip outputs on commit (requires nbstripout configured locally)
-
-\*.ipynb filter=nbstripout text eol=lf
-
-# Optional (if nbdime merge is configured locally):
-
-# \*.ipynb merge=jupyternotebook
-
-# -----------------------
-
+# ------------------------------------------------------------------------------
 # Source Code & Configs
-
-# -----------------------
-
-\*.py      text diff=python
-\*.pyi     text
-\*.toml    text
-\*.ini     text
-\*.cfg     text
-\*.yaml    text
-\*.yml     text
-\*.json    text
-\*.jsonl   text
-\*.md      text
-\*.rst     text
-\*.html    text
-\*.css     text
-\*.js      text
-\*.mjs     text
-\*.cjs     text
-\*.ts      text
-\*.tsx     text
-\*.jsx     text
+# ------------------------------------------------------------------------------
+*.py             text diff=python
+*.pyi            text
+*.toml           text
+*.ini            text
+*.cfg            text
+*.yaml           text
+*.yml            text
+*.json           text
+*.jsonl          text
+*.md             text
+*.rst            text
+*.html           text
+*.css            text
+*.js             text
+*.mjs            text
+*.cjs            text
+*.ts             text
+*.tsx            text
+*.jsx            text
 
 # Lockfiles — avoid conflicted merges; resolve by regeneration
+poetry.lock          -merge text
+Pipfile.lock         -merge text
+package-lock.json    -merge text
+pnpm-lock.yaml       -merge text
+yarn.lock            -merge text
 
-poetry.lock   -merge text
-Pipfile.lock  -merge text
-package-lock.json -merge text
-pnpm-lock.yaml   -merge text
-yarn.lock        -merge text
+# Environment / secrets should never merge or diff
+.env              -diff -merge
+.env.*            -diff -merge
+secrets/**        -diff -merge
 
-# Environment / secrets should never merge
-
-.env        -diff -merge
-.env.\*      -diff -merge
-secrets/\*\*  -diff -merge
-
-# -----------------------
-
+# ------------------------------------------------------------------------------
 # Data Files (text vs binary)
-
-# -----------------------
-
-\*.csv     text
-\*.tsv     text
-\*.txt     text
-\*.dat     text
+# ------------------------------------------------------------------------------
+*.csv             text
+*.tsv             text
+*.txt             text
+*.dat             text
 
 # Binary scientific data
+*.npy             binary
+*.npz             binary
+*.pkl             binary
+*.joblib          binary
+*.feather         binary
+*.parquet         binary
+*.hdf5            binary
+*.h5              binary
+*.fits            binary
 
-\*.npy     binary
-\*.npz     binary
-\*.pkl     binary
-\*.joblib  binary
-\*.feather binary
-\*.parquet binary
-\*.hdf5    binary
-\*.h5      binary
-\*.fits    binary
-
-# -----------------------
-
+# ------------------------------------------------------------------------------
 # Binary Assets
-
-# -----------------------
-
-\*.png     binary
-\*.jpg     binary
-\*.jpeg    binary
-\*.gif     binary
-\*.bmp     binary
-\*.ico     binary
-\*.tif     binary
-\*.tiff    binary
-\*.webp    binary
-\*.pdf     binary
-\*.docx    binary
-\*.pptx    binary
-\*.xlsx    binary
-\*.odt     binary
-\*.ods     binary
-\*.odp     binary
+# ------------------------------------------------------------------------------
+*.png             binary
+*.jpg             binary
+*.jpeg            binary
+*.gif             binary
+*.bmp             binary
+*.ico             binary
+*.tif             binary
+*.tiff            binary
+*.webp            binary
+*.pdf             binary
+*.docx            binary
+*.pptx            binary
+*.xlsx            binary
+*.odt             binary
+*.ods             binary
+*.odp             binary
+*.woff            binary
+*.woff2           binary
+*.eot             binary
+*.wasm            binary
 
 # Vector graphics as text (better diffs)
+*.svg             text
 
-\*.svg     text
-
-# -----------------------
-
+# ------------------------------------------------------------------------------
 # Git LFS (Large Files & Models)
-
-# -----------------------
-
-# Core ML artifacts and large archives → LFS
-
-\*.pt        filter=lfs diff=lfs merge=lfs -text
-\*.pth       filter=lfs diff=lfs merge=lfs -text
-\*.ckpt      filter=lfs diff=lfs merge=lfs -text
-\*.onnx      filter=lfs diff=lfs merge=lfs -text
-\*.pb        filter=lfs diff=lfs merge=lfs -text
-\*.tflite    filter=lfs diff=lfs merge=lfs -text
+#   - Prevents repo bloat while keeping reproducibility in CI/Kaggle exports
+# ------------------------------------------------------------------------------
+# Core ML artifacts and model formats
+*.pt              filter=lfs diff=lfs merge=lfs -text
+*.pth             filter=lfs diff=lfs merge=lfs -text
+*.ckpt            filter=lfs diff=lfs merge=lfs -text
+*.onnx            filter=lfs diff=lfs merge=lfs -text
+*.pb              filter=lfs diff=lfs merge=lfs -text
+*.tflite          filter=lfs diff=lfs merge=lfs -text
 
 # Large datasets / arrays
-
-\*.npy       filter=lfs diff=lfs merge=lfs -text
-\*.npz       filter=lfs diff=lfs merge=lfs -text
-\*.feather   filter=lfs diff=lfs merge=lfs -text
-\*.parquet   filter=lfs diff=lfs merge=lfs -text
-\*.hdf5      filter=lfs diff=lfs merge=lfs -text
-\*.h5        filter=lfs diff=lfs merge=lfs -text
-\*.fits      filter=lfs diff=lfs merge=lfs -text
+*.npy             filter=lfs diff=lfs merge=lfs -text
+*.npz             filter=lfs diff=lfs merge=lfs -text
+*.feather         filter=lfs diff=lfs merge=lfs -text
+*.parquet         filter=lfs diff=lfs merge=lfs -text
+*.hdf5            filter=lfs diff=lfs merge=lfs -text
+*.h5              filter=lfs diff=lfs merge=lfs -text
+*.fits            filter=lfs diff=lfs merge=lfs -text
 
 # Archives / bundles
-
-\*.zip       filter=lfs diff=lfs merge=lfs -text
-\*.tar       filter=lfs diff=lfs merge=lfs -text
-\*.tar.gz    filter=lfs diff=lfs merge=lfs -text
-\*.tgz       filter=lfs diff=lfs merge=lfs -text
-\*.7z        filter=lfs diff=lfs merge=lfs -text
-\*.bz2       filter=lfs diff=lfs merge=lfs -text
-\*.xz        filter=lfs diff=lfs merge=lfs -text
+*.zip             filter=lfs diff=lfs merge=lfs -text
+*.tar             filter=lfs diff=lfs merge=lfs -text
+*.tar.gz          filter=lfs diff=lfs merge=lfs -text
+*.tgz             filter=lfs diff=lfs merge=lfs -text
+*.7z              filter=lfs diff=lfs merge=lfs -text
+*.bz2             filter=lfs diff=lfs merge=lfs -text
+*.xz              filter=lfs diff=lfs merge=lfs -text
 
 # Checkpoints directory
+checkpoints/**     filter=lfs diff=lfs merge=lfs -text
 
-checkpoints/\*\* filter=lfs diff=lfs merge=lfs -text
-
-# -----------------------
-
+# ------------------------------------------------------------------------------
 # Logs & Generated Artifacts (noisy diffs off)
-
-# -----------------------
-
-*.log          -diff
-outputs/*\*     -diff -merge
-logs/\*\*        -diff -merge
-artifacts/\*\*   -diff -merge
-reports/\*\*     -diff -merge
+# ------------------------------------------------------------------------------
+*.log                    -diff
+outputs/**               -diff -merge
+logs/**                  -diff -merge
+artifacts/**             -diff -merge
+reports/**               -diff -merge
 
 # Diagnostics/HTML bundles (treat as generated)
+**/diagnostic_summary.json    -diff
+**/v*_report*.html            -diff
+**/*_heatmap.png              -diff
+**/*_overlay*.png             -diff
 
-\*\*/diagnostic\_summary.json -diff
-\*\*/v*\_report*.html         -diff
-\**/*\_heatmap.png           -diff
-\*\*/*\_overlay*.png          -diff
+# Generated/minified sources (reduced noise in reviews)
+*.min.js                -diff
+*_pb2.py                -diff linguist-generated
+*_pb2.pyi               -diff linguist-generated
 
-# -----------------------
-
-# Documentation & Diagrams
-
-# -----------------------
-
-docs/**/\*.md     text linguist-documentation
-docs/**/*.svg    text
-docs/\*\*/*.png    binary
-docs/\*\*/\*.pdf    binary
+# ------------------------------------------------------------------------------
+# Documentation & Diagrams (Linguist tuning)
+# ------------------------------------------------------------------------------
+docs/**/*.md            text linguist-documentation
+docs/**/*.svg           text
+docs/**/*.png           binary
+docs/**/*.pdf           binary
 
 # Mermaid sources & renders
-
-diagrams/**/\*.mmd text linguist-language=Mermaid
-diagrams/**/*.png binary
-diagrams/\*\*/*.svg text
+diagrams/**/*.mmd       text linguist-language=Mermaid
+diagrams/**/*.png       binary
+diagrams/**/*.svg       text
 
 # GitHub Pages / site bundles as generated
+site/**                 -diff -merge linguist-documentation
 
-site/\*\* -diff -merge linguist-documentation
+# ------------------------------------------------------------------------------
+# Frontend / GUI (Linguist tuning)
+# ------------------------------------------------------------------------------
+src/gui/**              linguist-language=TypeScript
+src/gui/**/*.tsx        text
+src/gui/**/*.ts         text
+src/gui/**/*.css        text
+src/gui/**/*.svg        text
 
-# -----------------------
+# Vendored deps (if ever committed)
+node_modules/**         linguist-vendored
 
-# Frontend / GUI (linguist tuning)
-
-# -----------------------
-
-src/gui/\*\* linguist-language=TypeScript
-src/gui/**/\*.tsx text
-src/gui/**/*.ts  text
-src/gui/\*\*/*.css text
-src/gui/\*\*/\*.svg text
-
-# Reduce linguist noise from vendored deps (if committed)
-
-node\_modules/\*\* linguist-vendored
-
-# -----------------------
-
+# ------------------------------------------------------------------------------
 # CI / Workflows / Metadata
+# ------------------------------------------------------------------------------
+.github/**/*.yml        text
+.github/**/*.yaml       text
+.github/**/*.md         text
 
-# -----------------------
-
-.github/**/\*.yml text
-.github/**/*.yaml text
-.github/\*\*/*.md  text
-
-# -----------------------
-
+# ------------------------------------------------------------------------------
 # Export packaging (when using `git archive`)
-
-# -----------------------
-
-# Exclude developer-only directories from source tarballs
-
-.gitignore      export-ignore
-.gitattributes  export-ignore
-.github/        export-ignore
-.devcontainer/  export-ignore
-.vscode/        export-ignore
-docs/dev/\*\*     export-ignore
-tests/\*\*        export-ignore
-
-# ==============================================================================
-
-# End of .gitattributes
-
-# ==============================================================================
+#   - Exclude developer-only directories from source tarballs
+# ------------------------------------------------------------------------------
+.gitignore              export-ignore
+.gitattributes          export-ignore
+.github/                export-ignore
+.devcontainer/          export-ignore
+.vscode/                export-ignore
+docs/dev/**             export-ignore
+tests/**                export-ignore
