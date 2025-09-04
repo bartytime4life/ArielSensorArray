@@ -8,6 +8,8 @@ Reproducibility • CLI-first • Hydra-safe • DVC • CI • Kaggle • Docke
 
 ==============================================================================
 
+
+
 This Makefile is the single pane-of-glass for local dev, CI parity, Docker,
 
 DVC, diagnostics, diagrams, Kaggle helpers, GUI demos, and reproducibility
@@ -33,6 +35,10 @@ make train DEVICE=gpu EPOCHS=3 OVERRIDES=”+data=ariel_nominal +training.seed=1
 - OVERRIDES are Hydra-style “+key=value” tokens passed through to CLI.
 
 - EXTRA_ARGS pass raw flags to CLI subcommands.
+
+
+
+==============================================================================
 
 ========= Shell & Make hygiene =========
 
@@ -237,6 +243,7 @@ env-capture hash-config git-clean-check git-status release-tag
 pip-audit audit sbom sbom-scan docs docs-html docs-pdf docs-open docs-clean docs-serve docs-build 
 pyg-install kaggle-pyg-index 
 docker-help docker-print docker-build docker-buildx docker-run docker-shell docker-test docker-clean 
+docker-build-gpu docker-build-cpu docker-run-gpu docker-run-cpu cli cli-gpu cli-cpu docker-context-check docker-cache-clean 
 compose-ps compose-logs compose-up-gpu compose-up-cpu compose-up-api compose-up-web compose-up-docs compose-up-viz compose-up-lab compose-up-llm compose-up-ci compose-down compose-recreate compose-rebuild 
 repro-start repro-snapshot repro-verify repro-manifest 
 ensure-exec ensure-bin 
@@ -268,10 +275,10 @@ help:
 @echo “  $(CYN)benchmark-bin$(RST)       : run ./bin/benchmark.sh (preferred, feature-rich)”
 @echo “  $(CYN)diagnostics-bin$(RST)     : run ./bin/diagnostics.sh (rich overlays + options)”
 @echo “  $(CYN)ci-smoke$(RST)            : local smoke of benchmark+diagnostics (CPU)”
-@echo “  $(CYN)repro-$(RST)             : run snapshot & manifest (config/data hashing)”
-@echo “  $(CYN)dvc-$(RST)               : DVC pull/push/status/repro & sanity checks”
-@echo “  $(CYN)kaggle-$(RST)            : Kaggle run/submit/dataset publish”
-@echo “  $(CYN)diagrams$(RST)           : render Mermaid diagrams with mmdc”
+@echo “  $(CYN)repro-$(RST)              : run snapshot & manifest (config/data hashing)”
+@echo “  $(CYN)dvc-$(RST)                : DVC pull/push/status/repro & sanity checks”
+@echo “  $(CYN)kaggle-$(RST)             : Kaggle run/submit/dataset publish”
+@echo “  $(CYN)diagrams$(RST)            : render Mermaid diagrams with mmdc”
 @echo “  $(CYN)docker-build/run/shell$(RST) : Dockerized workflow (GPU autodetect)”
 @echo “  $(CYN)compose-up-…$(RST)        : Start services by profile (gpu/cpu/api/web/docs/viz/lab/llm/ci)”
 @echo “  $(CYN)gui-help$(RST)            : list GUI demo targets (Streamlit/FastAPI/Qt)”
@@ -306,16 +313,16 @@ command -v $(POETRY) >/dev/null 2>&1 || { echo “$(YLW)Poetry not found — ins
 command -v $(NODE)   >/dev/null 2>&1 || { echo “$(YLW)Node not found (needed for mermaid-cli)$(RST)”; }; 
 command -v $(NPM)    >/dev/null 2>&1 || { echo “$(YLW)npm not found (needed for mermaid-cli)$(RST)”; }; 
 { $(CLI) –version >/dev/null 2>&1 && echo “$(GRN)CLI OK$(RST)”; } || { echo “$(YLW)CLI not yet installed or venv not active$(RST)”; }; 
-$(PYTHON) - <<‘PY’ || ok=0
-import sys
-try:
-import torch
-print(“torch:”, getattr(torch, “version”, “n/a”))
-print(“cuda :”, getattr(getattr(torch, “version”, None), “cuda”, “n/a”))
-except Exception:
-print(“torch: (missing)”)
+$(PYTHON) - <<‘PY’ || ok=0; 
+import sys; 
+try: 
+import torch; 
+print(“torch:”, getattr(torch, “version”, “n/a”)); 
+print(“cuda :”, getattr(getattr(torch, “version”, None), “cuda”, “n/a”)); 
+except Exception: 
+print(“torch: (missing)”); 
 PY
-test $$ok -eq 1
+@test $$ok -eq 1
 
 quickstart: env info
 @echo “$(CYN)Installing project deps via Poetry (no-root)…$(RST)”
@@ -629,7 +636,7 @@ $(PIP) install -r $(REQ_DEV)
 install-kaggle:
 $(PIP) install -r $(REQ_KAGGLE)
 
-–– Unified dependency workflows ––
+– Unified dependency workflows –
 
 deps:
 @echo “>>> Upgrading pip/setuptools/wheel”
@@ -770,7 +777,7 @@ kaggle-pyg-index:
 import torch
 ver = torch.version.split(’+’)[0]
 cu  = (torch.version.cuda or ‘cpu’).replace(’.’,’’)
-base = f”https://data.pyg.org/whl/torch-{ver}+{‘cu’+cu if torch.version.cuda else ‘cpu’}.html”
+base = f”https://data.pyg.org/whl/torch-{ver}+{(‘cu’+cu if torch.version.cuda else ‘cpu’)}.html”
 print(base)
 PY
 
@@ -782,7 +789,6 @@ $(PIP) install torch-geometric==2.5.3 -f “$$PYG_INDEX”
 
 ========= Docker helpers =========
 
-.PHONY: docker-help
 docker-help:
 @echo “Docker targets”
 @echo “  make docker-build-gpu      # build GPU image  → $(IMAGE_GPU)”
@@ -790,8 +796,8 @@ docker-help:
 @echo “  make docker-run-gpu        # bash shell (GPU), mounts repo + caches”
 @echo “  make docker-run-cpu        # bash shell (CPU), mounts repo + caches”
 @echo “  make cli CMD=‘spectramind –version’        # auto GPU/CPU”
-@echo “  make cli-gpu CMD=‘spectramind train …’    # run in GPU image”
-@echo “  make cli-cpu CMD=‘spectramind diagnose …’ # run in CPU image”
+@echo “  make cli-gpu CMD=‘spectramind train …’      # run in GPU image”
+@echo “  make cli-cpu CMD=‘spectramind diagnose …’   # run in CPU image”
 @echo “  make docker-context-check  # quick context size sanity”
 @echo “  make docker-cache-clean    # remove local build cache dir”
 
