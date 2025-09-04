@@ -1,112 +1,112 @@
 {
-  "prereserve_doi": true,
-  "title": "SpectraMind V50 — Neuro-symbolic, Physics-informed Exoplanet Spectroscopy Pipeline",
-  "upload_type": "software",
-  "publication_type": "software",
-  "description": "<p>SpectraMind V50 is a mission-grade, CLI-first, neuro-symbolic, physics-informed AI pipeline for the NeurIPS 2025 Ariel Data Challenge. It integrates a long-sequence Structured State-Space Model (SSM) for FGS1 time-series with a molecule- and wavelength-aware Graph Neural Network (GNN) for AIRS spectra; training uses Gaussian log-likelihood with symbolic/physics constraints. NASA-grade reproducibility is enforced via Hydra configs, DVC/lakeFS data versioning, CI workflows, Docker/Poetry environments, and deterministic self-tests. Outputs include per-wavelength μ and σ, plus diagnostics (UMAP/t-SNE, SHAP, symbolic overlays, FFT, calibration maps) and leaderboard-ready Kaggle submissions. All functionality is orchestrated through a unified Typer CLI with integrated logging, symbolic validation, and diagnostics dashboards.</p>",
-  "creators": [
-    {
-      "name": "Barta, Andy",
-      "orcid": "0000-0002-1825-0097",
-      "affiliation": "SpectraMind Research"
-    },
-    {
-      "name": "SpectraMind V50 Team",
-      "affiliation": "SpectraMind Research / NeurIPS 2025 Ariel Challenge"
-    }
-  ],
-  "contributors": [
-    {
-      "name": "SpectraMind V50 Community Contributors",
-      "type": "Other",
-      "affiliation": "Open-source community"
-    }
-  ],
-  "keywords": [
-    "NeurIPS 2025",
-    "Ariel",
-    "exoplanets",
-    "transmission spectroscopy",
-    "Gaussian log-likelihood",
-    "uncertainty quantification",
-    "neuro-symbolic AI",
-    "state-space models",
-    "graph neural networks",
-    "Hydra",
-    "DVC",
-    "reproducibility",
-    "Kaggle",
-    "CLI",
-    "symbolic AI",
-    "astrophysics",
-    "calibration",
-    "SHAP",
-    "UMAP",
-    "t-SNE"
-  ],
-  "language": "en",
-  "version": "0.3.0",
-  "publication_date": "2025-08-21",
-  "license": "Apache-2.0",
-  "access_right": "open",
-  "communities": [
-    { "identifier": "open-source-software" }
-  ],
-  "related_identifiers": [
-    {
-      "relation": "isSupplementTo",
-      "identifier": "https://github.com/bartytime4life/SpectraMindV50",
-      "resource_type": "software"
-    },
-    {
-      "relation": "isDocumentedBy",
-      "identifier": "https://github.com/bartytime4life/SpectraMindV50/blob/main/README.md",
-      "resource_type": "publication-softwaredocumentation"
-    },
-    {
-      "relation": "isRelatedTo",
-      "identifier": "https://www.kaggle.com/competitions/ariel-data-challenge-2025",
-      "resource_type": "other"
-    }
-  ],
-  "notes": "This deposition is the archived release for reproducibility. For active development, issues, and CI artifacts, see the GitHub repository.",
-  "references": [
-    "NeurIPS 2025 Ariel Data Challenge: Challenge overview and datasets.",
-    "Hydra, DVC/lakeFS, Docker/Poetry: Reproducible ML stack used in this software.",
-    "Diagnostics: UMAP/t-SNE, SHAP, symbolic overlays, FFT & calibration maps."
-  ],
-  "grants": [],
-  "subjects": [
-    {
-      "term": "Astrophysics",
-      "identifier": "https://id.loc.gov/authorities/subjects/sh85009002"
-    },
-    {
-      "term": "Machine Learning",
-      "identifier": "https://id.loc.gov/authorities/subjects/sh2008107395"
-    }
-  ],
-  "alternate_identifiers": [
-    {
-      "identifier": "https://github.com/bartytime4life/SpectraMindV50/releases/tag/v0.3.0",
-      "scheme": "url"
-    }
-  ],
-  "custom": {
-    "cli_entrypoint": "spectramind",
-    "artifact_layout": [
-      "configs/**",
-      "src/**",
-      "docs/**",
-      "assets/**",
-      "pyproject.toml",
-      "poetry.lock",
-      "Dockerfile",
-      "dvc.yaml",
-      ".dvc/**",
-      "README.md",
-      "ARCHITECTURE.md",
-      "CITATION.cff"
-    ]
-  }
+“prereserve_doi”: true,
+“upload_type”: “software”,
+“title”: “SpectraMind V50 — Neuro-symbolic, Physics-informed Exoplanet Spectroscopy Pipeline”,
+“version”: “0.3.0”,
+“publication_date”: “2025-08-21”,
+“language”: “en”,
+“license”: “Apache-2.0”,
+“access_right”: “open”,
+“description”: “SpectraMind V50 is a mission-grade, CLI-first, neuro-symbolic, physics-informed AI pipeline for the NeurIPS 2025 Ariel Data Challenge. It integrates a long-sequence Structured State-Space Model (SSM) for FGS1 time-series with a molecule- and wavelength-aware Graph Neural Network (GNN) for AIRS spectra. Training uses Gaussian log-likelihood with symbolic/physics constraints (smoothness, non-negativity, molecular coherence, photonic alignment).Reproducibility is enforced via Hydra configs, DVC/lakeFS data versioning, CI workflows, and Docker/Poetry environments, with deterministic self-tests. Outputs include per-wavelength μ and σ, plus diagnostics (UMAP/t-SNE, SHAP, symbolic overlays, FFT, calibration maps) and leaderboard-ready Kaggle submissions. All functionality is orchestrated through a unified Typer CLI with integrated logging, symbolic validation, and diagnostics dashboards.”,
+“creators”: [
+{
+“name”: “Barta, Andy”,
+“orcid”: “0000-0002-1825-0097”,
+“affiliation”: “SpectraMind Research”
+},
+{
+“name”: “SpectraMind V50 Team”,
+“affiliation”: “SpectraMind Research / NeurIPS 2025 Ariel Challenge”
+}
+],
+“contributors”: [
+{
+“name”: “SpectraMind V50 Community Contributors”,
+“type”: “Researcher”,
+“affiliation”: “Open-source community”
+}
+],
+“keywords”: [
+“NeurIPS 2025”,
+“Ariel”,
+“exoplanets”,
+“transmission spectroscopy”,
+“Gaussian log-likelihood”,
+“uncertainty quantification”,
+“neuro-symbolic AI”,
+“state-space models”,
+“graph neural networks”,
+“Hydra”,
+“DVC”,
+“reproducibility”,
+“Kaggle”,
+“CLI”,
+“symbolic AI”,
+“astrophysics”,
+“calibration”,
+“SHAP”,
+“UMAP”,
+“t-SNE”
+],
+“communities”: [
+{ “identifier”: “open-source-software” }
+],
+“related_identifiers”: [
+{
+“relation”: “isSupplementTo”,
+“identifier”: “https://github.com/bartytime4life/SpectraMindV50”,
+“resource_type”: “software”
+},
+{
+“relation”: “isDocumentedBy”,
+“identifier”: “https://github.com/bartytime4life/SpectraMindV50/blob/main/README.md”,
+“resource_type”: “publication-softwaredocumentation”
+},
+{
+“relation”: “isRelatedTo”,
+“identifier”: “https://www.kaggle.com/competitions/ariel-data-challenge-2025”,
+“resource_type”: “other”
+},
+{
+“relation”: “isAlternateIdentifier”,
+“identifier”: “https://github.com/bartytime4life/SpectraMindV50/releases/tag/v0.3.0”,
+“resource_type”: “other”
+}
+],
+“notes”: “This deposition is the archived, citable release for reproducibility. For active development, issues, CI artifacts, and nightly containers, see the GitHub repository.”,
+“references”: [
+“NeurIPS 2025 Ariel Data Challenge: Challenge overview and datasets.”,
+“Hydra, DVC/lakeFS, Docker/Poetry: Reproducible ML stack used in this software.”,
+“Diagnostics: UMAP/t-SNE, SHAP, symbolic overlays, FFT & calibration maps.”
+],
+“grants”: [],
+“subjects”: [
+{
+“term”: “Astrophysics”,
+“identifier”: “https://id.loc.gov/authorities/subjects/sh85009002”,
+“scheme”: “URL”
+},
+{
+“term”: “Machine Learning”,
+“identifier”: “https://id.loc.gov/authorities/subjects/sh2008107395”,
+“scheme”: “URL”
+}
+],
+“custom”: {
+“cli_entrypoint”: “spectramind”,
+“artifact_layout”: [
+“configs/”,
+“src/”,
+“docs/”,
+“assets/”,
+“pyproject.toml”,
+“poetry.lock”,
+“Dockerfile”,
+“dvc.yaml”,
+“.dvc/**”,
+“README.md”,
+“ARCHITECTURE.md”,
+“CITATION.cff”
+]
+}
 }
