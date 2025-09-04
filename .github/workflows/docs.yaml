@@ -1,5 +1,5 @@
-# .github/workflows/docs.yml
 # ==============================================================================
+# .github/workflows/docs.yml
 # SpectraMind V50 — Docs (MkDocs Material) • build, validate, and deploy to Pages
 # - Reproducible: pinned Python, pip cache, strict build, deterministic plugins
 # - Robust validation: internal links (fail) + external links (soft, retried)
@@ -184,3 +184,4 @@ jobs:
       - name: Deploy
         id: deployment
         uses: actions/deploy-pages@v4
+```
