@@ -3,8 +3,9 @@
 # SpectraMind V50 — Ablation Runner (Hydra-safe, Reproducible)
 # - Presets come from configs/ablation/ablation_v50.yaml
 # - PR: runs ONLY fast_eval (≤ ~5–10 min)
-# - Nightly / Manual: runs selected preset matrix; optional Hydra multirun grid
-# - Artifacts: per-preset logs + ablation outputs under outputs/ablations/<preset>/
+# - Nightly / Manual: runs selected preset matrix; optional Hydra multirun (-m)
+# - Artifacts: logs + outputs under outputs/ablations/<preset>/
+# - Caching: pip/poetry/.venv, strict bash, explicit timeouts, concurrency guard
 # ==============================================================================
 
 name: Ablations
@@ -31,6 +32,12 @@ on:
         description: "Enable Hydra multirun grid (+grid.enable=true) for selected presets"
         required: false
         default: "false"
+        type: choice
+        options: ["false", "true"]
+      extra_overrides:
+        description: "Hydra overrides (e.g., +training.seed=1337 +training.epochs=1)"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -41,6 +48,10 @@ concurrency:
   group: ablations-${{ github.ref }}
   cancel-in-progress: true
 
+defaults:
+  run:
+    shell: bash -euxo pipefail
+
 env:
   PY: "3.12"
   POETRY_VERSION: "1.8.3"
@@ -48,8 +59,43 @@ env:
   OUTDIR: "outputs/ablations"
 
 jobs:
+  # tiny helper to decide which presets to keep in matrix
+  select:
+    name: Select Presets
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      presets: ${{ steps.sel.outputs.presets }}
+      multirun: ${{ steps.sel.outputs.multirun }}
+      extra: ${{ steps.sel.outputs.extra }}
+    steps:
+      - id: sel
+        run: |
+          # presets (from dispatch or defaults)
+          INPUT_PRESETS="${{ github.event.inputs.presets }}"
+          if [ -z "$INPUT_PRESETS" ]; then
+            if [ "${{ github.event_name }}" = "pull_request" ]; then
+              PRESETS="fast_eval"
+            else
+              PRESETS="default,light"
+            fi
+          else
+            PRESETS="$INPUT_PRESETS"
+          fi
+          echo "presets=$PRESETS" >> "$GITHUB_OUTPUT"
+
+          # multirun flag (default false)
+          MR="${{ github.event.inputs.multirun }}"
+          if [ -z "$MR" ]; then MR="false"; fi
+          echo "multirun=$MR" >> "$GITHUB_OUTPUT"
+
+          # extra overrides (optional)
+          EXTRA="${{ github.event.inputs.extra_overrides }}"
+          echo "extra=${EXTRA}" >> "$GITHUB_OUTPUT"
+
   ablate:
-    name: Run Ablation Presets
+    name: Run Ablation Presets • ${{ matrix.preset }}
+    needs: select
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
@@ -66,15 +112,17 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PY }}
+          cache: "pip"
 
       - name: Install Poetry
         run: |
           python -m pip install --upgrade pip
           python -m pip install "poetry==${POETRY_VERSION}"
 
-      - name: Configure in-project venv for caching
+      - name: Configure in-project venv (cache-friendly)
         run: |
           poetry config virtualenvs.in-project true
+          poetry config installer.max-workers 10
 
       - name: Cache deps (pip/poetry/.venv)
         uses: actions/cache@v4
@@ -87,89 +135,63 @@ jobs:
           restore-keys: |
             ablate-${{ runner.os }}-py${{ env.PY }}-
 
-      - name: Install project (main deps)
+      - name: Install project (no dev extras)
         run: |
           poetry install --no-interaction --no-ansi --without dev
 
-      - name: Select presets for this event
-        id: select
-        shell: bash
-        run: |
-          # Determine desired presets list
-          INPUT_PRESETS="${{ github.event.inputs.presets }}"
-          if [ -z "$INPUT_PRESETS" ]; then
-            if [ "${{ github.event_name }}" = "pull_request" ]; then
-              PRESETS="fast_eval"
-            else
-              PRESETS="default,light"
-            fi
-          else
-            PRESETS="$INPUT_PRESETS"
-          fi
-          echo "presets=$PRESETS" >> "$GITHUB_OUTPUT"
-
-          # Determine multirun flag
-          MR="${{ github.event.inputs.multirun }}"
-          if [ -z "$MR" ]; then MR="false"; fi
-          echo "multirun=$MR" >> "$GITHUB_OUTPUT"
-
-          echo "Selected presets: $PRESETS"
-          echo "Multirun: $MR"
-
       - name: Skip preset (not selected for this event)
-        if: ${{ !contains(steps.select.outputs.presets, matrix.preset) }}
+        if: ${{ !contains(needs.select.outputs.presets, matrix.preset) }}
         run: |
-          echo "Preset '${{ matrix.preset }}' not in selected list '${{ steps.select.outputs.presets }}' — skipping."
+          echo "Preset '${{ matrix.preset }}' not in list '${{ needs.select.outputs.presets }}' — skipping."
           printf "skipped\n" > "skip_${{ matrix.preset }}.txt"
 
       - name: Enforce PR fast path
-        if: ${{ github.event_name == 'pull_request' && matrix.preset != 'fast_eval' }}
+        if: ${{ github.event_name == 'pull_request' && matrix.preset != 'fast_eval' && contains(needs.select.outputs.presets, matrix.preset) }}
         run: |
           echo "PR fast path: only 'fast_eval' allowed — skipping '${{ matrix.preset }}'."
           printf "pr-fast-skip\n" > "skip_${{ matrix.preset }}.txt"
 
       - name: Show CLI banner / versions
-        if: ${{ contains(steps.select.outputs.presets, matrix.preset) && !(github.event_name == 'pull_request' && matrix.preset != 'fast_eval') }}
+        if: ${{ contains(needs.select.outputs.presets, matrix.preset) && !(github.event_name == 'pull_request' && matrix.preset != 'fast_eval') }}
         run: |
           poetry run spectramind --version || true
           python -V
           poetry -V
 
       - name: Run ablation preset
-        if: ${{ contains(steps.select.outputs.presets, matrix.preset) && !(github.event_name == 'pull_request' && matrix.preset != 'fast_eval') }}
-        shell: bash
+        if: ${{ contains(needs.select.outputs.presets, matrix.preset) && !(github.event_name == 'pull_request' && matrix.preset != 'fast_eval') }}
         run: |
           set -eo pipefail
           mkdir -p "${OUTDIR}"
-          EXTRA=""
-          if [ "${{ steps.select.outputs.multirun }}" = "true" ]; then
-            EXTRA="+grid.enable=true -m"
+          EXTRA_FLAGS=""
+          if [ "${{ needs.select.outputs.multirun }}" = "true" ]; then
+            EXTRA_FLAGS="+grid.enable=true -m"
           fi
-
+          USER_OVERRIDES="${{ needs.select.outputs.extra }}"
           echo "::group::Ablation ${{ matrix.preset }}"
           poetry run spectramind ablate \
             ablation=${{ matrix.preset }} \
             --config-path configs/ablation \
             --config-name ablation_v50 \
             export.outdir="${OUTDIR}/${{ matrix.preset }}" \
-            ${EXTRA} 2>&1 | tee "ablate_${{ matrix.preset }}.log"
+            ${EXTRA_FLAGS} ${USER_OVERRIDES} 2>&1 | tee "ablate_${{ matrix.preset }}.log"
           echo "::endgroup::"
 
-      - name: Post run summary
+      - name: Summarize last 60 log lines
         if: always()
         run: |
           {
-            echo "### Ablation Summary — \`${{ matrix.preset }}\`"
+            echo "### Ablation — \`${{ matrix.preset }}\`"
             if [ -f "ablate_${{ matrix.preset }}.log" ]; then
               echo
-              echo "<details><summary>Last 50 log lines</summary>"
+              echo "<details><summary>Last 60 lines</summary>"
               echo
-              tail -n 50 "ablate_${{ matrix.preset }}.log" | sed -e 's/</\&lt;/g' -e 's/>/\&gt;/g'
+              tail -n 60 "ablate_${{ matrix.preset }}.log" | sed -e 's/</\&lt;/g' -e 's/>/\&gt;/g'
               echo
               echo "</details>"
             else
               echo
-              echo "_No log produced (skipped or failed before run step)._"
+              echo "_No log produced (skipped/failed before run step)._"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -183,5 +205,5 @@ jobs:
             ablate_${{ matrix.preset }}.log
             outputs/ablations/${{ matrix.preset }}/**
           if-no-files-found: ignore
-          retention-days: 7
+          retention-days: 10
 ```
