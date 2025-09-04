@@ -1,6 +1,5 @@
-```yaml
 # ==============================================================================
-# .editorconfig.test.yml — Hydra-safe config for EditorConfig CI enforcement
+# .editorconfig.test.yaml — Hydra-safe config for EditorConfig CI enforcement
 # SpectraMind V50 (ArielSensorArray)
 # Purpose: Drive pre-commit / CI checks that .editorconfig rules are respected
 # ==============================================================================
@@ -16,6 +15,19 @@ hydra:
   output_subdir: .
 
 # ------------------------------------------------------------------------------
+# Parameters (tunable via CLI: `+editorconfig_test.fail_on_warnings=false`, etc.)
+# ------------------------------------------------------------------------------
+params:
+  # When true, a single warning will exit nonzero in CI/selftest.
+  fail_on_warnings: true
+  # Extra CLI args to pass to the checker (e.g., ["-no-color"])
+  extra_args: []
+  # Number of parallel processes if you wrap the checker (informational only)
+  parallel: 0
+  # Timeout in seconds for the run (0 = unlimited; wrap at caller/CI level)
+  timeout_sec: 0
+
+# ------------------------------------------------------------------------------
 # Tooling configuration
 # - Uses the `editorconfig-checker` CLI (https://github.com/editorconfig-checker/editorconfig-checker)
 # - See also: pre-commit hook `editorconfig-checker` for local enforcement.
@@ -24,7 +36,6 @@ editorconfig_test:
   tool: editorconfig-checker
   # Any 3.x should be fine; keep in sync with pre-commit and CI image.
   version: ">=3.3.0"
-  fail_on_warnings: true
 
   # Explicit include patterns (globs) — keep aligned with repo file types.
   include:
@@ -47,6 +58,9 @@ editorconfig_test:
     - "**/*.tsv"
     - "**/*.txt"
     - "**/*.ini"
+    - "**/*.sh"
+    - "**/*.bash"
+    - "**/*.cfg"
 
   # Exclusions: caches, large artifacts, data, envs, build outputs, etc.
   exclude:
@@ -55,6 +69,7 @@ editorconfig_test:
     - ".venv/**"
     - "venv/**"
     - "env/**"
+    - ".env/**"
     - "site-packages/**"
     - ".mypy_cache/**"
     - ".pytest_cache/**"
@@ -68,14 +83,42 @@ editorconfig_test:
     - "logs/**"
     - "wandb/**"
     - "mlruns/**"
+    - "**/.ipynb_checkpoints/**"
+    - ".idea/**"
+    - ".vscode/**"
+    - "**/*.egg-info/**"
+    - ".cache/**"
+
+  # Root directory to start the scan from (relative to repo root).
+  root: "."
 
   # Environment/flags for the checker. Most repos just need EC_CONFIG.
   env:
     EC_CONFIG: ".editorconfig"
 
+  # Where to store plain-text report output (stdout is also preserved by caller).
+  report:
+    dir: "outputs/reports/editorconfig/${now:%Y%m%d-%H%M%S}"
+    text: "report.txt"   # final path: <dir>/<text>
+
   # Shell commands (used by CI or local runner). The checker auto-detects .editorconfig.
   commands:
+    # Optional install step (pin via system package or pre-commit; leave empty if pre-baked).
+    install: ""
+    # Core check command. Caller may append include/exclude glob handling.
+    # Note: editorconfig-checker exits nonzero on problems; combine with params.fail_on_warnings if your wrapper distinguishes severities.
     check: "editorconfig-checker"
+
+# ------------------------------------------------------------------------------
+# Cross-OS hints (informational; use in your runner if needed)
+# ------------------------------------------------------------------------------
+platforms:
+  linux:
+    install_hint: "Use pre-commit or apt-get install editorconfig-checker"
+  macos:
+    install_hint: "brew install editorconfig-checker"
+  windows:
+    install_hint: "choco install editorconfig-checker (or scoop); use Git Bash or WSL for best results"
 
 # ------------------------------------------------------------------------------
 # CI wiring helpers (optional; used by your GH Actions / pre-commit plumbing)
@@ -85,11 +128,22 @@ ci:
     enable: true
     # Pre-commit hook id matches the official hook name.
     hook_id: editorconfig-checker
+    # Recommended stanza for `.pre-commit-config.yaml` (informational)
+    snippet: |
+      - repo: https://github.com/editorconfig-checker/editorconfig-checker.python
+        rev: v3.3.0
+        hooks:
+          - id: editorconfig-checker
+
   github_actions:
     enable: true
     job_name: editorconfig
     # Minimal run command (assumes tool is installed in the job image/step)
     run: "editorconfig-checker"
+    # Optional matrix for multi-OS smoke checks (informational)
+    matrix:
+      os: ["ubuntu-latest"]
+      python: ["3.12"]
 
 # ------------------------------------------------------------------------------
 # Notes:
@@ -103,5 +157,6 @@ ci:
 # • In GitHub Actions, add a job step:
 #     - name: EditorConfig
 #       run: editorconfig-checker
+# • If you need a file allowlist/denylist wrapper, let your runner expand globs:
+#     find . -type f \( -name '*.py' -o -name '*.md' ... \) -print0 | xargs -0 editorconfig-checker
 # ------------------------------------------------------------------------------
-```
