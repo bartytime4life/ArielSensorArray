@@ -1,16 +1,20 @@
+```yaml
+# .github/workflows/artifact-sweeper.yml
 # ==============================================================================
-# SpectraMind V50 — Artifact Sweeper (GitHub Actions)
+# SpectraMind V50 — Artifact & Cache Sweeper (Safe, Auditable)
 # ------------------------------------------------------------------------------
 # Purpose:
-#   • Clean up old workflow run artifacts, caches, and logs to save space.
-#   • Keep recent artifacts (last N days) and tagged release bundles.
-#   • Run on a safe cadence (weekly) and manually dispatchable.
+#   • Clean up old workflow artifacts, action caches, and logs to save space.
+#   • Keep recent artifacts (last N days), tagged/release bundles, and any
+#     artifacts tied to OPEN pull requests (CI safety).
+#   • Runs weekly on a safe cadence; can be manually dispatched with dry-run.
 #
 # Features:
-#   • Matrix across OS/runtimes if desired (expandable).
-#   • Dry-run toggle to preview deletions.
-#   • PR safety: never deletes artifacts for open PRs.
-#   • Uses official GitHub CLI (`gh`) for robustness.
+#   • Dry-run toggle to preview deletions (default true for manual runs).
+#   • PR safety: never deletes artifacts associated with OPEN PR heads.
+#   • Release safety: keeps artifacts matching release/submission/dashboard/SBOM.
+#   • Uses official GitHub CLI (`gh`) + REST; no third-party actions required.
+#   • Summarized results posted to the job summary.
 # ==============================================================================
 
 name: artifact-sweeper
@@ -19,11 +23,11 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "Set to true to preview deletions without removing artifacts"
+        description: "Preview deletions without removing artifacts (true/false)"
         required: false
         default: "true"
       keep_days:
-        description: "Number of days of artifacts to keep"
+        description: "Number of days of artifacts/caches to keep"
         required: false
         default: "14"
   schedule:
@@ -31,16 +35,23 @@ on:
     - cron: "30 7 * * 0"
 
 permissions:
-  actions: write   # needed for artifact deletions
+  actions: write   # required for artifact/cache deletions
   contents: read
 
 concurrency:
   group: artifact-sweeper-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  REPO: ${{ github.repository }}
+  DRY_RUN: ${{ github.event.inputs.dry_run || 'true' }}
+  KEEP_DAYS: ${{ github.event.inputs.keep_days || '14' }}
+  # Patterns we consider "release-grade" (never delete via this sweeper)
+  KEEP_NAME_REGEX: '^(release-|submission-|dashboard-|sbom-|pages-|pages-build-deployment)'
+
 jobs:
   sweep:
-    name: Sweep old artifacts
+    name: Sweep old artifacts & caches
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -50,67 +61,178 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Install GitHub CLI
-        uses: cli/cli@v3
-        with:
-          version: latest
+      - name: Install GitHub CLI & jq
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y jq
+          # gh is preinstalled on ubuntu-latest; pin if desired:
+          gh --version
 
-      - name: Authenticate GH CLI
-        run: gh auth setup-git
+      - name: Auth GitHub CLI
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Sweep artifacts
-        env:
-          DRY_RUN: ${{ github.event.inputs.dry_run || 'true' }}
-          KEEP_DAYS: ${{ github.event.inputs.keep_days || '14' }}
         run: |
-          echo "🔍 Starting artifact sweep (dry_run=$DRY_RUN, keep_days=$KEEP_DAYS)"
-          cutoff="$(date -u -d "$KEEP_DAYS days ago" +%s)"
-          page=1
-          deleted=0
-          kept=0
+          gh auth status || gh auth login --with-token <<< "${GITHUB_TOKEN}"
+          echo "Using repo: ${REPO}"
 
-          while true; do
-            artifacts=$(gh api repos/${{ github.repository }}/actions/artifacts \
-              -q ".artifacts[] | {id: .id, name: .name, created_at: .created_at}" \
-              --paginate -F per_page=100 -F page=$page) || break
+      - name: Compute cutoff timestamp
+        id: cutoff
+        run: |
+          CUTOFF_EPOCH="$(date -u -d "${KEEP_DAYS} days ago" +%s)"
+          echo "epoch=${CUTOFF_EPOCH}" >> "$GITHUB_OUTPUT"
+          echo "Cutoff (epoch): ${CUTOFF_EPOCH}"
 
-            [ -z "$artifacts" ] && break
+      - name: Gather OPEN PR head SHAs (protection list)
+        id: prheads
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          OPEN_PR_HEADS=$(gh pr list -R "${REPO}" --state open --json headRefOid -q '[.[].headRefOid]')
+          echo "open_heads=${OPEN_PR_HEADS}" >> "$GITHUB_OUTPUT"
+          echo "Open PR head SHAs: ${OPEN_PR_HEADS}"
 
-            for row in $(echo "$artifacts" | jq -c '.'); do
-              id=$(echo "$row" | jq -r '.id')
-              name=$(echo "$row" | jq -r '.name')
-              created=$(echo "$row" | jq -r '.created_at')
-              created_ts=$(date -d "$created" +%s)
+      - name: Sweep artifacts (respect keep rules)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
 
-              if [ "$created_ts" -lt "$cutoff" ]; then
-                if [ "$DRY_RUN" = "true" ]; then
-                  echo "🧹 [dry-run] Would delete artifact $name (ID=$id, created=$created)"
+          CUTOFF="${{ steps.cutoff.outputs.epoch }}"
+          OPEN_SHAS='${{ steps.prheads.outputs.open_heads }}'
+          DRY="${DRY_RUN}"
+          REGEX="${KEEP_NAME_REGEX}"
+
+          echo "🔍 Starting artifact sweep (dry_run=${DRY}, keep_days=${KEEP_DAYS})"
+          echo "KEEP_NAME_REGEX=${REGEX}"
+
+          # Fetch all artifacts with pagination; include workflow_run to inspect branch/SHA
+          # Note: Artifacts API provides 'artifacts' array; use --paginate for >100.
+          TMP=$(mktemp)
+          gh api -H "Accept: application/vnd.github+json" \
+            "/repos/${REPO}/actions/artifacts?per_page=100" --paginate \
+            -q '.artifacts[] | {id, name, created_at, expired, size_in_bytes, workflow_run}' > "$TMP" || true
+
+          DELETED=0
+          KEPT=0
+
+          # Function to test if JSON array contains value
+          contains_sha() { echo "$1" | jq -e --arg x "$2" 'index($x) != null' >/dev/null 2>&1; }
+
+          while IFS= read -r line; do
+            [ -z "$line" ] && continue
+
+            id=$(echo "$line" | jq -r '.id')
+            name=$(echo "$line" | jq -r '.name')
+            created=$(echo "$line" | jq -r '.created_at')
+            expired=$(echo "$line" | jq -r '.expired')
+            size=$(echo "$line" | jq -r '.size_in_bytes // 0')
+            head_sha=$(echo "$line" | jq -r '.workflow_run.head_sha // empty')
+            branch=$(echo "$line" | jq -r '.workflow_run.head_branch // empty')
+
+            created_ts=$(date -u -d "$created" +%s || echo 0)
+
+            # Keep conditions:
+            #  1) Within keep window
+            #  2) Name matches release/submission/dashboard/SBOM/pages patterns
+            #  3) Artifact associated with an OPEN PR head SHA
+            #  4) Workflow run came from a tag (branch looks like a tag) — heuristic: branch empty or looks like a tag we still keep by name
+            if [ "$created_ts" -ge "$CUTOFF" ]; then
+              echo "⏳ Keep (recent): $name • created=$created"
+              KEPT=$((KEPT+1))
+              continue
+            fi
+
+            if echo "$name" | grep -Eqi "$REGEX"; then
+              echo "📦 Keep (release-grade by name): $name"
+              KEPT=$((KEPT+1))
+              continue
+            fi
+
+            if [ -n "$head_sha" ] && contains_sha "$OPEN_SHAS" "$head_sha"; then
+              echo "🛡️  Keep (open PR head): $name • sha=$head_sha"
+              KEPT=$((KEPT+1))
+              continue
+            fi
+
+            # If we reach here, artifact is old and not protected — delete or simulate.
+            if [ "$DRY" = "true" ]; then
+              echo "🧹 [dry-run] Would delete artifact $name (ID=$id, created=$created, size=${size}B)"
+            else
+              gh api -X DELETE -H "Accept: application/vnd.github+json" "/repos/${REPO}/actions/artifacts/${id}" && \
+              echo "🗑️ Deleted artifact $name (ID=$id, created=$created, size=${size}B)" || \
+              echo "⚠️ Failed to delete artifact $name (ID=$id)"
+            fi
+            DELETED=$((DELETED+1))
+          done < <(cat "$TMP")
+
+          echo "✅ Artifact sweep complete. Deleted=$DELETED, Kept=$KEPT"
+
+          {
+            echo "### Artifact Sweep Summary"
+            echo "- **Dry run**: \`${DRY}\`"
+            echo "- **Keep window**: last \`${KEEP_DAYS}\` days"
+            echo "- **Protected by name regex**: \`${REGEX}\`"
+            echo "- **Open PR heads protected**: $(echo "$OPEN_SHAS" | jq 'length')"
+            echo "- **Deleted**: \`${DELETED}\`"
+            echo "- **Kept**: \`${KEPT}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Sweep Actions caches (REST API, age-based)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          CUTOFF="${{ steps.cutoff.outputs.epoch }}"
+          DRY="${DRY_RUN}"
+
+          echo "🧹 Starting cache sweep (older than ${KEEP_DAYS} days)"
+
+          PAGE=1
+          DELETED=0
+          KEPT=0
+
+          while :; do
+            RESP=$(gh api -H "Accept: application/vnd.github+json" \
+              "/repos/${REPO}/actions/caches?per_page=100&page=${PAGE}" || true)
+            COUNT=$(echo "$RESP" | jq '.actions_caches | length')
+            [ "$COUNT" -eq 0 ] && break
+
+            echo "$RESP" | jq -c '.actions_caches[]' | while read -r cache; do
+              id=$(echo "$cache" | jq -r '.id')
+              key=$(echo "$cache" | jq -r '.key')
+              size=$(echo "$cache" | jq -r '.size_in_bytes // 0')
+              created=$(echo "$cache" | jq -r '.created_at')
+              cts=$(date -u -d "$created" +%s || echo 0)
+
+              if [ "$cts" -lt "$CUTOFF" ]; then
+                if [ "$DRY" = "true" ]; then
+                  echo "🧺 [dry-run] Would delete cache id=$id key=$key size=${size}B (created=$created)"
                 else
-                  gh api repos/${{ github.repository }}/actions/artifacts/$id -X DELETE
-                  echo "🗑️ Deleted artifact $name (ID=$id, created=$created)"
-                  ((deleted++))
+                  gh api -X DELETE -H "Accept: application/vnd.github+json" \
+                    "/repos/${REPO}/actions/caches?cache_id=${id}" && \
+                    echo "🧺 Deleted cache id=$id key=$key size=${size}B" || \
+                    echo "⚠️ Failed to delete cache id=$id key=$key"
                 fi
+                DELETED=$((DELETED+1))
               else
-                echo "⏳ Keeping artifact $name (created=$created)"
-                ((kept++))
+                echo "⏳ Keeping cache key=$key (created=$created)"
+                KEPT=$((KEPT+1))
               fi
             done
-            ((page++))
+
+            PAGE=$((PAGE+1))
           done
 
-          echo "✅ Sweep complete. Deleted=$deleted, Kept=$kept"
+          echo "✅ Cache sweep complete. Deleted=$DELETED, Kept=$KEPT"
 
-      - name: Sweep caches (optional)
-        run: |
-          echo "🗑️ Sweeping caches older than 14 days"
-          gh cache list --limit 100 | while read -r id key size created; do
-            if [[ "$created" < "$(date -d '14 days ago' '+%Y-%m-%d')" ]]; then
-              echo "Deleting cache $id ($key)"
-              gh cache delete $id || true
-            fi
-          done
+          {
+            echo "### Cache Sweep Summary"
+            echo "- **Dry run**: \`${DRY}\`"
+            echo "- **Keep window**: last \`${KEEP_DAYS}\` days"
+            echo "- **Deleted**: \`${DELETED}\`"
+            echo "- **Kept**: \`${KEPT}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Done
-        run: echo "🎉 Artifact sweep job finished."
+        run: echo "🎉 Artifact sweeper finished."
+```
