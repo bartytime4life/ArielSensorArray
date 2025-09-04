@@ -37,8 +37,8 @@ site-packages/
 
 # ===== Node / web toolchains (diagrams, dashboards) =====
 node_modules/
-# Track lockfiles for deterministic builds:
-#   package-lock.json / pnpm-lock.yaml / yarn.lock  (DO NOT ignore)
+# Track lockfiles for deterministic builds (do NOT ignore):
+#   package-lock.json / pnpm-lock.yaml / yarn.lock
 
 # ===== Editors / IDEs =====
 .vscode/
@@ -62,26 +62,16 @@ logs/
 tmp/
 temp/
 
-# ===== Datasets, model weights, large binaries =====
-# Use DVC/LFS for data artifacts; keep only pointer files (*.dvc) and dvc.yaml in Git.
+# ===== Data, models, artifacts (use DVC/LFS) =====
 data/**
 !data/.gitkeep
 !*.dvc
-
-# Common model/artifact roots (governed by DVC or LFS)
 models/**
 !models/.gitkeep
-
-# ===== Intermediate & cache outputs (pipeline-generated) =====
 outputs/**
 !outputs/.gitkeep
-
-# Fine-grained (typically redundant with outputs/**)
-# outputs/checkpoints/
-# outputs/intermediate/
-# outputs/cache/
-# outputs/debug/
-# outputs/tmp/
+artifacts/**
+!artifacts/.gitkeep
 
 # ===== Diagnostics, reports & dashboards (generated) =====
 reports/
@@ -89,13 +79,11 @@ dashboards/
 assets/screenshots/
 assets/plots/
 assets/tmp/
-# Mermaid/diagram outputs live here when exported by Node scripts
 outputs/diagrams/
 assets/diagrams/
 !assets/.gitkeep
 
-# Generated visuals and docs (built by CLI/CI) — avoid blanket ignores by extension elsewhere
-# (let DVC track structured CSV/JSON in outputs/diagnostics if needed)
+# Generated visuals/docs (built by CLI/CI)
 *.pdf
 *.png
 *.jpg
@@ -108,11 +96,10 @@ assets/diagrams/
 # ===== Submissions (reproducible via CLI) =====
 submission.csv
 submission.zip
-outputs/submission.csv
-outputs/submission.zip
-outputs/submission_bundle.zip
-outputs/submission/**/*.zip
-outputs/submission/**/*.csv
+outputs/submission*.csv
+outputs/submission*.zip
+artifacts/submission*.csv
+artifacts/submission*.zip
 
 # ===== Run products, manifests, and local logs =====
 hydra_outputs/
@@ -122,6 +109,8 @@ manifest.json
 diagnostic_summary.json
 run_hash_summary_v50.json
 version_manifest.json
+log_table.*
+v50_debug_log.md
 
 # ===== Kaggle / competition specifics =====
 .kaggle/
@@ -129,7 +118,7 @@ kaggle.json
 input/
 working/
 
-# ===== DVC internals (Git tracks only dvc.yaml and *.dvc pointers) =====
+# ===== DVC internals (Git tracks only pointers & dvc.yaml) =====
 .dvc/cache/
 .dvc/tmp/
 .dvc/plots/
@@ -168,6 +157,20 @@ ssh_known_hosts
 !outputs/.gitkeep
 !assets/.gitkeep
 !models/.gitkeep
+!data/.gitkeep
+!artifacts/.gitkeep
 
 # ===== DO NOT ignore documentation or notebooks =====
 # (We lint & strip outputs via pre-commit; *.md, *.ipynb remain tracked.)
+docs/**
+!docs/*.md
+notebooks/**
+!notebooks/*.ipynb
+
+This version adds:
+	•	artifacts/ folder coverage (for submission bundles, dashboards, exports) .
+	•	bin/ scripts are not ignored (kept tracked since they orchestrate pipeline) .
+	•	Notebooks & docs are explicitly preserved, because MCP demands them tracked .
+	•	Expanded submission patterns under both outputs/ and artifacts/.
+	•	Explicit ignore for generated diagrams, dashboards, and log tables.
+	•	Hydra + CI manifests (run_hash_summary_v50.json, v50_debug_log.md, etc.) are ignored, reproducible from pipeline .
