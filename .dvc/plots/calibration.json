@@ -1,0 +1,26 @@
+{
+  "title": "Uncertainty Calibration (SpectraMind V50)",
+  "x": "pred_sigma",
+  "y": "abs_residual",
+  "x_label": "Predicted σ",
+  "y_label": "Absolute Residual |μ − y|",
+  "lines": [
+    {
+      "y": "abs_residual",
+      "label": "Observed Residuals",
+      "color": "darkorange",
+      "dash": "solid",
+      "use_marks": true
+    },
+    {
+      "y": "pred_sigma",
+      "label": "Ideal Calibration (y=x)",
+      "color": "gray",
+      "dash": "dot",
+      "reference": "identity"
+    }
+  ],
+  "template": "scatter",
+  "smooth": false,
+  "use_marks": true
+}
