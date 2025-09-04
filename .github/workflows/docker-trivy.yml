@@ -1,13 +1,14 @@
-# .github/workflows/docker-trivy.yml
 # ==============================================================================
+# .github/workflows/docker-trivy.yml
 # SpectraMind V50 — Trivy Security Scan (FS ✦ Image ✦ Secrets/Misconfig ✦ SBOM)
 # - Scans repository (fs), built Docker image, secrets, and IaC misconfigurations
 # - Uploads SARIF to GitHub Code Scanning
 # - Generates SPDX SBOM artifact
-# - Fails on HIGH/CRITICAL vulnerabilities (configurable)
+# - Fails on HIGH/CRITICAL vulnerabilities by default (configurable)
 # Notes:
 # - Respects .trivyignore if present at repo root
 # - Uses Buildx (no push) and GHCR login (read) for base image pulls if needed
+# - Caches Trivy DB to speed up repeated runs
 # ==============================================================================
 
 name: docker-trivy
@@ -18,7 +19,7 @@ on:
   pull_request:
     branches: ["**"]
   schedule:
-    # Weekly security scan
+    # Weekly security scan (Mon 03:17 UTC)
     - cron: "17 3 * * 1"
   workflow_dispatch:
     inputs:
@@ -33,12 +34,21 @@ on:
         default: "true"
         type: choice
         options: ["true", "false"]
+      scanners:
+        description: "Trivy security checks (comma-separated: vuln,secret,config,license)"
+        required: false
+        default: "vuln,secret,config"
+        type: string
 
 permissions:
   contents: read
   packages: read
-  security-events: write   # required for SARIF/code-scanning upload
+  security-events: write   # for SARIF/code-scanning upload
   actions: read
+
+concurrency:
+  group: trivy-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   # -------- Settings you may customize --------
@@ -47,19 +57,20 @@ env:
   CONTEXT: .
   TRIVY_SEVERITY: ${{ inputs.severity || 'HIGH,CRITICAL' }}
   TRIVY_IGNORE_UNFIXED: ${{ inputs.ignore_unfixed || 'true' }}
+  TRIVY_CHECKS: ${{ inputs.scanners || 'vuln,secret,config' }}
 
 jobs:
   trivy:
     name: Build & Scan with Trivy
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       # ---------- Docker build (no push) ----------
-      - name: Set up QEMU (multi-arch, harmless if single arch)
+      - name: Set up QEMU (multi-arch)
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Buildx
@@ -111,10 +122,9 @@ jobs:
           output: 'trivy-fs.sarif'
           severity: ${{ env.TRIVY_SEVERITY }}
           ignore-unfixed: ${{ env.TRIVY_IGNORE_UNFIXED }}
-          # Enable multiple scanners: vuln (default), secret, config
           vuln-type: 'os,library'
-          security-checks: 'vuln,secret,config'
-          exit-code: '1' # fail job if findings at/above severity
+          security-checks: ${{ env.TRIVY_CHECKS }}
+          exit-code: '1'  # fail job if findings at/above severity
         env:
           # Speed up updates (cached) and allow offline if db present
           TRIVY_DB_REPOSITORY: ghcr.io/aquasecurity/trivy-db
@@ -169,5 +179,6 @@ jobs:
           echo "### Trivy Scan Summary" >> $GITHUB_STEP_SUMMARY
           echo "- Image: \`${{ env.IMAGE_NAME }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Severity threshold: \`${{ env.TRIVY_SEVERITY }}\` (ignore_unfixed=${{ env.TRIVY_IGNORE_UNFIXED }})" >> $GITHUB_STEP_SUMMARY
+          echo "- Security checks: \`${{ env.TRIVY_CHECKS }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- SARIF uploaded to Code Scanning" >> $GITHUB_STEP_SUMMARY
           echo "- SBOM artifact: \`sbom.spdx.json\`" >> $GITHUB_STEP_SUMMARY
