@@ -2,14 +2,20 @@
 # 🧠 Prefetch Factor — Heavy Pipeline / HPC
 # ------------------------------------------------------------------------------
 # Purpose:
-#   • Maximize throughput for multi-GPU HPC or local SSD RAID setups.
-#   • Assumes abundant system memory and I/O bandwidth.
+#   • Maximize data-loading throughput for multi-GPU HPC or local SSD RAID setups.
+#   • Designed for nodes with abundant system memory (≥128 GB) and very fast I/O.
+#   • Ensures GPUs are saturated with data even in large-scale distributed runs.
 # ==============================================================================
 
-prefetch_factor: 8
+prefetch_factor: 8               # each worker preloads 8 batches in advance
+persistent_workers: true         # keep workers alive across epochs for efficiency
+pin_memory: true                 # lock host memory for faster GPU transfer
 
 notes: |
   Heavy mode:
-  • Each worker preloads 8 batches.
-  • Best for HPC clusters with strong I/O and large RAM.
-  • Not recommended for Kaggle (memory/time constrained).
+  • Each DataLoader worker preloads 8 batches, minimizing GPU idle cycles.
+  • Ideal for HPC clusters, multi-GPU servers, or local rigs with NVMe RAID.
+  • Requires substantial host RAM; each worker may hold 8×batch_size in memory.
+  • Not recommended for Kaggle kernels or small-memory nodes (risk of OOM).
+  • Best paired with large batch sizes and mixed precision (AMP) to maximize throughput.
+  • Use when throughput is the bottleneck, not memory, and system resources are abundant.
