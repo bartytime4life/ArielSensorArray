@@ -1,0 +1,13 @@
+# ==============================================================================
+# 🔬 Precision — Float64 (double)
+# ------------------------------------------------------------------------------
+# Purpose:
+#   - Use float64 for high-precision scientific diagnostics.
+#   - Not recommended for Kaggle (too slow).
+# ==============================================================================
+precision: 64
+amp_backend: native
+amp_level: O0
+deterministic: true
+cudnn_benchmark: false
+notes: "Double precision for numerical experiments / debugging."
