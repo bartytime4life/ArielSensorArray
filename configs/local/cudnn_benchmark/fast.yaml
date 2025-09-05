@@ -1,0 +1,13 @@
+# ==============================================================================
+# 🚀 cuDNN Autotune — Aggressive Performance Mode
+# ------------------------------------------------------------------------------
+# Purpose:
+#   • Favor maximum throughput over reproducibility.
+#   • Good for Kaggle leaderboard runs with fixed shapes.
+# ==============================================================================
+
+cudnn_benchmark: true
+
+notes: |
+  Autotuner aggressively enabled. Best speed for static workloads,
+  but kernel selection may vary across hardware/drivers.
