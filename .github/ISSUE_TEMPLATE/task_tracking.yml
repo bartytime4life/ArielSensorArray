@@ -1,6 +1,3 @@
-You're right — those backslashes (`\`), HTML entities (`&#x20;`), and Markdown-escaped characters are invalid in a GitHub Issue Form YAML and will trip parsers. Here’s your template **cleaned and valid** (no unknown escapes, fixed indentation, valid lists, and safe placeholders).
-
-```yaml
 name: "📌 Task Tracking"
 description: "Plan and track a unit of work for SpectraMind V50 (CLI-first, reproducible, testable, physics-aware)"
 title: "[task] <short summary>"
@@ -259,12 +256,3 @@ body:
         - Issue: #4567
         - CI: actions/runs/234567890
         - Kaggle: submission 2025-08-25
-```
-
-**Why it failed before:**
-
-* `\[` `\]` `\_` `\-` were literal backslash escapes that aren’t valid YAML scalars.
-* `&#x20;` is an HTML entity that snuck in for a space.
-* Indentation/list markers under `labels:` used Markdown `*` instead of YAML `-`.
-
-If you want, I can also convert your other issue forms to this strict, parser-clean format.
