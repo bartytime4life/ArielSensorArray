@@ -1,15 +1,54 @@
 # ==============================================================================
-# 🚀 Kaggle Devices — NVIDIA T4 GPU
+# 🚀 Kaggle Devices — NVIDIA T4 GPU (SpectraMind V50)
 # ------------------------------------------------------------------------------
 # Purpose:
-#   - Kaggle default GPU runtime (T4, 16 GB).
-#   - Configures AMP and runtime guardrails for 9-hour walltime.
+#   • Kaggle default GPU runtime (T4, 16 GB).
+#   • Configures AMP and runtime guardrails for ≤ 9-hour Kaggle walltime.
+#   • Reproducible and leaderboard-safe by default.
+#
+# Usage:
+#   spectramind train local=devices/kaggle_t4 trainer=kaggle_safe
+#
+# Notes:
+#   • Kaggle runs have no internet; rely only on attached datasets.
+#   • T4 GPUs support AMP (16-mixed precision) efficiently.
+#   • Strict ≤ 9h runtime cap enforced for leaderboard compliance.
 # ==============================================================================
 
 _target_: torch.device
-devices: 1
-precision: 16-mixed
-deterministic: true
-cudnn_benchmark: true
-timeout_hours: 9
-notes: "Kaggle GPU quota: T4 runtime, ~9h max walltime."
+
+# Device orchestration
+devices: 1                   # single T4 GPU per Kaggle runtime
+autodetect: false            # fixed: Kaggle always provisions 1 GPU
+
+# Precision / numerical stability
+precision: 16-mixed          # AMP on T4 for speed/memory efficiency
+deterministic: true          # enforce deterministic kernels for reproducibility
+cudnn_benchmark: true        # allow conv autotune (safe on fixed input sizes)
+
+# Reproducibility guardrails
+seed: 2025
+numpy_seed: 2025
+pythonhashseed: 0
+
+# Threading controls (Kaggle runtime has 2 vCPUs by default)
+max_threads: 2
+intraop_threads: 2
+interop_threads: 1
+
+# Runtime guardrails
+timeout_hours: 9             # Kaggle hard walltime limit
+gradient_clip_val: 1.0       # protect small-batch training stability
+
+# Diagnostics
+log_device_info: true        # log GPU model + driver on startup
+profile_runtime: false       # disable profiling (keep under 9h cap)
+
+# Metadata
+notes: |
+  Kaggle T4 device profile (16 GB GPU).
+  - Designed for competition submissions.
+  - 16-mixed AMP precision for efficiency.
+  - Deterministic kernels + fixed seeds for reproducibility.
+  - Runtime guardrails ensure ≤ 9h walltime.
+  - Logs device info on startup for audit.
