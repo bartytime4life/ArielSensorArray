@@ -1,17 +1,19 @@
 # ==============================================================================
-# 🌙 Dark Subtraction — Method Config (v1.1)
+# 🌙 Dark Subtraction — Method Config (v1.2, Mission-Grade)
 # Purpose
-#   Remove dark current & bias structure using master dark frames.
+#   Remove dark current & bias structure using master dark(s); supports exposure/
+#   temperature scaling, per-amplifier & overscan trimming, hot/bad structure
+#   repair, persistence/striping mitigation, uncertainty propagation, and rich QC.
 # Usage
-#   Composed by calib/nominal.yaml; runs after ADC & nonlinearity correction.
-#   Override examples:
+#   Composed by calib/{nominal,fast,strict}.yaml after ADC & nonlinearity corr.
+#   Examples:
 #     spectramind calibrate calib.method.dark.master.path=calib_refs/dark/master_dark.fits
 #     spectramind calibrate calib.method.dark.scaling.temperature_compensation.enabled=true
 #     spectramind calibrate calib.method.dark.master.mode=select_by_metadata
 # ==============================================================================
 
 _meta:
-  schema_version: "1.1.0"
+  schema_version: "1.2.0"
   last_updated: "${now:%Y-%m-%d}"
 
 dark:
@@ -20,19 +22,21 @@ dark:
   # --------------------------
   # Units & basic instrument info
   # --------------------------
-  units: "DN"                  # "DN" | "electrons"
-  gain_e_per_adu: 1.0          # used if converting DN <-> electrons
+  units: "DN"                      # DN | electrons
+  gain_e_per_adu: 1.0              # used if converting DN <-> e-
+  read_noise_e: 5.0                # e- RMS; used for variance propagation
+  full_well_e: 80000               # for saturation/persistence guards
 
   # --------------------------
   # Master dark selection / construction
   # --------------------------
   master:
-    mode: "single"             # "single" | "select_by_metadata" | "build_from_raw"
+    mode: "single"                 # single | select_by_metadata | build_from_raw
 
-    # Single-file path (used when mode == single)
+    # Single-file path (mode==single)
     path: "calib_refs/dark/master_dark.npy"
 
-    # For metadata-based selection (used when mode == select_by_metadata)
+    # Metadata-based selection (mode==select_by_metadata)
     dir: "calib_refs/dark/masters"
     filename_pattern: "master_dark_{exptime:.3f}s_{temp:+.1f}C.npy"
     selection:
@@ -40,84 +44,105 @@ dark:
         exposure_seconds: ["EXPTIME", "EXPOSURE"]
         sensor_temperature_C: ["SENSOR_TEMP_C", "CCD-TEMP"]
       tolerance:
-        exposure_seconds: 0.5     # seconds
-        sensor_temperature_C: 2.0 # deg C
+        exposure_seconds: 0.5       # s
+        sensor_temperature_C: 2.0   # °C
+      fallback: "nearest"           # nearest | bracket | fail
 
-    # Build a master from raw dark frames (used when mode == build_from_raw)
+    # Build a master from raw dark frames (mode==build_from_raw)
     build:
       enabled: false
       sources_dir: "calib_raw/dark/"
       glob: "*.fits"
-      combine: "median"           # "median" | "mean" | "sigma_clip"
+      overscan_correct: true
+      per_amp_bias_correct: true
+      combine: "sigma_clip"         # median | mean | sigma_clip
       sigma_clip:
         low_sigma: 5.0
         high_sigma: 5.0
         max_iters: 3
       normalize_by:
-        mode: "exposure"          # "exposure" | "none"
+        mode: "exposure"            # exposure | none
+      background_plane:
+        enabled: false
+        model: "poly2d"             # poly2d | spline2d
+        poly_order: 2
+        robust: true
+      save_intermediate: false
+      intermediates_dir: "outputs/diagnostics/calib/dark/build"
 
   # --------------------------
   # Exposure & temperature scaling of the master
   # --------------------------
   scaling:
     enabled: true
-
-    # Master & target units (conversion happens if mismatch)
-    units_of_master: "DN"         # "DN" | "electrons"
+    # Unit harmonization
+    units_of_master: "DN"           # DN | electrons
     target_units: "${dark.units}"
 
+    # Exposure scaling
     exposure_time:
-      source: "metadata"          # "metadata" | "fixed"
+      source: "metadata"            # metadata | fixed
       key_candidates: ["EXPTIME", "EXPOSURE"]
       fallback_seconds: 10.0
+      linear: true                  # scale master linearly with exposure time
 
-    # Optional temperature model: dark_current ~ A * exp(B * (T - T0))
+    # Temperature model: dark_current(T) ~ A * exp(B*(T - T0))  or linear
     temperature_compensation:
       enabled: false
-      model: "exp"                # "exp" | "linear"
+      model: "exp"                  # exp | linear | arrhenius
       T0_C: -40.0
       A: 1.0
       B: 0.07
+      arrhenius:
+        Ea_eV: 0.6                  # activation energy (if model=arrhenius)
+        k_B_eV_per_K: 8.617333e-5
       key_candidates: ["SENSOR_TEMP_C", "CCD-TEMP"]
+      telemetry_file: null          # optional direct link to temperature telemetry
+      smoothing_window_s: 15.0
 
   # --------------------------
-  # Overscan & per-amplifier handling (optional)
+  # Overscan & per-amplifier handling
   # --------------------------
   overscan:
     enabled: false
-    regions:                      # per-amplifier overscan boxes [y0,y1], [x0,x1]
+    regions:                        # per-amp overscan boxes [y0,y1], [x0,x1]
       A: { y: [0, 2047], x: [2048, 2095] }
-    strategy: "median"            # "median" | "polyfit"
+    strategy: "median"              # median | polyfit
     poly_order: 1
 
   amplifiers:
     enabled: false
     layout: ["A", "B", "C", "D"]
-    regions:                      # trim regions for science area per amp (no overscan)
+    regions:                        # trim science area per amp (no overscan)
       A: { y: [0, 2047], x: [0, 1023] }
       B: { y: [0, 2047], x: [1024, 2047] }
     trim_overscan: true
     per_amp_bias_subtract: true
+    bias_striping:
+      enabled: false                # row/column bias striping removal
+      axis: "row"                   # row | column
+      method: "median"              # median | polynomial
+      poly_order: 1
 
   # --------------------------
-  # Hot pixels / bad columns / cosmic rays
+  # Hot pixels / bad columns / cosmic rays / persistence
   # --------------------------
   hot_pixels:
     enabled: true
     map_path: "calib_refs/dark/hot_pixel_map.npy"    # boolean mask (H,W)
     threshold_sigma: 8.0                              # if generating from data
     grow_kernel: 1
-    repair_strategy: "median"                         # "median" | "neighbor" | "mask"
+    repair_strategy: "median"                         # median | neighbor | mask
     median_window: 3
 
   bad_columns:
     enabled: false
     map_path: "calib_refs/dark/bad_columns.npy"      # boolean mask (H,W)
-    repair_strategy: "interpolate"                    # "interpolate" | "mask"
+    repair_strategy: "interpolate"                    # interpolate | mask
 
   cosmic_rays:
     enabled: false
-    method: "lacosmic"                                # "lacosmic" | "temporal_sigma_clip"
+    method: "lacosmic"                                # lacosmic | temporal_sigma_clip
     lacosmic:
       sigclip: 5.0
       sigfrac: 0.3
@@ -127,12 +152,19 @@ dark:
       window: 5
       sigma: 4.0
 
+  persistence:
+    enabled: false
+    model: "exponential"           # exponential | linear
+    tau_frames: 50                 # decay constant (frames)
+    mask_bright_history: true
+    bright_threshold_e: 0.7        # fraction of full well to flag history
+
   # --------------------------
   # Residual bias plane fit (slow; optional)
   # --------------------------
   residual_plane:
     enabled: false
-    model: "poly2d"                                   # "poly2d" | "spline2d"
+    model: "poly2d"                                   # poly2d | spline2d
     poly_order: 2
     robust: true
     mask_hot_and_bad: true
@@ -146,7 +178,23 @@ dark:
       max_mean_dark_DN: 500.0
       max_hot_pixel_fraction: 0.02
       max_residual_std_ratio: 1.3   # residual_std / expected_shot_noise_std
-    on_fail: "warn"                  # "warn" | "raise" | "skip"
+      max_bias_strip_amp: 5.0       # DN after striping removal
+      max_persistence_frac: 0.01
+    on_fail: "warn"                  # warn | raise | skip
+    report:
+      save: true
+      path: "${oc.env:SM_RUN_DIAG_DIR,outputs/diagnostics/calib/dark}/qc_report.json"
+
+  # --------------------------
+  # Application & uncertainty propagation
+  # --------------------------
+  application:
+    order: ["unit_harmonize", "overscan", "per_amp", "scale_exptime", "scale_temp", "subtract", "residual_plane"]
+    epsilon: 0.0                    # not used for subtraction; kept for symmetry
+    propagate_uncertainty: true
+    variance_model: "poisson"       # poisson | empirical | none
+    include_read_noise: true
+    write_variance_map: true
 
   # --------------------------
   # I/O, parallelism, GPU
@@ -159,7 +207,7 @@ dark:
 
   parallel:
     num_workers: 4
-    backend: "thread"               # "thread" | "process" | "none"
+    backend: "thread"               # thread | process | none
 
   gpu:
     enabled: false
@@ -175,6 +223,7 @@ dark:
     save_input_previews: false
     save_residuals: true
     save_masks: true
+    save_bias_profiles: true
     sample_indices: [0, 100, 500]
     output_dir: "${oc.env:SM_RUN_DIAG_DIR,outputs/diagnostics/calib/dark}"
     filename_prefix: "dark"
@@ -184,7 +233,30 @@ dark:
     level: "INFO"
 
   # --------------------------
-  # Metadata key aliases (for robust ingestion across files/instruments)
+  # Profile-specific overrides (fast / strict)
+  # --------------------------
+  profile_overrides:
+    fast:
+      master.mode: "select_by_metadata"
+      build.enabled: false
+      scaling.temperature_compensation.enabled: false
+      residual_plane.enabled: false
+      cosmic_rays.enabled: false
+      application.propagate_uncertainty: false
+      diagnostics.save_residuals: false
+    strict:
+      master.mode: "select_by_metadata"
+      build.enabled: true
+      build.combine: "sigma_clip"
+      scaling.temperature_compensation.enabled: true
+      residual_plane.enabled: true
+      residual_plane.model: "poly2d"
+      cosmic_rays.enabled: true
+      persistence.enabled: true
+      application.propagate_uncertainty: true
+
+  # --------------------------
+  # Metadata key aliases (robust ingestion across files/instruments)
   # --------------------------
   metadata_keys:
     exposure_seconds: ["EXPTIME", "EXPOSURE"]
@@ -192,9 +264,11 @@ dark:
     gain_e_per_adu: ["GAIN", "EGAIN"]
 
   notes: |
-    • Ensure unit consistency (DN vs electrons) between ADC output and master dark (see units & gain).
-    • If metadata exposure differs from master, scale the master accordingly (scaling.exposure_time).
-    • Hot pixels/bad columns are repaired before residual plane fitting and QC.
-    • Per-amp + overscan blocks let you do channel-aware bias handling if your detector supports it.
-    • Set master.mode to select_by_metadata to auto-pick nearest exptime/temperature master.
-    • Use diagnostics.* to persist masks/residuals for auditability; DVC can track artifacts downstream.
+    • Ensure unit consistency (DN vs electrons) between ADC output and master dark; use gain to convert.
+    • Scale master by exposure time and (optionally) temperature to match target frames.
+    • Overscan and per-amplifier blocks allow channel-aware bias corrections and striping removal.
+    • Hot pixels/bad columns/persistence are handled prior to residual-plane fitting and QC.
+    • Use metadata-driven master selection to auto-pick nearest exposure/temperature; strict profile
+      enables sigma-clipped builds when reference coverage is sparse.
+    • Uncertainty propagation adds photon + read noise and tracks subtraction variance into the map.
+    • Diagnostics include residual images and bias profiles for auditability; DVC can track artifacts.
