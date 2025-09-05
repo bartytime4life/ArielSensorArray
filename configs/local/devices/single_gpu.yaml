@@ -1,0 +1,14 @@
+# ==============================================================================
+# 🎮 Local Devices — Single-GPU profile
+# ------------------------------------------------------------------------------
+# Purpose:
+#   - Run on the first available CUDA device.
+#   - Autodetects if CUDA is present, otherwise falls back to CPU.
+# ==============================================================================
+
+_target_: torch.device
+devices: 1               # use first CUDA device (CUDA:0)
+precision: 16-mixed      # automatic mixed precision
+deterministic: true
+cudnn_benchmark: true
+notes: "Default single-GPU dev setting with AMP."
