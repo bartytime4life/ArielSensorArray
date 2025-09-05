@@ -1,0 +1,17 @@
+# ==============================================================================
+# 🎲 Local Seed — Randomized
+# ------------------------------------------------------------------------------
+# Purpose:
+#   - Non-deterministic runs for exploration / augmentation diversity.
+#   - Seeds pulled from system time; not reproducible across runs.
+# ==============================================================================
+
+seed: null
+numpy_seed: null
+torch_seed: null
+pythonhashseed: null
+
+deterministic: false
+cudnn_benchmark: true
+
+notes: "Random seeds disabled — stochastic runs (exploration mode)."
