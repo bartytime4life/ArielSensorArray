@@ -1,0 +1,16 @@
+# ==============================================================================
+# 🖥️🖥️ Local Devices — Multi-GPU profile
+# ------------------------------------------------------------------------------
+# Purpose:
+#   - Designed for local multi-GPU rigs (≥2 GPUs).
+#   - Use with trainer=multi_gpu + local=hpc.
+# ==============================================================================
+
+_target_: torch.device
+devices: 4               # override via CLI: local.devices=2, local.devices=8
+strategy: ddp            # DistributedDataParallel
+sync_batchnorm: true
+precision: bf16-mixed
+deterministic: false     # allow nondeterminism for speed
+cudnn_benchmark: true
+notes: "For multi-GPU HPC rigs (A100s, V100s, etc.)."
