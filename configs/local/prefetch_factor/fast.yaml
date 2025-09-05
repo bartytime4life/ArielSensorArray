@@ -1,0 +1,15 @@
+# ==============================================================================
+# ⚡ Prefetch Factor — Fast I/O
+# ------------------------------------------------------------------------------
+# Purpose:
+#   • Aggressive prefetching for high-bandwidth SSDs / NVMe.
+#   • Good for HPC/local workstations with large RAM.
+# ==============================================================================
+
+prefetch_factor: 4
+
+notes: |
+  Fast mode:
+  • Each DataLoader worker preloads 4 batches.
+  • Reduces GPU idle time on fast disks.
+  • May consume more memory; avoid on Kaggle small-memory nodes.
