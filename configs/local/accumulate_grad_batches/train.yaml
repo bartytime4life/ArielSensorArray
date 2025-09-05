@@ -2,28 +2,35 @@
 # 🛰️ SpectraMind V50 — Gradient Accumulation (TRAINING)
 # ------------------------------------------------------------------------------
 # Purpose:
-#   • Control how many forward/backward passes to accumulate before optimizer step.
-#   • Allows training with an effectively larger batch size than fits in GPU memory.
-#   • Essential knob for scaling up batch size under Kaggle/HPC GPU memory limits.
+#   • Control how many forward/backward passes to accumulate before an optimizer step.
+#   • Enables training with an effectively larger batch size than physically fits in GPU memory.
+#   • Core knob for scaling stability/throughput under Kaggle (≤9h) and HPC GPU limits.
 # ------------------------------------------------------------------------------
 # When to Use
-#   • ✅ Increase (>1) if:
-#       – Model or batch does not fit in GPU memory directly.
-#       – Want to simulate larger global batch size for stable updates.
-#   • 🚫 Keep =1 if GPU memory is sufficient for desired batch size.
-#   • ⚠️ Note: Effective batch size = batch_size × accumulate_grad_batches.
-#     Ensure LR scaling (linear rule) if you change this factor.
+#   • ✅ Set >1 if:
+#       – Model/batch does not fit in GPU memory directly.
+#       – You want to simulate larger global batch size for smoother updates.
+#   • 🚫 Keep =1 if GPU memory is sufficient for the desired batch size.
+#   • ⚠️ Effective batch size = batch_size × accumulate_grad_batches.
+#       Adjust learning rate using the linear scaling rule when increasing this factor.
 # ==============================================================================
 
 accumulate_grad_batches: 1
 
 notes: |
   Training loaders:
-  • Default =1 (no accumulation; optimizer step every batch).
-  • Use >1 to simulate large batches on limited-memory GPUs:
+  • Default =1 (no accumulation; optimizer updates every batch).
+  • Use >1 to simulate large-batch training on limited-memory GPUs:
       – Example: batch_size=32, accumulate_grad_batches=4 → effective batch=128.
-  • LR scaling rule of thumb: multiply learning rate by accumulate_grad_batches.
-  • Critical for Kaggle environments:
-      – T4/A10 GPUs may require accumulation to reach target effective batch size.
-      – Balance runtime (≤9h) vs. stability.
-  • Always log chosen accumulation factor in v50_debug_log.md with config hash.
+  • LR scaling guideline: scale learning rate proportionally with accumulate_grad_batches.
+  • Mission-grade considerations:
+      – Log accumulation factor in v50_debug_log.md with config hash for reproducibility.
+      – Monitor wall-clock runtime: accumulation reduces memory but may increase step time.
+  • Kaggle environments:
+      – T4/A10 GPUs often require accumulation to reach target effective batch sizes.
+      – Must balance runtime (≤9h) vs. stability.
+  • HPC environments:
+      – With A100/H100 GPUs and large RAM, may keep =1 unless intentionally scaling up.
+      – For multi-GPU distributed training, ensure accumulation interacts correctly with DDP.
+  • Debug/CI:
+      – Always keep =1 for smoke tests and pipeline verification to minimize variance.
