@@ -1,19 +1,19 @@
 <!DOCTYPE html>
-
 <html lang="en" data-build-env="local" data-build-run="—" data-build-ts="—">
 <head>
   <!--
-    SpectraMind V50 — Diagnostics Dashboard (Hardened v2)
+    SpectraMind V50 — Diagnostics Dashboard (Hardened v3)
     - Offline, zero-deps, print-friendly, accessible
     - Autoloads optional ./diagnostic_summary.json and ./log_table.json if present
     - Query params:
-        ?embed=umap,tsne,shap,mu,fft,symbolic,calibration   → swap imgs → iframes
-        ?assets=./outputs/diagnostics                         → base path for assets
-        ?open=report|readme                                   → auto-navigate to links
+        ?embed=umap,tsne,shap,mu,fft,symbolic,calibration  → swap imgs → iframes
+        ?assets=./outputs/diagnostics                        → base path for assets
+        ?open=report|readme|kpis                             → auto-navigate to links/section
+        ?kpi=status:ok,gll:-0.012,coverage:0.94,runtime:28m → quick KPI override
     - Keyboard shortcuts:
         r: soft refresh assets, t: theme toggle, p: print, g: jump to KPIs
     - CLI may overwrite:
-        <html data-build-*> and innerText of #build-* spans, and call window.SMV50.init(...)
+        <html data-build-*> and innerText of #build-* spans, and call window.SMV50.init(opts)
   -->
   <meta charset="utf-8" />
   <title>SpectraMind V50 — Diagnostics Dashboard</title>
@@ -86,7 +86,7 @@
     .card h3{margin:0;font-size:var(--fs-lg);font-weight:700;letter-spacing:.2px}
     .muted{color:var(--muted);font-size:var(--fs-sm)}
 
-    .kpis{display:grid;gap:10px;grid-template-columns:repeat(3,1fr)}
+    .kpis{display:grid;gap:10px;grid-template-columns:repeat(4,1fr)}
     @media (max-width:1200px){.kpis{grid-template-columns:repeat(2,1fr)}}
     @media (max-width:720px){.kpis{grid-template-columns:1fr}}
     .kpi{background:color-mix(in oklab,var(--surface)85%,var(--bg)15%);border:1px dashed var(--border);border-radius:12px;padding:12px;display:grid;gap:6px}
@@ -110,6 +110,9 @@
 
     .hint{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 
+    details.fold{border:1px dashed var(--border);border-radius:12px;padding:10px;background:color-mix(in oklab,var(--surface)92%,var(--bg)8%)}
+    details.fold > summary{cursor:pointer;font-weight:700}
+
     @media print{
       header.appbar, .toolbar, footer{display:none!important}
       body{background:#fff;color:#000}
@@ -117,7 +120,6 @@
       a::after{content:" (" attr(href) ")";font-size:11px;color:#555}
     }
   </style>
-
 </head>
 <body>
 <a href="#main" class="sr-only">Skip to main content</a>
@@ -142,7 +144,7 @@
     <h3 id="sec-overview">Overview</h3>
     <div class="muted hint">
       <span>Seed dashboard — safe before first run. CLI overwrites KPIs, build info, and figures post-diagnostics.</span>
-      <span>Shortcuts: <span class="kbd">r</span> refresh • <span class="kbd">t</span> theme • <span class="kbd">p</span> print</span>
+      <span>Shortcuts: <span class="kbd">r</span> refresh • <span class="kbd">t</span> theme • <span class="kbd">p</span> print • <span class="kbd">g</span> KPIs</span>
     </div>
     <div class="muted">
       Build: <span id="build-env">local</span> • Run: <span id="build-run">—</span> • TS (UTC): <span id="build-ts">—</span>
@@ -163,11 +165,23 @@
         <div class="value" id="kpi-coverage" data-kpi="coverage">—</div>
         <div class="muted">COREL / σ calibration</div>
       </div>
+      <div class="kpi" role="listitem">
+        <div class="label">Avg Planet Runtime</div>
+        <div class="value" id="kpi-runtime" data-kpi="runtime">—</div>
+        <div class="muted">Wall time (s/planet)</div>
+      </div>
     </div>
+    <details class="fold" id="details-summary">
+      <summary>Summary snapshot (from <code>diagnostic_summary.json</code>)</summary>
+      <pre id="summary-json" class="muted" style="white-space:pre-wrap;overflow:auto;max-height:300px;">(pending)</pre>
+      <div class="hint">
+        <button class="btn" id="downloadSummaryBtn" aria-label="Download summary JSON">Download summary.json</button>
+        <button class="btn" id="downloadLogBtn" aria-label="Download CLI log JSON">Download log_table.json</button>
+      </div>
+    </details>
   </section>
 
   <!-- Quick links -->
-
   <section class="card span-12" aria-labelledby="sec-links">
     <h3 id="sec-links">Quick Links</h3>
     <div class="links">
@@ -179,7 +193,6 @@
   </section>
 
   <!-- Visuals -->
-
   <section class="card span-6" aria-labelledby="sec-umap">
     <h3 id="sec-umap">UMAP — Latent Clusters</h3>
     <div class="preview"><img alt="UMAP clusters (placeholder)" loading="lazy" data-asset="umap" src="./umap_clusters.png" /></div>
@@ -223,7 +236,6 @@
   </section>
 
   <!-- Recent CLI Calls -->
-
   <section class="card span-6" aria-labelledby="sec-cli">
     <h3 id="sec-cli">Recent CLI Calls</h3>
     <table class="table" aria-describedby="cli-desc">
@@ -239,7 +251,6 @@
   </section>
 
   <!-- How-To -->
-
   <section class="card span-12" aria-labelledby="sec-howto">
     <h3 id="sec-howto">Regenerate This Dashboard</h3>
     <ol>
@@ -267,6 +278,13 @@
   const qa = (sel, root=document) => Array.from(root.querySelectorAll(sel));
   const setText = (id, v) => { const el = document.getElementById(id); if(el) el.textContent = v; };
   const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+  const toDataURL = (obj, fname='file.json') => {
+    try {
+      const blob = new Blob([JSON.stringify(obj, null, 2)], {type:'application/json'});
+      const url = URL.createObjectURL(blob);
+      return { url, revoke: () => URL.revokeObjectURL(url), name: fname };
+    } catch { return null; }
+  };
 
   // Build metadata placeholders (generator can overwrite data-* on <html>)
   setText("build-env", htmlEl.getAttribute("data-build-env") || "local");
@@ -323,8 +341,10 @@
         if(!el) return;
         if(key === 'status'){
           if (typeof val === 'string') {
-            el.textContent = val.toUpperCase();
-            el.className = `pill ${val.toLowerCase()==='ok'?'ok':(val.toLowerCase()==='warn'?'warn':(val.toLowerCase()==='error'?'err':'ok'))}`;
+            const up = val.toUpperCase();
+            el.textContent = up;
+            const lvl = (/ERR|FAIL/).test(up)?'err':((/WARN/).test(up)?'warn':'ok');
+            el.className = `pill ${lvl}`;
           } else {
             el.textContent = (val?.text ?? 'OK');
             el.className = `pill ${val?.level ?? 'ok'}`;
@@ -346,7 +366,8 @@
           const when = row.when ?? '—';
           const cmd  = row.cmd ?? '';
           const status = row.status ?? 'OK';
-          const level  = row.level ?? (String(status).toLowerCase().startsWith('ok') ? 'ok' : (String(status).toLowerCase().includes('fail') ? 'err' : 'warn'));
+          const level  = row.level ?? (String(status).toLowerCase().startsWith('ok') ? 'ok' :
+                            (String(status).toLowerCase().includes('fail') ? 'err' : 'warn'));
           tr.innerHTML = `<td>${when}</td><td><code>${cmd}</code></td><td class="td-status"><span class="pill ${level}">${status}</span></td>`;
           tbody.appendChild(tr);
         });
@@ -391,6 +412,7 @@
           frame.loading = 'lazy';
           frame.title = key + ' interactive view';
           frame.setAttribute('aria-label', frame.title);
+          frame.setAttribute('sandbox', 'allow-scripts allow-same-origin'); // stays same-origin by CSP/COEP
           frame.style.width = '100%'; frame.style.height = '380px';
           frame.style.border = '1px solid var(--border)'; frame.style.borderRadius = '10px';
           img.parentElement.replaceChild(frame, img);
@@ -399,11 +421,23 @@
     });
   })();
 
-  // Auto-open helpers: ?open=report|readme
+  // Quick KPI override: ?kpi=key:val,key:val
+  (function handleKpiParam(){
+    const s = params.get('kpi'); if(!s) return;
+    const obj = {};
+    s.split(',').map(x=>x.trim()).filter(Boolean).forEach(pair=>{
+      const [k,...rest]=pair.split(':'); if(!k) return;
+      obj[k.trim()] = rest.join(':').trim();
+    });
+    if(Object.keys(obj).length) init({ kpi: obj });
+  })();
+
+  // Auto-open helpers: ?open=report|readme|kpis
   (function handleOpenParam(){
     const open = (params.get('open') || '').toLowerCase();
     if(open==='report'){ q('#openReport')?.click(); }
     if(open==='readme'){ q('#openReadme')?.click(); }
+    if(open==='kpis'){ document.getElementById('sec-overview')?.scrollIntoView({behavior:'smooth',block:'start'}); }
   })();
 
   // ---------- Optional autoloaders ----------
@@ -418,24 +452,35 @@
     }catch(_){ clearTimeout(to); return null; }
   }
 
+  // Hold fetched JSON for downloads
+  let _summaryJSON = null, _logJSON = null;
+
   async function autoload(){
     // diagnostic_summary.json
     const diag = await fetchIfExists('./diagnostic_summary.json', { timeout: 2500 });
     if(diag){
-      const status = (diag.status || 'OK').toUpperCase();
+      _summaryJSON = diag;
+      const status = (String(diag.status || 'OK')).toUpperCase();
       const level = (status.includes('FAIL')||status.includes('ERR')) ? 'err' : (status.includes('WARN')?'warn':'ok');
-      init({
-        kpi:{
-          status: { text: status, level },
-          gll: (diag.gll_delta ?? diag.gllDelta ?? '—'),
-          coverage: (diag.coverage ?? diag.conformal_coverage ?? '—')
-        }
-      });
+      const gll = (diag.gll_delta ?? diag.gllDelta ?? diag.metrics?.gll_delta ?? '—');
+      const coverage = (diag.coverage ?? diag.conformal_coverage ?? diag.metrics?.coverage ?? '—');
+      const runtime = (diag.avg_runtime ?? diag.runtime_per_planet ?? diag.metrics?.avg_runtime ?? '—');
+      init({ kpi:{ status:{ text:status, level }, gll, coverage, runtime }});
+
+      // Pretty-print snapshot (limited keys)
+      const snapshot = {
+        status, gll_delta:gll, coverage, avg_runtime: runtime,
+        seed: diag.seed ?? diag.config?.training?.seed ?? '—',
+        commit: diag.git?.commit ?? diag.commit ?? '—',
+        config_hash: diag.config_hash ?? '—'
+      };
+      const pre = q('#summary-json'); if(pre) pre.textContent = JSON.stringify(snapshot, null, 2);
     }
 
     // log_table.json
     const logs = await fetchIfExists('./log_table.json', { timeout: 2000 });
     if(logs && Array.isArray(logs.rows)){
+      _logJSON = logs;
       init({ tables: { cli: logs.rows.map(r => ({
         when: r.when || r.time || '—',
         cmd: r.command || r.cmd || '',
@@ -444,6 +489,18 @@
       }))}});
     }
   }
+
+  // Download buttons (create object URLs safely)
+  q('#downloadSummaryBtn')?.addEventListener('click', ()=>{
+    if(!_summaryJSON) return;
+    const file = toDataURL(_summaryJSON, 'diagnostic_summary.json'); if(!file) return;
+    const a = document.createElement('a'); a.href = file.url; a.download = file.name; a.click(); file.revoke();
+  });
+  q('#downloadLogBtn')?.addEventListener('click', ()=>{
+    if(!_logJSON) return;
+    const file = toDataURL(_logJSON, 'log_table.json'); if(!file) return;
+    const a = document.createElement('a'); a.href = file.url; a.download = file.name; a.click(); file.revoke();
+  });
 
   // Keyboard shortcuts: r (refresh), t (theme), p (print), g (jump to KPIs)
   document.addEventListener('keydown', (e)=>{
