@@ -1,224 +1,305 @@
-# .github/workflows/pip-audit.yml
+upgrade, # .github/workflows/pip-audit.yml
+
 # ==============================================================================
-# SpectraMind V50 — Dependency Vulnerability Scan (pip-audit)
-# Scans Python dependencies (Poetry or requirements.txt) for known CVEs using OSV
-# and uploads results to GitHub Code Scanning (SARIF). Runs on PRs, pushes, and
-# a weekly cron. Caches Poetry/pip to keep runs fast.
+
+# SpectraMind V50 — Dependency Vulnerability Scan (pip-audit • OSV/SARIF)
+
+# Scans Python dependencies for known CVEs using pip-audit and uploads SARIF to
+
+# GitHub Code Scanning. Supports Poetry (via export) and requirements.txt flows.
+
+# - Matrix across 3.10/3.11/3.12
+
+# - Cache pip, Poetry venv, and pipx home for speed
+
+# - Optional allowlist (IDs or file), optional strict failure gate
+
+# - Weekly cron + PRs/pushes + manual dispatch
+
 # ==============================================================================
 
 name: pip-audit
 
 on:
-  push:
-    branches: ["**"]
-    paths:
-      - "pyproject.toml"
-      - "poetry.lock"
-      - "requirements*.txt"
-      - "setup.cfg"
-      - "setup.py"
-      - ".github/workflows/pip-audit.yml"
-  pull_request:
-    branches: ["**"]
-    paths:
-      - "pyproject.toml"
-      - "poetry.lock"
-      - "requirements*.txt"
-      - "setup.cfg"
-      - "setup.py"
-      - ".github/workflows/pip-audit.yml"
-  schedule:
-    # Weekly, Monday 06:15 UTC
-    - cron: "15 6 * * 1"
-  workflow_dispatch:
-    inputs:
-      fail_on_vuln:
-        description: "Fail the job if vulnerabilities are found (true/false)"
-        required: false
-        default: "true"
-      ignore_file:
-        description: "Optional allowlist file passed as --ignore-vuln ID1 --ignore-vuln ID2 (space-separated IDs) OR a path to a file with one ID per line"
-        required: false
-        default: ""
+push:
+branches: \["**"]
+paths:
+\- "pyproject.toml"
+\- "poetry.lock"
+\- "requirements\*.txt"
+\- "setup.cfg"
+\- "setup.py"
+\- ".github/workflows/pip-audit.yml"
+pull\_request:
+branches: \["**"]
+paths:
+\- "pyproject.toml"
+\- "poetry.lock"
+\- "requirements\*.txt"
+\- "setup.cfg"
+\- "setup.py"
+\- ".github/workflows/pip-audit.yml"
+schedule:
+\# Weekly, Monday 06:15 UTC
+\- cron: "15 6 \* \* 1"
+workflow\_dispatch:
+inputs:
+fail\_on\_vuln:
+description: "Fail the job if vulnerabilities are found (true/false)"
+required: false
+default: "true"
+type: choice
+options: \["true", "false"]
+ignore\_file:
+description: "Optional allowlist: space-separated IDs or path to file (one ID per line)"
+required: false
+default: ""
+vuln\_service:
+description: "Vulnerability service (osv|pypi)"
+required: false
+default: "osv"
+type: choice
+options: \["osv", "pypi"]
 
 permissions:
-  contents: read
-  security-events: write   # required for SARIF upload
-  actions: read
+contents: read
+security-events: write   # required for SARIF upload
+actions: read
 
 concurrency:
-  group: pip-audit-${{ github.ref }}
-  cancel-in-progress: true
+group: pip-audit-\${{ github.ref }}
+cancel-in-progress: true
 
 jobs:
-  audit:
-    name: pip-audit • py${{ matrix.python-version }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+audit:
+name: pip-audit • py\${{ matrix.python-version }}
+runs-on: ubuntu-latest
+timeout-minutes: 25
 
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.10", "3.11", "3.12"]
+```
+strategy:
+  fail-fast: false
+  matrix:
+    python-version: ["3.10", "3.11", "3.12"]
 
-    env:
-      # Allow toggling failure behavior from dispatch input; default "true"
-      FAIL_ON_VULN: ${{ inputs.fail_on_vuln || 'true' }}
-      IGNORE_INPUT: ${{ inputs.ignore_file || '' }}
+env:
+  FAIL_ON_VULN: ${{ inputs.fail_on_vuln || 'true' }}
+  IGNORE_INPUT: ${{ inputs.ignore_file || '' }}
+  VULN_SERVICE: ${{ inputs.vuln_service || 'osv' }}
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+steps:
+  - name: Checkout
+    uses: actions/checkout@v4
 
-      - name: Set up Python ${{ matrix.python-version }}
-        id: setup-python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-          cache: "pip"
+  - name: Set up Python ${{ matrix.python-version }}
+    id: setup-python
+    uses: actions/setup-python@v5
+    with:
+      python-version: ${{ matrix.python-version }}
+      cache: "pip"
 
-      # -------------------- Detect project layout --------------------
-      - name: Detect dependency strategy
-        id: detect
-        run: |
-          set -euo pipefail
-          if [[ -f "pyproject.toml" ]] && grep -qi '\[tool.poetry\]' pyproject.toml; then
-            echo "mode=poetry" >> "$GITHUB_OUTPUT"
-          elif ls requirements*.txt >/dev/null 2>&1; then
-            echo "mode=requirements" >> "$GITHUB_OUTPUT"
-          else
-            echo "::warning::No Poetry (pyproject.toml with [tool.poetry]) or requirements*.txt found."
-            echo "mode=none" >> "$GITHUB_OUTPUT"
-          fi
+  - name: Cache pipx
+    uses: actions/cache@v4
+    with:
+      path: |
+        ~/.local/pipx
+        ~/.cache/pipx
+      key: pipx-${{ runner.os }}-py${{ matrix.python-version }}-${{ hashFiles('**/pyproject.toml', '**/poetry.lock', 'requirements*.txt') }}
+      restore-keys: |
+        pipx-${{ runner.os }}-py${{ matrix.python-version }}-
+        pipx-${{ runner.os }}-
 
-      # -------------------- Install dependencies (Poetry) --------------------
-      - name: Install Poetry
-        if: steps.detect.outputs.mode == 'poetry'
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install "poetry==1.8.3"
+  # -------------------- Detect project layout --------------------
+  - name: Detect dependency strategy
+    id: detect
+    run: |
+      set -euo pipefail
+      if [[ -f "pyproject.toml" ]] && grep -qi '^\[tool\.poetry\]' pyproject.toml; then
+        echo "mode=poetry" >> "$GITHUB_OUTPUT"
+      elif ls requirements*.txt >/dev/null 2>&1; then
+        echo "mode=requirements" >> "$GITHUB_OUTPUT"
+      else
+        echo "::notice::No Poetry or requirements*.txt detected; will audit current site-packages."
+        echo "mode=none" >> "$GITHUB_OUTPUT"
+      fi
 
-      - name: Cache Poetry virtualenv
-        if: steps.detect.outputs.mode == 'poetry'
-        uses: actions/cache@v4
-        with:
-          path: |
-            .venv
-            ~/.cache/pypoetry
-          key: poetry-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('**/poetry.lock') }}
-          restore-keys: |
-            poetry-${{ runner.os }}-${{ matrix.python-version }}-
+  # -------------------- Poetry path --------------------
+  - name: Install Poetry
+    if: steps.detect.outputs.mode == 'poetry'
+    run: |
+      python -m pip install --upgrade pip
+      python -m pip install "poetry==1.8.3"
 
-      - name: Poetry install (no dev)
-        if: steps.detect.outputs.mode == 'poetry'
-        run: |
-          poetry config virtualenvs.in-project true
-          poetry env use "${{ steps.setup-python.outputs.python-path }}"
-          poetry install --no-interaction --no-root --only main
+  - name: Cache Poetry virtualenv
+    if: steps.detect.outputs.mode == 'poetry'
+    uses: actions/cache@v4
+    with:
+      path: |
+        .venv
+        ~/.cache/pypoetry
+      key: poetry-${{ runner.os }}-py${{ matrix.python-version }}-${{ hashFiles('**/poetry.lock') }}
+      restore-keys: |
+        poetry-${{ runner.os }}-py${{ matrix.python-version }}-
+        poetry-${{ runner.os }}-
 
-      # -------------------- Install dependencies (requirements) --------------------
-      - name: Install requirements
-        if: steps.detect.outputs.mode == 'requirements'
-        run: |
-          python -m pip install --upgrade pip
-          # Install all requirement files in a stable order
-          for f in $(ls -1 requirements*.txt | sort); do
-            echo "Installing $f"
-            python -m pip install -r "$f"
+  - name: Poetry export → requirements (audit scope)
+    if: steps.detect.outputs.mode == 'poetry'
+    run: |
+      set -euo pipefail
+      poetry config virtualenvs.in-project true
+      poetry env use "${{ steps.setup-python.outputs.python-path }}"
+      # Install ONLY main deps so export resolves fully & deterministically
+      poetry install --no-interaction --only main --no-root
+      # Export lock to requirements format (hashes off to avoid overly strict pins)
+      poetry export -f requirements.txt --without-hashes -o requirements.audit.txt
+      echo "Exported requirements.audit.txt:"
+      head -n 20 requirements.audit.txt || true
+
+  # -------------------- requirements path --------------------
+  - name: Install requirements (for env audit)
+    if: steps.detect.outputs.mode == 'requirements'
+    run: |
+      set -euo pipefail
+      python -m pip install --upgrade pip
+      # Install all requirement files in a stable order
+      for f in $(ls -1 requirements*.txt | sort); do
+        echo "Installing: $f"
+        python -m pip install -r "$f"
+      done
+
+  # -------------------- Install pipx + pip-audit --------------------
+  - name: Install pipx and pip-audit
+    run: |
+      set -euo pipefail
+      python -m pip install --upgrade pip pipx
+      python -m pipx ensurepath
+      # shellcheck disable=SC1091
+      . "${HOME}/.local/bin/_pipx_bin_dir" 2>/dev/null || true
+      pipx install pip-audit || pipx upgrade pip-audit
+      pipx run pip-audit --version || true
+
+  # -------------------- Build pip-audit args (ignore list / service) -------------
+  - name: Prepare pip-audit options
+    id: opts
+    shell: bash
+    run: |
+      set -euo pipefail
+      IGNORE_ARGS=()
+      if [[ -n "${IGNORE_INPUT}" ]]; then
+        if [[ -f "${IGNORE_INPUT}" ]]; then
+          while IFS= read -r vid; do
+            [[ -z "$vid" ]] && continue
+            IGNORE_ARGS+=("--ignore-vuln" "$vid")
+          done < "${IGNORE_INPUT}"
+        else
+          for vid in ${IGNORE_INPUT}; do
+            IGNORE_ARGS+=("--ignore-vuln" "$vid")
           done
+        fi
+      fi
+      # Vulnerability service (default OSV)
+      SERVICE_ARG=()
+      if [[ "${VULN_SERVICE}" == "osv" ]]; then
+        SERVICE_ARG=(--vulnerability-service osv)
+      elif [[ "${VULN_SERVICE}" == "pypi" ]]; then
+        SERVICE_ARG=(--vulnerability-service pypi)
+      fi
 
-      # -------------------- Install pip-audit via pipx (isolated) --------------------
-      - name: Install pipx and pip-audit
-        run: |
-          python -m pip install --upgrade pip pipx
-          python -m pipx ensurepath
-          # shellcheck disable=SC1091
-          . "${HOME}/.local/bin/_pipx_bin_dir" 2>/dev/null || true
-          pipx install pip-audit
+      printf 'args=%s\n' "${IGNORE_ARGS[*]} ${SERVICE_ARG[*]}" >> "$GITHUB_OUTPUT"
 
-      # -------------------- Build pip-audit args (ignore list / strict) --------------------
-      - name: Prepare pip-audit options
-        id: opts
-        shell: bash
-        run: |
-          set -euo pipefail
-          IGNORE_ARGS=()
-          if [[ -n "${IGNORE_INPUT}" ]]; then
-            if [[ -f "${IGNORE_INPUT}" ]]; then
-              while IFS= read -r vid; do
-                [[ -z "$vid" ]] && continue
-                IGNORE_ARGS+=("--ignore-vuln" "$vid")
-              done < "${IGNORE_INPUT}"
-            else
-              # treat input as space-separated IDs
-              for vid in ${IGNORE_INPUT}; do
-                IGNORE_ARGS+=("--ignore-vuln" "$vid")
-              done
-            fi
-          fi
-          printf 'args=%s\n' "${IGNORE_ARGS[*]}" >> "$GITHUB_OUTPUT"
+  # -------------------- Run pip-audit (SARIF) --------------------
+  - name: Run pip-audit (Poetry export)
+    if: steps.detect.outputs.mode == 'poetry'
+    shell: bash
+    run: |
+      set -euo pipefail
+      ARGS="${{ steps.opts.outputs.args }}"
+      # Audit the exported requirements list for more precise dependency graph
+      pipx run pip-audit --progress-spinner=off \
+        --format sarif -o audit.sarif \
+        --requirement requirements.audit.txt $ARGS
+    continue-on-error: ${{ env.FAIL_ON_VULN == 'false' }}
 
-      # -------------------- Run pip-audit (SARIF) --------------------
-      - name: Run pip-audit (Poetry lockfile)
-        if: steps.detect.outputs.mode == 'poetry'
-        shell: bash
-        run: |
-          set -euo pipefail
-          # Prefer auditing the lock file directly for accuracy
-          pipx run pip-audit --progress-spinner=off \
-            --format sarif -o audit.sarif \
-            --dry-run --requirement ./poetry.lock ${ { steps.opts.outputs.args } }
-        continue-on-error: ${{ env.FAIL_ON_VULN == 'false' }}
+  - name: Run pip-audit (installed environment)
+    if: steps.detect.outputs.mode == 'requirements'
+    shell: bash
+    run: |
+      set -euo pipefail
+      ARGS="${{ steps.opts.outputs.args }}"
+      # Audit the current environment (what ships)
+      pipx run pip-audit --progress-spinner=off \
+        --format sarif -o audit.sarif $ARGS
+    continue-on-error: ${{ env.FAIL_ON_VULN == 'false' }}
 
-      - name: Run pip-audit (installed environment / requirements)
-        if: steps.detect.outputs.mode == 'requirements'
-        shell: bash
-        run: |
-          set -euo pipefail
-          # Audit current environment (what will ship)
-          pipx run pip-audit --progress-spinner=off \
-            --format sarif -o audit.sarif ${ { steps.opts.outputs.args } }
-        continue-on-error: ${{ env.FAIL_ON_VULN == 'false' }}
+  - name: Run pip-audit (fallback — site-packages)
+    if: steps.detect.outputs.mode == 'none'
+    shell: bash
+    run: |
+      set -euo pipefail
+      ARGS="${{ steps.opts.outputs.args }}"
+      echo "::notice::Auditing current interpreter site-packages (no manifests found)."
+      pipx run pip-audit --progress-spinner=off \
+        --format sarif -o audit.sarif $ARGS
+    continue-on-error: ${{ env.FAIL_ON_VULN == 'false' }}
 
-      - name: Run pip-audit (fallback - no manifests)
-        if: steps.detect.outputs.mode == 'none'
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "::notice::No dependency manifests found; auditing current interpreter site-packages."
-          pipx run pip-audit --progress-spinner=off \
-            --format sarif -o audit.sarif ${ { steps.opts.outputs.args } }
-        continue-on-error: ${{ env.FAIL_ON_VULN == 'false' }}
+  # -------------------- Upload SARIF to GitHub code scanning --------------------
+  - name: Upload SARIF results
+    if: always()
+    uses: github/codeql-action/upload-sarif@v3
+    with:
+      sarif_file: audit.sarif
+      category: pip-audit
 
-      # -------------------- Upload SARIF to GitHub code scanning --------------------
-      - name: Upload SARIF results
-        if: always()
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: audit.sarif
-          category: pip-audit
+  # -------------------- Enforce failure on vulnerabilities (optional strict) -----
+  - name: Enforce failure on vulnerabilities
+    if: ${{ env.FAIL_ON_VULN == 'true' }}
+    shell: bash
+    run: |
+      set -euo pipefail
+      if ! test -s audit.sarif; then
+        echo "::warning::No audit.sarif produced — treating as pass."
+        exit 0
+      fi
+      COUNT=$(jq '[.runs[].results[]] | length' audit.sarif 2>/dev/null || echo 0)
+      echo "Findings: ${COUNT}"
+      if [[ "${COUNT}" -gt 0 ]]; then
+        echo "::error::Vulnerabilities were found by pip-audit. See Code Scanning alerts."
+        exit 1
+      fi
+      echo "No vulnerabilities found by pip-audit."
 
-      # -------------------- Fail if vulnerabilities were found (optional strict) --------------------
-      - name: Enforce failure on vulnerabilities
-        if: ${{ env.FAIL_ON_VULN == 'true' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          # If SARIF contains any results, fail
-          if jq -e '.runs[].results | length > 0' audit.sarif >/dev/null 2>&1; then
-            echo "::error::Vulnerabilities were found by pip-audit. See code scanning alerts."
-            exit 1
+  # -------------------- Artifacts + Summary -------------------------------------
+  - name: Upload audit artifact
+    if: always()
+    uses: actions/upload-artifact@v4
+    with:
+      name: pip-audit-py${{ matrix.python-version }}
+      path: |
+        audit.sarif
+        requirements.audit.txt
+      if-no-files-found: ignore
+      retention-days: 14
+
+  - name: Summary
+    if: always()
+    shell: bash
+    run: |
+      {
+        echo "### pip-audit Summary (py${{ matrix.python-version }})"
+        if test -f audit.sarif; then
+          COUNT=$(jq '[.runs[].results[]] | length' audit.sarif 2>/dev/null || echo 0)
+          echo "- Findings: ${COUNT}"
+          echo "- Service : \`${{ env.VULN_SERVICE }}\`"
+          echo "- Strict  : \`${{ env.FAIL_ON_VULN }}\`"
+          if test -f requirements.audit.txt; then
+            echo "- Mode    : poetry (exported requirements)"
+          elif [[ "${{ steps.detect.outputs.mode }}" == "requirements" ]]; then
+            echo "- Mode    : requirements (env audit)"
           else
-            echo "No vulnerabilities found by pip-audit."
+            echo "- Mode    : none (site-packages)"
           fi
-
-      # -------------------- Summarize --------------------
-      - name: Summary
-        if: always()
-        run: |
-          echo "pip-audit completed for Python ${{ matrix.python-version }}."
-          if test -f audit.sarif; then
-            echo "SARIF report generated: audit.sarif"
-          else
-            echo "No SARIF produced."
-          fi
+        else
+          echo "- No SARIF produced."
+        fi
+      } >> "$GITHUB_STEP_SUMMARY"
+```
