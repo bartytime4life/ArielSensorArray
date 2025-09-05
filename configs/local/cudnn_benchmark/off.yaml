@@ -1,13 +1,36 @@
 # ==============================================================================
-# 🚫 cuDNN Autotune — Disabled
+# 🚫 cuDNN Autotune — Disabled (v1.2)
 # ------------------------------------------------------------------------------
-# Purpose:
-#   • Deterministic execution (no kernel search).
-#   • Good for reproducibility and debugging.
+# Purpose
+#   • Enforce deterministic kernel execution (no autotune search).
+#   • Prioritize reproducibility and auditability over raw speed.
+#   • Useful for debugging, CI validation, and scientific diagnostics.
+# ------------------------------------------------------------------------------
+# Trade-offs
+#   • ✅ Reproducibility: Kernel choices are fixed → run-to-run bitwise stability.
+#   • ✅ Debugging: Easier to compare across hardware/driver versions.
+#   • ❌ Performance: Throughput is reduced, especially if input shapes vary.
+#   • ❌ Not recommended for leaderboard-scale training due to runtime cost.
 # ==============================================================================
-
 cudnn_benchmark: false
 
+# ------------------------------------------------------------------------------
+# Extended Controls (optional)
+# ------------------------------------------------------------------------------
+# deterministic: true        # ensure all torch/cuDNN kernels use deterministic paths
+# allow_tf32: false          # (Ampere+) force-disable TensorFloat32 for strict FP32
+# torch_compile_deterministic: true   # (PyTorch ≥2.2) enforce compile-time determinism
+
+# ------------------------------------------------------------------------------
+# 📓 Notes
+# ------------------------------------------------------------------------------
 notes: |
-  cuDNN autotuner disabled: fixed kernel selection, fully reproducible.
-  Slower for varying input shapes, but guarantees stable kernel choice.
+  cuDNN autotuner disabled → fixed kernel selection.
+  
+  • Guarantees reproducible results across runs, GPUs, and driver versions.
+  • Best for: CI pipelines, ablations, symbolic diagnostics, or reproducibility audits.
+  • Expect slower training when input shapes are constant (benchmarking skipped).
+  • Combine with `local/precision/strict_deterministic.yaml` for full audit mode.
+
+  ✅ Recommended: CI, audits, scientific debugging
+  ❌ Avoid: Kaggle leaderboard runs, long training with static shapes
