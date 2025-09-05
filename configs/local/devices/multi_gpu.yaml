@@ -1,16 +1,80 @@
+# configs/trainer/multi_gpu.yaml
 # ==============================================================================
-# 🖥️🖥️ Local Devices — Multi-GPU profile
+# 🧩 Trainer — Multi-GPU (DDP) strategy
 # ------------------------------------------------------------------------------
 # Purpose:
-#   - Designed for local multi-GPU rigs (≥2 GPUs).
-#   - Use with trainer=multi_gpu + local=hpc.
+#   - Orchestrate distributed training across 2–8 GPUs using DDP.
+#   - Pairs with local/devices/{multi_gpu,hpc_a100}.yaml.
+#   - Keeps hardware/precision decisions in local/* profiles.
+# Notes:
+#   - Assumes torchrun/Lightning/DDP launcher (no SLURM specifics baked in).
+#   - Safe defaults for large runs; override via CLI when needed.
+#     e.g., spectramind train trainer=multi_gpu local=hpc local.devices=8 training.max_epochs=120
 # ==============================================================================
 
-_target_: torch.device
-devices: 4               # override via CLI: local.devices=2, local.devices=8
-strategy: ddp            # DistributedDataParallel
-sync_batchnorm: true
-precision: bf16-mixed
-deterministic: false     # allow nondeterminism for speed
-cudnn_benchmark: true
-notes: "For multi-GPU HPC rigs (A100s, V100s, etc.)."
+# ---- Distributed strategy ----
+strategy: ddp                   # DDP for multi-GPU
+find_unused_parameters: false   # perf: avoid graph traversal if model is well-formed
+sync_batchnorm: true            # enable SyncBN across ranks (paired with local/*)
+
+# ---- Device orchestration (left to local/* for count/precision) ----
+# devices: <set in local/devices/*.yaml>
+# precision: <set in local/devices/*.yaml>
+
+# ---- Performance & stability ----
+accumulate_grad_batches: 1      # override via CLI (e.g., =2) if you need higher effective batch
+gradient_clip_val: 1.0          # protect from exploding grads
+gradient_clip_algorithm: norm
+
+# cudnn/mixed-precision/kernel autotuning toggles live in local/*:
+#   deterministic, cudnn_benchmark, precision (16/bf16-mixed)
+
+# ---- Dataloader/step pacing (sane defaults; tune per workload) ----
+log_every_n_steps: 50
+val_check_interval: 1.0         # validate each epoch (can be fractional for intra-epoch val)
+check_val_every_n_epoch: 1
+enable_progress_bar: true
+
+# ---- Epochs & early stopping (override in config or CLI) ----
+max_epochs: 100                 # typical ceiling; set lower/higher per experiment
+min_epochs: 1
+
+# ---- Reproducibility & seeds (global seed typically set in local/* or root cfg) ----
+deterministic: null             # honor local/*; set true/false there
+
+# ---- Timeouts / runtime guards (Kaggle/HPC safety) ----
+timeout_hours: null             # set in local/devices/kaggle_*.yaml if needed
+
+# ---- Checkpointing (Lightning-style; adapt if you use your own trainer) ----
+enable_checkpointing: true
+save_top_k: 3                   # keep best N by monitored metric
+monitor: "val/gll"              # default metric key; adjust to your pipeline
+mode: "min"                     # GLL: lower is better
+every_n_epochs: 1
+save_last: true
+
+# ---- Logging hooks (your logger config lives elsewhere; these flags are trainer-level) ----
+enable_model_summary: true
+
+# ---- Fault tolerance / restart friendliness ----
+num_sanity_val_steps: 2         # quick sanity check of val loop on rank 0
+reload_dataloaders_every_n_epochs: 0
+
+# ---- Launcher hints (documented, not enforced) ----
+# Run locally with torchrun (example for 4 GPUs):
+#   torchrun --standalone --nproc_per_node=4 \
+#     -m spectramind.cli_core_v50 train trainer=multi_gpu local=hpc local.devices=4
+#
+# Under SLURM, export MASTER_ADDR/PORT, WORLD_SIZE, RANK (your cluster wrapper should set these).
+#
+# If you use PyTorch Lightning Trainer directly in code, map these keys as:
+#   Trainer(
+#     accelerator="gpu",
+#     devices=<from local/*>,
+#     strategy="ddp",
+#     sync_batchnorm=True,
+#     accumulate_grad_batches=...,
+#     gradient_clip_val=...,
+#     max_epochs=...,
+#     ...
+#   )
