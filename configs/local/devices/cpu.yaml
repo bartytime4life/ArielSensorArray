@@ -1,15 +1,47 @@
 # ==============================================================================
-# 🖥️ Local Devices — CPU-only profile
+# 🖥️ Local Devices — CPU-only profile (SpectraMind V50)
 # ------------------------------------------------------------------------------
 # Purpose:
-#   - Force training/inference on CPU (useful for portability tests and CI).
-#   - Typically combined with local=default or local=debug profiles.
+#   • Force training/inference on CPU (for portability tests, CI smoke, or
+#     constrained environments with no GPU).
+#   • Typically combined with local=default or local=debug profiles.
+#
+# Usage:
+#   spectramind train local=devices/cpu
+#
+# Notes:
+#   • Disables CUDA entirely (torch.device('cpu')).
+#   • Runs deterministically (cudnn disabled, seeds fixed).
+#   • Slower than GPU but fully reproducible.
 # ==============================================================================
 
 _target_: torch.device
+
+# Explicit device request
 devices: cpu
 
-precision: 32            # float32 for numerical stability
-deterministic: true
-cudnn_benchmark: false
-notes: "For portability/CI smoke tests — disables CUDA entirely."
+# Precision control
+precision: 32              # float32 for numerical stability
+deterministic: true        # enforce deterministic ops where possible
+cudnn_benchmark: false     # cudnn not used on CPU
+
+# Runtime guardrails
+max_threads: 4             # cap OpenMP threads for CI parity (override as needed)
+intraop_threads: 2         # PyTorch intra-op parallelism
+interop_threads: 2         # PyTorch inter-op parallelism
+
+# Reproducibility
+seed: 42
+numpy_seed: 42
+pythonhashseed: 0
+
+# Diagnostics
+log_device_info: true      # print torch.device + threads on startup
+profile_runtime: false     # set true to collect per-op timings in CPU mode
+
+# Metadata
+notes: |
+  CPU-only profile for portability and CI smoke tests.
+  - No CUDA context initialized.
+  - Good for fast_dev_run, deterministic validation, and GitHub Actions.
+  - Expect significantly slower runtimes vs GPU.
