@@ -25,9 +25,10 @@
 defaults:
   # Environment/hardware/precision/seed
   - local: default                 # environment (paths, workers, etc.)
-  - local/devices: kaggle_t4       # {cpu|single_g gpu|multi_g gpu|kaggle_t4|kaggle_a10|kaggle_l4|hpc_a100}
+  - local/devices: kaggle_t4       # {cpu|single_gpu|multi_gpu|kaggle_t4|kaggle_a10|kaggle_l4|hpc_a100}
   - local/precision: 16-mixed      # {32|16-mixed|bf16-mixed|64}
   - local/seed: default            # {default|fast|random|kaggle}
+  - local/prefetch_factor: default # {default|fast|debug|heavy}
 
   # Core pipeline groups
   - data: nominal                  # data/{nominal|kaggle|debug}.yaml
@@ -53,7 +54,7 @@ experiment:
   tag: "baseline"
   description: "V50 baseline: FGS1-Mamba + AIRS-GNN, GLL loss + optional priors"
   seed: ${seed}                    # reflect selected seed profile
-  deterministic: ${deterministic}  # sourced from seed profile
+  deterministic: ${deterministic}  # sourced from seed/precision profiles
   cudnn_benchmark: ${cudnn_benchmark}
 
 # ----------------------------------------------------------------------
@@ -95,7 +96,7 @@ data:
   eval_batch_size: 64
   num_workers: 4
   pin_memory: true
-  prefetch_factor: 2
+  prefetch_factor: ${prefetch_factor}   # wired to local/prefetch_factor group
   persistent_workers: true
 
 # ----------------------------------------------------------------------
@@ -256,6 +257,7 @@ cli:
 #  • Switch groups on the CLI, e.g.:
 #      local/devices=cpu | single_gpu | kaggle_t4 | kaggle_a10 | hpc_a100
 #      local/precision=32 | 16-mixed | bf16-mixed | 64
+#      local/prefetch_factor=default | fast | debug | heavy
 #      local/seed=default | fast | random | kaggle
 #  • Increase epochs + enable uncertainty.calibration.corel for leaderboard pushes.
 #  • For smoke/CI runs, override:
