@@ -2,18 +2,26 @@
 # 🛰️ SpectraMind V50 — Gradient Accumulation (TEST/INFERENCE)
 # ------------------------------------------------------------------------------
 # Purpose:
-#   • Test/inference phase does not use backward passes.
-#   • Accumulation setting has no effect but preserved for Hydra consistency.
-#
+#   • Test/inference phase does not perform backward passes or optimizer steps.
+#   • Gradient accumulation factor has no computational effect.
+#   • Retained for Hydra completeness and symmetry with training/validation knobs.
+# ------------------------------------------------------------------------------
 # When to Use
-#   • 🚫 Always 1 — no gradients in inference.
-#   • ✅ Included to keep interface uniform across all phases.
+#   • 🚫 Default: 1 — always one batch per step (no accumulation needed).
+#   • ✅ Only adjust >1 for:
+#       – Debugging config overrides in CI.
+#       – Ensuring Hydra sweep consistency across all phases.
+#   • ⚠️ Does not alter effective batch size — governed solely by `eval_batch_size`.
 # ==============================================================================
 
 accumulate_grad_batches: 1
 
 notes: |
-  Test/inference loaders:
-  • No backprop → accumulation unused.
-  • Kept for reproducibility and Hydra group symmetry.
-  • Avoid confusion: effective batch size = eval_batch_size, not controlled here.
+  Test/Inference loaders:
+  • No gradient updates → accumulation setting is inert.
+  • Always keep =1 for clarity and to avoid confusion.
+  • Effective batch size is determined exclusively by `data.eval_batch_size`.
+  • This knob exists to preserve Hydra group symmetry and reproducibility:
+      – Prevents special-case handling in CLI/configs.
+      – Ensures logs (`v50_debug_log.md`) record consistent keys across phases.
+  • Safe for CI smoke tests and Kaggle leaderboard runs.
