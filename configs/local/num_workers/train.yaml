@@ -1,25 +1,34 @@
 # ==============================================================================
-# ⚙️ DataLoader Workers — Training
+# ⚙️ DataLoader Workers — Training (v1.2)
 # ------------------------------------------------------------------------------
 # Purpose
 #   • Configure number of worker threads for training dataloaders.
-#   • Balance throughput vs. determinism across GPU/CPU environments.
-#   • Hydra-safe override, isolated from validation/test settings.
+#   • Balance throughput vs. determinism across Kaggle, HPC, and CI environments.
+#   • Hydra-safe override, isolated from validation/test worker configs.
+# ------------------------------------------------------------------------------
+# Trade-offs
+#   • ⚡ Throughput: More workers overlap CPU preprocessing with GPU compute.
+#   • ❌ Risk: Too many workers → high memory use, watchdog resets (esp. on Kaggle).
+#   • 🔒 Reproducibility: num_workers=0 ensures bitwise reproducibility in CI/audits.
 # ==============================================================================
 
-num_workers: 4   # default; adjust for Kaggle/HPC runtime
+num_workers: 4   # safe default; tune for Kaggle/HPC runtime
 
 # ------------------------------------------------------------------------------
-# Notes
+# Extended Controls (optional, if trainer supports)
 # ------------------------------------------------------------------------------
-# • Workers handle background data loading and preprocessing.
-# • More workers → higher throughput, but higher CPU/memory use.
-# • Too many workers on Kaggle kernels may cause OOM or watchdog restarts.
-# • 4 workers is usually safe; tune upward (8–16) on HPC with more cores.
-# • For strict reproducibility (CI), prefer num_workers=0.
-# ==============================================================================
+# prefetch_factor: 2        # batches prefetched per worker (default=2)
+# persistent_workers: true  # keep workers alive across epochs (improves stability)
+# pin_memory: true          # pin host memory for faster GPU transfer
+
+# ------------------------------------------------------------------------------
+# 📓 Notes
+# ------------------------------------------------------------------------------
 notes: |
   Training dataloader workers.
-  • Use 0 for reproducibility/debug.
-  • Use 2–4 for Kaggle kernels (safe under 9h limit).
-  • Use 8–16 for HPC clusters if CPU allows.
+
+  • Use 0 → strict reproducibility/debug mode (CI, audits, symbolic tracing).
+  • Use 2–4 → Kaggle kernels (safe under 9h runtime, avoids watchdog OOM).
+  • Use 8–16 → HPC clusters with abundant CPU cores for max throughput.
+  • Monitor CPU/RAM utilization: excessive workers can degrade stability.
+  • For reproducibility-sensitive experiments, always log worker count in run manifest.
