@@ -2,14 +2,31 @@
 # 🚀 Precision — BF16 Automatic Mixed Precision (AMP)
 # ------------------------------------------------------------------------------
 # Purpose:
-#   • Preferred on A100/H100-class GPUs.
-#   • Wider exponent range than FP16 → fewer overflows, stable training.
+#   • Preferred on A100/H100-class GPUs (Ampere/Hopper architectures).
+#   • Wider exponent range than FP16 → fewer overflows, more stable training.
+#   • Balances throughput and robustness; ideal for cloud/HPC clusters.
 # ==============================================================================
 
-precision: bf16-mixed
-deterministic: true
-cudnn_benchmark: true
+precision:
+  amp: "bf16-mixed"      # Lightning/Trainer-friendly string for AMP
+  amp_backend: "native"  # use PyTorch native AMP backend
+  amp_level: "O1"        # safe mixed precision level (ignored if not applicable)
+  grad_clip: 1.0         # gradient clipping (essential in mixed precision)
+  loss_scaler: null      # BF16 does not need dynamic scaling (unlike FP16)
+
+deterministic: true       # cudnn_deterministic=True → repeatable runs
+cudnn_benchmark: true     # allow autotuned kernels (safe if input shapes fixed)
+enable_tf32: false        # disable TF32 to preserve reproducibility
+
+nan_monitor: true         # stop run on NaN/Inf detection in loss/gradients
+seed_everything: 42       # enforce seeds across torch/numpy/random for auditability
 
 notes: |
-  BF16 AMP: robust mixed precision with excellent stability on Ampere/Hopper.
-  Recommended for A100/H100 clusters and modern cloud/HPC nodes.
+  BF16 AMP:
+  • Best for A100/H100 GPUs (and future Hopper/Grace clusters).
+  • Much wider exponent range vs FP16 → minimizes overflows/underflows.
+  • More stable than FP16 while maintaining mixed-precision throughput.
+  • Retains ~FP32 dynamic range, making it robust for physics/symbolic tasks.
+  • Recommended for cloud/HPC training jobs where determinism + stability matter.
+  • Kaggle GPUs (T4/V100/L4) may not support BF16; fallback to FP16/FP32 if needed.
+  • For numerical audits or symbolic rule validation, use float64 (see precision=float64).
