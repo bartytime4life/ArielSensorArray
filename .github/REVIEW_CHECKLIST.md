@@ -12,6 +12,8 @@ Mark ✅ = pass, ❌ = fail, ⚠️ = needs clarification.
 |-------|--------|
 | PR title imperative & concise | ☐ |
 | Linked to issue(s)/milestones | ☐ |
+| Labels applied (area, type, CI, docs) | ☐ |
+| Author followed PR template | ☐ |
 
 ---
 
@@ -20,6 +22,7 @@ Mark ✅ = pass, ❌ = fail, ⚠️ = needs clarification.
 |-------|--------|
 | Rationale clear & scientific context provided | ☐ |
 | Impact on μ/σ, GLL, calibration, runtime, symbolic rules explained | ☐ |
+| Alignment with Kaggle 9h runtime & rules stated | ☐ |
 
 ---
 
@@ -30,6 +33,8 @@ Mark ✅ = pass, ❌ = fail, ⚠️ = needs clarification.
 | Hydra config diffs shown, no hidden constants | ☐ |
 | DVC stages updated & `dvc repro` passes | ☐ |
 | Run hash recorded in `v50_debug_log.md` | ☐ |
+| Config hash updated in `run_hash_summary_v50.json` | ☐ |
+| Selftest passes locally (`spectramind selftest`) | ☐ |
 
 ---
 
@@ -39,6 +44,8 @@ Mark ✅ = pass, ❌ = fail, ⚠️ = needs clarification.
 | Metrics table filled (baseline vs new) | ☐ |
 | Dashboard/plots attached (HTML, UMAP/t-SNE, FFT, GLL heatmap) | ☐ |
 | Symbolic/physics rules respected (smoothness, nonnegativity, priors) | ☐ |
+| Calibration diagnostics included (σ vs residuals, COREL coverage) | ☐ |
+| Reproducibility evidence provided (seed, config, commit) | ☐ |
 
 ---
 
@@ -48,6 +55,7 @@ Mark ✅ = pass, ❌ = fail, ⚠️ = needs clarification.
 | Breaking changes listed (CLI/config/schema) | ☐ |
 | Migration/fallback path documented | ☐ |
 | Risk assessment & mitigation provided | ☐ |
+| Kaggle notebook parity checked (if applicable) | ☐ |
 
 ---
 
@@ -58,6 +66,7 @@ Mark ✅ = pass, ❌ = fail, ⚠️ = needs clarification.
 | `spectramind selftest --fast/--deep` passes | ☐ |
 | CI smoke run passes | ☐ |
 | Determinism checked (seeds consistent) | ☐ |
+| Reproducibility verified with DVC artifacts | ☐ |
 
 ---
 
@@ -67,6 +76,7 @@ Mark ✅ = pass, ❌ = fail, ⚠️ = needs clarification.
 | Runtime ≤ 9h Kaggle limit | ☐ |
 | Memory/VRAM within container limits | ☐ |
 | Variance across seeds acceptable | ☐ |
+| Benchmark results compared vs baseline | ☐ |
 
 ---
 
@@ -76,6 +86,7 @@ Mark ✅ = pass, ❌ = fail, ⚠️ = needs clarification.
 | No secrets/keys in code/configs | ☐ |
 | New deps/actions pinned to versions/SHAs | ☐ |
 | Licenses respected, no PII introduced | ☐ |
+| Security scans (bandit, pip-audit, codeql, trivy) pass | ☐ |
 
 ---
 
@@ -86,6 +97,7 @@ Mark ✅ = pass, ❌ = fail, ⚠️ = needs clarification.
 | CLI `--help` accurate | ☐ |
 | Configs commented inline | ☐ |
 | CHANGELOG updated | ☐ |
+| Architecture diagrams/figures updated (if relevant) | ☐ |
 
 ---
 
@@ -96,8 +108,9 @@ Mark ✅ = pass, ❌ = fail, ⚠️ = needs clarification.
 | Run hash tagged & artifacts published | ☐ |
 | Dashboard backfilled & linked | ☐ |
 | Stakeholders notified / issues closed | ☐ |
+| Kaggle notebook sync validated (if applicable) | ☐ |
 
 ---
 
 ### 🔭 Mission Reminder
-**Every PR must be reproducible, validated, and scientifically safe before merge.**
+**Every PR must be reproducible, validated, Kaggle-compliant, and scientifically safe before merge.**
