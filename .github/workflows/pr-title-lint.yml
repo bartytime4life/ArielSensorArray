@@ -1,112 +1,171 @@
-# .github/workflows/pr-title-lint.yml
+upgrade, # .github/workflows/pr-title-lint.yml
+
 # ==============================================================================
-# SpectraMind V50 — PR Title Lint (Conventional Commits)
-# Validates pull request titles against Conventional Commits.
+
+# SpectraMind V50 — PR Title Lint (Conventional Commits + extras)
+
+# Validates pull request titles against Conventional Commits and enforces a few
+
+# additional hygiene rules (no trailing spaces, reasonable length).
+
 # Examples:
-#   feat(model): add SSM+GNN fusion head
-#   fix(cli): handle missing Hydra overrides
-#   docs(readme): add quickstart
-#   perf(training)!: cache dataloader between folds
+
+# feat(model): add SSM+GNN fusion head
+
+# fix(cli): handle missing Hydra overrides
+
+# docs(readme): add quickstart
+
+# perf(training)!: cache dataloader between folds
+
+# Notes:
+
+# • Fork-safe: uses pull\_request\_target with minimal perms
+
+# • Adds an explicit length check (<= 72 chars) and trims whitespace guidance
+
+# • Skips when PR is draft or labeled `skip-pr-title-lint`
+
 # ==============================================================================
 
 name: PR Title Lint
 
 on:
-  pull_request_target:
-    types: [opened, edited, reopened, synchronize, ready_for_review]
+pull\_request\_target:
+types: \[opened, edited, reopened, synchronize, ready\_for\_review]
 
-# This workflow needs to post a status/check and (optionally) a guidance comment.
 permissions:
-  contents: read
-  pull-requests: write
-  checks: write
+contents: read
+pull-requests: write
+checks: write
 
 concurrency:
-  group: pr-title-lint-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: true
+group: pr-title-lint-\${{ github.event.pull\_request.number || github.run\_id }}
+cancel-in-progress: true
 
 jobs:
-  lint:
-    name: Check PR title (Conventional Commits)
-    runs-on: ubuntu-latest
+lint:
+name: Check PR title (Conventional Commits)
+runs-on: ubuntu-latest
 
-    steps:
-      - name: Validate PR title with conventional-commits
-        id: cc
-        uses: amannn/action-semantic-pull-request@v5
-        with:
-          # Allowed types (one per line)
-          types: |
-            feat
-            fix
-            perf
-            refactor
-            docs
-            style
-            test
-            build
-            ci
-            chore
-            revert
-          # Common scopes for this repo (optional; leave empty to allow any)
-          scopes: |
-            core
-            data
-            model
-            training
-            calibration
-            diagnostics
-            cli
-            infra
-            ci
-            deps
-            docs
-            utils
-          # Allow titles without a scope (e.g., "docs: update readme")
-          requireScope: false
-          # Subject should start lowercase (no leading capital) and not end with a period.
-          subjectPattern: '^(?![A-Z]).+[^.\s]$'
-          subjectPatternError: >
-            The subject must start lowercase and must not end with a period.
-          # Consider a single-commit PR’s commit message as the title if the PR title looks auto-generated.
-          validateSingleCommit: true
-          # Labels that, if present, will skip linting (use sparingly).
-          ignoreLabels: |
-            bot
-            skip-pr-title-lint
-          # Treat "WIP" / draft style prefixes as invalid; use GitHub Draft PRs instead.
-          wip: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+````
+steps:
+  - name: Guard — skip for drafts / explicit skip label
+    id: guard
+    uses: actions/github-script@v7
+    with:
+      script: |
+        const pr = context.payload.pull_request;
+        let skip = false;
+        if (!pr) skip = true;
+        if (pr?.draft) skip = true;
+        const labels = (pr?.labels || []).map(l => (l.name || '').toLowerCase());
+        if (labels.includes('skip-pr-title-lint')) skip = true;
+        core.setOutput('skip', skip ? 'true' : 'false');
 
-      - name: Comment with guidance on failure
-        if: failure()
-        uses: peter-evans/create-or-update-comment@v4
-        with:
-          issue-number: ${{ github.event.pull_request.number }}
-          edit-mode: replace
-          body: |
-            ❌ **PR title does not follow [Conventional Commits](https://www.conventionalcommits.org/)**
-            
-            **Format**
-            ```
-            <type>(<optional scope>)<optional !>: <subject>
-            ```
-            - `type`: feat | fix | perf | refactor | docs | style | test | build | ci | chore | revert
-            - `scope` (optional): e.g., core, model, training, cli, docs, deps, etc.
-            - `!` (optional): add `!` before the colon for breaking changes
-            - `subject`: start **lowercase**, no trailing period
-            
-            **Good examples**
-            - `feat(model): add SSM+GNN fusion head`
-            - `fix(cli): handle missing Hydra overrides`
-            - `docs(readme): add quickstart section`
-            - `perf(training)!: cache dataloader between folds`
-            
-            **Please edit the PR title** to match the format and re-run checks.  
-            (If this PR is automated or should be exempt, add the `skip-pr-title-lint` label.)
+  - name: Validate PR title with conventional-commits
+    if: steps.guard.outputs.skip != 'true'
+    id: cc
+    uses: amannn/action-semantic-pull-request@v5
+    with:
+      # Allowed types (one per line)
+      types: |
+        feat
+        fix
+        perf
+        refactor
+        docs
+        style
+        test
+        build
+        ci
+        chore
+        revert
+      # Common scopes (optional; leave empty to allow any)
+      scopes: |
+        core
+        data
+        model
+        training
+        calibration
+        diagnostics
+        cli
+        infra
+        ci
+        deps
+        docs
+        utils
+      # Allow titles without a scope (e.g., "docs: update readme")
+      requireScope: false
+      # Subject must start lowercase and not end with a period.
+      subjectPattern: '^(?![A-Z]).+[^.\s]$'
+      subjectPatternError: >
+        The subject must start lowercase and must not end with a period or trailing whitespace.
+      # Consider a single-commit PR’s commit message as the title if the PR title looks auto-generated.
+      validateSingleCommit: true
+      # Labels that, if present, will skip linting (in addition to the guard above).
+      ignoreLabels: |
+        bot
+        skip-pr-title-lint
+      # Treat "WIP"/draft style prefixes as invalid; use GitHub Draft PRs instead.
+      wip: false
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Success summary
-        if: success()
-        run: |
-          echo "✅ PR title is valid."
+  - name: Additional hygiene checks (length, trailing space)
+    if: steps.guard.outputs.skip != 'true'
+    uses: actions/github-script@v7
+    with:
+      script: |
+        const pr = context.payload.pull_request;
+        if (!pr) return;
+        const title = pr.title || '';
+        const MAX = 72;
+        const issues = [];
+        if (title.length > MAX) {
+          issues.push(`Title too long: ${title.length} > ${MAX} characters.`);
+        }
+        if (/\s$/.test(title)) {
+          issues.push("Title has trailing whitespace.");
+        }
+        // Optional: forbid all-caps type (e.g., FEAT:) already covered by action
+        if (issues.length) {
+          core.setFailed(issues.join(' '));
+        }
+
+  - name: Comment with guidance on failure
+    if: failure() && steps.guard.outputs.skip != 'true'
+    uses: peter-evans/create-or-update-comment@v4
+    with:
+      issue-number: ${{ github.event.pull_request.number }}
+      edit-mode: replace
+      body: |
+        ❌ **PR title does not follow [Conventional Commits](https://www.conventionalcommits.org/) and/or hygiene rules.**
+        
+        **Format**
+        ```
+        <type>(<optional scope>)<optional !>: <subject>
+        ```
+        - `type`: feat | fix | perf | refactor | docs | style | test | build | ci | chore | revert
+        - `scope` (optional): e.g., core, model, training, cli, docs, deps, etc.
+        - `!` (optional): add `!` before the colon for breaking changes
+        - `subject`: start **lowercase**, no trailing period or whitespace
+        - length: **≤ 72 chars** recommended
+        
+        **Good examples**
+        - `feat(model): add SSM+GNN fusion head`
+        - `fix(cli): handle missing Hydra overrides`
+        - `docs(readme): add quickstart section`
+        - `perf(training)!: cache dataloader between folds`
+        
+        **Please edit the PR title** to match the format and re-run checks.  
+        (If this PR is automated or should be exempt, add the `skip-pr-title-lint` label or convert to a Draft while iterating.)
+
+  - name: Success summary
+    if: success() && steps.guard.outputs.skip != 'true'
+    run: echo "✅ PR title is valid."
+
+  - name: Skipped summary
+    if: steps.guard.outputs.skip == 'true'
+    run: echo "ℹ️ PR title lint skipped (draft or skip label present)."
+````
