@@ -1,11 +1,13 @@
 # FILE: configs/calib/method/adc.yaml
 # ==============================================================================
-# 🔧 ADC (Analog-to-Digital Conversion) — Method Config (v1.3)
+# 🔧 ADC (Analog-to-Digital Conversion) — Method Config (v1.4, Mission-Grade)
 # ------------------------------------------------------------------------------
 # Purpose
 #   Apply offset & gain normalization (PRNU), optional reference-pixel / overscan
 #   correction, response linearization, and (optionally) re-quantize outputs for
 #   downstream calibration (dark → flat → CDS → photometry → trace → phase).
+#   Adds instrument-aware options, bias/stripe mitigation, smear/bleed handling,
+#   uncertainty scaffolding, and rich QC/diagnostics.
 #
 # Hydra usage (examples)
 #   spectramind calibrate calib.method.adc.offset.method=per_channel \
@@ -17,7 +19,7 @@
 # ==============================================================================
 
 _meta:
-  schema_version: "1.3.0"
+  schema_version: "1.4.0"
   last_updated: "${now:%Y-%m-%d}"
 
 adc:
@@ -28,35 +30,32 @@ adc:
   # ---------------------------------------------------------------------------
   detector:
     name: "ArielSimCam"
-    bit_depth_in: 16                       # raw DN nominal depth
-    bit_depth_out: 16                      # if re-quantizing to integer dtype
-    dtype_out: "float32"                   # "float32" | "float16" | "uint16" | "uint32"
+    instrument: "auto"                    # auto | fgs1 | airs
+    bit_depth_in: 16
+    bit_depth_out: 16
+    dtype_out: "float32"                   # float32 | float16 | uint16 | uint32
     conversion_gain_e_per_adu: 1.0         # e-/DN for optional unit conversions
-    saturation_level_dn: 65535             # DN saturation (if known)
-    saturation_level_e: 180000.0           # e- saturation (informative)
+    saturation_level_dn: 65535
+    saturation_level_e: 180000.0
 
   # ---------------------------------------------------------------------------
-  # Reference pixels & overscan (optional; typically before offset/gain)
+  # Reference pixels & overscan (optional; generally first)
   # ---------------------------------------------------------------------------
   reference_pixel:
     use: false
-    # strategy: "border_mean" | "mask_mean" | "strip_per_col" | "strip_per_row"
-    strategy: "border_mean"
+    strategy: "border_mean"               # border_mean | mask_mean | strip_per_col | strip_per_row
     border: { top: 4, bottom: 4, left: 4, right: 4 }
     mask_path: "data/calib/adc/reference_pixels_mask.npy"
-    # Remove column/row bias using ref pixel strips
     strip:
       robust:
         sigma_clip: 4.0
         max_iters: 2
-      poly_order: 0                   # 0=mean of strip; >0 fits slow trend along the strip
+      poly_order: 0
 
   overscan:
     enabled: false
-    # 2D boxes in pixel coords (inclusive). Values as {y:[y0,y1], x:[x0,x1]}
-    regions:
-      # A: { y: [0, 2047], x: [2048, 2095] }
-    strategy: "median"                 # "median" | "polyfit" (fit along columns)
+    regions: {}                           # e.g., A: { y: [0, 2047], x: [2048, 2095] }
+    strategy: "median"                    # median | polyfit (fit along columns)
     poly_order: 1
     subtract_per_amp: true
     robust:
@@ -69,53 +68,50 @@ adc:
   amplifiers:
     enabled: false
     layout: ["A", "B", "C", "D"]
-    # science (trim) regions per amplifier (no overscan in these)
-    regions:
-      # A: { y: [0, 2047], x: [0, 1023] }
+    regions: {}                           # e.g., A: { y: [0, 2047], x: [0, 1023] }
     trim_overscan: true
     per_amp_gain:
       enabled: false
-      table_path: "data/calib/adc/gain_per_amp.npy"   # per-amp scalars
+      table_path: "data/calib/adc/gain_per_amp.npy"
     per_amp_offset:
       enabled: false
-      table_path: "data/calib/adc/offset_per_amp.npy" # per-amp biases (DN)
+      table_path: "data/calib/adc/offset_per_amp.npy"
+    bias_striping:
+      enabled: false
+      axis: "row"                         # row | column
+      method: "median"                    # median | polynomial
+      poly_order: 1
 
   # ---------------------------------------------------------------------------
   # Offset correction (bias removal)
-  #   Order within ADC: reference_pixel/overscan → offset → gain → linearization
+  #   Order: reference/overscan → offset → gain → linearization
   # ---------------------------------------------------------------------------
   offset:
-    method: "per_channel"                # "none" | "global" | "per_channel" | "per_pixel"
-    # DN constant if method=="global"
-    value_adu: 0.0
-    # Per-channel offsets [C] if method=="per_channel"
+    method: "per_channel"                 # none | global | per_channel | per_pixel
+    value_adu: 0.0                        # if method==global
     table_path: "data/calib/adc/offsets_per_channel.npy"
-    # Per-pixel offsets (HxW or CxHxW) if method=="per_pixel"
-    map_path: "data/calib/adc/offsets_map.npy"
-    # Optional auto-black (fallback when tables missing): estimate constant bias
+    map_path: "data/calib/adc/offsets_map.npy"   # HxW or CxHxW if per_pixel
     auto_black:
       enabled: false
-      # "roi" | "hist_peak"
-      method: "hist_peak"
+      method: "hist_peak"                 # roi | hist_peak
       roi: { y: [0, 63], x: [0, 63] }
       hist:
         bins: 2048
         smooth_sigma_bins: 3.0
 
   # ---------------------------------------------------------------------------
-  # Gain / PRNU correction (multiplicative) — frame <- frame / gain_map
+  # Gain / PRNU correction (multiplicative): frame <- frame / gain_map
   # ---------------------------------------------------------------------------
   gain:
-    method: "per_channel"                # "none" | "global" | "per_channel" | "per_pixel"
+    method: "per_channel"                 # none | global | per_channel | per_pixel
     value: 1.0
     table_path: "data/calib/adc/gains_per_channel.npy"   # [C]
     prnu_map_path: "data/calib/adc/prnu_map.npy"         # HxW or CxHxW
     epsilon: 1.0e-6
-    renormalize_to_mean_one: true        # rescale gains so mean(gain)=1 after load
-    # Optional large-scale illumination field to divide out (vignetting pre-flat)
+    renormalize_to_mean_one: true
     illumination:
-      enabled: false
-      method: "spline2d"                 # "poly2d" | "spline2d" | "gaussian"
+      enabled: false                      # pre-flat vignette removal (large-scale)
+      method: "spline2d"                  # poly2d | spline2d | gaussian
       spline: { grid: [24, 24] }
       poly:   { degree_x: 2, degree_y: 2 }
       gaussian: { sigma_px: 25.0 }
@@ -129,14 +125,11 @@ adc:
   #   Converts non-linear DN response to linear space.
   # ---------------------------------------------------------------------------
   linearization:
-    method: "none"                       # "none" | "lut" | "poly"
-    # LUT: DN_in → DN_lin (1D)
+    method: "none"                        # none | lut | poly
     lut_path: "data/calib/adc/linearization_lut.npy"
-    lut_interp: "linear"                 # "nearest" | "linear"
-    # Polynomial: y_lin = c0 + c1*x + c2*x^2 + ... with x = raw_DN / poly_norm_adu
-    poly_coeffs: [1.0, 0.0, 0.0]
+    lut_interp: "linear"                  # nearest | linear
+    poly_coeffs: [1.0, 0.0, 0.0]          # y_lin = c0 + c1*x + c2*x^2 + ...
     poly_norm_adu: 65535.0
-    # Optional per-amp LUTs override (if geometry differs)
     per_amp:
       enabled: false
       lut_dir: "data/calib/adc/lin_luts_per_amp"        # e.g., A.npy, B.npy, ...
@@ -146,30 +139,38 @@ adc:
   # ---------------------------------------------------------------------------
   smear:
     enabled: false
-    # Column smear model: subtract fraction of column mean
-    column_fraction: 0.0               # e.g., 0.001
-    # Row smear model: subtract fraction of row mean
-    row_fraction: 0.0
+    column_fraction: 0.0                  # subtract fraction of column mean
+    row_fraction: 0.0                     # subtract fraction of row mean
 
   blooming:
     enabled: false
-    # treat saturated runs by tapering neighboring pixels
-    taper_kernel: "gaussian3"          # "median4" | "gaussian3"
+    taper_kernel: "gaussian3"             # median4 | gaussian3
     grow_radius_px: 1
 
   # ---------------------------------------------------------------------------
-  # Saturation & masks (propagated to downstream)
+  # Saturation & masks (propagated downstream)
   # ---------------------------------------------------------------------------
   saturation:
     enabled: true
     threshold_dn: 65500
-    write_mask_key: "adc_saturation_mask"   # added under io.output_key if enabled
+    write_mask_key: "adc_saturation_mask"
 
   bad_pixels:
     enabled: false
     bpm_path: "data/calib/masks/bad_pixel_map.npy"
-    replace_mode: "median4"            # "median4" | "median8" | "gaussian3"
+    replace_mode: "median4"               # median4 | median8 | gaussian3
     max_replace_fraction: 0.05
+
+  # ---------------------------------------------------------------------------
+  # Uncertainty scaffolding (optional; map creation for downstream)
+  # ---------------------------------------------------------------------------
+  uncertainty:
+    enabled: false
+    write_variance_map: true
+    model: "poisson"                      # poisson | empirical | none
+    include_read_noise: true
+    # If poisson: var ≈ max(frame_e, 0) + read_noise_e^2; convert to DN^2 if staying in DN
+    convert_to_dn2: true
 
   # ---------------------------------------------------------------------------
   # Re-quantization / clamping
@@ -178,9 +179,8 @@ adc:
     clip:
       min_adu: 0.0
       max_adu: 65535.0
-    rounding: "nearest"                # "nearest" | "floor" | "ceil" | "stochastic"
-    enforce_range: true                # if casting to integer dtype_out
-    # After offset/gain/lin, clamp small negatives (preserve noise margin)
+    rounding: "nearest"                   # nearest | floor | ceil | stochastic
+    enforce_range: true
     post_subtraction_clamp:
       enabled: true
       min_adu: -5.0
@@ -190,21 +190,21 @@ adc:
   # ---------------------------------------------------------------------------
   qc:
     enabled: true
-    # Histogram sanity post-ADC
     histogram_after:
       bins: 256
-      max_zero_frac: 0.15              # fraction exactly at 0
-      max_saturated_frac: 0.10         # fraction at top of range
-    # Frame stats sanity
+      max_zero_frac: 0.15
+      max_saturated_frac: 0.10
     stats_after:
       mean_adu_range: [50.0, 50000.0]
       std_adu_max: 20000.0
-    # Optional per-amp parity checks (mean/median deltas between amps)
     per_amp:
       enabled: false
       max_mean_delta_frac: 0.05
       max_median_delta_frac: 0.05
-    on_fail: "warn"                    # "warn" | "raise" | "skip"
+    on_fail: "warn"                       # warn | raise | skip
+    report:
+      save: true
+      path: "${oc.env:RUN_DIR, runs}/diag/adc/qc_report.json"
 
   # ---------------------------------------------------------------------------
   # IO mapping (pipeline/executor contract)
@@ -212,7 +212,7 @@ adc:
   io:
     input_key: "raw_frames"
     output_key: "adc_corrected"
-    # Optional debug artifacts written under output_key
+    variance_key_out: "var_adc"
     debug_keys:
       overscan_estimate: "adc_overscan_est"
       bias_map: "adc_bias_map"
@@ -231,7 +231,7 @@ adc:
     plot_format: "png"
 
   logging:
-    level: "INFO"                     # "DEBUG" | "INFO" | "WARNING" | "ERROR"
+    level: "INFO"                          # DEBUG | INFO | WARNING | ERROR
 
   # ---------------------------------------------------------------------------
   # Runtime & validation
@@ -241,14 +241,33 @@ adc:
     seed: 1337
 
   validation:
-    require_existing_paths: true      # if a method uses files, they must exist
-    check_shape_compatibility: true   # verify [C,H,W] vs loaded maps/LUTs
+    require_existing_paths: true           # any referenced files must exist
+    check_shape_compatibility: true        # verify [C,H,W] vs loaded maps/LUTs
     assert_finite_output: true
 
+  # ---------------------------------------------------------------------------
+  # Profile overrides (fast / strict)
+  # ---------------------------------------------------------------------------
+  profile_overrides:
+    fast:
+      linearization.method: "none"
+      overscan.enabled: false
+      reference_pixel.use: false
+      amplifiers.enabled: false
+      uncertainty.enabled: false
+      diagnostics.enabled: false
+    strict:
+      overscan.enabled: true
+      reference_pixel.use: true
+      amplifiers.enabled: true
+      amplifiers.bias_striping.enabled: true
+      linearization.method: "lut"
+      uncertainty.enabled: true
+      bad_pixels.enabled: true
+
   notes: |
-    • Order of ops: reference/overscan → offset → gain(PRNU) → linearization →
-      smear/bloom corrections → clamping/quantization.
-    • Enable per-amp handling when detector electronics differ by quadrant/amp.
-    • Renormalize PRNU/gains to mean 1 to avoid global flux scaling drift.
-    • Keep unit consistency if converting between DN and electrons; use
-      detector.conversion_gain_e_per_adu consistently across stages.
+    • Recommended order: reference/overscan → offset → PRNU/gain → linearization →
+      smear/bloom → clamp/quantize. Keep units consistent (DN vs e-).
+    • Renormalize PRNU/gains to mean 1 to prevent global flux drift.
+    • Enable per-amp bias/gain options when quadrant electronics differ.
+    • QC is advisory; use the report.json for CI gating and audit trails.
