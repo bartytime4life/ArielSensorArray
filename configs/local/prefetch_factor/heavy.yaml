@@ -1,0 +1,15 @@
+# ==============================================================================
+# 🧠 Prefetch Factor — Heavy Pipeline / HPC
+# ------------------------------------------------------------------------------
+# Purpose:
+#   • Maximize throughput for multi-GPU HPC or local SSD RAID setups.
+#   • Assumes abundant system memory and I/O bandwidth.
+# ==============================================================================
+
+prefetch_factor: 8
+
+notes: |
+  Heavy mode:
+  • Each worker preloads 8 batches.
+  • Best for HPC clusters with strong I/O and large RAM.
+  • Not recommended for Kaggle (memory/time constrained).
