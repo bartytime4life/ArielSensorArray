@@ -1,23 +1,349 @@
-# Top-level calibration config
-# Default = temperature scaling; switch to COREL via: method=corel
+FILE: configs/calib/top_level.yaml
+
+==============================================================================
+
+Top-level calibration config — SpectraMind V50 (upgraded)
+
+——————————————————————————
+
+Purpose
+
+Dispatch and control uncertainty calibration of σ (and optional μ post-scale),
+
+with Hydra-selectable methods:
+
+• temperature  — global / per-bin temperature scaling
+
+• corel        — COREL GNN calibration (edge-feature-aware), optional conformal
+
+
+
+Usage
+
+# Default (temperature scaling)
+
+hydra.run.dir=outputs/calib_runs method=temperature
+
+
+
+# Switch to COREL
+
+method=corel
+
+
+
+# Per-run overrides (examples)
+
+method=temperature temperature.per_bin=true temperature.grid_search=true
+
+method=corel corel.conformal.enable=true corel.coverage.target=0.90
+
+==============================================================================
+
+———————––
+
+Hydra defaults & method selection
+
+———————––
 
 defaults:
-  - method: temperature
-  - override hydra/job_logging: default
-  - override hydra/run_logging: default
+	•	method: temperature              # default method (switch via CLI: method=corel)
+	•	override hydra/job_logging: default
+	•	override hydra/run_logging: default
+	•	self
 
-# Common I/O
-preds_pt: "outputs/preds.pt"                  # input μ,σ
-targets_pt: null                              # optional (N,B) ground truth
-ids_path: null                                # optional list of planet_ids
-out_csv: "outputs/submission_calibrated.csv"  # submission (μ only)
-out_pt: "outputs/preds_calibrated.pt"         # calibrated σ (+T)
-report_html: "outputs/diagnostics/calib_report.html"
+———————––
 
-# Runtime
-device: "cpu"       # or "cuda"
+Common I/O
+
+———————––
+
+io:
+
+Input predictions (μ, σ) as a torch .pt dict:
+
+{‘mu’: (N,B), ‘sigma’: (N,B)} or {‘mu’: (N,B), ‘sigma’: (N,B), ‘ids’: (N,)}
+
+preds_pt: “outputs/preds.pt”
+
+Optional ground-truth tensor for offline calibration/validation
+
+targets_pt: null                   # (N,B) or path to .pt/.npy
+
+Optional list of planet ids (text or npy/pt); overrides any ids in preds_pt
+
+ids_path: null
+
+Outputs
+
+out_csv: “outputs/submission_calibrated.csv”   # submission (μ only; σ not submitted)
+out_pt:  “outputs/preds_calibrated.pt”         # calibrated {‘mu’,‘sigma’,‘T’,‘meta’}
+report_html: “outputs/diagnostics/calib_report.html”
+report_json: “outputs/diagnostics/calib_report.json”
+
+———————––
+
+Runtime / globals
+
+———————––
+
+runtime:
+device: “cpu”                     # “cpu” | “cuda” | “auto”
 seed: 1337
 bins: 283
+dtype: “float32”                  # “float32” | “float64”
+num_workers: 2
+deterministic: true
+pythonhashseed: 0
 
-# Method dispatch (populated by method/*)
-method: ???         # "temperature" | "corel"
+———————––
+
+Method dispatch (populated by method/*)
+
+———————––
+
+method: ???    # “temperature” | “corel”
+
+———————––
+
+Diagnostics & reporting (applies to any method)
+
+———————––
+
+diagnostics:
+enable: true
+save_plots: true
+plots:
+# σ vs residuals before/after; z-score histograms; coverage curves
+calibration_curve: true
+residual_vs_sigma: true
+zscore_hist: true
+per_bin_gll_heatmap: true
+per_bin_coverage: true
+export:
+html: true
+json: true
+png: true
+outdir: “outputs/diagnostics”
+leaderboard:
+enable: true
+md_path: “outputs/diagnostics/calib_leaderboard.md”
+include_metrics: [“gll”,“mae”,“rmse”,“nll”,“coverage”,“ece”]
+log_summary_to_debug_md: true     # append to logs/v50_debug_log.md if present
+
+———————––
+
+Validation & safety guards
+
+———————––
+
+validation:
+require_finite_inputs: true
+require_sigma_positive: true
+sigma_min: 1.0e-8
+check_bins: true
+expected_bins: “${runtime.bins}”
+allow_pad_or_truncate: false      # fail if (B != expected_bins) when true -> warn
+
+If targets are provided:
+
+require_matching_ids: false       # if true and ids provided, enforce alignment with preds
+min_samples: 8                    # minimal N to compute stable diagnostics
+action_on_fail: “warn”            # “warn” | “error”
+
+safety:
+fail_fast: true
+epsilon: 1.0e-12
+clip_sigma_after: true
+sigma_clip_range: [1.0e-8, 1.0e4]
+
+———————––
+
+Temperature scaling (default method config)
+
+———————––
+
+temperature:
+enable: true
+
+Global vs per-bin temperatures
+
+per_bin: false
+
+Solve T by minimizing negative log-likelihood on validation set
+
+solver:
+name: “newton”                  # “grid” | “newton” | “lbfgsb”
+max_iters: 200
+tol: 1.0e-7
+
+Optional grid search (coarse) then refine with Newton
+
+grid_search: false
+grid:
+t_min: 0.25
+t_max: 4.0
+steps: 40
+
+Regularization (keeps T near 1 to prevent overfitting)
+
+regularization:
+enable: true
+weight: 1.0e-3
+target: 1.0
+
+Apply cap after optimization
+
+clamp_T: [0.1, 10.0]
+
+Output behavior
+
+write:
+store_T_in_pt: true
+store_per_bin_T: “${temperature.per_bin}”
+
+———————––
+
+COREL calibration (graph-based)
+
+———————––
+
+corel:
+enable: false
+
+GNN backbone
+
+model:
+backend: “gatconv”              # “gatconv” | “nnconv” | “rgcn” | “mpnn”
+hidden: 128
+layers: 3
+heads: 4
+dropout: 0.05
+use_edge_features: true         # distance, molecule-region, detector-region, bin adjacency
+positional_encoding: “fourier”  # “fourier” | “none”
+
+Graph construction
+
+graph:
+# Build edges by wavelength proximity + molecule masks + detector region adjacency
+build: “proximity+molecule+region”
+k_proximity: 8
+add_self_loops: true
+edge_features:
+distance: true
+same_molecule_region: true
+same_detector_region: true
+
+Training/fit (if targets available)
+
+fit:
+epochs: 40
+batch_size: 2048
+lr: 1.0e-3
+weight_decay: 1.0e-4
+early_stop:
+enable: true
+patience: 5
+metric: “val_gll”
+mode: “min”
+
+Inference options
+
+infer:
+temperature_backoff: true       # if COREL underfits, optionally apply residual temp scaling
+residual_temp_weight: 0.25
+
+Coverage / conformal prediction
+
+coverage:
+target: 0.90
+eval_bins: “all”
+conformal:
+enable: false
+method: “quantile”              # “quantile” | “jackknife” | “split”
+alpha: 0.10
+per_bin: true
+
+Outputs
+
+write:
+store_graph_stats: true
+store_corel_params: true        # learned weights / meta
+
+———————––
+
+Metrics & evaluation (shared)
+
+———————––
+
+metrics:
+compute:
+gll: true
+rmse: true
+mae: true
+nll: true
+coverage: true
+ece: true                       # expected calibration error (σ vs residual)
+
+Bin-range reports for molecule regions (requires molecule map if available)
+
+regions:
+enable: false
+molecules_json: null            # path to region definition
+export_csv: false
+out_csv: “outputs/diagnostics/region_metrics.csv”
+
+———————––
+
+Logging
+
+———————––
+
+logging:
+level: “INFO”
+to_file: true
+file: “logs/calib_top_level.log”
+
+Append a one-line summary into the main debug log if present
+
+debug_log_md: “logs/v50_debug_log.md”
+
+———————––
+
+Caching & run manifest
+
+———————––
+
+cache:
+write_intermediate: true
+out_dir: “${oc.env:RUN_DIR, runs}/calibration”
+manifest:
+write: true
+path: “${cache.out_dir}/manifest.json”
+include:
+- “${io.preds_pt}”
+- “${io.targets_pt}”
+- “${io.out_pt}”
+- “${io.out_csv}”
+
+———————––
+
+Post-processing hooks (optional)
+
+———————––
+
+post:
+
+Optional μ re-centering to remove tiny global bias after calibration
+
+recenter_mu:
+enable: false
+method: “median”                # “mean” | “median”
+ref_bins: null                  # e.g., [10,260] or null for all
+
+Final clamp for numerical stability
+
+clamp_sigma:
+enable: true
+min: 1.0e-8
+max: 1.0e4
