@@ -1,316 +1,372 @@
-# .github/workflows/tests.yml
-# ==============================================================================
-# SpectraMind V50 — CI: Lint ✦ Unit ✦ E2E ✦ Coverage ✦ Docker(GPU) Smoke (+ BuildKit cache)
-# - Pre-commit lint with cache
-# - Unit tests across Python 3.10/3.11/3.12 with coverage + JUnit
-# - Fast CLI self-test and tiny diagnostics
-# - Optional Dockerized GPU smoke (opt-in via repo/org variable DOCKER_GPU=1)
-# - Codecov upload if token present
-# ==============================================================================
-
 name: tests
 
 on:
-  push:
-    branches: ["**"]
-  pull_request:
-    branches: ["**"]
-  workflow_dispatch:
+push:
+branches: \["**"]
+paths:
+\- "**/*.py"
+\- "pyproject.toml"
+\- "poetry.lock"
+\- ".pre-commit-config.yaml"
+\- ".github/workflows/tests.yml"
+\- "Dockerfile"
+\- "dvc.yaml"
+\- "dvc.lock"
+pull\_request:
+branches: \["**"]
+paths:
+\- "**/*.py"
+\- "pyproject.toml"
+\- "poetry.lock"
+\- ".pre-commit-config.yaml"
+\- ".github/workflows/tests.yml"
+\- "Dockerfile"
+\- "dvc.yaml"
+\- "dvc.lock"
+workflow\_dispatch: {}
 
 permissions:
-  contents: read
+contents: read
 
 concurrency:
-  group: tests-${{ github.ref }}
-  cancel-in-progress: true
+group: tests-\${{ github.ref }}
+cancel-in-progress: true
 
 env:
-  POETRY_VIRTUALENVS_IN_PROJECT: "true"
-  POETRY_NO_INTERACTION: "1"
-  PIP_DISABLE_PIP_VERSION_CHECK: "1"
-  PIP_NO_PYTHON_VERSION_WARNING: "1"
-  HF_HOME: ${{ github.workspace }}/.cache/huggingface
-  TRANSFORMERS_OFFLINE: "1"
-  MPLBACKEND: "Agg"
-  SOURCE_DATE_EPOCH: ${{ github.event.repository.pushed_at || 1704067200 }}
+POETRY\_VIRTUALENVS\_IN\_PROJECT: "true"
+POETRY\_NO\_INTERACTION: "1"
+PIP\_DISABLE\_PIP\_VERSION\_CHECK: "1"
+PIP\_NO\_PYTHON\_VERSION\_WARNING: "1"
+HF\_HOME: \${{ github.workspace }}/.cache/huggingface
+TRANSFORMERS\_OFFLINE: "1"
+MPLBACKEND: "Agg"
+SOURCE\_DATE\_EPOCH: \${{ github.event.repository.pushed\_at || 1704067200 }}
+PYTHONHASHSEED: "0"
 
 jobs:
-  # ---------- Lint quick pass (delegates to pre-commit) ----------
-  lint:
-    name: Lint & Style
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
+lint:
+name: Lint & Style
+runs-on: ubuntu-latest
+timeout-minutes: 15
+steps:
+\- uses: actions/checkout\@v4
+with:
+fetch-depth: 0
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: "pip"
+```
+  - uses: actions/setup-python@v5
+    with:
+      python-version: "3.12"
+      cache: "pip"
 
-      - name: Cache pre-commit envs
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pre-commit
-          key: precommit-${{ runner.os }}-3.12-${{ hashFiles('.pre-commit-config.yaml') }}
-          restore-keys: |
-            precommit-${{ runner.os }}-3.12-
-            precommit-${{ runner.os }}-
+  - name: Cache pre-commit envs
+    uses: actions/cache@v4
+    with:
+      path: ~/.cache/pre-commit
+      key: precommit-${{ runner.os }}-3.12-${{ hashFiles('.pre-commit-config.yaml') }}
+      restore-keys: |
+        precommit-${{ runner.os }}-3.12-
+        precommit-${{ runner.os }}-
 
-      - name: Run pre-commit
-        run: |
-          python -m pip install --upgrade pip pre-commit
-          if [ -f ".pre-commit-config.yaml" ]; then
-            pre-commit run --all-files --show-diff-on-failure
-          else
-            echo "No .pre-commit-config.yaml found; skipping."
-          fi
+  - name: Install pre-commit
+    run: |
+      python -m pip install --upgrade pip
+      pip install --upgrade pre-commit
 
-  # ---------- Unit test matrix + coverage ----------
-  unit:
-    name: Unit • py${{ matrix.python }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 40
-    strategy:
-      fail-fast: false
-      matrix:
-        python: ["3.10", "3.11", "3.12"]
-    env:
-      COVERAGE_FILE: ".coverage.${{ matrix.python }}"
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+  - name: Run pre-commit (all files)
+    run: |
+      if [ -f ".pre-commit-config.yaml" ]; then
+        pre-commit run --all-files --show-diff-on-failure
+      else
+        echo "No .pre-commit-config.yaml found; skipping."
+      fi
 
-      - id: setup-py
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python }}
-          cache: "pip"
-
-      - name: Install Poetry via pipx (isolated)
-        uses: pipxproject/pipx-action@v1
-        with:
-          python_version: ${{ matrix.python }}
-          pipx_args: "install poetry==1.8.3"
-
-      - name: Cache Poetry & virtualenv
-        uses: actions/cache@v4
-        with:
-          path: |
-            .venv
-            ~/.cache/pip
-            ~/.cache/pypoetry
-          key: unit-poetry-${{ runner.os }}-${{ matrix.python }}-${{ hashFiles('**/poetry.lock') }}
-          restore-keys: |
-            unit-poetry-${{ runner.os }}-${{ matrix.python }}-
-
-      - name: Install dependencies (dev)
-        run: |
-          poetry env use "${{ steps.setup-py.outputs.python-path }}"
-          poetry install --no-interaction --with dev
-
-      - name: Run unit tests with coverage
-        run: |
-          mkdir -p artifacts
-          if [ ! -d "tests" ]; then
-            echo "::error::No tests/ directory found. Please add unit tests."
-            exit 1
-          fi
-          poetry run pytest \
-            --maxfail=1 \
-            --disable-warnings \
-            -ra \
-            --cov=src \
-            --cov-report=term-missing \
-            --cov-report=xml:artifacts/coverage-${{ matrix.python }}.xml \
-            --junitxml=artifacts/junit-${{ matrix.python }}.xml
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: unit-py${{ matrix.python }}
-          path: artifacts/
-          retention-days: 14
-          if-no-files-found: warn
-
-  # ---------- Fast CLI smoke ----------
-  e2e:
-    name: Self‑Test & E2E Smoke (CLI) • py3.12
-    needs: [lint, unit]
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    steps:
-      - uses: actions/checkout@v4
-
-      - id: setup-py
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: "pip"
-
-      - name: Install Poetry via pipx (isolated)
-        uses: pipxproject/pipx-action@v1
-        with:
-          python_version: "3.12"
-          pipx_args: "install poetry==1.8.3"
-
-      - name: Cache Poetry & virtualenv
-        uses: actions/cache@v4
-        with:
-          path: |
-            .venv
-            ~/.cache/pip
-            ~/.cache/pypoetry
-          key: e2e-poetry-${{ runner.os }}-3.12-${{ hashFiles('**/poetry.lock') }}
-          restore-keys: |
-            e2e-poetry-${{ runner.os }}-3.12-
-
-      - name: Install (main + dev tools used by CLI)
-        run: |
-          poetry env use "${{ steps.setup-py.outputs.python-path }}"
-          poetry install --no-interaction --with dev
-
-      - name: Prepare caches (DVC optional) + HF cache dir
-        run: |
-          if command -v dvc >/dev/null 2>&1 && [ -f "dvc.yaml" ]; then
-            dvc pull --run-cache --force || true
-          fi
-          mkdir -p "${HF_HOME}"
-
-      - name: Fast self-test
-        run: |
-          mkdir -p artifacts
-          # Use canonical subcommand name per repo standard:
-          poetry run spectramind test --fast || (echo "::error::CLI self-test failed"; exit 1)
-
-      - name: Tiny diagnostics (no UMAP/TSNE for speed)
-        run: |
-          poetry run spectramind diagnose dashboard --no-umap --no-tsne --no-open --outdir outputs/diagnostics-ci || true
-          poetry run spectramind analyze-log --out outputs/diagnostics-ci/log_table.md || true
-
-      - name: Gather artifacts
-        if: always()
-        run: |
-          mkdir -p artifacts/logs
-          test -f logs/v50_debug_log.md && cp logs/v50_debug_log.md artifacts/logs/ || true
-          if [ -d outputs/diagnostics-ci ]; then
-            tar -czf artifacts/diagnostics-ci.tar.gz outputs/diagnostics-ci || true
-          fi
-          if [ -d outputs/singlerun ]; then
-            latest=$(ls -1dt outputs/singlerun/* 2>/dev/null | head -n 1 || true)
-            if [ -n "$latest" ]; then
-              tar -czf artifacts/hydra-singlerun-latest.tar.gz "$latest" || true
-            fi
-          fi
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: e2e-artifacts
-          path: artifacts/
-          retention-days: 14
-          if-no-files-found: warn
-
-  # ---------- Dockerized GPU Smoke (+ BuildKit cache) ----------
-  docker-gpu:
-    name: Dockerized GPU Smoke • CUDA (with cache)
-    # Opt-in: set DOCKER_GPU=1 in repo/org variables to enable
-    if: ${{ vars.DOCKER_GPU == '1' }}
-    needs: [lint]
-    runs-on: ubuntu-latest
-    timeout-minutes: 40
-    env:
-      BUILDKIT_CACHE_TO: /tmp/.buildx-cache-new
-      BUILDKIT_CACHE_FROM: /tmp/.buildx-cache
-      IMAGE_TAG: spectramindv50:ci
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Restore BuildKit cache
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.BUILDKIT_CACHE_FROM }}
-          key: buildx-${{ runner.os }}-${{ hashFiles('Dockerfile', '**/pyproject.toml', '**/poetry.lock') }}
-          restore-keys: |
-            buildx-${{ runner.os }}-
-
-      - name: Install Docker & NVIDIA runtime
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install -y docker.io
-          sudo systemctl start docker
-          # NVIDIA Container Toolkit (runtime)
-          distribution=$(. /etc/os-release;echo $ID$VERSION_ID) && \
-          curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg && \
-          curl -fsSL https://nvidia.github.io/libnvidia-container/$distribution/libnvidia-container.list | \
-            sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
-            sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
-          sudo apt-get update -y
-          sudo apt-get install -y nvidia-container-toolkit
-          sudo nvidia-ctk runtime configure --runtime=docker
-          sudo systemctl restart docker
-
-      - name: Build CUDA image (cached)
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Dockerfile
-          tags: ${{ env.IMAGE_TAG }}
-          load: true
-          cache-from: type=local,src=${{ env.BUILDKIT_CACHE_FROM }}
-          cache-to: type=local,dest=${{ env.BUILDKIT_CACHE_TO }},mode=max
-
-      - name: Save BuildKit cache
-        if: always()
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.BUILDKIT_CACHE_TO }}
-          key: buildx-${{ runner.os }}-${{ hashFiles('Dockerfile', '**/pyproject.toml', '**/poetry.lock') }}
-
-      - name: Run GPU smoke (selftest inside container)
-        run: |
-          docker run --rm --gpus all \
-            -v "$PWD":/workspace -w /workspace \
-            ${{ env.IMAGE_TAG }} \
-            bash -lc "which spectramind || true; spectramind test --fast || exit 1"
-
-  # ---------- Coverage combine / Codecov ----------
-  summarize:
-    name: Coverage Summary & Upload
-    needs: [unit, e2e]
-    runs-on: ubuntu-latest
+  - name: Lint Summary
     if: always()
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: unit-py*
-          merge-multiple: true
-          path: artifacts
+    run: |
+      echo "### Lint & Style" >> $GITHUB_STEP_SUMMARY
+      echo "" >> $GITHUB_STEP_SUMMARY
+      echo "Completed pre-commit checks." >> $GITHUB_STEP_SUMMARY
+```
 
-      - name: List coverage files
-        run: |
-          echo "Coverage XML files in artifacts/:"
-          ls -1 artifacts/coverage-*.xml || true
+unit:
+name: Unit • py\${{ matrix.python }}
+runs-on: ubuntu-latest
+timeout-minutes: 45
+strategy:
+fail-fast: false
+matrix:
+python: \["3.10", "3.11", "3.12"]
+env:
+COVERAGE\_FILE: ".coverage.\${{ matrix.python }}"
+steps:
+\- uses: actions/checkout\@v4
+with:
+fetch-depth: 0
 
-      - name: Upload to Codecov (if token set)
-        if: ${{ secrets.CODECOV_TOKEN != '' }}
-        uses: codecov/codecov-action@v4
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: |
-            artifacts/coverage-3.10.xml
-            artifacts/coverage-3.11.xml
-            artifacts/coverage-3.12.xml
-          flags: unittests
-          fail_ci_if_error: false
+```
+  - id: setup-py
+    uses: actions/setup-python@v5
+    with:
+      python-version: ${{ matrix.python }}
+      cache: "pip"
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ci-summary
-          path: artifacts/
-          retention-days: 14
-          if-no-files-found: ignore
+  - name: Install Poetry via pipx (isolated)
+    uses: pipxproject/pipx-action@v1
+    with:
+      python_version: ${{ matrix.python }}
+      pipx_args: "install poetry==1.8.3"
+
+  - name: Cache Poetry, pip & venv
+    uses: actions/cache@v4
+    with:
+      path: |
+        .venv
+        ~/.cache/pip
+        ~/.cache/pypoetry
+      key: unit-poetry-${{ runner.os }}-${{ matrix.python }}-${{ hashFiles('**/poetry.lock') }}
+      restore-keys: |
+        unit-poetry-${{ runner.os }}-${{ matrix.python }}-
+
+  - name: Install dependencies (dev)
+    run: |
+      poetry env use "${{ steps.setup-py.outputs.python-path }}"
+      poetry --version
+      poetry install --no-interaction --with dev
+
+  - name: Show dependency tree (debug)
+    run: |
+      poetry show --tree || true
+
+  - name: Run unit tests with coverage
+    run: |
+      mkdir -p artifacts
+      if [ ! -d "tests" ]; then
+        echo "::error::No tests/ directory found. Please add unit tests."
+        exit 1
+      fi
+      poetry run pytest \
+        -q \
+        --maxfail=1 \
+        --disable-warnings \
+        -ra \
+        --durations=15 \
+        --cov=src \
+        --cov-branch \
+        --cov-report=term-missing \
+        --cov-report=xml:artifacts/coverage-${{ matrix.python }}.xml \
+        --junitxml=artifacts/junit-${{ matrix.python }}.xml
+
+  - name: Record environment & metadata
+    run: |
+      python -V > artifacts/env-${{ matrix.python }}.txt
+      poetry --version >> artifacts/env-${{ matrix.python }}.txt
+      echo "GIT_SHA=$(git rev-parse HEAD)" >> artifacts/env-${{ matrix.python }}.txt
+      echo "BRANCH=${GITHUB_REF}" >> artifacts/env-${{ matrix.python }}.txt
+
+  - uses: actions/upload-artifact@v4
+    if: always()
+    with:
+      name: unit-py${{ matrix.python }}
+      path: artifacts/
+      retention-days: 14
+      if-no-files-found: warn
+```
+
+e2e:
+name: Self-Test & E2E Smoke (CLI) • 3.12
+needs: \[lint, unit]
+runs-on: ubuntu-latest
+timeout-minutes: 25
+steps:
+\- uses: actions/checkout\@v4
+
+```
+  - id: setup-py
+    uses: actions/setup-python@v5
+    with:
+      python-version: "3.12"
+      cache: "pip"
+
+  - name: Install Poetry via pipx (isolated)
+    uses: pipxproject/pipx-action@v1
+    with:
+      python_version: "3.12"
+      pipx_args: "install poetry==1.8.3"
+
+  - name: Cache Poetry, pip & venv
+    uses: actions/cache@v4
+    with:
+      path: |
+        .venv
+        ~/.cache/pip
+        ~/.cache/pypoetry
+      key: e2e-poetry-${{ runner.os }}-3.12-${{ hashFiles('**/poetry.lock') }}
+      restore-keys: |
+        e2e-poetry-${{ runner.os }}-3.12-
+
+  - name: Install (main + dev)
+    run: |
+      poetry env use "${{ steps.setup-py.outputs.python-path }}"
+      poetry install --no-interaction --with dev
+
+  - name: Prepare caches (DVC optional) & HF dir
+    run: |
+      if command -v dvc >/dev/null 2>&1 && [ -f "dvc.yaml" ]; then
+        dvc pull --run-cache --force || true
+      fi
+      mkdir -p "${HF_HOME}"
+
+  - name: Fast CLI self-test
+    run: |
+      mkdir -p artifacts
+      poetry run spectramind test --fast || (echo "::error::CLI self-test failed"; exit 1)
+
+  - name: Tiny diagnostics (no UMAP/t-SNE for speed)
+    run: |
+      poetry run spectramind diagnose dashboard --no-umap --no-tsne --no-open --outdir outputs/diagnostics-ci || true
+      poetry run spectramind analyze-log --out outputs/diagnostics-ci/log_table.md || true
+
+  - name: Gather artifacts
+    if: always()
+    run: |
+      mkdir -p artifacts/logs
+      test -f logs/v50_debug_log.md && cp logs/v50_debug_log.md artifacts/logs/ || true
+      if [ -d outputs/diagnostics-ci ]; then
+        tar -czf artifacts/diagnostics-ci.tar.gz outputs/diagnostics-ci || true
+      fi
+      if [ -d outputs/singlerun ]; then
+        latest=$(ls -1dt outputs/singlerun/* 2>/dev/null | head -n 1 || true)
+        if [ -n "$latest" ]; then
+          tar -czf artifacts/hydra-singlerun-latest.tar.gz "$latest" || true
+        fi
+      fi
+
+  - uses: actions/upload-artifact@v4
+    if: always()
+    with:
+      name: e2e-artifacts
+      path: artifacts/
+      retention-days: 14
+      if-no-files-found: warn
+
+  - name: E2E Summary
+    if: always()
+    run: |
+      echo "### Self-Test & E2E Smoke (CLI)" >> $GITHUB_STEP_SUMMARY
+      echo "" >> $GITHUB_STEP_SUMMARY
+      echo "- spectramind test --fast executed" >> $GITHUB_STEP_SUMMARY
+      echo "- diagnostics bundle archived (if produced)" >> $GITHUB_STEP_SUMMARY
+```
+
+docker-gpu:
+name: Dockerized GPU Smoke • CUDA (with cache)
+if: \${{ vars.DOCKER\_GPU == '1' }}
+needs: \[lint]
+runs-on: ubuntu-latest
+timeout-minutes: 45
+env:
+BUILDKIT\_CACHE\_TO: /tmp/.buildx-cache-new
+BUILDKIT\_CACHE\_FROM: /tmp/.buildx-cache
+IMAGE\_TAG: spectramindv50\:ci
+steps:
+\- uses: actions/checkout\@v4
+
+```
+  - name: Set up Docker Buildx
+    uses: docker/setup-buildx-action@v3
+
+  - name: Restore BuildKit cache
+    uses: actions/cache@v4
+    with:
+      path: ${{ env.BUILDKIT_CACHE_FROM }}
+      key: buildx-${{ runner.os }}-${{ hashFiles('Dockerfile', '**/pyproject.toml', '**/poetry.lock') }}
+      restore-keys: |
+        buildx-${{ runner.os }}-
+
+  - name: Ensure Docker & NVIDIA runtime
+    run: |
+      sudo apt-get update -y
+      sudo apt-get install -y docker.io curl gnupg
+      sudo systemctl start docker
+      distribution=$(. /etc/os-release;echo $ID$VERSION_ID)
+      curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+      curl -fsSL https://nvidia.github.io/libnvidia-container/$distribution/libnvidia-container.list | \
+        sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+        sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+      sudo apt-get update -y
+      sudo apt-get install -y nvidia-container-toolkit
+      sudo nvidia-ctk runtime configure --runtime=docker
+      sudo systemctl restart docker
+
+  - name: Build CUDA image (cached)
+    uses: docker/build-push-action@v6
+    with:
+      context: .
+      file: ./Dockerfile
+      tags: ${{ env.IMAGE_TAG }}
+      load: true
+      cache-from: type=local,src=${{ env.BUILDKIT_CACHE_FROM }}
+      cache-to: type=local,dest=${{ env.BUILDKIT_CACHE_TO }},mode=max
+
+  - name: Save BuildKit cache
+    if: always()
+    uses: actions/cache@v4
+    with:
+      path: ${{ env.BUILDKIT_CACHE_TO }}
+      key: buildx-${{ runner.os }}-${{ hashFiles('Dockerfile', '**/pyproject.toml', '**/poetry.lock') }}
+
+  - name: Run GPU smoke (self-test inside container)
+    run: |
+      docker run --rm --gpus all \
+        -v "$PWD":/workspace -w /workspace \
+        ${{ env.IMAGE_TAG }} \
+        bash -lc "which spectramind || true; spectramind test --fast || exit 1"
+```
+
+summarize:
+name: Coverage Summary & Upload
+needs: \[unit, e2e]
+runs-on: ubuntu-latest
+if: always()
+steps:
+\- uses: actions/download-artifact\@v4
+with:
+pattern: unit-py\*
+merge-multiple: true
+path: artifacts
+
+```
+  - name: List coverage files
+    run: |
+      echo "Coverage XML files in artifacts/:"
+      ls -1 artifacts/coverage-*.xml || true
+
+  - name: Upload to Codecov (if token set)
+    if: ${{ secrets.CODECOV_TOKEN != '' }}
+    uses: codecov/codecov-action@v4
+    with:
+      token: ${{ secrets.CODECOV_TOKEN }}
+      files: |
+        artifacts/coverage-3.10.xml
+        artifacts/coverage-3.11.xml
+        artifacts/coverage-3.12.xml
+      flags: unittests
+      fail_ci_if_error: false
+
+  - name: Upload CI summary artifacts
+    uses: actions/upload-artifact@v4
+    with:
+      name: ci-summary
+      path: artifacts/
+      retention-days: 14
+      if-no-files-found: ignore
+
+  - name: Summary
+    if: always()
+    run: |
+      echo "### Coverage & Artifacts" >> $GITHUB_STEP_SUMMARY
+      echo "" >> $GITHUB_STEP_SUMMARY
+      echo "- Coverage XMLs uploaded (if present)" >> $GITHUB_STEP_SUMMARY
+      echo "- Artifacts archived for 14 days" >> $GITHUB_STEP_SUMMARY
+```
