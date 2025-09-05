@@ -1,122 +1,404 @@
-# ==============================================================================
-# SpectraMind V50 — Ablation Profile: HEAVY (deep analysis / offline)
-# - More epochs + larger batch (9‑hour Kaggle envelope aware)
-# - Enables full diagnostics (UMAP, t‑SNE, SHAP, symbolic, FFT)
-# - Turns on advanced uncertainty calibration (temp scaling + COREL + conformal)
-# - Exports full HTML/MD leaderboard and ZIP bundle of top‑N
-# ==============================================================================
+==============================================================================
+
+SpectraMind V50 — Ablation Profile: HEAVY (deep analysis / offline, upgraded)
+
+- 9-hour Kaggle envelope aware (GPU T4/A10/L4) with deterministic guards
+
+- Full diagnostics suite (UMAP, t-SNE, SHAP, Symbolic, FFT, GLL heatmap, Z-score)
+
+- Advanced uncertainty calibration (TempScaling + COREL + Quantile + Conformal)
+
+- Exports HTML + MD leaderboard, JSON packs, and a ZIP bundle of Top-N trials
+
+- Hydra-safe, CI/Kaggle friendly, reproducible, with safety timeouts
+
+==============================================================================
 
 defaults:
-  - override hydra/job_logging: colorlog
-  - override hydra/hydra_logging: colorlog
-  - _self_
+	•	override hydra/job_logging: colorlog
+	•	override hydra/hydra_logging: colorlog
+	•	self
 
-# -------------------------
-# Global Reproducibility
-# -------------------------
+———————––
+
+Global Reproducibility
+
+———————––
+
 seed: 1337
 deterministic: true
+pythonhashseed: 0
+cudnn_deterministic: true
+cublas_workspace: “:16:8”
 num_workers: 4
+benchmark: false
+allow_tf32: false
 
-# -------------------------
-# Curriculum Toggles
-# -------------------------
+———————––
+
+Data / Paths
+
+———————––
+
+data:
+root: /kaggle/input/neurips-2025-ariel-data-challenge
+cache_dir: .cache/ariel
+fgs1:
+enable: true
+dtype: float32
+airs:
+enable: true
+dtype: float32
+splits:
+train: configs/splits/train_ids.csv
+valid: configs/splits/valid_ids.csv
+test:  configs/splits/test_ids.csv
+loader:
+shuffle: true
+pin_memory: true
+persistent_workers: true
+prefetch_factor: 2
+drop_last: false
+
+———————––
+
+Curriculum Toggles
+
+———————––
+
 curriculum:
-  mae_pretrain: true
-  contrastive:  true
-  gll_finetune: true
-  symbolic_finetune: true
+mae_pretrain: true
+contrastive:  true
+gll_finetune: true
+symbolic_finetune: true
+schedule:
+warmup_epochs: 0
+hold_epochs: 0
 
 masking:
-  random: true
-  block: true
-  molecule_aware: true
-  snr_aware: true
+random: true
+block: true
+molecule_aware: true
+snr_aware: true
+temporal_dropout: true
+dual_view: true
+visualize: false
 
-# -------------------------
-# Loss Weights (richer)
-# -------------------------
+———————––
+
+Model (FGS1 + AIRS dual-encoder, V50)
+
+———————––
+
+model:
+name: spectramind_v50
+fgs1:
+encoder: mamba_ssm
+hidden: 384
+depth: 12
+dropout: 0.1
+jit: false
+airs:
+encoder: gnn
+backend: gatconv           # options: gatconv|nnconv|rgcn|mpnn
+heads: 4
+hidden: 256
+layers: 6
+use_edge_features: true    # distance, molecule-type, detector-region
+temporal_posenc: fourier
+dropout: 0.1
+decoder:
+mu_head: multi_scale
+sigma_head: flow_uncertainty
+quantile_head: false
+dropout: 0.0
+fusion:
+strategy: mean             # mean|attention|gated
+attention_fusion: true
+symbolic_overlay: true     # SHAP×symbolic attention fusion
+
+———————––
+
+Loss Weights (richer)
+
+———————––
+
 loss:
-  gll: 1.0
-  fft_smoothness: 0.25
-  asymmetry: 0.08
-  nonnegativity: 0.12
-  photonic_alignment: 0.3
-  symbolic: 0.6
-  entropy_reg: 0.12
+gll: 1.0
+fft_smoothness: 0.25
+asymmetry: 0.08
+nonnegativity: 0.12
+photonic_alignment: 0.30
+symbolic: 0.60
+entropy_reg: 0.12
+spectral_smoothness_map: 0.0
 
-# -------------------------
-# Uncertainty Calibration
-# -------------------------
+Symbolic loss decomposition toggles
+
+components:
+smoothness: true
+nonneg: true
+asym: true
+photonic_align: true
+
+———————––
+
+Optimizer / Scheduler
+
+———————––
+
+optim:
+name: adamw
+lr: 2.5e-4
+weight_decay: 0.01
+betas: [0.9, 0.999]
+eps: 1.0e-8
+grad_clip_norm: 1.0
+grad_accum_steps: 1
+
+sched:
+name: cosine
+warmup_steps: 1000
+min_lr: 1.0e-6
+t_mult: 1.0
+
+———————––
+
+Uncertainty Calibration
+
+———————––
+
 uncertainty:
-  temperature_scaling: true
-  corel: true
-  quantile: true
-  conformal_prediction: true
-  per_bin_eval: true
+temperature_scaling: true
+corel: true
+quantile: true
+conformal_prediction: true
+per_bin_eval: true
+corel_gnn:
+backend: gatconv
+hidden: 128
+layers: 3
+dropout: 0.05
+edge_features: true
+coverage:
+target: 0.90
+eval_bins: all
+outputs:
+save_plots: true
+save_csv: true
+outdir: outputs/calibration
 
-# -------------------------
-# Symbolic Ablations
-# -------------------------
+———————––
+
+Symbolic Ablations
+
+———————––
+
 symbolic:
-  nonnegativity: true
-  fft_smoothness: true
-  asymmetry: true
-  photonic_alignment: true
-  violation_weight: 1.0
-  normalize_losses: true
-  trace_outputs: true
+nonnegativity: true
+fft_smoothness: true
+asymmetry: true
+photonic_alignment: true
+violation_weight: 1.0
+normalize_losses: true
+trace_outputs: true
+export_masks: true
+logic_engine:
+soft_mode: true
+per_rule_weights: true
+summary_json: outputs/diagnostics/symbolic_summary.json
 
-# -------------------------
-# Runtime & Training (DEEP)
-# -------------------------
+———————––
+
+Runtime & Training (DEEP)
+
+———————––
+
 runtime:
-  device: auto                 # resolve to cuda if available
-  epochs: 6                    # tuned to respect 9‑hr Kaggle budget w/ mixed precision
-  batch_size: 24
-  mixed_precision: true
-  checkpoint_interval: 1
-  log_interval: 50
-  max_runtime_hours: 8.5
+device: auto                 # resolve to cuda if available
+epochs: 6                    # 9-hour Kaggle budget with AMP
+batch_size: 24
+mixed_precision: true
+amp_dtype: float16
+checkpoint_interval: 1
+keep_last_n_checkpoints: 3
+log_interval: 50
+save_best_on: valid_gll
+early_stop:
+enable: true
+patience: 2
+metric: valid_gll
+mode: min
+max_runtime_hours: 8.5
+kaggle_internet_off: true
+seed_reprobarrier: true
 
-# -------------------------
-# Diagnostics Hooks (full)
-# -------------------------
+———————––
+
+Diagnostics Hooks (full)
+
+———————––
+
 diagnostics:
-  enable_umap: true
-  enable_tsne: true
-  enable_shap: true
-  enable_symbolic: true
-  enable_fft: true
-  gll_heatmap: true
-  zscore_hist: true
-  export_json: true
-  export_png: true
+enable_umap: true
+enable_tsne: true
+enable_shap: true
+enable_symbolic: true
+enable_fft: true
+enable_cli_heatmaps: true
+gll_heatmap: true
+zscore_hist: true
+shap:
+topk_bins: 50
+overlay_symbolic: true
+export_png: true
+export_json: true
+fft:
+power_spectrum: true
+autocorr: true
+export_png: true
+export_csv: true
+umap:
+dim: 2
+dedupe: true
+link_symbols: true
+confidence_shading: true
+export_html: true
+tsne:
+perplexity: 30
+export_html: true
+exports:
+export_json: true
+export_png: true
+outdir: outputs/diagnostics
+dashboard:
+generate_html: true
+file: outputs/diagnostics/diagnostics_report.html
+embed_tsne: true
+embed_umap: true
+embed_symbolic_tables: true
+embed_cli_log_heatmap: true
 
-# -------------------------
-# Export / Leaderboard
-# -------------------------
+———————––
+
+Export / Leaderboard / Packaging
+
+———————––
+
 export:
-  html: true
-  markdown: true
-  zip: true
-  leaderboard_top_n: 10
-  open_browser: false
-  outdir: outputs/ablate_heavy
-  zip_name: outputs/ablate_heavy/topN_bundle.zip
-  include:
-    - "logs/v50_debug_log.md"
-    - "logs/v50_event_log.jsonl"
-    - "outputs/diagnostics/**"
-    - "outputs/submission.csv"
-    - "outputs/run_hash_summary_v50.json"
+html: true
+markdown: true
+zip: true
+leaderboard_top_n: 10
+open_browser: false
+outdir: outputs/ablate_heavy
+zip_name: outputs/ablate_heavy/topN_bundle.zip
+include:
+- “logs/v50_debug_log.md”
+- “logs/v50_event_log.jsonl”
+- “outputs/diagnostics/”
+- “outputs/submission.csv”
+- “outputs/run_hash_summary_v50.json”
+- “outputs/calibration/”
+leaderboard:
+md_path: outputs/ablate_heavy/leaderboard.md
+html_path: outputs/ablate_heavy/leaderboard.html
+include_metrics: [“gll”, “rmse”, “mae”, “entropy”, “coverage”, “violations”]
+manifest:
+write: true
+path: outputs/ablate_heavy/manifest.json
+include_hashes: true
 
-# -------------------------
-# Hydra Sweep / Run dirs
-# -------------------------
+———————––
+
+Ablation Engine (auto_ablate_v50)
+
+———————––
+
+ablation:
+enable: true
+top_n: 10
+retries: 1
+metrics:
+- gll
+- l2_smoothness
+- entropy
+- symbolic_violations
+- fft_power
+export:
+html: true
+markdown: true
+open_html: false
+outdir: outputs/ablate_heavy
+zip_top_n:
+enable: true
+path: outputs/ablate_heavy/topN_bundle.zip
+
+———————––
+
+CLI / Logging
+
+———————––
+
+cli:
+enable_guardrails: true
+dry_run: false
+confirm: false
+write_version_on_start: true
+debug_log: logs/v50_debug_log.md
+events_log: logs/v50_event_log.jsonl
+version_banner: true
+
+logging:
+level: INFO
+to_file: true
+file: logs/train_heavy.log
+mlflow:
+enable: false
+wandb:
+enable: false
+
+———————––
+
+Submission (optional local packaging)
+
+———————––
+
+submission:
+validate: true
+validator:
+gll_threshold: null
+schema_check: true
+bundle:
+enable: true
+out_csv: outputs/submission.csv
+out_zip: outputs/submission_bundle.zip
+
+———————––
+
+Hydra Sweep / Run dirs
+
+———————––
+
 hydra:
-  sweep:
-    dir: outputs/multirun_heavy/${now:%Y-%m-%d}/${now:%H-%M-%S}
-    subdir: ${hydra.job.num}
-  run:
-    dir: outputs/singlerun_heavy/${now:%Y-%m-%d_%H-%M-%S}
+sweep:
+dir: outputs/multirun_heavy/${now:%Y-%m-%d}/${now:%H-%M-%S}
+subdir: ${hydra.job.num}
+run:
+dir: outputs/singlerun_heavy/${now:%Y-%m-%d_%H-%M-%S}
+job:
+chdir: true
+output_subdir: null
+
+———————––
+
+Safety / CI Guards
+
+———————––
+
+safety:
+fail_fast: true
+assert_kaggle_runtime: false
+disk_space_min_gb: 5
+gpu_required: false
+internet_required: false
