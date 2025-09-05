@@ -1,14 +1,54 @@
 # ==============================================================================
-# 🚀 Kaggle Devices — NVIDIA L4 GPU
+# 🚀 Kaggle Devices — NVIDIA L4 GPU (SpectraMind V50)
 # ------------------------------------------------------------------------------
 # Purpose:
-#   - Kaggle experimental GPU runtime (L4, 24 GB, newer arch).
+#   • Kaggle experimental GPU runtime (L4, 24 GB, Ada Lovelace architecture).
+#   • Configures AMP and runtime guardrails for ≤ 9-hour Kaggle walltime.
+#   • Reproducible and leaderboard-safe by default.
+#
+# Usage:
+#   spectramind train local=devices/kaggle_l4 trainer=kaggle_safe
+#
+# Notes:
+#   • Kaggle kernels run offline — no internet, datasets must be pre-attached.
+#   • L4 GPUs (Ada Lovelace) handle AMP (16-mixed) efficiently with larger memory (24 GB).
+#   • Runtime capped at 9h for leaderboard compliance.
 # ==============================================================================
 
 _target_: torch.device
-devices: 1
-precision: 16-mixed
-deterministic: true
-cudnn_benchmark: true
-timeout_hours: 9
-notes: "Kaggle GPU quota: L4 runtime, ~9h max walltime."
+
+# Device orchestration
+devices: 1                   # Kaggle provides one L4 GPU per runtime
+autodetect: false            # fixed: Kaggle always provisions 1 GPU
+
+# Precision / numerical stability
+precision: 16-mixed          # default AMP; override to bf16-mixed/32 via CLI if needed
+deterministic: true          # enforce deterministic ops for reproducibility
+cudnn_benchmark: true        # enable cuDNN autotune (safe with static Kaggle inputs)
+
+# Reproducibility guardrails
+seed: 2025
+numpy_seed: 2025
+pythonhashseed: 0
+
+# Threading controls (Kaggle: ~2 vCPUs typical)
+max_threads: 2
+intraop_threads: 2
+interop_threads: 1
+
+# Runtime guardrails
+timeout_hours: 9             # Kaggle walltime hard cap
+gradient_clip_val: 1.0       # stabilize training on small/medium batch sizes
+
+# Diagnostics
+log_device_info: true        # log CUDA device properties on startup
+profile_runtime: false        # disable by default to conserve 9h runtime
+
+# Metadata
+notes: |
+  Kaggle L4 device profile (24 GB Ada Lovelace GPU).
+  - Designed for competition inference & training within Kaggle’s runtime sandbox.
+  - AMP (16-mixed) precision by default for efficiency.
+  - Deterministic kernels with fixed seeds ensure reproducibility.
+  - Threads capped to Kaggle’s vCPU limits.
+  - Logs device and runtime info at startup for audit trails.
