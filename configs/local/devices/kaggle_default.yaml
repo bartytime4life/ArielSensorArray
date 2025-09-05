@@ -1,0 +1,54 @@
+# ==============================================================================
+# 🚀 Kaggle Devices — Auto-Select (T4 / A10 / L4) • SpectraMind V50
+# ------------------------------------------------------------------------------
+# Purpose:
+#   • Single entry-point for Kaggle GPU runs that adapts to the provided GPU.
+#   • Chooses one of: kaggle_t4 / kaggle_a10 / kaggle_l4 at runtime.
+#   • Keeps precision & guardrails consistent with device-specific profiles.
+#
+# Usage:
+#   spectramind train local=devices/kaggle_default trainer=kaggle_safe
+#
+# Resolver:
+#   • The launcher reads CUDA device name (e.g., “NVIDIA L4”, “NVIDIA A10G”, “Tesla T4”)
+#     and swaps this profile for the corresponding concrete device profile.
+#   • Fallback order: L4 → A10 → T4. If unknown, default to T4.
+# ==============================================================================
+
+# This file is a logical alias (no concrete CUDA flags here).
+# Your launcher/CLI should resolve it to one of:
+#   - local/devices: kaggle_l4
+#   - local/devices: kaggle_a10
+#   - local/devices: kaggle_t4
+
+_target_: torch.device
+
+# Indicate this is an alias requiring resolution at runtime.
+alias: true
+alias_group: kaggle_auto
+candidates:
+  - kaggle_l4
+  - kaggle_a10
+  - kaggle_t4
+
+# Soft preferences used by the resolver (documented; ignored by Hydra).
+resolve_rules:
+  match:
+    - contains: "L4"
+      use: "kaggle_l4"
+    - contains: "A10"
+      use: "kaggle_a10"
+    - contains: "T4"
+      use: "kaggle_t4"
+  fallback: "kaggle_t4"
+
+# Keep minimal common expectations for reproducibility (non-binding here).
+devices: 1
+deterministic: true
+timeout_hours: 9
+
+notes: |
+  Auto profile for Kaggle GPU selection.
+  The runtime launcher must inspect CUDA device strings and switch the
+  effective profile to one of: kaggle_l4 / kaggle_a10 / kaggle_t4.
+  If no match is found, defaults to T4. Internet is disabled on Kaggle.
