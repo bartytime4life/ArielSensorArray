@@ -1,0 +1,17 @@
+# ==============================================================================
+# 🧠 Precision — Auto Mixed Precision (BF16→FP16→FP32)
+# ------------------------------------------------------------------------------
+# Purpose:
+#   • Portability-first: pick the best precision supported at runtime.
+#   • BF16 if available, else FP16, else FP32 fallback.
+# ==============================================================================
+
+# Pseudopolicy selector (resolved in launcher/util code if supported),
+# or have your runtime translate this to a concrete precision.
+precision: auto-mixed
+deterministic: true
+cudnn_benchmark: true
+
+notes: |
+  Auto policy: prefer BF16 on capable GPUs; otherwise use FP16; otherwise FP32.
+  Implemented by launcher to probe hardware capability before Trainer init.
