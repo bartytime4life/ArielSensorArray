@@ -2,18 +2,24 @@
 # 🛰️ SpectraMind V50 — Gradient Accumulation (VALIDATION)
 # ------------------------------------------------------------------------------
 # Purpose:
-#   • Validation doesn’t update weights; accumulation has no effect on optimizer.
-#   • Kept here for config completeness and symmetry with train/test.
-#
+#   • Validation does not perform backpropagation or weight updates.
+#   • Gradient accumulation has no mathematical effect on the optimizer.
+#   • This entry exists for Hydra completeness and symmetry with train/test configs.
+# ------------------------------------------------------------------------------
 # When to Use
-#   • 🚫 Typically always 1 (no accumulation).
-#   • ✅ You may set >1 for consistency/testing, but it has no training impact.
+#   • 🚫 Default: 1 — always one batch per step, no accumulation needed.
+#   • ✅ May set >1 only for:
+#       – Debugging pipeline consistency across train/val/test.
+#       – Stress-testing configuration overrides in CI.
+#   • ⚠️ Do not rely on this to change validation semantics — outputs remain identical.
 # ==============================================================================
 
 accumulate_grad_batches: 1
 
 notes: |
   Validation loaders:
-  • No gradient updates → accumulation irrelevant.
-  • Always keep =1 unless debugging pipeline consistency.
-  • Included for Hydra symmetry: keeps val/test aligned with train knobs.
+  • No gradient updates → accumulation factor has no effect on results.
+  • Always leave =1 unless explicitly testing override propagation.
+  • Retained for Hydra symmetry with training/test configs.
+  • Ensures uniform config knobs across all phases, avoiding special-case logic.
+  • Logged in v50_debug_log.md for reproducibility/auditability even if inert.
