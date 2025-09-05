@@ -1,1 +1,183 @@
-delete me
+%% SpectraMind V50 — Architecture Stack (Neuro‑Symbolic, Physics‑Informed)
+%% File: architecture_stack.mmd
+%% Usage: mermaid-cli -> mmdc -i architecture_stack.mmd -o architecture_stack.svg -b transparent -t neutral
+
+flowchart TB
+
+%%==============================
+%% Layer 7 — Interfaces & UX
+%%==============================
+subgraph L7[Layer 7 · Interfaces & UX]
+  direction TB
+  CLI["spectramind CLI\n(Typer)"]:::ux
+  NB["Kaggle Notebook\n(Hardened Inference)"]:::ux
+  DASH["Diagnostics Dashboard\n(React/HTML)"]:::ux
+end
+
+%%=============================================
+%% Layer 6 — Orchestration & Reproducibility
+%%=============================================
+subgraph L6[Layer 6 · Orchestration & Reproducibility]
+  direction TB
+  HYDRA["Hydra Configs\n(YAML groups, overrides)"]:::orch
+  DVC["DVC + lakeFS\n(Data/Artifact Versioning)"]:::orch
+  MLFLOW["MLflow Tracking\n(Params/metrics/artifacts)"]:::orch
+  POETRY["Poetry Env + Lock\n(Reproducible deps)"]:::orch
+  DOCKER["Docker + CUDA\n(Deterministic runtime)"]:::orch
+  MAKE["Master Makefile\n(Deterministic targets)"]:::orch
+  GHA["GitHub Actions CI\n(Tests, Docs, Submit, SBOM)"]:::orch
+  KERNEL["Kaggle Runtime\n(GPU, Internet OFF)"]:::orch
+end
+
+%%=============================
+%% Layer 5 — Data & Calibration
+%%=============================
+subgraph L5[Layer 5 · Data & Calibration]
+  direction TB
+  RAW_FGS1["FGS1 Frames\n(135k×32×32)"]:::data
+  RAW_AIRS["AIRS Frames\n(11k×32×356)"]:::data
+  CAL_PIPE["Calibration Pipeline\n(ADC → nonlinearity → dark → flat → CDS → photometry → trace → norm → phase align)"]:::data
+  LC["Calibrated Light Curves\n(FGS1/AIRS)"]:::data
+  FEATURES["Feature/Latent Store\n(FFT, PCA, UMAP, embeddings)"]:::data
+  DATASETS["Datasets (Kaggle/Local)\n+ DVC Remotes"]:::data
+end
+
+%%===================================
+%% Layer 4 — Modeling & Training Core
+%%===================================
+subgraph L4[Layer 4 · Modeling & Training]
+  direction TB
+  FGS1_ENC["FGS1 Encoder\nMamba SSM (long‑seq)"]:::model
+  AIRS_GNN["AIRS Encoder\nGNN (edge‑feature aware)"]:::model
+  DECODERS["Multi‑Scale Decoders\nμ (mean), σ (uncertainty)"]:::model
+  LOSSES["Losses\nGLL + FFT smooth + asymmetry + symbolic constraints"]:::model
+  PRETRAIN["MAE Pretraining\n(masked bins)"]:::model
+  CONTRAST["Contrastive Stage\n(FGS1↔AIRS)"]:::model
+  FINETUNE["Fine‑tune\n(GLL + symbolic)"]:::model
+  PROFILE["Instrument Profile Switcher\n(Symbolic profiles)"]:::model
+end
+
+%%=======================================
+%% Layer 3 — Uncertainty & Calibration
+%%=======================================
+subgraph L3[Layer 3 · Uncertainty & Calibration]
+  direction TB
+  TSCALE["Temperature Scaling\n(instance/global)"]:::calib
+  COREL["COREL Conformal GNN\n(binwise coverage)"]:::calib
+  CALCHK["Calibration Checker\n(σ vs residuals, z‑scores)"]:::calib
+  COVPLOTS["Coverage & Reliability Plots\n(per‑bin, per‑molecule)"]:::calib
+end
+
+%%=================================
+%% Layer 2 — Diagnostics & XAI
+%%=================================
+subgraph L2[Layer 2 · Diagnostics & Explainability]
+  direction TB
+  SHAP["SHAP Overlays\n(AIRS/FGS1, μ×SHAP fusion)"]:::diag
+  SYMLOGIC["Symbolic Logic Engine\n(rules: smoothness, non‑negativity, molecular coherence, photonic align)"]:::diag
+  FFTDIAG["FFT & Autocorr\n(power spectra, periodicity)"]:::diag
+  SMOOTHMAP["Spectral Smoothness Map\n(L2/TV diagnostics)"]:::diag
+  UMAPTSNE["UMAP / t‑SNE Latents\n(interactive HTML)"]:::diag
+  GLLHEAT["GLL Heatmap\n(bin‑wise)"]:::diag
+  HTMLREP["generate_html_report.py\n(unified diagnostics)"]:::diag
+end
+
+%%==================================
+%% Layer 1 — Submission & Delivery
+%%==================================
+subgraph L1[Layer 1 · Submission & Delivery]
+  direction TB
+  PREDICT["predict_v50.py\n(inference: μ, σ)"]:::delivery
+  VALIDATE["submission_validator.py\n(schema, shapes, NaNs)"]:::delivery
+  BUNDLE["cli_bundle.py / cli_submit.py\n(zip, manifest, hashes)"]:::delivery
+  KAGGLE_SUBMIT["Kaggle Submission\n(leaderboard)"]:::delivery
+end
+
+%%=====================================
+%% Cross‑Cutting — Observability & Sec
+%%=====================================
+subgraph XCUT[Cross‑Cutting · Observability, Security, Compliance]
+  direction TB
+  LOGS["v50_debug_log.md\n(CLI call log)"]:::cross
+  RUNHASH["run_hash_summary_v50.json\n(config/hash lineage)"]:::cross
+  EVENTS["events.jsonl\n(runtime events)"]:::cross
+  SBOM["SBOM (Syft/CycloneDX)\n+ Trivy/Grype"]:::cross
+  CODEQL["CodeQL / pip‑audit\n(secure supply chain)"]:::cross
+  TESTS["Pytest Unit & CI Tests\n(scientific + CLI)"]:::cross
+  CI_DASH["CI Dashboard\n(GitHub Pages/MkDocs)"]:::cross
+end
+
+%%====================
+%% Primary Data Flow
+%%====================
+CLI --> HYDRA
+CLI --> MAKE
+NB --> KERNEL
+DASH --> GHA
+
+HYDRA --> DVC
+MAKE --> GHA
+MAKE --> DOCKER
+DOCKER --> KERNEL
+POETRY --> DOCKER
+GHA --> CI_DASH
+
+DATASETS --> RAW_FGS1
+DATASETS --> RAW_AIRS
+RAW_FGS1 --> CAL_PIPE --> LC
+RAW_AIRS  --> CAL_PIPE
+LC --> FEATURES
+
+FEATURES --> FGS1_ENC
+FEATURES --> AIRS_GNN
+FGS1_ENC --> DECODERS
+AIRS_GNN --> DECODERS
+DECODERS --> LOSSES
+PROFILE -. symbolic profiles .-> LOSSES
+
+PRETRAIN --> CONTRAST --> FINETUNE
+FINETUNE --> PREDICT
+
+PREDICT --> TSCALE --> COREL --> CALCHK --> COVPLOTS
+PREDICT -. μ, σ artifacts .-> HTMLREP
+
+%% Diagnostics taps
+PREDICT -. tap .-> SHAP
+PREDICT -. tap .-> SYMLOGIC
+FEATURES -. tap .-> FFTDIAG
+FEATURES -. tap .-> UMAPTSNE
+LOSSES   -. tap .-> GLLHEAT
+SMOOTHMAP -. tap .-> HTMLREP
+SHAP --> HTMLREP
+SYMLOGIC --> HTMLREP
+FFTDIAG --> HTMLREP
+UMAPTSNE --> HTMLREP
+GLLHEAT --> HTMLREP
+
+%% Submission
+PREDICT --> VALIDATE --> BUNDLE --> KAGGLE_SUBMIT
+HTMLREP --> BUNDLE
+
+%% Observability wiring (dashed)
+classDef wire stroke-dasharray: 4 4;
+CLI -. log .-> LOGS:::wire
+GHA -. artifacts .-> DVC:::wire
+GHA -. sbom .-> SBOM:::wire
+GHA -. code-scan .-> CODEQL:::wire
+MAKE -. logs .-> LOGS:::wire
+PREDICT -. metrics .-> MLFLOW:::wire
+FINETUNE -. metrics .-> MLFLOW:::wire
+BUNDLE -. manifest .-> RUNHASH:::wire
+CALCHK -. jsonl .-> EVENTS:::wire
+
+%%====================
+%% Styles & Classes
+%%====================
+classDef ux fill:#0ea5e9,stroke:#0369a1,stroke-width:1px,color:#ffffff;
+classDef orch fill:#14b8a6,stroke:#0f766e,stroke-width:1px,color:#062925;
+classDef data fill:#f59e0b,stroke:#b45309,stroke-width:1px,color:#1f1300;
+classDef model fill:#a78bfa,stroke:#6d28d9,stroke-width:1px,color:#1e0b3a;
+classDef calib fill:#ef4444,stroke:#991b1b,stroke-width:1px,color:#ffffff;
+classDef diag fill:#22d3ee,stroke:#0891b2,stroke-width:1px,color:#0b1a1f;
+classDef delivery fill:#84cc16,stroke:#4d7c0f,stroke-width:1px,color:#0b1402;
+classDef cross fill:#94a3b8,stroke:#334155,stroke-width:1px,color:#0b1220;
