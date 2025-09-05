@@ -1,10 +1,51 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="640" height="240">
-  <rect x="20" y="80" width="140" height="60" fill="#2196f3" stroke="#000"/>
-  <text x="90" y="115" text-anchor="middle" fill="#fff">FGS1 Encoder</text>
-  <rect x="200" y="80" width="140" height="60" fill="#4caf50" stroke="#000"/>
-  <text x="270" y="115" text-anchor="middle" fill="#fff">AIRS GNN</text>
-  <rect x="380" y="80" width="140" height="60" fill="#ff9800" stroke="#000"/>
-  <text x="450" y="115" text-anchor="middle" fill="#fff">Decoder μ/σ</text>
-  <line x1="160" y1="110" x2="200" y2="110" stroke="#000" stroke-width="2"/>
-  <line x1="340" y1="110" x2="380" y2="110" stroke="#000" stroke-width="2"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="780" height="260">
+  <!-- Styles -->
+  <style>
+    .enc { fill:#2196f3; stroke:#0b305b; stroke-width:2; }
+    .gnn { fill:#4caf50; stroke:#1b5e20; stroke-width:2; }
+    .dec { fill:#ff9800; stroke:#e65100; stroke-width:2; }
+    .text { font-family:Inter, sans-serif; font-size:14px; font-weight:bold; fill:#fff; }
+    .arrow { stroke:#000; stroke-width:2; marker-end:url(#arrowhead); }
+  </style>
+
+  <!-- Arrowhead marker -->
+  <defs>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7"
+            refX="9" refY="3.5" orient="auto" fill="#000">
+      <polygon points="0 0, 10 3.5, 0 7" />
+    </marker>
+  </defs>
+
+  <!-- Encoder: FGS1 -->
+  <g>
+    <rect x="40" y="100" width="160" height="70" rx="10" ry="10" class="enc"/>
+    <text x="120" y="140" text-anchor="middle" class="text">FGS1 Encoder</text>
+    <text x="120" y="160" text-anchor="middle" font-size="11" fill="#e0f7fa">(Mamba SSM)</text>
+  </g>
+
+  <!-- Encoder: AIRS -->
+  <g>
+    <rect x="260" y="100" width="160" height="70" rx="10" ry="10" class="gnn"/>
+    <text x="340" y="140" text-anchor="middle" class="text">AIRS Encoder</text>
+    <text x="340" y="160" text-anchor="middle" font-size="11" fill="#e0f7fa">(Wavelength GNN)</text>
+  </g>
+
+  <!-- Fusion -->
+  <g>
+    <rect x="480" y="60" width="160" height="50" rx="10" ry="10" fill="#ede7f6" stroke="#7e57c2" stroke-width="2"/>
+    <text x="560" y="90" text-anchor="middle" font-size="14" font-weight="bold" fill="#4527a0">Latent Fusion</text>
+  </g>
+
+  <!-- Decoder -->
+  <g>
+    <rect x="480" y="140" width="160" height="80" rx="10" ry="10" class="dec"/>
+    <text x="560" y="175" text-anchor="middle" class="text">Decoder μ / σ</text>
+    <text x="560" y="195" text-anchor="middle" font-size="11" fill="#fffde7">(Mean + Uncertainty)</text>
+  </g>
+
+  <!-- Arrows -->
+  <line x1="200" y1="135" x2="260" y2="135" class="arrow"/>
+  <line x1="420" y1="135" x2="480" y2="85" class="arrow"/>
+  <line x1="420" y1="135" x2="480" y2="180" class="arrow"/>
+  <line x1="560" y1="110" x2="560" y2="140" class="arrow"/>
 </svg>
