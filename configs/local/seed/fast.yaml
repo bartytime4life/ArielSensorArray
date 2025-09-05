@@ -1,0 +1,17 @@
+# ==============================================================================
+# ⚡ Local Seed — Fast/CI
+# ------------------------------------------------------------------------------
+# Purpose:
+#   - Lightweight reproducibility checks for CI or smoke tests.
+#   - Keeps determinism on; may reduce NumPy/PyTorch workers.
+# ==============================================================================
+
+seed: 1337
+numpy_seed: 1337
+torch_seed: 1337
+pythonhashseed: 1337
+
+deterministic: true
+cudnn_benchmark: false
+
+notes: "CI/smoke tests: deterministic seeds, lightweight reproducibility."
