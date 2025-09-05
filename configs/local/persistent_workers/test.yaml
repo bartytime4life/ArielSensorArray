@@ -1,0 +1,19 @@
+# ==============================================================================
+# 🛰️ SpectraMind V50 — DataLoader Persistent Workers (TEST/INFERENCE)
+# ------------------------------------------------------------------------------
+# Purpose:
+#   • Control worker persistence during test/inference runs.
+#   • Inference is often one-shot; persistent workers rarely help.
+#
+# When to Use
+#   • 🚫 Typically false, since test loaders run only once.
+#   • ✅ May set true if inference spans many batches (e.g. large ensembles).
+# ==============================================================================
+
+persistent_workers: false
+
+notes: |
+  Test loaders:
+  • Persistent workers disabled by default (single-pass inference).
+  • Keeps inference deterministic and lightweight.
+  • Enable only if running long batched inference jobs.
