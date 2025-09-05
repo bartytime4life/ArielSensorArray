@@ -1,13 +1,32 @@
 # ==============================================================================
-# 🔬 Precision — Float64 (double)
+# 🔬 Precision — Float64 (Double)
 # ------------------------------------------------------------------------------
 # Purpose:
-#   - Use float64 for high-precision scientific diagnostics.
-#   - Not recommended for Kaggle (too slow).
+#   • Full 64-bit floating point precision for high-accuracy scientific diagnostics.
+#   • Useful for debugging numerical stability, symbolic/physics checks, or
+#     validating approximations against ground-truth math.
+#   • Not recommended for Kaggle leaderboard runs (2–4× slower, >2× memory).
+#   • Use locally or in CI diagnostics jobs when reproducibility > speed.
 # ==============================================================================
-precision: 64
-amp_backend: native
-amp_level: O0
-deterministic: true
-cudnn_benchmark: false
-notes: "Double precision for numerical experiments / debugging."
+
+precision:
+  float: 64             # enforce float64 dtype across tensors
+  amp_backend: "native" # AMP disabled effectively in double precision
+  amp_level: "O0"       # "O0" = full precision, no mixed precision ops
+  grad_clip: 1.0        # still clip gradients for stability
+  loss_scaler: null     # no dynamic scaling in double precision
+
+deterministic: true      # ensures bitwise-repeatable results
+cudnn_benchmark: false   # disable heuristic autotuning (favor exact reproducibility)
+enable_tf32: false       # ensure no TF32 kernels are used on Ampere+
+
+nan_monitor: true        # fail fast on NaN/inf in loss or grads
+seed_everything: 42      # enforce reproducible seeds (torch/numpy/random)
+
+notes: |
+  Float64 (double precision):
+  • Use for numerical experiments, scientific validation, or symbolic debugging.
+  • Guarantees maximum numeric fidelity but increases runtime & memory.
+  • Disable on Kaggle GPUs (runtime >9h); reserve for local/CI audit jobs.
+  • Logs should record dtype, hardware, and CUDA/cuDNN versions for traceability.
+  • If training stability is the goal, first try AMP (16-mixed) + NaN monitor.
