@@ -1,13 +1,39 @@
 # ==============================================================================
-# 🚀 cuDNN Autotune — Aggressive Performance Mode
+# 🚀 cuDNN Autotune — Aggressive Performance Mode (v1.2)
 # ------------------------------------------------------------------------------
-# Purpose:
-#   • Favor maximum throughput over reproducibility.
-#   • Good for Kaggle leaderboard runs with fixed shapes.
+# Purpose
+#   • Enable cuDNN autotuner for maximum throughput.
+#   • Benchmarks available kernels for each layer and picks the fastest.
+#   • Ideal for Kaggle leaderboard runs or long epochs with fixed input shapes.
+# ------------------------------------------------------------------------------
+# Trade-offs
+#   • ⚡ Speed: Significant speedup if batch size & tensor shapes are constant.
+#   • ❌ Reproducibility: Kernel choice may vary by driver, CUDA/cuDNN version,
+#       or hardware → results may differ slightly run-to-run.
+#   • 🔒 If strict determinism is required, pair with:
+#         local/precision/strict_deterministic.yaml
 # ==============================================================================
-
 cudnn_benchmark: true
 
+# ------------------------------------------------------------------------------
+# Extended Controls (optional)
+# ------------------------------------------------------------------------------
+# allow_tf32: true          # (Ampere+) enable TensorFloat32 for matmul (perf boost)
+# torch_compile_tune: true  # (PyTorch 2.x) allow Inductor to fuse/cuDNN-optimize ops
+# kernel_cache_dir: null    # (future) explicit cache path if runtime supports it
+
+# ------------------------------------------------------------------------------
+# 📓 Notes
+# ------------------------------------------------------------------------------
 notes: |
-  Autotuner aggressively enabled. Best speed for static workloads,
-  but kernel selection may vary across hardware/drivers.
+  Aggressive cuDNN autotuner enabled.
+
+  • Best choice for leaderboard training with consistent input shapes
+    (e.g. fixed batch size, sequence length, resolution).
+  • Kernel selection may vary across drivers/GPUs — not bitwise reproducible.
+  • Expect 5–25% throughput gain vs. cudnn_benchmark=false on CNN/Conv-heavy
+    architectures.
+  • For strict reproducibility, disable this and use `strict_deterministic`.
+
+  ✅ Recommended: Kaggle / HPC leaderboard runs  
+  ❌ Avoid: CI pipelines, ablations, or audits where bitwise determinism matters.
