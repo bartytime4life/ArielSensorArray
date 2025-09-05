@@ -3,114 +3,166 @@
 **SpectraMind V50 — Ariel Data Challenge 2025**  
 *Central repository assets: diagrams, dashboards, reports, comparisons, and reproducibility visuals*
 
-> See companion docs: **[ARCHITECTURE.md](ARCHITECTURE.md)**, **[KAGGLE_GUIDE.md](KAGGLE_GUIDE.md)**, **[COMPARISON_GUIDE.md](COMPARISON_GUIDE.md)**
+> See companion docs: **[ARCHITECTURE.md](../ARCHITECTURE.md)** • **[KAGGLE_GUIDE.md](../KAGGLE_GUIDE.md)** • **[COMPARISON_GUIDE.md](../COMPARISON_GUIDE.md)**
 
 ---
 
 ## 📌 Purpose
 
-This directory consolidates all **visual + documentation artifacts** used across SpectraMind V50.  
-It ensures the system is **self-documented, reproducible, and leaderboard-ready**:
+This directory consolidates all **visual + documentation artifacts** used across SpectraMind V50 and makes them **self-documented, reproducible, and leaderboard-ready**.
 
-- **Source-tracked** (Mermaid `.mmd` is canonical)  
-- **Auto-exported** (`.svg`, `.png`, `.pdf` via CI or `make diagrams`)  
-- **CI-validated** (diagram tests + mermaid-export workflow)  
-- **Dashboard-ready** (`report.html`, `diagnostics_dashboard.html`)  
+- **Source-tracked**: Mermaid `.mmd` files are canonical.
+- **Auto-exported**: `.svg` / `.png` / `.pdf` via CI (`make diagrams`).
+- **CI-validated**: Diagram tests + mermaid export job + HTML lint.
+- **Dashboard-ready**: `report.html`, `diagnostics_dashboard.html` with optional `dashboards/dashboard_data.json` hydration.
+- **Manifested**: Every file appears in `assets-manifest.json` with MIME, size, integrity, and version.
 
 ---
 
 ## 📂 Contents
 
-- **`diagrams/`** — Mermaid diagrams (`.mmd` sources) + rendered `.svg`/`.png`.  
-  Used in **[ARCHITECTURE.md](ARCHITECTURE.md)**, reports, and dashboards.  
-- **`gui/`** — Optional GUI/dashboard visuals.  
-- **`logos/`** — Project branding and iconography.  
-- **`report.html`** — Compact reproducibility log (pipeline + configs).  
-- **`diagnostics_dashboard.html`** — Interactive dashboard (UMAP/t-SNE, SHAP overlays, symbolic rule tables, calibration).  
-- **`KAGGLE_GUIDE.md`** — Kaggle runtime integration and submission workflow.  
-- **`COMPARISON_GUIDE.md`** — Narrative explainer of `comparison_overview.png`, contrasting Kaggle baselines vs V50.  
-- **`comparison_overview.png`** — Visual comparison of Kaggle baselines vs SpectraMind V50.  
-- **`kaggle_infer_template.ipynb`** — Notebook template for Kaggle inference.  
-- **`sample_plots/`** *(optional)* — Example PNGs for testing (`sample_spectrum.png`, `umap_clusters.png`, `shap_overlay.png`).  
+assets/
+├─ diagrams/                # Mermaid sources and rendered artifacts
+│  ├─ architecture_stack.mmd
+│  ├─ pipeline_overview.mmd
+│  ├─ symbolic_logic_layers.mmd
+│  ├─ kaggle_ci_pipeline.mmd
+│  ├─ .svg .png           # CI-rendered outputs
+│  └─ test_diagrams.py      # fast rendering/smoke tests
+│
+├─ dashboards/
+│  ├─ diagnostics_dashboard.html
+│  ├─ dashboard_data.json   # optional: generator hydration (KPIs, asset paths, CLI table)
+│  └─ report.html
+│
+├─ gui/                     # optional GUI/dashboard visuals & styles
+│  ├─ color_palette.json
+│  └─ widget_styles.css
+│
+├─ logos/                   # brand + symbols (spectrum/black/white; mark/full)
+│  ├─ spectrum/mark/.png .svg
+│  ├─ spectrum/full/.png .svg
+│  ├─ black/  white/**
+│  └─ favicon/*.ico
+│
+├─ sample_plots/            # optional smoke assets used by dashboards and tests
+│  ├─ sample_spectrum.png
+│  ├─ umap_clusters.png
+│  └─ shap_overlay.png
+│
+├─ comparison_overview.png
+├─ assets-manifest.json     # integrity, size, mime, version for every asset
+└─ (root docs live one level up)
 
 ---
 
-## 📊 Kaggle Model Insights (Why the diagrams look this way)
+## 📊 Kaggle Model Insights (why the diagrams look this way)
 
 SpectraMind V50 integrates lessons from Kaggle baselines in the NeurIPS 2025 Ariel Data Challenge:
 
-- **Thang Do Duc “0.329 LB”**  
-  • Residual MLP; simple preprocessing; no σ estimation.  
-  • Robust, reproducible reference design.  
+- **Thang Do Duc “0.329 LB”** — residual MLP; simple preprocessing; no σ estimation; robust and reproducible.
+- **V1ctorious3010 “80bl-128hd-impact”** — very deep MLP (80 residual blocks/128 hidden); captures subtle features but higher variance/overfit risk.
+- **Fawad Awan “Spectrum Regressor”** — multi-output spectrum head; stable and interpretable across bins.
 
-- **V1ctorious3010 “80bl-128hd-impact”**  
-  • Extremely deep (80 residual blocks, 128 hidden).  
-  • Captures subtle features; higher variance/overfitting risk; less interpretable.  
+**Embedded in V50 (reflected in diagrams & docs):**
 
-- **Fawad Awan “Spectrum Regressor”**  
-  • Multi-output head predicts the entire spectrum.  
-  • Stable, interpretable; consistent across bins.  
-
-**Takeaways embedded in V50 (reflected in diagrams & docs):**  
-- Residual-style encoders (**Mamba SSM** for FGS1, **GNN** for AIRS) instead of brute-force deep MLPs.  
-- Physics-informed detrending & jitter correction in calibration.  
-- Explicit uncertainty (σ) with **Temperature Scaling + COREL GNN**.  
+- Residual-style encoders (**Mamba SSM** for FGS1; **GNN** for AIRS).
+- Physics-informed detrending and jitter correction during calibration.
+- Explicit uncertainty (σ) with **Temperature Scaling + COREL GNN**.
 - Ensembles that fuse shallow + deep + symbolic overlays.
 
-> Full narrative + image: **[COMPARISON_GUIDE.md](COMPARISON_GUIDE.md)**
+See **[COMPARISON_GUIDE.md](../COMPARISON_GUIDE.md)** for the full narrative and the comparison graphic.
 
 ---
 
 ## 📐 Diagrams (maintained in `assets/diagrams/`)
 
-- **Pipeline Overview** — `diagrams/pipeline_overview.svg`  
+- **Pipeline Overview** — `diagrams/pipeline_overview.mmd` → `pipeline_overview.svg`  
   *FGS1/AIRS → Calibration → Modeling (μ/σ) → UQ → Diagnostics → Submission → Reproducibility & Ops*
 
-- **Architecture Stack** — `diagrams/architecture_stack.svg`  
-  *Layers: CLI → Configs → DVC/Git → Calibration → Encoders/Decoders → UQ → Diagnostics → Packaging → CI → Runtime*
+- **Architecture Stack** — `diagrams/architecture_stack.mmd` → `architecture_stack.svg`  
+  *CLI → Configs → DVC/Git → Calibration → Encoders/Decoders → UQ → Diagnostics → Packaging → CI → Runtime*
 
-- **Symbolic Logic Layers** — `diagrams/symbolic_logic_layers.svg`  
-  *Rule families: non-negativity, smoothness, asymmetry, FFT coherence, molecular alignment; evaluation & diagnostics*
+- **Symbolic Logic Layers** — `diagrams/symbolic_logic_layers.mmd` → `symbolic_logic_layers.svg`  
+  *Families: non-negativity, smoothness, asymmetry, FFT coherence, molecular alignment; evaluation & diagnostics*
 
-- **Kaggle CI Pipeline** — `diagrams/kaggle_ci_pipeline.svg`  
+- **Kaggle CI Pipeline** — `diagrams/kaggle_ci_pipeline.mmd` → `kaggle_ci_pipeline.svg`  
   *GitHub Actions → Selftest → Training → Diagnostics → Validation → Packaging → Kaggle Submission → Artifact Registry*
 
-Rendered `.svg` and `.png` files are committed for portability.  
-All four are embedded in **[ARCHITECTURE.md](ARCHITECTURE.md)**.
+> Rendered `.svg`/`.png` are committed for portability and embedded from `../ARCHITECTURE.md`.
 
 ---
 
-## 📑 Reports
+## 📑 Dashboards & Reports
 
-- **`report.html`** — Compact reproducibility report (pipeline + config snapshots).  
-- **`diagnostics_dashboard.html`** — Rich interactive diagnostics (symbolic overlays, SHAP, latent projections, calibration checks).
+- **`dashboards/diagnostics_dashboard.html`** — Interactive diagnostics (UMAP/t-SNE, SHAP overlays, symbolic rules, calibration).  
+  Optional data hydration file: `dashboards/dashboard_data.json` (build meta, KPIs, asset map, recent CLI calls).
+
+- **`dashboards/report.html`** — Compact reproducibility report (pipeline + config snapshots).
+
+**Embed mode:** append `?embed=1` (images → iframes).  
+**Theme:** `?theme=dark|light|auto` (persists).  
+**Keyboard:** `?` help • `r` refresh images • `t` theme • `e` embed • `g` jump to overview.
 
 ---
 
-## 🛠 Reproducibility & CI
+## 🧾 Manifest & Integrity
 
-- **Configs:** Hydra YAMLs in `configs/`.  
-- **Data:** DVC-tracked datasets/models (hash-bound to runs).  
-- **CI:** GitHub Actions (selftest, diagnostics, mermaid-export).  
-- **Logs:** `logs/v50_debug_log.md` (append-only), JSONL event streams.  
-- **Validation:** diagram tests ensure sources render and are embedded in docs.
+All assets are enumerated in **`assets-manifest.json`** with:
+
+- **`path`** (repo-relative), **`type`**, **`mime`**, **`bytes`**, **`version`**
+- **`hash`**: `sha256-…` for integrity
+- **Aliases** for legacy import paths (`branding/logo.svg`, `favicon.ico`, …)
+- **Deprecated** mapping with removal windows (e.g., `logos/logo.svg` → new spectrum path)
+
+> The manifest is validated in CI and used by the dashboards to cache-bust (`?v=`) and verify integrity.
+
+---
+
+## 🛠 Reproducibility, CI & Tests
+
+- **Configs:** Hydra YAMLs in `configs/` (hash-bound to runs).
+- **Data/Models:** DVC-tracked; artifacts link back to commit + config hash.
+- **CI:** GitHub Actions (`selftest`, `diagnose`, `mermaid-export`, `lint-html`, `manifest-verify`).
+- **Logs:** `logs/v50_debug_log.md` (append-only), `events/*.jsonl`.
+- **Diagram tests:** `assets/diagrams/test_diagrams.py` confirms sources render and are embedded in docs.
+- **HTML lint:** `npm run lint:html` (or `html-validate`) checks dashboards & reports.
 
 Every artifact here is **versioned, CI-tested, and leaderboard-safe**.
 
 ---
 
-## 🔁 How to regenerate diagrams (local)
+## 🔁 Regenerate diagrams locally
 
 From repo root:
 
 ```bash
-# Render all diagrams from .mmd → .svg/.png
+# Render all .mmd → .svg/.png
 make diagrams
 
-# Or render individual files
+# Render a single diagram
 npx @mermaid-js/mermaid-cli \
   -i assets/diagrams/architecture_stack.mmd \
   -o assets/diagrams/architecture_stack.svg
 
 # Run diagram tests
-pytest assets/diagrams/test_diagrams.py
+pytest assets/diagrams/test_diagrams.py -q
+
+
+⸻
+
+✅ Checklist for contributions
+	•	Add/modify .mmd in assets/diagrams/, run make diagrams.
+	•	Update assets-manifest.json (hash/bytes/version/mime).
+	•	If new dashboard assets: place under assets/ and list them in manifest.
+	•	CI green: diagram tests, manifest verify, HTML lint.
+	•	Link new visuals from ARCHITECTURE.md/COMPARISON_GUIDE.md.
+
+⸻
+
+🔒 Notes on licensing & branding
+
+Logos are © SpectraMind and subject to the project license noted in the manifest.
+Third-party icons or fonts (if any) must include attribution and compatible licenses.
+
+⸻
