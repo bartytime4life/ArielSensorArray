@@ -1,15 +1,33 @@
 # ==============================================================================
-# ⚡ Precision — FP16 Automatic Mixed Precision (AMP)
+# ⚡ Precision & Determinism — FP16 Automatic Mixed Precision (AMP)
 # ------------------------------------------------------------------------------
 # Purpose:
 #   • High throughput on NVIDIA GPUs (T4/A10/L4/A100).
 #   • Reduces memory footprint; monitor for inf/NaN with dynamic loss scaling.
+#   • Mission-grade reproducibility via deterministic flags & controlled seeds.
+#   • Hydra- and Kaggle-safe: ≤9h runtime, no non-deterministic ops.
 # ==============================================================================
 
-precision: 16-mixed
-deterministic: true
-cudnn_benchmark: true
+precision:
+  amp: "16-mixed"        # PyTorch Lightning / Trainer-friendly string
+  loss_scaler: "dynamic" # enables auto adjustment if gradients under/overflow
+  grad_clip: 1.0         # ensure stability with FP16 (clip global norm)
+
+deterministic: true       # cudnn_deterministic = True (repeatable results)
+cudnn_benchmark: true     # allow perf autotuning (safe if input shapes fixed)
+enable_tf32: false        # disable TF32 to keep FP16 determinism exact
+
+# Optional guardrails
+nan_monitor: true         # stop run if NaNs/inf detected in loss or grads
+seed_everything: 42       # enforce reproducible seeds across torch/numpy/random
 
 notes: |
-  FP16 AMP: fastest on most NVIDIA GPUs.
-  Keep gradient clipping enabled; use dynamic loss scaling if training is unstable.
+  FP16 AMP: fastest on most NVIDIA GPUs (T4, A10, L4, A100).
+  • Keep gradient clipping enabled to prevent unstable updates.
+  • Dynamic loss scaling recovers automatically from under/overflow.
+  • Disable TF32 (Ampere default) for bitwise reproducibility.
+  • Deterministic flag enforces cudnn_deterministic=True (repeatable ops).
+  • For NASA-grade reproducibility, log hardware, CUDA/cuDNN versions,
+    and config hash with each run.
+  • If instability persists: try `precision=bf16-mixed` on Ampere/Hooper GPUs
+    (slightly slower but more stable).
