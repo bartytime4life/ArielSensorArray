@@ -1,0 +1,19 @@
+# ==============================================================================
+# 🛰️ SpectraMind V50 — DataLoader Persistent Workers (VALIDATION)
+# ------------------------------------------------------------------------------
+# Purpose:
+#   • Control worker persistence during validation epochs.
+#   • Validation has fewer steps; persistent workers may not always pay off.
+#
+# When to Use
+#   • ⚖️ Optional: can be true if validation is long/heavy.
+#   • ✅ Default here: false (determinism, lower memory footprint).
+# ==============================================================================
+
+persistent_workers: false
+
+notes: |
+  Validation loaders:
+  • Persistent workers disabled by default (shorter jobs, fewer batches).
+  • Safer for determinism and CI smoke tests.
+  • Enable if validation set is large and reload overhead is noticeable.
