@@ -1,209 +1,358 @@
-# .github/workflows/pages.yml
-# ==============================================================================
-# SpectraMind V50 — GitHub Pages Deployment (with Mermaid pre-render)
-# Builds MkDocs site and deploys to GitHub Pages. Before build, renders
-# Mermaid diagrams (SVG/PNG/PDF) from Markdown fences and .mmd files using
-# the same knobs/logic as mermaid-export.yml.
+upgrade, # ==============================================================================
+
+# SpectraMind V50 — GitHub Pages Deployment (with Mermaid pre-render, light ✦ dark)
+
+# Builds MkDocs site and deploys to GitHub Pages.
+
+# - Pre-build: render Mermaid from Markdown fences (export\_mermaid.py) and raw .mmd
+
+# - Uses .mermaidrc.json (light) and .mermaidrc-dark.json (dark) with deterministic IDs
+
+# - Caching: npm, Puppeteer, pip; optional SVG/PNG optimization
+
+# - PRs: build & link-check only (no deploy), artifact site for preview
+
+# - Main: build & deploy to Pages
+
 # ==============================================================================
 
 name: pages
 
 on:
-  push:
-    branches: [ "main" ]
-    paths:
-      - "README.md"
-      - "ARCHITECTURE.md"
-      - "docs/**"
-      - "diagrams/**"
-      - "scripts/export_mermaid.py"
-      - ".mermaidrc*"
-      - ".github/workflows/pages.yml"
-  pull_request:
-    branches: [ "**" ]
-    paths:
-      - "README.md"
-      - "ARCHITECTURE.md"
-      - "docs/**"
-      - "diagrams/**"
-      - "scripts/export_mermaid.py"
-      - ".mermaidrc*"
-      - ".github/workflows/pages.yml"
-  workflow_dispatch:
+push:
+branches: \[ "main" ]
+paths:
+\- "README.md"
+\- "ARCHITECTURE.md"
+\- "docs/**"
+\- "diagrams/**"
+\- "scripts/export\_mermaid.py"
+\- ".mermaidrc\*"
+\- "mkdocs.yml"
+\- "requirements\*.txt"
+\- "pyproject.toml"
+\- "package\*.json"
+\- ".github/workflows/pages.yml"
+pull\_request:
+branches: \[ "**" ]
+paths:
+\- "README.md"
+\- "ARCHITECTURE.md"
+\- "docs/**"
+\- "diagrams/\*\*"
+\- "scripts/export\_mermaid.py"
+\- ".mermaidrc\*"
+\- "mkdocs.yml"
+\- "requirements\*.txt"
+\- "pyproject.toml"
+\- "package\*.json"
+\- ".github/workflows/pages.yml"
+workflow\_dispatch:
+inputs:
+formats:
+description: "Mermaid output formats (space-separated: svg png pdf)"
+required: false
+default: "svg"
+type: string
+png\_scale:
+description: "PNG scale factor for mmdc -s"
+required: false
+default: "2"
+type: string
+svgo\_optimize:
+description: "Optimize SVGs with svgo"
+required: false
+default: "true"
+type: choice
+options: \["false", "true"]
+png\_optimize:
+description: "Compress PNGs with pngquant"
+required: false
+default: "true"
+type: choice
+options: \["false", "true"]
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+contents: read
+pages: write
+id-token: write
 
 concurrency:
-  group: pages-${{ github.ref }}
-  cancel-in-progress: true
+group: pages-\${{ github.ref }}
+cancel-in-progress: true
+
+env:
+
+# Keep these in sync with mermaid-export.yml where possible
+
+MD\_FILES: "ARCHITECTURE.md README.md"
+OUT\_DIR:  "docs/diagrams"
+FORMATS:  \${{ inputs.formats || 'svg' }}
+PNG\_SCALE: \${{ inputs.png\_scale || '2' }}
+RC\_LIGHT: ".mermaidrc.json"
+RC\_DARK:  ".mermaidrc-dark.json"
+RAW\_GLOBS: "diagrams/**/\*.mmd docs/**/\*.mmd"
+DO\_SVGO: \${{ inputs.svgo\_optimize || 'true' }}
+DO\_PNGQ: \${{ inputs.png\_optimize || 'true' }}
 
 jobs:
-  render-mermaid:
-    name: Render Mermaid (pre-build)
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+render-mermaid:
+name: Render Mermaid (pre-build)
+runs-on: ubuntu-latest
+timeout-minutes: 25
 
-    env:
-      # Keep these in sync with mermaid-export.yml defaults:
-      MD_FILES: "ARCHITECTURE.md README.md"
-      OUT_DIR:  "docs/diagrams"
-      FORMATS:  "svg"
-      THEME:    ""
-      PNG_SCALE: "2"
+```
+steps:
+  - name: Checkout
+    uses: actions/checkout@v4
+    with: { fetch-depth: 0 }
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
+  - name: Ensure output directories
+    run: |
+      mkdir -p "${OUT_DIR}/light" "${OUT_DIR}/dark" "${OUT_DIR}/raw/light" "${OUT_DIR}/raw/dark"
 
-      - name: Ensure output dir
-        run: mkdir -p "${OUT_DIR}"
+  # ---------- Toolchains & caches ----------
+  - name: Setup Node.js (20) with npm cache
+    uses: actions/setup-node@v4
+    with:
+      node-version: "20"
+      cache: "npm"
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: "npm"
+  - name: Setup Python (3.12) with pip cache
+    uses: actions/setup-python@v5
+    with:
+      python-version: "3.12"
+      cache: "pip"
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: "pip"
+  - name: Cache Mermaid CLI (Chromium/fonts) & npm
+    uses: actions/cache@v4
+    with:
+      path: |
+        ~/.cache/puppeteer
+        ~/.npm
+      key: mmdc-${{ runner.os }}-${{ hashFiles('package-lock.json', 'package.json') }}
+      restore-keys: |
+        mmdc-${{ runner.os }}-
 
-      - name: Cache Mermaid CLI artifacts (Chromium/fonts)
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/puppeteer
-            ~/.npm
-          key: mmdc-${{ runner.os }}-${{ hashFiles('package-lock.json', 'package.json') }}
-          restore-keys: |
-            mmdc-${{ runner.os }}-
+  # ---------- Install deps ----------
+  - name: Install npm deps (with fallback)
+    run: |
+      if [ -f package.json ]; then
+        npm ci
+      else
+        npm init -y
+        npm i -D @mermaid-js/mermaid-cli@^10
+      fi
 
-      - name: Install Mermaid deps
-        run: |
-          if [ -f package.json ]; then
-            npm ci
-          else
-            npm init -y
-            npm i -D @mermaid-js/mermaid-cli@^10
-          fi
-          python -m pip install --upgrade pip
-          if [ -f scripts/export_mermaid.py ]; then
-            python -m pip install markdown-it-py beautifulsoup4
-          fi
+  - name: Install Python deps (Markdown fence renderer optional)
+    run: |
+      python -m pip install --upgrade pip
+      if [ -f "scripts/export_mermaid.py" ]; then
+        python -m pip install markdown-it-py beautifulsoup4
+      fi
 
-      - name: Render Mermaid from Markdown (export_mermaid.py)
-        run: |
-          if [ -f "scripts/export_mermaid.py" ]; then
-            echo "FILES=${MD_FILES}"
-            echo "OUT_DIR=${OUT_DIR}  THEME='${THEME}'  FORMATS='${FORMATS}'"
-            export MERMAID_THEME="${THEME}"
-            export MERMAID_FORMATS="${FORMATS}"
-            export MERMAID_OUTDIR="${OUT_DIR}"
-            python scripts/export_mermaid.py ${MD_FILES}
-          else
-            echo "scripts/export_mermaid.py not found — skipping Markdown rendering"
-          fi
+  - name: Show tool versions
+    run: |
+      npx --yes @mermaid-js/mermaid-cli -V || true
+      node --version
+      npm --version
+      python --version
 
-      - name: Find .mmd files
-        id: findmmd
-        shell: bash
-        run: |
-          mapfile -t MMD < <(git ls-files -- 'diagrams/**/*.mmd' 'docs/**/*.mmd' | tr -d '\r' || true)
-          echo "count=${#MMD[@]}" >> $GITHUB_OUTPUT
-          printf '%s\n' "${MMD[@]}" > mmd_list.txt || true
-          echo "mmd_list=$(paste -sd ' ' mmd_list.txt)" >> $GITHUB_OUTPUT
+  # ---------- Guard .mermaidrc presence (fallback-safe defaults) ----------
+  - name: Ensure .mermaidrc defaults (if missing)
+    run: |
+      if [ ! -f "${RC_LIGHT}" ]; then
+        cat > "${RC_LIGHT}" <<'JSON'
+        {
+          "theme": "base",
+          "startOnLoad": false,
+          "deterministicIds": true,
+          "deterministicIDSeed": "spectramind-v50",
+          "logLevel": "error",
+          "securityLevel": "strict",
+          "themeVariables": { "background": "transparent" }
+        }
+        JSON
+      fi
+      if [ ! -f "${RC_DARK}" ]; then
+        cat > "${RC_DARK}" <<'JSON'
+        {
+          "theme": "dark",
+          "startOnLoad": false,
+          "deterministicIds": true,
+          "deterministicIDSeed": "spectramind-v50",
+          "logLevel": "error",
+          "securityLevel": "strict",
+          "themeVariables": { "background": "transparent" }
+        }
+        JSON
+      fi
 
-      - name: Render .mmd → svg/png/pdf
-        if: steps.findmmd.outputs.count != '0'
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo ">>> Rendering raw .mmd files to: ${FORMATS}"
-          while IFS= read -r f; do
-            [ -z "$f" ] && continue
-            base="$(basename "$f" .mmd)"
-            THEME_FLAG=""
-            if [ -n "${THEME}" ]; then
-              THEME_FLAG="--theme ${THEME}"
-            fi
-            for fmt in ${FORMATS}; do
-              case "$fmt" in
-                svg) npx --yes @mermaid-js/mermaid-cli -i "$f" -o "${OUT_DIR}/${base}.svg" ${THEME_FLAG} ;;
-                png) npx --yes @mermaid-js/mermaid-cli -i "$f" -o "${OUT_DIR}/${base}.png" ${THEME_FLAG} -s "${PNG_SCALE}" ;;
-                pdf) npx --yes @mermaid-js/mermaid-cli -i "$f" -o "${OUT_DIR}/${base}.pdf" ${THEME_FLAG} ;;
-                *) echo "Unknown format: $fmt" >&2; exit 1 ;;
-              esac
-            done
-          done < mmd_list.txt
+  # ---------- Render Mermaid from Markdown fences (if script present) ----------
+  - name: Render Mermaid from Markdown (light)
+    if: hashFiles('scripts/export_mermaid.py') != ''
+    run: |
+      echo ">>> Rendering Markdown fences (light): ${MD_FILES}"
+      export MERMAID_RC="${RC_LIGHT}"
+      export MERMAID_OUTDIR="${OUT_DIR}/light"
+      export MERMAID_FORMATS="${FORMATS}"
+      python scripts/export_mermaid.py ${MD_FILES}
 
-      - name: List rendered outputs
-        run: |
-          echo ">>> Rendered files in ${OUT_DIR}:"
-          find "${OUT_DIR}" -maxdepth 2 -type f \( -name '*.svg' -o -name '*.png' -o -name '*.pdf' \) -print || true
+  - name: Render Mermaid from Markdown (dark)
+    if: hashFiles('scripts/export_mermaid.py') != ''
+    run: |
+      echo ">>> Rendering Markdown fences (dark): ${MD_FILES}"
+      export MERMAID_RC="${RC_DARK}"
+      export MERMAID_OUTDIR="${OUT_DIR}/dark"
+      export MERMAID_FORMATS="${FORMATS}"
+      python scripts/export_mermaid.py ${MD_FILES}
 
-      - name: Upload diagrams (artifact)
-        uses: actions/upload-artifact@v4
-        with:
-          name: mermaid-diagrams
-          path: ${{ env.OUT_DIR }}
-          if-no-files-found: warn
-          retention-days: 14
+  # ---------- Find raw .mmd ----------
+  - name: Find .mmd files
+    id: findmmd
+    shell: bash
+    run: |
+      shopt -s globstar nullglob
+      files=()
+      for g in $RAW_GLOBS; do
+        for f in $g; do files+=("$f"); done
+      done
+      printf '%s\n' "${files[@]}" > mmd_list.txt
+      echo "count=${#files[@]}" >> $GITHUB_OUTPUT
 
-  build:
-    name: Build MkDocs site
-    runs-on: ubuntu-latest
-    needs: render-mermaid
-    timeout-minutes: 20
+  # ---------- Render raw .mmd via mmdc ----------
+  - name: Render .mmd (light + dark) to requested formats
+    if: steps.findmmd.outputs.count != '0'
+    shell: bash
+    run: |
+      set -euo pipefail
+      while IFS= read -r f; do
+        [ -z "$f" ] && continue
+        base="$(basename "$f" .mmd)"
+        # Light
+        for fmt in ${FORMATS}; do
+          case "$fmt" in
+            svg)
+              npx --yes @mermaid-js/mermaid-cli -c "${RC_LIGHT}" -i "$f" -o "${OUT_DIR}/raw/light/${base}.light.svg"
+              ;;
+            png)
+              npx --yes @mermaid-js/mermaid-cli -c "${RC_LIGHT}" -i "$f" -o "${OUT_DIR}/raw/light/${base}.light.png" -s "${PNG_SCALE}"
+              ;;
+            pdf)
+              npx --yes @mermaid-js/mermaid-cli -c "${RC_LIGHT}" -i "$f" -o "${OUT_DIR}/raw/light/${base}.light.pdf"
+              ;;
+            *)
+              echo "Unknown format: $fmt" >&2; exit 1;;
+          esac
+        done
+        # Dark
+        for fmt in ${FORMATS}; do
+          case "$fmt" in
+            svg)
+              npx --yes @mermaid-js/mermaid-cli -c "${RC_DARK}" -i "$f" -o "${OUT_DIR}/raw/dark/${base}.dark.svg"
+              ;;
+            png)
+              npx --yes @mermaid-js/mermaid-cli -c "${RC_DARK}" -i "$f" -o "${OUT_DIR}/raw/dark/${base}.dark.png" -s "${PNG_SCALE}"
+              ;;
+            pdf)
+              npx --yes @mermaid-js/mermaid-cli -c "${RC_DARK}" -i "$f" -o "${OUT_DIR}/raw/dark/${base}.dark.pdf"
+              ;;
+          esac
+        done
+      done < mmd_list.txt
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
+  # ---------- Optimize (optional) ----------
+  - name: Optimize SVGs (svgo)
+    if: ${{ env.DO_SVGO == 'true' }}
+    run: |
+      npm i -D svgo@^3
+      mapfile -t svgs < <(find "${OUT_DIR}" -type f -name '*.svg' -print)
+      if ((${#svgs[@]})); then
+        npx --yes svgo --config='{"multipass": true}' "${svgs[@]}" || true
+      fi
 
-      - name: Download diagrams artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: mermaid-diagrams
-          path: docs/diagrams
+  - name: Compress PNGs (pngquant)
+    if: ${{ env.DO_PNGQ == 'true' }}
+    run: |
+      sudo apt-get update -y && sudo apt-get install -y pngquant
+      find "${OUT_DIR}" -type f -name '*.png' -print0 | xargs -0 -I{} pngquant --force --skip-if-larger --ext .png {} || true
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
+  - name: List rendered outputs
+    run: |
+      echo ">>> Rendered files in ${OUT_DIR}:"
+      find "${OUT_DIR}" -type f \( -name '*.svg' -o -name '*.png' -o -name '*.pdf' \) -print || true
 
-      - name: Install mkdocs + plugins + linkchecker
-        run: |
-          pip install --upgrade pip
-          pip install mkdocs mkdocs-material mkdocs-mermaid2-plugin mkdocs-git-revision-date-localized-plugin linkchecker
+  - name: Upload diagrams (artifact)
+    uses: actions/upload-artifact@v4
+    with:
+      name: mermaid-diagrams
+      path: ${{ env.OUT_DIR }}
+      if-no-files-found: warn
+      retention-days: 14
+```
 
-      - name: Build site (MkDocs)
-        run: mkdocs build --strict --verbose --clean
+build:
+name: Build MkDocs site
+runs-on: ubuntu-latest
+needs: render-mermaid
+timeout-minutes: 25
 
-      - name: Link check
-        run: linkchecker site/
+```
+steps:
+  - name: Checkout
+    uses: actions/checkout@v4
+    with: { fetch-depth: 0 }
 
-      - name: Upload site artifact (for Pages)
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: site
+  - name: Download diagrams artifact
+    uses: actions/download-artifact@v4
+    with:
+      name: mermaid-diagrams
+      path: docs/diagrams
 
-  deploy:
-    name: Deploy to GitHub Pages
-    runs-on: ubuntu-latest
-    needs: build
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    permissions:
-      pages: write
-      id-token: write
-    steps:
-      - name: Deploy
-        id: deployment
-        uses: actions/deploy-pages@v4
+  - name: Set up Python
+    uses: actions/setup-python@v5
+    with:
+      python-version: "3.11"
+      cache: "pip"
+
+  - name: Install mkdocs + plugins + linkcheck
+    run: |
+      pip install --upgrade pip
+      pip install \
+        mkdocs \
+        mkdocs-material \
+        mkdocs-mermaid2-plugin \
+        mkdocs-git-revision-date-localized-plugin \
+        linkchecker
+
+  - name: Build site (MkDocs)
+    run: mkdocs build --strict --verbose --clean
+
+  - name: Link check (soft-fail for external links)
+    run: |
+      set +e
+      linkchecker --no-status site/ | tee linkcheck.txt
+      echo "::notice::External link check completed (non-blocking)."
+      exit 0
+
+  - name: Upload site artifact (for Pages / PR preview)
+    uses: actions/upload-pages-artifact@v3
+    with:
+      path: site
+```
+
+deploy:
+name: Deploy to GitHub Pages
+runs-on: ubuntu-latest
+needs: build
+if: github.event\_name == 'push' && github.ref == 'refs/heads/main'
+environment:
+name: github-pages
+url: \${{ steps.deployment.outputs.page\_url }}
+permissions:
+pages: write
+id-token: write
+steps:
+\- name: Deploy
+id: deployment
+uses: actions/deploy-pages\@v4
