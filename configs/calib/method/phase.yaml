@@ -1,78 +1,197 @@
 # configs/calib/method/phase.yaml
 # ==============================================================================
-# ⏱️ Phase Correction — Method Config
+# ⏱️ Phase Correction — Method Config (Upgraded, Mission-Grade)
 # Purpose
-#   Apply phase alignment and timing correction for time-series data
-#   (light curves, detector sequences). Ensures all frames share a consistent
-#   temporal reference and corrects for instrument clock drift, spacecraft
-#   motion, and astrophysical timing effects.
+#   Apply phase/timing alignment and clock-drift correction for time-series data
+#   (light curves, detector sequences). Enforces a consistent temporal reference
+#   and compensates instrument clock drift, spacecraft motion, and astrophysical
+#   timing effects. Includes multi-clock fusion, barycentric correction, and
+#   robust quality gates with rich diagnostics.
 # Usage
-#   Composed by calib/nominal.yaml in the calibration kill chain.
-#   Override example:
-#     spectramind calibrate calib.method.phase.alignment_method=fft
+#   Composed by calib/{nominal,fast,strict}.yaml in the calibration kill chain.
+#   Examples:
+#     spectramind calibrate calib.method.phase.alignment.method=fft
+#     spectramind calibrate calib.method.phase.reference.primary=gps
 # ==============================================================================
 
 phase:
   enabled: true
 
-  # Reference timing source
-  reference_clock: "gps"            # options: gps | onboard | external
-  fallback_clock: "onboard"         # used if primary reference is missing
+  # ---------------------------------------------------------------------------
+  # Reference timing sources & fusion
+  # ---------------------------------------------------------------------------
+  reference:
+    primary: "gps"                 # gps | onboard | external
+    fallback: "onboard"            # used if primary unavailable
+    sources:
+      gps:
+        file: "calib/phase/gps_time.csv"         # optional PPS/NMEA log
+        pps_column: "pps_time"
+        quality_column: "dq"
+        min_quality: 0.8
+      onboard:
+        file: "calib/phase/onboard_clock.csv"    # instrument tick counter -> time
+        tick_column: "ticks"
+        tick_hz: 1.0e6
+      external:
+        file: "calib/phase/external_time.csv"    # e.g., ground-station time-tags
+        time_column: "timestamp"
+        format: "iso8601"
+    fusion:
+      method: "kalman"             # kalman | weighted_median | best_available
+      kalman:
+        process_noise: 1.0e-10     # s^2/s
+        measurement_noise: 5.0e-8  # s^2
+        initial_bias_s: 0.0
+        initial_drift_ppm: 0.0
+      weighted_median:
+        weights: {gps: 0.7, onboard: 0.2, external: 0.1}
 
+  # ---------------------------------------------------------------------------
+  # Time scale & leap second handling
+  # ---------------------------------------------------------------------------
+  time_system:
+    input_scale: "utc"             # utc | tai | tt | tdb
+    output_scale: "tdb"            # utc | tai | tt | tdb
+    leap_seconds_file: "calib/phase/leapseconds.table"
+    tai_minus_utc_s: 37.0          # fallback if no table (kept in sync via CI)
+    tt_minus_tai_s: 32.184
+    tolerance_s: 1e-6
+
+  # ---------------------------------------------------------------------------
   # Alignment strategy
-  alignment_method: "cross_correlation"   # options: cross_correlation | polynomial_fit | fft | template_match
+  # ---------------------------------------------------------------------------
+  alignment:
+    method: "cross_correlation"    # cross_correlation | polynomial_fit | fft | template_match | hybrid
+    hybrid:
+      sequence: ["cross_correlation", "polynomial_fit"]
+      stop_on_converged: true
+      converge_tol_s: 5e-4
+    cross_correlation:
+      window: 256                  # samples in correlation window
+      max_lag_sec: 1.0
+      refine_subsample: true       # parabolic/sinc interpolation at peak
+    polynomial_fit:
+      order: 3
+      robust: true                 # Huber/RANSAC
+      segment_size: 1000           # frames/segment for local fitting
+    fft:
+      highpass_hz: 1.0e-4
+      lowpass_hz: 0.5
+      taper: "hann"                # hann | hamming | none
+      peak_tracking: "phase_slope" # phase_slope | magnitude_peak
+    template_match:
+      template_file: "calib/phase/template.npy"
+      normalize: true
+      allow_time_warp: false
+      max_scale_change: 0.002      # ±0.2% stretch if time_warp enabled
 
-  # Cross-correlation settings
-  cross_correlation:
-    window: 256                  # number of samples in correlation window
-    max_lag_sec: 1.0             # maximum allowed lag to search (in seconds)
-    interpolate: true            # refine alignment with sub-sample interpolation
+  # ---------------------------------------------------------------------------
+  # Barycentric correction (astronomy)
+  # ---------------------------------------------------------------------------
+  barycentric:
+    enabled: true
+    observatory_coords: "calib/phase/observatory_coords.json"   # lat/lon/alt or spacecraft ephem
+    ephemeris_id: "de440"
+    time_scale: "tdb"
+    relativistic: true                # include Shapiro/Einstein delays if available
+    spacecraft:
+      enabled: false                  # if true, use spacecraft state vectors
+      spice_meta: "calib/phase/spk_meta.tm"   # optional SPICE meta kernel
+    aberration:
+      annual: true
+      diurnal: true
 
-  # Polynomial fit to drift curve
-  polynomial_fit:
-    order: 3                     # polynomial order for drift correction
-    robust: true                 # robust regression (Huber/RANSAC)
-    segment_size: 1000           # frames per segment for local fitting
+  # ---------------------------------------------------------------------------
+  # Drift model & iteration control
+  # ---------------------------------------------------------------------------
+  drift_model:
+    max_iter: 10
+    drift_tolerance_sec: 0.01         # allowable residual drift per segment
+    clamp_ppm: 50.0                   # clamp corrections to ±50 ppm
+    smooth_corrections:
+      enabled: true
+      method: "savgol"
+      window: 301
+      polyorder: 2
 
-  # FFT-based alignment (frequency-domain method)
-  fft:
-    highpass_hz: 1e-4            # high-pass cutoff for detrending
-    lowpass_hz: 0.5              # low-pass cutoff to isolate drift
-    taper: "hann"                # taper window: hann | hamming | none
+  # ---------------------------------------------------------------------------
+  # Gap handling & resampling
+  # ---------------------------------------------------------------------------
+  resampling:
+    target_rate_hz: null              # if set, resample to uniform cadence
+    method: "polyphase"               # polyphase | sinc | linear
+    max_gap_s: 120.0                  # gaps > max_gap flagged/masked
+    fill_strategy: "mask"             # mask | interpolate | hold
 
-  # Template matching method
-  template_match:
-    template_file: "calib/phase/template.npy"   # reference template waveform
-    normalize: true                             # normalize before matching
+  # ---------------------------------------------------------------------------
+  # Outlier and quality gates
+  # ---------------------------------------------------------------------------
+  quality:
+    outliers:
+      sigma_clip: 5.0
+      max_iter: 3
+    guards:
+      max_abs_lag_s: 2.0              # hard bound on any single correction
+      max_rate_change_ppm_s: 1.0
+      min_ccf_peak: 0.2               # require sufficient correlation peak
+    missing_reference_policy: "fallback"   # fallback | fail
+    on_violation: "warn"              # warn | fail | mask_segment
 
-  # Barycentric correction (for astronomy: corrects timing to solar system barycenter)
-  apply_barycentric: true
-  observatory_coords: "calib/phase/observatory_coords.json"  # lat/lon/alt or ephemeris
-  ephemeris: "de440"                # JPL ephemeris for barycentric correction
-  time_scale: "tdb"                 # barycentric dynamical time (TDB)
+  # ---------------------------------------------------------------------------
+  # Uncertainty estimation (optional)
+  # ---------------------------------------------------------------------------
+  uncertainty:
+    enabled: true
+    propagate:
+      alignment: true                 # export σ_t from alignment peak shape
+      barycentric: true               # export σ_bc from ephemeris/position σ
+    export_maps: true                 # per-sample σ_time after correction
 
-  # Drift tolerance
-  drift_tolerance_sec: 0.01         # allowable uncorrected drift in seconds
-  max_iter: 10                      # maximum correction iterations
-
-  # Outlier rejection
-  outliers:
-    sigma_clip: 5.0                 # reject points >5σ from drift model
-    max_iter: 3
-
-  # Logging and diagnostic exports
+  # ---------------------------------------------------------------------------
+  # Diagnostics & logging
+  # ---------------------------------------------------------------------------
   diagnostics:
     save_drift_curve: true
     save_crosscorr_plots: true
+    save_fft_plots: true
+    save_template_residuals: true
+    export_corrections_csv: "outputs/phase_corrections/corrections.csv"
+    export_quality_report: "outputs/phase_corrections/quality.json"
     output_dir: "outputs/phase_corrections/"
+    audit_flags:
+      warn_on_extrapolation: true
+      warn_on_leapsecond_boundary: true
+      fail_on_time_scale_mismatch: false
 
+  # ---------------------------------------------------------------------------
+  # Profile-specific overrides (fast / strict)
+  # ---------------------------------------------------------------------------
+  profile_overrides:
+    fast:
+      alignment.method: "cross_correlation"
+      alignment.cross_correlation.window: 128
+      drift_model.max_iter: 4
+      resampling.target_rate_hz: null
+      uncertainty.enabled: false
+      diagnostics.save_fft_plots: false
+      diagnostics.save_template_residuals: false
+    strict:
+      alignment.method: "hybrid"
+      alignment.hybrid.sequence: ["fft", "cross_correlation", "polynomial_fit"]
+      resampling.target_rate_hz: 1.0
+      resampling.method: "sinc"
+      barycentric.relativistic: true
+      drift_model.drift_tolerance_sec: 0.005
+      uncertainty.enabled: true
+
+  # ---------------------------------------------------------------------------
+  # Notes
+  # ---------------------------------------------------------------------------
   notes: |
-    Phase correction ensures all time-series frames are aligned to a common
-    temporal reference. This prevents astrophysical signals (e.g. transits) from
-    being smeared out by clock drift or spacecraft timing jitter.
-    - Cross-correlation is robust when signal SNR is high.
-    - Polynomial fitting is useful for slow, smooth drift trends.
-    - FFT methods are effective when drift has a dominant frequency component.
-    - Template matching locks data to a reference transit/eclipse model.
-    Barycentric correction accounts for Earth/spacecraft orbital motion so
-    observed timestamps are consistent with solar system ephemerides.
+    • Multi-clock fusion (Kalman) provides bias/drift estimates vs PPS/NMEA and on-board ticks.
+    • Hybrid alignment (FFT → CCF → poly) improves robustness when SNR or cadence varies.
+    • Barycentric correction moves timestamps to the solar-system barycenter in TDB; enable
+      relativistic terms for highest-precision timing.
+    • Resample only when needed; masking long gaps avoids imprinted systematics.
+    • Quality gates clamp unrealistic corrections and guard against low correlation peaks.
