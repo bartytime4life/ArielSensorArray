@@ -1,0 +1,15 @@
+# ==============================================================================
+# 📦 Prefetch Factor — Default
+# ------------------------------------------------------------------------------
+# Purpose:
+#   • Balanced setting for typical local/Kaggle runs.
+#   • Each worker prefetches 2 batches in advance.
+# ==============================================================================
+
+prefetch_factor: 2
+
+notes: |
+  Default prefetch factor:
+  • Each DataLoader worker preloads 2 batches.
+  • Safe balance between memory usage and throughput.
+  • Works well for Kaggle (≤9h runtime) and local GPU dev.
