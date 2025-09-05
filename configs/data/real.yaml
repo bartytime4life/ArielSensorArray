@@ -5,19 +5,22 @@
 #   Post-prediction uncertainty calibration for Ariel spectra (μ, σ).
 #   Supports:
 #     • Temperature scaling (global/per-bin) for σ calibration
+#     • Optional μ bias/scale correction (global/per-bin)
 #     • (Future) COREL graph calibrator for correlation-aware coverage
 #   Designed for CLI-first runs, DVC-friendly paths, and CI/Kaggle safety.
 #
 # Usage (examples)
-#   spectramind calibrate calib=temperature preds_pt=outputs/preds.pt
+#   spectramind calibrate calib=temperature io.preds_pt=outputs/preds.pt
 #   spectramind calibrate calib=temperature temperature.mode=perbin
+#   spectramind calibrate calib=temperature +temperature.export_T_csv=outputs/T_perbin.csv
+#   spectramind calibrate calib=mu_bias mu_bias.mode=global
 #   spectramind calibrate calib=corel corel.epochs=100
 #
 # Notes
-#   • Inputs can be torch .pt (dict with keys: mu, sigma, ids) or a CSV
+#   • Inputs can be torch .pt (dict with keys: mu, sigma, ids) or CSV
 #     with columns: planet_id, mu_0..mu_282, sigma_0..sigma_282.
-#   • Targets (if available) are μ* truth per planet/bin for fitting T.
-#   • When targets are unavailable, falls back to safety (no-op T=1.0).
+#   • Targets (if available) are μ* truth per planet/bin for fitting T or μ bias/scale.
+#   • When targets are unavailable, falls back to safety (no-op: T=1, bias=0, scale=1).
 # =====================================================================
 
 # ---------------------------------------------------------------------
@@ -32,17 +35,18 @@ defaults:
 # ---------------------------------------------------------------------
 data:
   root: "data/"
-  split: "train"            # "train" | "val" | "toy" | "custom"
-  batch_size: 8             # CI/Kaggle-safe default
-  num_workers: 0            # 0 for full portability
-  bins: 283                 # AIRS spectral bins
+  split: "val"                 # "train" | "val" | "toy" | "custom"
+  batch_size: 8                # CI/Kaggle-safe default
+  num_workers: 0               # 0 for full portability
+  bins: 283                    # AIRS spectral bins
 
 # ---------------------------------------------------------------------
 # Runtime & reproducibility
 # ---------------------------------------------------------------------
-device: "cpu"               # "cpu" | "cuda"
+device: "cpu"                  # "cpu" | "cuda"
 seed: 1337
 deterministic: true
+dry_run: false                 # if true: load, validate, summarize; skip write
 
 # ---------------------------------------------------------------------
 # I/O schema
@@ -52,19 +56,36 @@ deterministic: true
 io:
   preds_pt: "outputs/preds.pt"              # primary input (Torch)
   preds_csv: null                           # optional CSV input
-  targets_pt: null                          # e.g., "data/y_val.pt"
-  targets_csv: null                         # optional CSV targets
-  ids_path: null                            # optional text file with planet_id per line
+  targets_pt: null                          # e.g., "data/y_val.pt" (dict: {"mu_true":[N,B], "ids":[N]})
+  targets_csv: null                         # optional CSV targets (planet_id, mu_true_0..mu_true_282)
+  ids_path: null                            # optional text file with planet_id per line (filters subset)
+
+  # Outputs
   out_csv: "outputs/submission_calibrated.csv"
   out_preds_pt: "outputs/preds_calibrated.pt"
   report_html: "outputs/diagnostics/calib_report.html"
   manifest_json: "outputs/diagnostics/calib_manifest.json"
 
+  # Accepted CSV column patterns (for flexible ingestion)
+  csv_cols:
+    id: "planet_id"
+    mu_prefix: "mu_"
+    sigma_prefix: "sigma_"
+    mu_true_prefix: "mu_true_"
+
 # ---------------------------------------------------------------------
 # Master switch: which calibrator to run
+#   - temperature : σ ← T·σ         (μ untouched)
+#   - mu_bias     : μ ← a·μ + b     (σ untouched or optional rescale)
+#   - corel       : correlation-aware interval calibration (future)
+#   - none        : passthrough (no-op)
 # ---------------------------------------------------------------------
 calib:
-  method: "temperature"     # "temperature" | "corel" | "none"
+  method: "temperature"        # "temperature" | "mu_bias" | "corel" | "none"
+  # When both μ and σ calibration are desired, chain via multirun or composite:
+  composite:
+    enabled: false
+    order: ["mu_bias", "temperature"]  # applied sequentially if enabled
 
 # ---------------------------------------------------------------------
 # Temperature scaling (σ ← T·σ)
@@ -73,30 +94,69 @@ calib:
 #     • perbin : vector T_b per bin (size = bins)
 # ---------------------------------------------------------------------
 temperature:
-  mode: "global"            # "global" | "perbin"
-  solver: "lbfgs"           # "lbfgs" | "adam"
+  mode: "global"               # "global" | "perbin"
+  solver: "lbfgs"              # "lbfgs" | "adam"
   max_steps: 500
-  lr: 5e-2                  # if solver=adam
-  l2: 0.0                   # L2 penalty toward T=1.0 (global) or 1-vector (perbin)
-  min_sigma: 1.0e-8         # clamp floor to avoid degenerate σ
-  max_sigma: 1.0            # optional safety ceiling
-  clamp_after_scale: true   # clamp σ after applying T
-  fallback_T: 1.0           # used when no valid targets or ill-conditioning
+  lr: 5e-2                     # only used when solver=adam
+  l2: 0.0                      # L2 penalty toward T=1.0 (global) or 1-vector (perbin)
+  min_sigma: 1.0e-8            # clamp floor to avoid degenerate σ
+  max_sigma: 1.0               # safety ceiling (post-scale if clamp_after_scale=true)
+  clamp_after_scale: true      # clamp σ after applying T
+  fallback_T: 1.0              # used when no valid targets or ill-conditioning
+
   warm_start:
     enabled: false
-    T_init: 1.0             # starting T (or all-ones vector for perbin)
+    T_init: 1.0                # starting T (or all-ones vector for perbin)
+
+  # Optional CV on provided targets to guard overfit (esp. per-bin)
+  kfold:
+    enabled: false
+    k: 5
+    stratify: false
+    seed: 1337
+
+  # Optional holdout split from provided targets for early stop / model select
   val_holdout:
-    enabled: false          # if true, hold out a split from provided targets to validate T
+    enabled: false
     fraction: 0.2
     seed: 202
+
+  # Export learned T (audits & reuse)
+  export_T_csv: null           # e.g., "outputs/T_perbin.csv" (global: 1 row; perbin: B rows)
+
+# ---------------------------------------------------------------------
+# μ bias/scale correction (μ ← a·μ + b)
+#   mode:
+#     • global : one (a,b) pair for all bins
+#     • perbin : (a_b,b_b) per bin (size = bins)
+#   Optionally rescale σ by |a| for consistency (sigma_rescale=true).
+# ---------------------------------------------------------------------
+mu_bias:
+  enabled: true                # auto-used when calib.method=mu_bias or in composite
+  mode: "global"               # "global" | "perbin"
+  solver: "lbfgs"              # "lbfgs" | "adam"
+  max_steps: 500
+  lr: 1e-2                     # only used for adam
+  l2a: 0.0                     # penalty toward a=1
+  l2b: 0.0                     # penalty toward b=0
+  sigma_rescale: true          # apply σ ← |a|·σ after μ correction
+  clamp_mu:
+    enabled: true
+    min: -1.0                  # conservative flux-domain bounds for safety
+    max:  2.0
+  warm_start:
+    enabled: false
+    a_init: 1.0
+    b_init: 0.0
+  export_ab_csv: null          # e.g., "outputs/mu_affine.csv"
 
 # ---------------------------------------------------------------------
 # COREL (future): correlation-aware conformal graph calibrator
 #   Currently scaffolded; engine may be disabled by default.
 # ---------------------------------------------------------------------
 corel:
-  enabled: false            # toggled automatically when calib.method=corel
-  model: "gat"              # "gat" | "gcn" | "mpnn"
+  enabled: false               # toggled automatically when calib.method=corel
+  model: "gat"                 # "gat" | "gcn" | "mpnn"
   epochs: 50
   lr: 1.0e-3
   weight_decay: 1.0e-4
@@ -105,48 +165,65 @@ corel:
   patience: 10
   log_interval: 10
   coverage:
-    target: 0.90            # desired marginal coverage for intervals
+    target: 0.90               # desired marginal coverage for intervals
     max_iters: 20
   graph:
-    type: "knn"             # "knn" | "dense" | "threshold"
+    type: "knn"                # "knn" | "dense" | "threshold"
     k: 8
     distance: "l2"
     self_loops: true
     normalize_adj: true
   regularization:
-    smooth_T: 0.0           # encourage neighboring bins to have similar calibration
-    nonneg: true            # ensure positive predictive intervals
+    smooth_T: 0.0              # encourage neighboring bins to have similar calibration
+    nonneg: true               # ensure positive predictive intervals
   export:
     save_corel_model: false
     path: "outputs/corel_calibrator.pt"
+
+# ---------------------------------------------------------------------
+# Filters & masks (optional safety preprocessing)
+# ---------------------------------------------------------------------
+filters:
+  # drop bins known to be ill-conditioned (e.g., instrument edges),
+  # evaluated before fitting and reapplied after calibration
+  masked_bins: []              # e.g., [0,1,2,280,281,282]
+  drop_rows_with_nan: true
+  id_whitelist: []             # if nonempty, calibrate subset of ids only
+  id_blacklist: []             # exclude these ids
 
 # ---------------------------------------------------------------------
 # Evaluation / diagnostics
 # ---------------------------------------------------------------------
 eval:
   metrics:
-    - "gll"                 # Gaussian log-likelihood
-    - "mae"                 # optional: mean absolute error on μ
-    - "rmse"                # optional
-    - "nll_cal"             # negative log-likelihood after calibration
+    - "gll"                    # Gaussian log-likelihood (with provided σ or calibrated σ)
+    - "nll_cal"                # negative log-likelihood after calibration
+    - "mae"                    # mean absolute error on μ (requires targets)
+    - "rmse"                   # root mean squared error on μ (requires targets)
   per_bin_breakdown: true
   qq_plot: true
   reliability_plot: true
   interval_coverage_plot: true
-  fft_overlay: false        # optional sanity (slow)
-  molecular_overlay: false  # optional (requires molecule windows)
+  fft_overlay: false           # optional sanity (slow)
+  molecular_overlay: false     # optional (requires molecule windows)
+  export_csv:
+    enabled: true
+    path: "outputs/diagnostics/calib_eval.csv"  # per-bin / global summaries
 
 # ---------------------------------------------------------------------
 # Safety & integrity checks
 # ---------------------------------------------------------------------
 safety:
-  require_ids_match: true       # ids alignment between preds and targets
-  allow_missing_targets: true   # if false => hard fail when targets missing
+  require_ids_match: true          # ids alignment between preds and targets
+  allow_missing_targets: true      # if false => hard fail when targets missing
   drop_nan_rows: true
   validate_shapes: true
-  max_abs_mu: 10.0              # sanity limit for μ (flux domain)
-  min_sigma: 1.0e-8             # ensure post-calibration σ >= floor
-  max_sigma: 1.0                # ensure post-calibration σ <= ceiling
+  # Numeric constraints enforced post-calibration:
+  max_abs_mu: 10.0                 # sanity limit for μ (flux domain)
+  min_sigma: 1.0e-8                # ensure post-calibration σ >= floor
+  max_sigma: 1.0                   # ensure post-calibration σ <= ceiling
+  # If violated:
+  action_on_violation: "fail"      # "fail" | "warn"
 
 # ---------------------------------------------------------------------
 # Logging / manifest
@@ -155,13 +232,18 @@ logging:
   verbose: true
   save_manifest: true
   manifest_fields:
-    - "method"
+    - "calib.method"
     - "temperature.mode"
     - "temperature.l2"
+    - "mu_bias.mode"
+    - "mu_bias.l2a"
+    - "mu_bias.l2b"
     - "corel.model"
     - "data.split"
     - "device"
     - "seed"
+  save_learned_params: true
+  learned_params_path: "outputs/diagnostics/calib_params.json"
 
 # ---------------------------------------------------------------------
 # Hydra output directories (timestamped run dir + multirun root)
@@ -176,7 +258,8 @@ hydra:
 # ---------------------------------------------------------------------
 # CLI-override convenience (adapters for quick switches)
 #   Examples:
-#     +preds_pt=...  +targets_pt=...   OR use io.preds_pt/io.targets_pt
+#     +preds_pt=...  +targets_pt=...
+#     OR use io.preds_pt / io.targets_pt
 # ---------------------------------------------------------------------
 preds_pt: ${io.preds_pt}
 targets_pt: ${io.targets_pt}
