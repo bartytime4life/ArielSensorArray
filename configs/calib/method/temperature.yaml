@@ -1,63 +1,204 @@
 # configs/calib/method/temperature.yaml
 # ==============================================================================
-# 🌡️ Temperature Drift Correction — Method Config
+# 🌡️ Temperature Drift Correction — Method Config (Upgraded, Mission-Grade)
 # Purpose
-#   Correct detector and instrument response variations due to temperature
-#   fluctuations during observation. Compensates for gain shifts, bias drift,
-#   and wavelength calibration offsets induced by thermal instability.
+#   Compensate detector/electronics gain & bias drift, and optics-induced
+#   wavelength calibration offsets driven by thermal fluctuations. Supports
+#   multi-sensor telemetry fusion, per-instrument models (FGS1 vs AIRS),
+#   hysteresis/time-constant dynamics, uncertainty propagation, and rich
+#   diagnostics suitable for audit/CI.
 # Usage
-#   Composed by calib/nominal.yaml in the calibration kill chain.
-#   Override example:
+#   Composed by calib/{nominal,fast,strict}.yaml in the calibration kill chain.
+#   Example overrides:
 #     spectramind calibrate calib.method.temperature.enabled=false
+#     spectramind calibrate calib.method.temperature.models.fgs1.gain_model.type=polynomial
 # ==============================================================================
 
 temperature:
   enabled: true
 
-  # Source of temperature telemetry
-  telemetry_file: "calib/temperature/telemetry.csv"   # CSV with time vs temperature
-  column_map:
-    time: "timestamp"                                # time column in telemetry
-    detector_temp: "detector_C"                      # detector temperature column
-    optics_temp: "optics_C"                          # optics temperature column
+  # ---------------------------------------------------------------------------
+  # Telemetry ingestion (multi-sensor support)
+  # ---------------------------------------------------------------------------
+  telemetry:
+    file: "calib/temperature/telemetry.csv"  # CSV/Parquet with time + sensors
+    format: "csv"                             # csv | parquet
+    time:
+      column: "timestamp"                     # time column
+      unit: "s"                               # s | ms | iso8601
+      tz: "UTC"
+    sensors:
+      # Define any number of sensors and map to physical roles
+      detector_temp:
+        column: "detector_C"
+        unit: "C"                             # C | K
+        role: "detector"                      # detector | optics | ambient | board
+      optics_temp:
+        column: "optics_C"
+        unit: "C"
+        role: "optics"
+      board_temp:
+        column: "board_C"
+        unit: "C"
+        role: "board"
+    interpolation:
+      method: "linear"                        # linear | spline | nearest
+      order: 3                                # for spline
+      fill_extrapolate: true                  # allow limited extrapolation
+      max_gap: 120.0                          # s; gaps > max_gap are masked
+      smoothing:
+        enabled: true
+        window_s: 15.0                        # moving-average (seconds)
+        method: "ma"                          # ma | savgol
+        savgol:
+          window: 31
+          polyorder: 2
 
-  # Interpolation of telemetry to match science frames
-  interpolation:
-    method: "linear"          # options: linear | spline | nearest
-    fill_extrapolate: true    # allow extrapolation beyond telemetry bounds
-    smoothing_window: 15      # moving average window (seconds) to reduce noise
-
-  # Gain and bias correction model
-  gain_model:
-    type: "linear"            # options: linear | polynomial | lookup
-    coefficients: [1.0, 0.002]   # example: gain = a0 + a1 * (ΔT)
-    reference_temp: 20.0      # °C baseline reference
-  bias_model:
-    type: "linear"
-    coefficients: [0.0, 0.01] # DN offset per °C
-    reference_temp: 20.0
-
-  # Wavelength calibration drift correction
-  wavelength_drift:
+  # ---------------------------------------------------------------------------
+  # Thermal dynamics (first-order response + hysteresis)
+  # Models true effective temperatures seen by electronics/optics
+  # ---------------------------------------------------------------------------
+  dynamics:
     enabled: true
-    model: "polynomial"       # options: polynomial | spline
-    order: 2
-    reference_temp: 20.0      # °C baseline reference
-    coeffs: [0.0, 0.05, -0.002] # Δλ shift per ΔT (example in nm/°C)
+    detector:
+      time_constant_s: 60.0                   # RC-like lag to telemetry
+      hysteresis_C: 0.05                      # small hysteresis band
+    optics:
+      time_constant_s: 180.0
+      hysteresis_C: 0.02
 
-  # Outlier rejection for telemetry
-  outliers:
-    sigma_clip: 4.0           # reject temperature points >4σ from trend
-    max_iter: 5
+  # ---------------------------------------------------------------------------
+  # Per-instrument correction models (FGS1 vs AIRS)
+  # ΔT = (effective_temp - reference_temp)
+  # ---------------------------------------------------------------------------
+  models:
+    fgs1:
+      reference_temp_C: 20.0
+      gain_model:
+        type: "linear"                        # linear | polynomial | lookup
+        coefficients: [1.0, 0.002]            # gain = a0 + a1*ΔT (+ a2*ΔT^2 ...)
+        lookup_table: null                    # optional .npy table [ΔT, gain]
+      bias_model:
+        type: "linear"
+        coefficients: [0.0, 0.01]             # DN offset per °C
+        lookup_table: null
+      wavelength_drift:
+        enabled: true
+        model: "polynomial"                   # polynomial | spline | lookup
+        order: 2
+        coefficients: [0.0, 0.05, -0.002]     # Δλ [nm] per ΔT terms
+        lookup_table: null
+      apply_scope:
+        frames: "all"                         # all | in_transit | oot
+        channels: "all"                       # index list or "all"
 
-  # Optional external correction map
-  correction_map: "calib/temperature/correction_table.npy"  
-  use_correction_map: false   # if true, apply lookup-table correction instead of models
+    airs:
+      reference_temp_C: 20.0
+      gain_model:
+        type: "polynomial"
+        coefficients: [1.0, 0.001, 1.5e-4]
+        lookup_table: null
+      bias_model:
+        type: "linear"
+        coefficients: [0.0, 0.008]
+        lookup_table: null
+      wavelength_drift:
+        enabled: true
+        model: "spline"
+        order: 3
+        coefficients: []                      # unused for spline
+        lookup_table: null
+      apply_scope:
+        frames: "all"
+        channels: "all"
 
+  # ---------------------------------------------------------------------------
+  # Global fallback correction map (e.g., from lab calibration)
+  # If enabled, supersedes parametric models where coverage exists.
+  # ---------------------------------------------------------------------------
+  correction_map:
+    enabled: false
+    path: "calib/temperature/correction_table.npy"  # structured LUT:
+                                                    # keys: ΔT, gain, bias, Δλ
+    priority: "map_over_models"                     # map_over_models | blend
+    blend_weight: 0.6                               # if priority=blend
+
+  # ---------------------------------------------------------------------------
+  # Outlier handling & quality gates on telemetry
+  # ---------------------------------------------------------------------------
+  quality:
+    outliers:
+      sigma_clip: 4.0
+      max_iter: 5
+      isolate_sensor: true              # clip per-sensor independently
+    plausibility_limits:
+      detector_C: [-30.0, 50.0]
+      optics_C: [-30.0, 50.0]
+    missing_policy: "mask"              # mask | interpolate | fail
+    allow_large_extrapolation: false
+
+  # ---------------------------------------------------------------------------
+  # Uncertainty propagation (optional)
+  # Provide per-sensor σ_T to derive σ_gain, σ_bias, σ_Δλ by Jacobian.
+  # ---------------------------------------------------------------------------
+  uncertainty:
+    enabled: true
+    sensor_sigma_C:
+      detector_temp: 0.02               # °C (1σ)
+      optics_temp: 0.02
+    propagate_to:
+      gain: true
+      bias: true
+      wavelength: true
+    export_maps: true                   # save σ maps alongside corrections
+
+  # ---------------------------------------------------------------------------
+  # Execution controls & overrides for profiles
+  # These allow nominal/fast/strict to dial cost/accuracy.
+  # ---------------------------------------------------------------------------
+  profile_overrides:
+    fast:
+      telemetry.interpolation.smoothing.enabled: true
+      telemetry.interpolation.smoothing.window_s: 8.0
+      dynamics.detector.time_constant_s: 30.0
+      dynamics.optics.time_constant_s: 90.0
+      uncertainty.enabled: false
+    strict:
+      telemetry.interpolation.method: "spline"
+      telemetry.interpolation.order: 3
+      telemetry.interpolation.smoothing.method: "savgol"
+      dynamics.detector.time_constant_s: 120.0
+      dynamics.optics.time_constant_s: 300.0
+      uncertainty.enabled: true
+
+  # ---------------------------------------------------------------------------
+  # Diagnostics & logging
+  # ---------------------------------------------------------------------------
+  diagnostics:
+    save_plots: true
+    plot:
+      temps_time_series: true           # raw vs smoothed vs effective temps
+      deltaT_vs_corrections: true       # ΔT vs gain/bias/Δλ curves
+      residual_histograms: true
+      per_instrument_panels: true
+    export:
+      corrected_frames_preview: true    # small subset for sanity checks
+      metadata_json: true               # write applied coefficients, refs
+      csv_summary: "calib/temperature/summary.csv"
+    audit_flags:
+      fail_on_telemetry_gap: false
+      warn_on_extrapolation: true
+      warn_on_plausibility_violation: true
+
+  # ---------------------------------------------------------------------------
+  # Notes & best practices
+  # ---------------------------------------------------------------------------
   notes: |
-    Temperature fluctuations affect both detector electronics (bias/gain drift)
-    and optical alignment (wavelength calibration). This method interpolates
-    temperature telemetry to science frame timestamps, models gain/bias drift,
-    and applies wavelength shift corrections. For best results, reference
-    coefficients should be calibrated in lab using flat-field exposures and
-    arc-lamp wavelength standards.
+    This module aligns temperature telemetry to science frames, models thermal
+    response dynamics (lag/hysteresis), and applies per-instrument corrections
+    for gain, bias, and wavelength drift. For highest fidelity:
+      • Fit coefficients from lab calibration (flats, arcs) and in-flight flats.
+      • Validate Δλ correction with arc/sky lines (AIRS) and photometric color tests (FGS1).
+      • Use strict profile to enable spline interpolation and uncertainty export.
+      • Guard against telemetry gaps/extrapolation with quality gates.
+      • Prefer correction_map when dense lab LUTs exist; otherwise parametric models.
