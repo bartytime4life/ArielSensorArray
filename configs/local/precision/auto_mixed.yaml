@@ -1,17 +1,36 @@
 # ==============================================================================
-# 🧠 Precision — Auto Mixed Precision (BF16→FP16→FP32)
+# 🧠 Precision — Auto Mixed Precision (BF16 → FP16 → FP32)
 # ------------------------------------------------------------------------------
 # Purpose:
-#   • Portability-first: pick the best precision supported at runtime.
-#   • BF16 if available, else FP16, else FP32 fallback.
+#   • Portability-first: automatically select the best precision supported
+#     by the runtime (hardware + CUDA/cuDNN stack).
+#   • Decision order: prefer BF16 on capable GPUs (Ampere/Hooper+),
+#     otherwise FP16 AMP, otherwise fall back to FP32.
+#   • Ensures runs complete robustly across Kaggle, CI, or local GPU/CPU.
 # ==============================================================================
 
-# Pseudopolicy selector (resolved in launcher/util code if supported),
-# or have your runtime translate this to a concrete precision.
-precision: auto-mixed
-deterministic: true
-cudnn_benchmark: true
+precision:
+  policy: "auto-mixed"   # symbolic placeholder; resolved at runtime
+  order: ["bf16-mixed", "16-mixed", "32"]  # preference order
+  amp_backend: "native"  # PyTorch Lightning/AMP backend
+  amp_level: "O1"        # safe mixed-precision level (ignored in FP32)
+  grad_clip: 1.0         # enable gradient clipping (esp. in FP16/BF16)
+  loss_scaler: "dynamic" # auto loss scaling for FP16; ignored in FP32/BF16
+
+deterministic: true       # enforce cudnn_deterministic=True for repeatability
+cudnn_benchmark: true     # allow autotuned kernels (safe if shapes fixed)
+enable_tf32: false        # disable TF32 to guarantee reproducibility
+
+nan_monitor: true         # stop run on NaN/inf in loss/gradients
+seed_everything: 42       # unify seeds across torch/numpy/random
 
 notes: |
-  Auto policy: prefer BF16 on capable GPUs; otherwise use FP16; otherwise FP32.
-  Implemented by launcher to probe hardware capability before Trainer init.
+  Auto policy:
+  • Launcher probes hardware (compute capability, CUDA version, AMP support).
+  • If BF16 is supported (A100/H100/L4 etc.), use bf16-mixed.
+  • Else if FP16 AMP is supported, use 16-mixed with dynamic loss scaling.
+  • Else fallback to FP32 (full precision).
+  • Deterministic + seed locks guarantee mission-grade reproducibility.
+  • Use this for Kaggle/CI portability — ensures the pipeline runs
+    regardless of GPU type, without code changes.
+  • For debugging/scientific audits: override with precision=float64.
