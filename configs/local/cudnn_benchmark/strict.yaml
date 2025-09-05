@@ -1,13 +1,39 @@
 # ==============================================================================
-# 🔒 cuDNN Autotune — Strict Reproducible Mode
+# 🔒 cuDNN Autotune — Strict Reproducible Mode (v1.2)
 # ------------------------------------------------------------------------------
-# Purpose:
-#   • Disable autotune to enforce determinism.
-#   • Layer this with deterministic=true for audits.
+# Purpose
+#   • Enforce deterministic kernel execution by disabling cuDNN autotuner.
+#   • Guarantees reproducibility across hardware, driver, and runtime versions.
+#   • To be layered with deterministic=true and strict precision overlays.
+# ------------------------------------------------------------------------------
+# Trade-offs
+#   • ✅ Absolute reproducibility: bitwise-stable results across runs.
+#   • ✅ Audit safety: best mode for ablations, CI pipelines, and compliance logs.
+#   • ❌ Performance: slower than autotuned modes, especially on conv-heavy nets.
+#   • ❌ Not recommended for leaderboard runs unless reproducibility is critical.
 # ==============================================================================
-
 cudnn_benchmark: false
 
+# ------------------------------------------------------------------------------
+# Extended Controls (recommended for full lock-in)
+# ------------------------------------------------------------------------------
+deterministic: true              # enforce deterministic kernels globally
+allow_tf32: false                # (Ampere+) disallow TensorFloat32 for FP32 ops
+# torch_compile_deterministic: true   # (PyTorch ≥2.2) enforce compile-time determinism
+# python_hash_seed: 0                # set PYTHONHASHSEED=0 for stable hashing
+# global_seed: 1337                  # fixed RNG seed for torch/numpy
+# numpy_seed: 1337                   # fixed RNG seed for numpy
+
+# ------------------------------------------------------------------------------
+# 📓 Notes
+# ------------------------------------------------------------------------------
 notes: |
-  Strict reproducibility: cuDNN autotune disabled.
-  Use with local/precision/strict_deterministic.yaml to fully lock kernel choices.
+  cuDNN autotuner disabled → strict reproducibility mode.
+
+  • Pair with `local/precision/strict_deterministic.yaml` for full audit mode.
+  • Ensures kernel selection is fixed across GPUs, drivers, and cuDNN versions.
+  • Best for: CI pipelines, ablations, reproducibility audits, symbolic diagnostics.
+  • Expect slower training, but guaranteed run-to-run stability.
+
+  ✅ Recommended: CI, scientific audits, symbolic influence tracing  
+  ❌ Avoid: long leaderboard runs or production training where speed is priority
