@@ -1,20 +1,33 @@
-
----
-
-### `configs/local/precision/32.yaml`
-```yaml
 # ==============================================================================
-# 🧮 Precision — FP32 (strict)
+# 🧮 Precision — FP32 (Strict, Debug-Safe)
 # ------------------------------------------------------------------------------
 # Purpose:
-#   • Maximum numerical stability and debuggability.
-#   • Good for CI/CPU or sensitive diagnostics.
+#   • Maximum numerical stability and scientific debuggability.
+#   • Reference mode for CI, CPU-only runs, and symbolic/diagnostic validation.
+#   • Ensures bitwise-deterministic ops where feasible (reproducibility priority).
 # ==============================================================================
 
-precision: 32
-deterministic: true
-cudnn_benchmark: false
+# Precision / numerical mode
+precision: 32          # full single precision (FP32)
+deterministic: true    # enforce deterministic kernels (cuDNN, CUDA ops)
+cudnn_benchmark: false # disable autotuner to avoid nondeterministic kernels
+
+# ------------------------------------------------------------------------------
+# Notes & Usage
+# ------------------------------------------------------------------------------
+# • This profile sacrifices throughput for strict stability — ideal for:
+#     - CI pipelines (CPU/GPU validation, ≤ 2h runtime)
+#     - Symbolic diagnostics (∂L/∂μ tracing, rule influence maps)
+#     - Calibration verification & reproducibility audits
+#
+# • FP32 prevents NaN/Inf issues seen in mixed precision (AMP) on edge cases.
+# • Expect ~2–3× slower runtime vs. 16-mixed precision.
+# • Use 16-mixed (`configs/local/precision/16.yaml`) for leaderboard training.
+# • Keep gradient clipping enabled in trainer configs to avoid exploding grads.
+# ==============================================================================
 
 notes: |
-  Full FP32 with deterministic ops where feasible.
-  Expect slower throughput vs AMP; preferred for debugging/validation.
+  Full FP32 with strict determinism.  
+  Best for debugging, scientific validation, or CI smoke runs.  
+  Not recommended for leaderboard-scale training due to throughput cost.  
+  Prefer AMP (`16-mixed`) unless investigating instability or symbolic drift.
