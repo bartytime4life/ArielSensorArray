@@ -1,0 +1,15 @@
+# ==============================================================================
+# ⚡ Precision — FP16 Automatic Mixed Precision (AMP)
+# ------------------------------------------------------------------------------
+# Purpose:
+#   • High throughput on NVIDIA GPUs (T4/A10/L4/A100).
+#   • Reduces memory footprint; monitor for inf/NaN with dynamic loss scaling.
+# ==============================================================================
+
+precision: 16-mixed
+deterministic: true
+cudnn_benchmark: true
+
+notes: |
+  FP16 AMP: fastest on most NVIDIA GPUs.
+  Keep gradient clipping enabled; use dynamic loss scaling if training is unstable.
