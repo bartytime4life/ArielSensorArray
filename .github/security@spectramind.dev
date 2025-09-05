@@ -1,42 +1,80 @@
-3. Please include:
-- A clear description of the vulnerability.
-- Steps to reproduce (CLI commands, configs, Hydra overrides, PoC if safe).
-- Potential impact on pipeline integrity or data.
-- Suggested mitigations, if any.
 
-**Response commitments:**
-- Acknowledge within **72 hours**.  
-- Provide a triage result and fix timeline.  
-- Publish an advisory via [SECURITY_ADVISORY_TEMPLATE.md](./SECURITY_ADVISORY_TEMPLATE.md).  
+⸻
 
----
+.github/SECURITY_REPORTING.md
 
-## 🔍 Scope
+🔐 Vulnerability Reporting Guidelines (SpectraMind V50)
 
-We are most concerned with vulnerabilities that threaten **pipeline integrity, reproducibility, or system safety**:
+This document defines how contributors and users should report security vulnerabilities in the SpectraMind V50 system.
 
-- **Pipeline integrity**  
-(malicious Hydra overrides, DVC/lakeFS tampering, reproducibility hash bypass).
+We treat vulnerabilities in pipeline integrity, reproducibility, and safety as first-class issues.
 
-- **CLI / Config execution**  
-(unsafe Typer parameters, injection attacks, unvalidated inputs).
+⸻
 
-- **Docker & environment hardening**  
-(container escapes, CUDA driver exploits, unsafe base images).
+1. 📖 Description of the Vulnerability
 
-- **Dependency vulnerabilities**  
-(Python, Poetry, CUDA, Docker, GitHub Actions).
+When filing a report, please include:
+	•	Description: Clear explanation of the vulnerability (what is wrong, why it matters).
+	•	Scope: Which part of the system is affected (CLI, Hydra configs, Docker image, dependencies, etc.).
+	•	Impact: Potential consequences if exploited.
 
-- **Data security & privacy**  
-(sensitive log leaks, unsafe artifact packaging, metadata exposure).
+⸻
 
----
+2. 🧪 Steps to Reproduce
 
-## 🧰 Security Best Practices for Contributors
+Reports should include:
+	•	CLI commands used (e.g., spectramind train …, spectramind submit --dry-run).
+	•	Configs / Hydra overrides that triggered the issue (e.g., +training.seed=NaN).
+	•	Proof-of-concept (PoC), if safe to share.
+	•	Logs or outputs showing the issue.
 
-- ✅ Run `pre-commit run --all-files` before committing (includes `bandit`, `ruff`, `mypy`, YAML lint).  
-- ✅ Keep dependencies up-to-date (`poetry update` or use Dependabot PRs).  
-- ❌ Never commit secrets, tokens, or datasets. Use `.env`, DVC, or GitHub Secrets instead.  
-- ✅ Verify reproducibility & integrity with:
-```bash
+This allows maintainers to replicate the problem in a controlled environment.
+
+⸻
+
+3. ⚠️ Potential Impact
+
+We are most concerned with vulnerabilities that threaten:
+	•	Pipeline integrity
+– malicious Hydra overrides, reproducibility hash bypass, DVC/lakeFS tampering.
+	•	CLI/config execution
+– unsafe Typer parameters, injection risks, unvalidated inputs.
+	•	Docker & environment hardening
+– unsafe base images, CUDA/driver exploits, container escape vectors.
+	•	Dependency vulnerabilities
+– issues in Python, Poetry, CUDA, Docker, or GitHub Actions.
+	•	Data security & privacy
+– sensitive log leaks, unsafe artifact packaging, Kaggle/GitHub metadata exposure.
+
+⸻
+
+4. ✅ Suggested Mitigations
+
+If possible, please suggest:
+	•	Config sanitation / parameter validation.
+	•	Dependency upgrades or replacements.
+	•	Docker base image hardening.
+	•	Guardrails in Typer CLI (e.g., --dry-run, restricted overrides).
+	•	Reproducibility hash enforcement.
+
+⸻
+
+5. 📅 Response Commitments
+	•	Within 72 hours → Acknowledge report receipt.
+	•	Triage Result + Fix Timeline → Shared after initial assessment.
+	•	Advisory Publication → All confirmed issues will be published using
+SECURITY_ADVISORY_TEMPLATE.md.
+
+⸻
+
+6. 🧰 Security Best Practices for Contributors
+	•	✅ Run pre-commit run --all-files before committing
+(includes bandit, ruff, mypy, YAML lint).
+	•	✅ Keep dependencies up-to-date (poetry update, or Dependabot PRs).
+	•	❌ Never commit secrets, tokens, or datasets (use .env, DVC, GitHub Secrets).
+	•	✅ Verify reproducibility & integrity with:
+
 spectramind selftest --deep
+
+
+⸻
