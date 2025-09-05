@@ -1,16 +1,54 @@
 # ==============================================================================
-# 🖥️ HPC Devices — A100 multi-GPU cluster
+# 🖥️ HPC Devices — A100 Multi-GPU Cluster (SpectraMind V50)
 # ------------------------------------------------------------------------------
 # Purpose:
-#   - Large-scale HPC cluster training (e.g. 4–8 A100 GPUs).
-#   - Use with local=hpc and trainer=multi_gpu.
+#   • Orchestrate large-scale training (e.g. 4–8 A100 GPUs) in HPC or DGX setups.
+#   • To be used with: local=hpc and trainer=multi_gpu.
+#
+# Usage:
+#   spectramind train trainer=multi_gpu local=hpc local.devices=hpc_a100
+#
+# Notes:
+#   • Optimized for bf16 mixed precision (native on A100).
+#   • Designed for DDP strategy with 8 GPUs; override `devices` via CLI as needed.
+#   • Provides higher throughput via cuDNN autotune + persistent workers.
 # ==============================================================================
 
 _target_: torch.device
-devices: 8
-strategy: ddp
-sync_batchnorm: true
-precision: bf16-mixed
-deterministic: false
-cudnn_benchmark: true
-notes: "Optimized for A100 multi-GPU HPC jobs (DDP)."
+
+# Device orchestration
+devices: 8                  # default = 8 (DGX node); override at CLI if fewer/more GPUs
+strategy: ddp               # DistributedDataParallel
+sync_batchnorm: true        # enable SyncBN across devices
+
+# Precision / numerical stability
+precision: bf16-mixed        # preferred on A100; fallback via CLI to 16-mixed/32 if needed
+deterministic: false         # allow nondeterministic kernels for speed
+cudnn_benchmark: true        # optimize conv kernels for static shapes
+
+# Reproducibility guardrails
+seed: 1337
+numpy_seed: 1337
+pythonhashseed: 0
+
+# Threading controls (tune to cluster)
+max_threads: 16              # cap OpenMP threads
+intraop_threads: 8
+interop_threads: 8
+
+# Runtime profiling / diagnostics
+log_device_info: true        # log CUDA device properties on startup
+profile_runtime: false       # set true for per-op profiling (nsys/nsight ready)
+
+# HPC-specific guardrails
+elastic_timeout: 30          # minutes to wait for all ranks before failing
+gradient_clip_val: 1.0       # added here for safety in large-scale runs
+
+# Metadata
+notes: |
+  Profile optimized for NVIDIA A100 multi-GPU clusters.
+  - Designed for 8×A100 nodes (DGX, SLURM).
+  - Pair with trainer=multi_gpu for orchestration.
+  - bf16-mixed is default; ensure PyTorch/AMP supports bf16 kernels on your cluster.
+  - Deterministic is disabled for performance; enable if strict reproducibility is required.
+  - Logs CUDA device info and seeds at runtime for audit.
