@@ -1,364 +1,441 @@
-# .github/workflows/sbom-refresh.yml
+upgrade, # .github/workflows/sbom-refresh.yml
+
 # ==============================================================================
-# SpectraMind V50 — SBOM Refresh & Supply‑Chain Security Workflow (Upgraded)
+
+# SpectraMind V50 — SBOM Refresh & Supply-Chain Security Workflow (Upgraded)
+
 # ------------------------------------------------------------------------------
+
 # Generates, validates, signs, scans, and publishes Software Bills of Materials
+
 # (SBOMs) for source deps and (optionally) the Docker image on:
-#  - pushes to main (key files),
-#  - pull requests (review + scan),
-#  - a weekly schedule, and
-#  - manual dispatch (with format selection).
+
+# - pushes to main (key files),
+
+# - pull requests (review + scan),
+
+# - a weekly schedule, and
+
+# - manual dispatch (with format selection).
+
 #
+
 # Includes:
-#  • CycloneDX + SPDX output (per Python version / package manager)
-#  • Syft-based repo SBOM (broad coverage) + optional container SBOM
-#  • Grype vulnerability scan reports
-#  • GitHub Dependency Review + Dependency Submission API
-#  • Artifact signing with Sigstore Cosign (keyless, OIDC)
-#  • Least-privilege permissions, concurrency, caching
+
+# • CycloneDX + SPDX output (per Python version / package manager)
+
+# • Syft-based repo SBOM (broad coverage) + optional container SBOM
+
+# • Grype vulnerability scan reports
+
+# • GitHub Dependency Review + Dependency Submission API
+
+# • Artifact signing with Sigstore Cosign (keyless, OIDC)
+
+# • Least-privilege permissions, concurrency, caching, and run summaries
+
 # ==============================================================================
 
 name: sbom-refresh
 
 on:
-  push:
-    branches: [ "main" ]
-    paths:
-      - "pyproject.toml"
-      - "poetry.lock"
-      - "requirements*.txt"
-      - "Dockerfile"
-      - ".github/workflows/sbom-refresh.yml"
-  pull_request:
-    branches: [ "**" ]
-  schedule:
-    # Weekly SBOM refresh: Sundays at 05:00 UTC
-    - cron: "0 5 * * 0"
-  workflow_dispatch:
-    inputs:
-      format:
-        description: "SBOM output format (spdx-json, cyclonedx-json, both)"
-        required: false
-        default: "both"
-      build_container:
-        description: "Also build image and generate container SBOM/scan? (true/false)"
-        required: false
-        default: "false"
+push:
+branches: \[ "main" ]
+paths:
+\- "pyproject.toml"
+\- "poetry.lock"
+\- "requirements\*.txt"
+\- "Dockerfile"
+\- ".github/workflows/sbom-refresh.yml"
+pull\_request:
+branches: \[ "\*\*" ]
+schedule:
+\# Weekly SBOM refresh: Sundays at 05:00 UTC
+\- cron: "0 5 \* \* 0"
+workflow\_dispatch:
+inputs:
+format:
+description: "SBOM output format (spdx-json, cyclonedx-json, both)"
+required: false
+default: "both"
+type: choice
+options: \["spdx-json", "cyclonedx-json", "both"]
+build\_container:
+description: "Also build image and generate container SBOM/scan? (true/false)"
+required: false
+default: "false"
+type: choice
+options: \["false", "true"]
 
 # ---- Security: least-privilege permissions -----------------------------------
+
 permissions:
-  contents: write          # allow committing SBOMs on main
-  security-events: write   # upload SARIF / security events
-  id-token: write          # OIDC for keyless cosign signing
-  attestations: write      # future-proof: artifact attestations
-  actions: read
-  checks: read
+contents: write          # allow committing SBOMs on main
+security-events: write   # upload SARIF / security events
+id-token: write          # OIDC for keyless cosign signing
+attestations: write      # future-proof: artifact attestations
+actions: read
+checks: read
 
 concurrency:
-  group: sbom-${{ github.ref }}
-  cancel-in-progress: true
+group: sbom-\${{ github.ref }}
+cancel-in-progress: true
 
 env:
-  SBOM_DIR: sbom
-  REPORT_DIR: sbom/reports
-  CYCLONEDX_FILE: sbom-cyclonedx.json
-  SPDX_FILE: sbom-spdx.json
-  REPO_SBOM_FILE: sbom-syft-repo.json
-  IMAGE_SBOM_FILE: sbom-syft-image.json
-  VULN_REPORT_SARIF: sbom/grype.sarif
-  CACHE_KEY_SUFFIX: ${{ runner.os }}-${{ hashFiles('**/poetry.lock', '**/requirements*.txt') }}
-  # docker image tag (local) used if build_container=true
-  LOCAL_IMAGE_TAG: local/spectramind:sbom
-  COSIGN_EXPERIMENTAL: "true"
+SBOM\_DIR: sbom
+REPORT\_DIR: sbom/reports
+CYCLONEDX\_FILE: sbom-cyclonedx.json
+SPDX\_FILE: sbom-spdx.json
+REPO\_SBOM\_FILE: sbom-syft-repo.json
+IMAGE\_SBOM\_FILE: sbom-syft-image.json
+VULN\_REPORT\_SARIF: sbom/grype.sarif
+CACHE\_KEY\_SUFFIX: \${{ runner.os }}-\${{ hashFiles('**/poetry.lock', '**/requirements\*.txt') }}
+
+# docker image tag (local) used if build\_container=true
+
+LOCAL\_IMAGE\_TAG: local/spectramind\:sbom
+COSIGN\_EXPERIMENTAL: "true"
 
 jobs:
-  # ---------------------------------------------------------------------------
-  # 0) Static Dependency Review on PRs (pre-SBOM; quick feedback)
-  # ---------------------------------------------------------------------------
-  dependency-review:
-    if: ${{ github.event_name == 'pull_request' }}
-    name: "PR • Dependency Review"
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
 
-      - name: Dependency Review (GitHub Advanced Security)
-        uses: github/dependency-review-action@v4
-        with:
-          comment-summary-in-pr: true
-          fail-on-severity: critical
-          deny-licenses: GPL-1.0-or-later, GPL-2.0-or-later, GPL-3.0-or-later
+# ---------------------------------------------------------------------------
 
-  # ---------------------------------------------------------------------------
-  # 1) Build SBOMs for Python deps + repo (Syft), validate & upload
-  # ---------------------------------------------------------------------------
-  sbom:
-    name: "SBOM • py${{ matrix.python-version }} • ${{ matrix.pkg }}"
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: [ "3.10", "3.11" ]
-        pkg: [ "poetry", "pip" ] # Generate SBOM using both dependency managers when present
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+# 0) Static Dependency Review on PRs (pre-SBOM; quick feedback)
 
-      # ---------- Setup Python & cache ---------------------------------------
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
+# ---------------------------------------------------------------------------
 
-      - name: Cache pip
-        if: matrix.pkg == 'pip'
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: pip-${{ env.CACHE_KEY_SUFFIX }}
+dependency-review:
+if: \${{ github.event\_name == 'pull\_request' }}
+name: "PR • Dependency Review"
+runs-on: ubuntu-latest
+steps:
+\- name: Checkout
+uses: actions/checkout\@v4
 
-      - name: Cache Poetry
-        if: matrix.pkg == 'poetry'
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/pypoetry
-            ~/.cache/pip
-          key: poetry-${{ env.CACHE_KEY_SUFFIX }}
+```
+  - name: Dependency Review (GitHub Advanced Security)
+    uses: github/dependency-review-action@v4
+    with:
+      comment-summary-in-pr: true
+      fail-on-severity: critical
+      deny-licenses: GPL-1.0-or-later, GPL-2.0-or-later, GPL-3.0-or-later
+```
 
-      # ---------- Install deps per manager -----------------------------------
-      - name: Install Poetry
-        if: matrix.pkg == 'poetry'
-        run: |
-          pip install --upgrade pip
-          pip install "poetry>=1.6.0"
-          poetry --version
-          # install project deps (no build of current package)
-          if [ -f pyproject.toml ]; then
-            poetry install --no-root
-          fi
+# ---------------------------------------------------------------------------
 
-      - name: Install pip deps
-        if: matrix.pkg == 'pip'
-        run: |
-          pip install --upgrade pip
-          if ls requirements*.txt >/dev/null 2>&1; then
-            pip install -r requirements.txt || true
-            # attempt to install any other requirement files (dev, prod, etc.)
-            for f in requirements*.txt; do
-              [ "$f" = "requirements.txt" ] && continue
-              pip install -r "$f" || true
-            done
-          elif [ -f pyproject.toml ]; then
-            # fallback: lightweight install from pyproject (PEP 621) with setuptools if applicable
-            pip install .
-          fi
+# 1) Build SBOMs for Python deps + repo (Syft), validate & upload
 
-      # ---------- Install SBOM tooling ---------------------------------------
-      - name: Install CycloneDX/SBOM tools
-        run: |
-          pip install --upgrade cyclonedx-bom==3.* cyclonedx-python-lib==7.* || true
-          # jq for JSON validation / transformations
-          sudo apt-get update -y && sudo apt-get install -y jq
+# ---------------------------------------------------------------------------
 
-      - name: Prepare directories
-        run: |
-          mkdir -p "$SBOM_DIR" "$REPORT_DIR"
+sbom:
+name: "SBOM • py\${{ matrix.python-version }} • \${{ matrix.pkg }}"
+runs-on: ubuntu-latest
+timeout-minutes: 30
+strategy:
+fail-fast: false
+matrix:
+python-version: \[ "3.10", "3.11", "3.12" ]
+pkg: \[ "poetry", "pip" ] # Generate SBOM using both dependency managers when present
+steps:
+\- name: Checkout repository
+uses: actions/checkout\@v4
+with:
+fetch-depth: 0
 
-      # ---------- Generate CycloneDX / SPDX via CycloneDX-BOM ---------------
-      - name: Generate SBOM (CycloneDX JSON)
-        if: ${{ github.event.inputs.format == '' || github.event.inputs.format == 'both' || github.event.inputs.format == 'cyclonedx-json' }}
-        run: |
-          # Prefer Poetry lock if available; else scan current venv
-          if [ -f poetry.lock ]; then
-            # Export full lock to requirements to ensure resolved graph is captured (best-effort)
-            poetry export --without-hashes -o /tmp/requirements.lock.txt || true
-            # Generate SBOM from the environment (post install) for highest fidelity
-          fi
-          # CycloneDX for Python env (includes transitive deps)
-          cyclonedx-bom -o "$SBOM_DIR/${{ matrix.pkg }}-${{ matrix.python-version }}-$CYCLONEDX_FILE" -e --format json
+```
+  # ---------- Setup Python & cache ---------------------------------------
+  - name: Set up Python ${{ matrix.python-version }}
+    uses: actions/setup-python@v5
+    with:
+      python-version: ${{ matrix.python-version }}
 
-      - name: Generate SBOM (SPDX JSON)
-        if: ${{ github.event.inputs.format == '' || github.event.inputs.format == 'both' || github.event.inputs.format == 'spdx-json' }}
-        run: |
-          cyclonedx-bom -o "$SBOM_DIR/${{ matrix.pkg }}-${{ matrix.python-version }}-$SPDX_FILE" -e --format spdxjson
+  - name: Cache pip
+    if: matrix.pkg == 'pip'
+    uses: actions/cache@v4
+    with:
+      path: ~/.cache/pip
+      key: pip-${{ env.CACHE_KEY_SUFFIX }}
+      restore-keys: |
+        pip-${{ runner.os }}-
 
-      # ---------- Repo-wide SBOM via Syft (covers non-Python files/locks) ----
-      - name: Syft repo SBOM (CycloneDX JSON)
-        uses: anchore/sbom-action@v0
-        with:
-          path: "."
-          format: cyclonedx-json
-          output-file: "${{ env.REPO_SBOM_FILE }}"
+  - name: Cache Poetry
+    if: matrix.pkg == 'poetry'
+    uses: actions/cache@v4
+    with:
+      path: |
+        ~/.cache/pypoetry
+        ~/.cache/pip
+      key: poetry-${{ env.CACHE_KEY_SUFFIX }}
+      restore-keys: |
+        poetry-${{ runner.os }}-
 
-      # ---------- Validate JSON structure ------------------------------------
-      - name: Validate SBOM JSONs
-        run: |
-          set -e
-          for f in "$SBOM_DIR"/*"$CYCLONEDX_FILE" "$SBOM_DIR"/*"$SPDX_FILE" "$REPO_SBOM_FILE"; do
-            [ -f "$f" ] && jq . "$f" >/dev/null
-          done
+  # ---------- Install deps per manager -----------------------------------
+  - name: Install Poetry
+    if: matrix.pkg == 'poetry'
+    run: |
+      python -m pip install --upgrade pip
+      python -m pip install "poetry==1.8.3"
+      poetry --version
+      # install project deps (no build of current package)
+      if [ -f pyproject.toml ]; then
+        poetry install --no-root --only main || poetry install --no-root
+      fi
 
-      # ---------- Submit dependencies to GH Dependency Submission API --------
-      - name: Submit Dependencies (Dependency Submission API)
-        if: ${{ github.event_name != 'pull_request' }} # avoid duplicate noise on PRs
-        uses: github/dependency-submission-action@v4
-        with:
-          # The action infers manifests; we also provide CycloneDX where available
-          # It will attach dependency graph info to the commit
-          fail-on-error: false
+  - name: Install pip deps
+    if: matrix.pkg == 'pip'
+    run: |
+      python -m pip install --upgrade pip
+      if ls requirements*.txt >/dev/null 2>&1; then
+        # Install all requirement files in stable order
+        for f in $(ls -1 requirements*.txt | sort); do
+          echo "Installing $f"
+          python -m pip install -r "$f" || true
+        done
+      elif [ -f pyproject.toml ]; then
+        # fallback: lightweight install from pyproject (PEP 621)
+        python -m pip install .
+      fi
 
-      # ---------- Upload raw SBOM artifacts ----------------------------------
-      - name: Upload SBOM Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: sbom-${{ matrix.pkg }}-py${{ matrix.python-version }}
-          path: |
-            ${{ env.SBOM_DIR }}/*${{ matrix.pkg }}-${{ matrix.python-version }}-*
-            ${{ env.REPO_SBOM_FILE }}
-            ${{ env.REPORT_DIR }}/
+  # ---------- Install SBOM tooling ---------------------------------------
+  - name: Install CycloneDX/SBOM tools
+    run: |
+      python -m pip install --upgrade cyclonedx-bom==3.* cyclonedx-python-lib==7.* || true
+      # jq for JSON validation / transformations
+      sudo apt-get update -y && sudo apt-get install -y jq
 
-  # ---------------------------------------------------------------------------
-  # 2) (Optional) Build container and generate image SBOM + vulnerability scan
-  # ---------------------------------------------------------------------------
-  image-sbom:
-    name: "Container SBOM & Scan"
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    if: ${{ (github.event.inputs.build_container == 'true') || (github.event_name == 'push' && contains(github.event.head_commit.message, '[image-sbom]')) || (github.event_name == 'schedule') }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+  - name: Prepare directories
+    run: |
+      mkdir -p "$SBOM_DIR" "$REPORT_DIR"
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+  # ---------- Generate CycloneDX / SPDX via CycloneDX-BOM ---------------
+  - name: Generate SBOM (CycloneDX JSON)
+    if: ${{ github.event.inputs.format == '' || github.event.inputs.format == 'both' || github.event.inputs.format == 'cyclonedx-json' }}
+    run: |
+      set -euo pipefail
+      # CycloneDX for Python env (includes transitive deps)
+      cyclonedx-bom \
+        -o "$SBOM_DIR/${{ matrix.pkg }}-${{ matrix.python-version }}-$CYCLONEDX_FILE" \
+        -e --format json
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+  - name: Generate SBOM (SPDX JSON)
+    if: ${{ github.event.inputs.format == '' || github.event.inputs.format == 'both' || github.event.inputs.format == 'spdx-json' }}
+    run: |
+      set -euo pipefail
+      cyclonedx-bom \
+        -o "$SBOM_DIR/${{ matrix.pkg }}-${{ matrix.python-version }}-$SPDX_FILE" \
+        -e --format spdxjson
 
-      - name: Build image (no push)
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Dockerfile
-          push: false
-          load: true
-          tags: ${{ env.LOCAL_IMAGE_TAG }}
+  # ---------- Repo-wide SBOM via Syft (covers non-Python files/locks) ----
+  - name: Syft repo SBOM (CycloneDX JSON)
+    uses: anchore/sbom-action@v0
+    with:
+      path: "."
+      format: cyclonedx-json
+      output-file: "${{ env.REPO_SBOM_FILE }}"
 
-      - name: Syft image SBOM (CycloneDX JSON)
-        uses: anchore/sbom-action@v0
-        with:
-          image: ${{ env.LOCAL_IMAGE_TAG }}
-          format: cyclonedx-json
-          output-file: ${{ env.IMAGE_SBOM_FILE }}
+  # ---------- Validate JSON structure ------------------------------------
+  - name: Validate SBOM JSONs
+    run: |
+      set -euo pipefail
+      ok=0
+      for f in "$SBOM_DIR"/*"$CYCLONEDX_FILE" "$SBOM_DIR"/*"$SPDX_FILE" "$REPO_SBOM_FILE"; do
+        if [ -f "$f" ]; then
+          jq . "$f" >/dev/null && ok=1
+        fi
+      done
+      if [ $ok -eq 0 ]; then
+        echo "::warning::No SBOM files found to validate."
+      fi
 
-      - name: Validate image SBOM
-        run: jq . "${{ env.IMAGE_SBOM_FILE }}" >/dev/null
+  # ---------- Submit dependencies to GH Dependency Submission API --------
+  - name: Submit Dependencies (Dependency Submission API)
+    if: ${{ github.event_name != 'pull_request' }} # avoid duplicate noise on PRs
+    uses: github/dependency-submission-action@v4
+    with:
+      fail-on-error: false
 
-      - name: Grype vulnerability scan (SARIF)
-        uses: anchore/scan-action@v4
-        with:
-          image: ${{ env.LOCAL_IMAGE_TAG }}
-          fail-build: false
-          output-format: sarif
-          output-file: ${{ env.VULN_REPORT_SARIF }}
+  # ---------- Upload raw SBOM artifacts ----------------------------------
+  - name: Upload SBOM Artifacts
+    uses: actions/upload-artifact@v4
+    with:
+      name: sbom-${{ matrix.pkg }}-py${{ matrix.python-version }}
+      path: |
+        ${{ env.SBOM_DIR }}/*${{ matrix.pkg }}-${{ matrix.python-version }}-*
+        ${{ env.REPO_SBOM_FILE }}
+        ${{ env.REPORT_DIR }}/
+      if-no-files-found: warn
+      retention-days: 21
 
-      - name: Upload image SBOM & reports
-        uses: actions/upload-artifact@v4
-        with:
-          name: container-sbom-and-scan
-          path: |
-            ${{ env.IMAGE_SBOM_FILE }}
-            ${{ env.VULN_REPORT_SARIF }}
-
-      - name: Upload SARIF to GitHub Security
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: ${{ env.VULN_REPORT_SARIF }}
-
-  # ---------------------------------------------------------------------------
-  # 3) Sign SBOM artifacts with Cosign (keyless via OIDC)
-  # ---------------------------------------------------------------------------
-  sign:
-    name: "Sign SBOM Artifacts (Cosign)"
-    runs-on: ubuntu-latest
-    needs: [ sbom ]
+  - name: Summary (deps SBOM)
     if: always()
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+    run: |
+      echo "### SBOM Build Summary (py${{ matrix.python-version }} • ${{ matrix.pkg }})" >> "$GITHUB_STEP_SUMMARY"
+      ls -lh "$SBOM_DIR" || true >> "$GITHUB_STEP_SUMMARY"
+```
 
-      - name: Download SBOM artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: ./_artifacts
+# ---------------------------------------------------------------------------
 
-      - name: Install Cosign
-        uses: sigstore/cosign-installer@v3
+# 2) (Optional) Build container and generate image SBOM + vulnerability scan
 
-      - name: Sign all SBOM files (keyless)
-        env:
-          COSIGN_EXPERIMENTAL: ${{ env.COSIGN_EXPERIMENTAL }}
-        run: |
-          set -e
-          find _artifacts -type f -name "*.json" -o -name "*.spdx.json" -o -name "*.cdx.json" | while read -r f; do
-            echo "Signing: $f"
-            cosign sign-blob --yes --output-signature "${f}.sig" --output-certificate "${f}.cert" "$f"
-          done
+# ---------------------------------------------------------------------------
 
-      - name: Upload signatures
-        uses: actions/upload-artifact@v4
-        with:
-          name: sbom-signatures
-          path: |
-            _artifacts/**/*.sig
-            _artifacts/**/*.cert
+image-sbom:
+name: "Container SBOM & Scan"
+runs-on: ubuntu-latest
+timeout-minutes: 45
+if: \${{ (github.event.inputs.build\_container == 'true') || (github.event\_name == 'push' && contains(github.event.head\_commit.message, '\[image-sbom]')) || (github.event\_name == 'schedule') }}
+steps:
+\- name: Checkout
+uses: actions/checkout\@v4
 
-  # ---------------------------------------------------------------------------
-  # 4) Commit & Push SBOMs to repo (main branch only)
-  # ---------------------------------------------------------------------------
-  commit:
-    name: "Commit & Push SBOM Catalog (main)"
-    runs-on: ubuntu-latest
-    needs: [ sbom ]
-    if: ${{ github.ref == 'refs/heads/main' }}
-    steps:
-      - name: Checkout (with write)
-        uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          fetch-depth: 0
+```
+  - name: Set up QEMU
+    uses: docker/setup-qemu-action@v3
 
-      - name: Download SBOM artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: ./_artifacts
+  - name: Set up Docker Buildx
+    uses: docker/setup-buildx-action@v3
 
-      - name: Organize SBOM catalog
-        run: |
-          mkdir -p "$SBOM_DIR/catalog" "$REPORT_DIR"
-          cp -r _artifacts/* "$SBOM_DIR/catalog/" || true
-          # Create/refresh index file with commit metadata
-          cat > "$SBOM_DIR/INDEX.json" <<EOF
-          {
-            "repository": "${{ github.repository }}",
-            "ref": "${{ github.ref }}",
-            "commit_sha": "${{ github.sha }}",
-            "generated_at_utc": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')",
-            "formats": ["cyclonedx-json","spdx-json"],
-            "notes": "Catalog contains per-python-version SBOMs via CycloneDX-BOM, repo-wide Syft SBOM, optional image SBOM, and signatures."
-          }
-          EOF
-          jq . "$SBOM_DIR/INDEX.json" >/dev/null
+  - name: Build image (no push)
+    uses: docker/build-push-action@v6
+    with:
+      context: .
+      file: ./Dockerfile
+      push: false
+      load: true
+      tags: ${{ env.LOCAL_IMAGE_TAG }}
 
-      - name: Commit & Push
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add "$SBOM_DIR"
-          git commit -m "chore(sbom): refresh & catalog SBOMs for ${{ github.sha }} [skip ci]" || echo "No changes to commit."
-          git push || true
+  - name: Syft image SBOM (CycloneDX JSON)
+    uses: anchore/sbom-action@v0
+    with:
+      image: ${{ env.LOCAL_IMAGE_TAG }}
+      format: cyclonedx-json
+      output-file: ${{ env.IMAGE_SBOM_FILE }}
+
+  - name: Validate image SBOM
+    run: jq . "${{ env.IMAGE_SBOM_FILE }}" >/dev/null
+
+  - name: Grype vulnerability scan (SARIF)
+    uses: anchore/scan-action@v4
+    with:
+      image: ${{ env.LOCAL_IMAGE_TAG }}
+      fail-build: false
+      output-format: sarif
+      output-file: ${{ env.VULN_REPORT_SARIF }}
+
+  - name: Upload image SBOM & reports
+    uses: actions/upload-artifact@v4
+    with:
+      name: container-sbom-and-scan
+      path: |
+        ${{ env.IMAGE_SBOM_FILE }}
+        ${{ env.VULN_REPORT_SARIF }}
+      retention-days: 21
+
+  - name: Upload SARIF to GitHub Security
+    uses: github/codeql-action/upload-sarif@v3
+    with:
+      sarif_file: ${{ env.VULN_REPORT_SARIF }}
+
+  - name: Summary (image)
+    if: always()
+    run: |
+      echo "### Container SBOM & Scan" >> "$GITHUB_STEP_SUMMARY"
+      echo "- Image tag: \`${{ env.LOCAL_IMAGE_TAG }}\`" >> "$GITHUB_STEP_SUMMARY"
+      echo "- Artifacts: container-sbom-and-scan" >> "$GITHUB_STEP_SUMMARY"
+```
+
+# ---------------------------------------------------------------------------
+
+# 3) Sign SBOM artifacts with Cosign (keyless via OIDC)
+
+# ---------------------------------------------------------------------------
+
+sign:
+name: "Sign SBOM Artifacts (Cosign)"
+runs-on: ubuntu-latest
+needs: \[ sbom ]
+if: always()
+steps:
+\- name: Checkout
+uses: actions/checkout\@v4
+
+```
+  - name: Download SBOM artifacts
+    uses: actions/download-artifact@v4
+    with:
+      path: ./_artifacts
+
+  - name: Install Cosign
+    uses: sigstore/cosign-installer@v3
+
+  - name: Sign all SBOM files (keyless)
+    env:
+      COSIGN_EXPERIMENTAL: ${{ env.COSIGN_EXPERIMENTAL }}
+    run: |
+      set -euo pipefail
+      find _artifacts -type f \( -name "*.json" -o -name "*.spdx.json" -o -name "*.cdx.json" \) | while read -r f; do
+        echo "Signing: $f"
+        cosign sign-blob --yes --output-signature "${f}.sig" --output-certificate "${f}.cert" "$f"
+      done
+
+  - name: Upload signatures
+    uses: actions/upload-artifact@v4
+    with:
+      name: sbom-signatures
+      path: |
+        _artifacts/**/*.sig
+        _artifacts/**/*.cert
+      retention-days: 21
+```
+
+# ---------------------------------------------------------------------------
+
+# 4) Commit & Push SBOMs to repo (main branch only)
+
+# ---------------------------------------------------------------------------
+
+commit:
+name: "Commit & Push SBOM Catalog (main)"
+runs-on: ubuntu-latest
+needs: \[ sbom ]
+if: \${{ github.ref == 'refs/heads/main' }}
+steps:
+\- name: Checkout (with write)
+uses: actions/checkout\@v4
+with:
+token: \${{ secrets.GITHUB\_TOKEN }}
+fetch-depth: 0
+
+```
+  - name: Download SBOM artifacts
+    uses: actions/download-artifact@v4
+    with:
+      path: ./_artifacts
+
+  - name: Organize SBOM catalog
+    run: |
+      set -euo pipefail
+      mkdir -p "$SBOM_DIR/catalog" "$REPORT_DIR"
+      cp -r _artifacts/* "$SBOM_DIR/catalog/" || true
+      # Create/refresh index file with commit metadata
+      cat > "$SBOM_DIR/INDEX.json" <<EOF
+      {
+        "repository": "${{ github.repository }}",
+        "ref": "${{ github.ref }}",
+        "commit_sha": "${{ github.sha }}",
+        "generated_at_utc": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')",
+        "formats": ["cyclonedx-json","spdx-json"],
+        "notes": "Catalog contains per-python-version SBOMs via CycloneDX-BOM, repo-wide Syft SBOM, optional image SBOM, and signatures."
+      }
+      EOF
+      jq . "$SBOM_DIR/INDEX.json" >/dev/null
+
+  - name: Commit & Push
+    run: |
+      set -euo pipefail
+      git config user.name "github-actions[bot]"
+      git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      git add "$SBOM_DIR"
+      git commit -m "chore(sbom): refresh & catalog SBOMs for ${{ github.sha }} [skip ci]" || echo "No changes to commit."
+      git push || true
+```
