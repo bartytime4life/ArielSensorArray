@@ -16,4 +16,6 @@ notes: |
   Pin memory disabled:
   • Safer in memory-constrained or CPU-only environments.
   • Slightly slower GPU data transfers, but reproducible.
-  • Good default for CI or audit/debug runs.
+  • Good default for CI, audit, or debug runs.
+  • Combine with `prefetch_factor=1` for maximum determinism during step-through debugging.
+  • Not recommended for high-throughput GPU pipelines (use pin_memory=true there).
