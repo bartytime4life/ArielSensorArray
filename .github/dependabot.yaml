@@ -1,10 +1,21 @@
+# .github/dependabot.yml
+# ==============================================================================
+# Dependabot (upgraded)
+# - Weekly bumps for pip and GitHub Actions with clean grouping + lockfile-only for Poetry.
+# - Daily security hotfix lane with higher PR cap and focused labels.
+# - Adds Docker ecosystem and sensible defaults (rebase, PR naming, limits).
+# - Timezone: America/Chicago • All times 09:00 local unless specified.
+# Docs: https://docs.github.com/en/code-security/dependabot
+# ==============================================================================
+
 version: 2
+
 updates:
   # -----------------------------------------------------------------------------
-  # Python dependencies (pip / Poetry)
+  # Python dependencies (pip / Poetry lockfile)
   # -----------------------------------------------------------------------------
   - package-ecosystem: "pip"
-    directory: "/"
+    directory: "/"                  # Looks for requirements*.txt and/or pyproject/poetry.lock
     schedule:
       interval: "weekly"
       day: "monday"
@@ -13,16 +24,20 @@ updates:
     commit-message:
       prefix: "deps(pip)"
       include: "scope"
+    rebase-strategy: "auto"
+    open-pull-requests-limit: 10
+    pull-request-branch-name:
+      separator: "-"
+    versioning-strategy: "lockfile-only"   # Keeps Poetry/pip-tools lock updates tidy
     labels:
       - "dependencies"
       - "python"
       - "pip"
-      - "automerge-candidate"   # You can remove this if you prefer manual labeling only
+      - "automerge-candidate"              # Remove if you do not auto-merge
     assignees:
       - "AndyBarta"
     reviewers:
       - "AndyBarta"
-    versioning-strategy: "lockfile-only"
     groups:
       core-libs:
         patterns:
@@ -45,6 +60,12 @@ updates:
           - "matplotlib*"
           - "plotly*"
           - "seaborn*"
+    ignore:
+      # Example: hold back known-breaking major bumps until you’re ready
+      - dependency-name: "torch*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "tensorflow*"
+        update-types: ["version-update:semver-major"]
 
   # -----------------------------------------------------------------------------
   # GitHub Actions workflow dependencies
@@ -59,11 +80,15 @@ updates:
     commit-message:
       prefix: "deps(actions)"
       include: "scope"
+    rebase-strategy: "auto"
+    open-pull-requests-limit: 10
+    pull-request-branch-name:
+      separator: "-"
     labels:
       - "dependencies"
       - "ci"
       - "github-actions"
-      - "automerge-candidate"   # You can remove this if you prefer manual labeling only
+      - "automerge-candidate"
     assignees:
       - "AndyBarta"
     reviewers:
@@ -79,18 +104,54 @@ updates:
           - "pypa/*"
 
   # -----------------------------------------------------------------------------
-  # Security alerts (prioritized hotfixes)
+  # Docker base images (if you ship containers)
+  # -----------------------------------------------------------------------------
+  - package-ecosystem: "docker"
+    directory: "/"                  # Scans Dockerfile at repo root; add more entries for subpaths
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/Chicago"
+    commit-message:
+      prefix: "deps(docker)"
+      include: "scope"
+    rebase-strategy: "auto"
+    open-pull-requests-limit: 5
+    pull-request-branch-name:
+      separator: "-"
+    labels:
+      - "dependencies"
+      - "container"
+      - "security"
+    assignees:
+      - "AndyBarta"
+    reviewers:
+      - "AndyBarta"
+    ignore:
+      # Example: avoid unpinned “latest” churn; prefer digest- or minor-only bumps
+      - dependency-name: "*"
+        versions: ["latest"]
+
+  # -----------------------------------------------------------------------------
+  # Security alerts (prioritized hotfix lane for Python)
   # -----------------------------------------------------------------------------
   - package-ecosystem: "pip"
     directory: "/"
     schedule:
       interval: "daily"
+      time: "09:00"
+      timezone: "America/Chicago"
     allow:
       - dependency-type: "all"
     open-pull-requests-limit: 10
-    labels:
-      - "dependencies"
-      - "security"
     commit-message:
       prefix: "fix(security)"
       include: "scope"
+    rebase-strategy: "auto"
+    pull-request-branch-name:
+      separator: "-"
+    labels:
+      - "dependencies"
+      - "security"
+      - "hotfix"
