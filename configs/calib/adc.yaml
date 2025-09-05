@@ -1,186 +1,318 @@
-# FILE: configs/calib/adc.yaml
-# ==============================================================================
-# ADC (Analog-to-Digital Conversion) correction and digitization controls
-# SpectraMind V50 — Calibration Kill Chain: stage 01 (precedes dark/flat/CDS)
-# ------------------------------------------------------------------------------
-# Purpose
-#   1) Normalize raw detector frames for offsets and gain non-uniformities.
-#   2) (Optionally) apply reference-pixel correction and linearization.
-#   3) Re-quantize to configured output bit-depth with safe clipping/rounding.
-#
-# How it is used
-#   - Loaded by Hydra in `spectramind calibrate` or the pipeline stage runner.
-#   - This file defines ONLY ADC-stage behavior. Downstream stages (dark/flat/cds/
-#     photometry/trace/phase) have their own YAMLs in configs/calib/.
-#
-# I/O contract (keys in the in-memory batch dict)
-#   - input_key:   name of tensor containing raw frames, shape [B, H, W] or [B, C, H, W]
-#   - output_key:  name under which corrected frames are stored for downstream stages
-#
-# Notes
-#   - Paths can be DVC-tracked artifacts. Use ${oc.env:DATA_DIR, data}/... as root.
-#   - If a path does not exist and method != "none", the stage will fail fast.
-# ==============================================================================
+FILE: configs/calib/adc.yaml
 
-version: 1
+==============================================================================
+
+ADC (Analog-to-Digital Conversion) correction & digitization — Stage 01 (upgraded)
+
+SpectraMind V50 • precedes dark/flat/CDS/photometry/trace
+
+——————————————————————————
+
+Purpose
+
+1) Normalize raw detector frames for offsets and gain non-uniformities.
+
+2) (Optionally) apply reference-pixel correction, column/row FPN cleanup, linearization.
+
+3) Re-quantize to configured output bit-depth with safe clipping/rounding.
+
+
+
+Contract (memory dict keys)
+
+in : io.input_key      -> raw frames  [B,H,W] or [B,C,H,W]
+
+out: io.output_key     -> adc-corrected frames for downstream stages
+
+
+
+Notes
+
+• Paths can be DVC artifacts (root via ${oc.env:DATA_DIR, data}).
+
+• If a required artifact is missing and method != “none”, behavior follows validation.
+
+• Deterministic, NaN/Inf-safe; CPU/GPU-agnostic; CI/Kaggle-friendly.
+
+==============================================================================
+
+version: 2
 enabled: true
 
-# ------------------------------------------------------------------------------
-# Detector + quantization model
-# ------------------------------------------------------------------------------
+——————————————————————————
+
+Detector & quantization model
+
+——————————————————————————
+
 detector:
-  name: "ArielSimCam"
-  # Native sensor quantization of input stream
-  bit_depth_in: 16               # e.g., 16-bit raw frames (0..65535)
-  # Target bit-depth after correction & re-quantization
-  bit_depth_out: 16              # keep 16 by default; can set to 32 (float) below via dtype_out
-  # Native electron/ADU conversion (approx); used when converting between e- and ADU
-  conversion_gain_e_per_adu: 1.0 # if frames already in ADU and you correct in ADU-space, keep 1.0
-  saturation_level_e: 180000.0   # full-well (electrons) for safe clipping checks (informative)
-  # Output tensor dtype after ADC stage (choose one): float32 | float16 | uint16 | uint32
-  dtype_out: "float32"
+name: “ArielSimCam”
+bit_depth_in: 16                  # e.g., 16-bit raw (0..65535)
+bit_depth_out: 16                 # target bit depth before dtype_out cast
+conversion_gain_e_per_adu: 1.0    # electrons per ADU (≈1 if already ADU-space)
+saturation_level_e: 180000.0      # full-well (e-) for informative checks
 
-# ------------------------------------------------------------------------------
-# Offset correction
-#   Removes fixed/bias offsets. Order of application: reference-pixel → table → constant.
-# ------------------------------------------------------------------------------
+Output tensor dtype after ADC stage: float32 | float16 | uint16 | uint32
+
+dtype_out: “float32”
+
+Optional physical units conversion for downstream diagnostics (no rescale if null)
+
+units_out: “ADU”                  # “ADU” | “e” (informational tag, not a rescale)
+
+——————————————————————————
+
+Offset correction (order: reference-pixel → map/table → constant)
+
+——————————————————————————
+
 offset_correction:
-  # method: "none" | "global" | "per_channel" | "per_pixel"
-  # Priority: if reference_pixel.use=true, ref-pixel bias is applied first.
-  method: "per_channel"
 
-  # Global constant (ADU) — used if method == "global"
-  offset_value_adu: 0.0
+method: “none” | “global” | “per_channel” | “per_pixel” | “auto”
 
-  # Per-channel offsets table (CSV/NPY). Expected shape:
-  #   - If input frames are [B, C, H, W]: table shape [C]
-  #   - If frames are [B, H, W]       : interpreted as single channel (C=1)
-  table_path: "${oc.env:DATA_DIR, data}/calib/adc/offsets_per_channel.npy"
+- auto: prefer per_pixel if map exists; else per_channel if table exists; else global
 
-  # Per-pixel offsets (NPY, HxW or CxHxW); used if method == "per_pixel"
-  map_path: "${oc.env:DATA_DIR, data}/calib/adc/offsets_map.npy"
+method: “per_channel”
 
-  # Optional reference pixel correction (applied first if enabled)
-  reference_pixel:
-    use: false
-    # strategy: "border_mean" | "mask_mean"
-    strategy: "border_mean"
-    # For border_mean: number of pixels from each border to use
-    border:
-      top: 4
-      bottom: 4
-      left: 4
-      right: 4
-    # For mask_mean: binary mask path (same HxW or CxHxW)
-    mask_path: "${oc.env:DATA_DIR, data}/calib/adc/reference_pixels_mask.npy"
+Global constant (ADU) — used if method == “global”
 
-# ------------------------------------------------------------------------------
-# Gain correction (PRNU / channel gains)
-#   Normalizes multiplicative response differences. Order: per_pixel → per_channel → global.
-# ------------------------------------------------------------------------------
+offset_value_adu: 0.0
+
+Per-channel offsets (NPY shape [C]); if input is [B,H,W], C=1 is assumed
+
+table_path: “${oc.env:DATA_DIR, data}/calib/adc/offsets_per_channel.npy”
+
+Per-pixel offsets (NPY H×W or C×H×W); used if method == “per_pixel”
+
+map_path: “${oc.env:DATA_DIR, data}/calib/adc/offsets_map.npy”
+
+Reference pixel (applied first if enabled)
+
+reference_pixel:
+use: false
+# strategy: “border_mean” | “mask_mean” | “per_row” | “per_col”
+#  • per_row/col remove row/column DC drifts using border/edge reference pixels
+strategy: “border_mean”
+border:
+top: 4
+bottom: 4
+left: 4
+right: 4
+mask_path: “${oc.env:DATA_DIR, data}/calib/adc/reference_pixels_mask.npy”
+robust:
+sigma_clip: 3.0
+max_iters: 3
+# Optional high-pass on the reference stream to remove slow bias drifts
+highpass:
+enabled: false
+cutoff_frac_nyq: 0.02
+
+——————————————————————————
+
+Column/Row fixed-pattern cleanup (after offsets, before gains)
+
+——————————————————————————
+
+fpn_cleanup:
+enabled: false
+
+modes: “col_median” | “row_median” | “both” | “none”
+
+mode: “col_median”
+robust:
+sigma_clip: 4.0
+max_iters: 1
+
+Optional masked FPN (exclude bright sources/trace)
+
+valid_mask_key: null   # key in memory dict to a (H×W or C×H×W) 1/0 mask
+
+——————————————————————————
+
+Gain correction (PRNU / channel gains) — order: per_pixel → per_channel → global
+
+——————————————————————————
+
 gain_correction:
-  # method: "none" | "global" | "per_channel" | "per_pixel"
-  method: "per_channel"
 
-  # Global scalar gain (unitless)
-  gain_value: 1.0
+method: “none” | “global” | “per_channel” | “per_pixel” | “auto”
 
-  # Per-channel gains (NPY 1D length C). Applied as: frame / gains[c]
-  table_path: "${oc.env:DATA_DIR, data}/calib/adc/gains_per_channel.npy"
+method: “per_channel”
 
-  # Per-pixel PRNU map (NPY HxW or CxHxW). Applied as: frame / prnu_map
-  prnu_map_path: "${oc.env:DATA_DIR, data}/calib/adc/prnu_map.npy"
+gain_value: 1.0                         # used if method == “global”
 
-  # Stabilizers — avoid division by ~0
-  epsilon: 1.0e-6
-  # Optional normalization to set mean gain to 1 after loading tables/maps
-  renormalize_to_mean_one: true
+table_path: “${oc.env:DATA_DIR, data}/calib/adc/gains_per_channel.npy”  # [C]
+prnu_map_path: “${oc.env:DATA_DIR, data}/calib/adc/prnu_map.npy”        # (H×W) or (C×H×W)
 
-# ------------------------------------------------------------------------------
-# Linearization (response curve)
-#   Converts non-linear ADU response to linear space using LUT or polynomial.
-# ------------------------------------------------------------------------------
+epsilon: 1.0e-6                         # avoid division by ~0
+renormalize_to_mean_one: true           # set mean(gain)=1 before applying
+
+Optional per-channel renorm when PRNU used with C>1 (helps AIRS)
+
+per_channel_mean_one: false
+
+——————————————————————————
+
+Linearization (response curve): LUT or polynomial
+
+——————————————————————————
+
 linearization:
-  # method: "none" | "lut" | "poly"
-  method: "none"
 
-  # When method == "lut": 1D LUT mapping input ADU → linearized ADU
-  lut_path: "${oc.env:DATA_DIR, data}/calib/adc/linearization_lut.npy"
-  # Interpolation mode for LUT: "nearest" | "linear"
-  lut_interp: "linear"
+method: “none” | “lut” | “poly”
 
-  # When method == "poly": evaluate poly on normalized intensity x in [0,1]
-  # y_linear = c0 + c1 x + c2 x^2 + ...
-  poly_coeffs: [1.0, 0.0, 0.0]
-  # Normalization reference for x = raw_adu / poly_norm_adu
-  poly_norm_adu: 65535.0
+method: “none”
 
-# ------------------------------------------------------------------------------
-# Clipping, rounding, and quantization to output depth
-# ------------------------------------------------------------------------------
+LUT: 1D mapping input ADU → linearized ADU
+
+lut_path: “${oc.env:DATA_DIR, data}/calib/adc/linearization_lut.npy”
+lut_interp: “linear”                   # “nearest” | “linear”
+
+Polynomial: y = c0 + c1 x + c2 x^2 + … on x=raw_adu / poly_norm_adu
+
+poly_coeffs: [1.0, 0.0, 0.0]
+poly_norm_adu: 65535.0
+
+Optional stochastic dithering prior to rounding (only if integer dtype_out)
+
+stochastic_dither:
+enabled: false
+amplitude_adu: 0.25
+
+——————————————————————————
+
+Clipping, rounding, and re-quantization
+
+——————————————————————————
+
 quantization:
-  # After corrections, values can be clipped for safety before re-quantization.
-  clip:
-    min_adu: 0.0
-    max_adu: 65535.0
-  # Rounding mode when casting to integer dtype_out (ignored for float outputs)
-  rounding: "nearest"   # "nearest" | "floor" | "ceil" | "stochastic"
-  # If dtype_out is integer, enforce final range for bit_depth_out
-  enforce_range: true
+clip:
+min_adu: 0.0
+max_adu: 65535.0
+rounding: “nearest”                    # “nearest” | “floor” | “ceil” | “stochastic”
+enforce_range: true                    # if dtype_out is integer, enforce bit_depth_out
 
-# ------------------------------------------------------------------------------
-# Quality checks (soft guards; do not change pixel values)
-#   These checks can raise warnings or hard errors depending on `action_on_fail`.
-# ------------------------------------------------------------------------------
+——————————————————————————
+
+Numerical safety & invalid handling
+
+——————————————————————————
+
+safety:
+handle_invalid: true
+fill:
+method: “median3”                    # “median3” | “nearest” | “zero”
+
+Optional output clamping (post everything, pre cast)
+
+clamp_output:
+enabled: true
+min_adu: -1.0e3
+max_adu: 1.0e7
+
+——————————————————————————
+
+Quality checks (soft guards; do not mutate data)
+
+——————————————————————————
+
 quality_checks:
-  enabled: true
-  # Simple histogram sanity after correction: expected dynamic usage
-  histogram_after:
-    bins: 256
-    # fraction of pixels allowed to be at exact 0 or max (to catch gross clipping)
-    max_zero_frac: 0.15
-    max_saturated_frac: 0.10
-  # Basic statistics bounds (per-frame):
-  stats_after:
-    mean_adu_range: [50.0, 50000.0]
-    std_adu_max: 20000.0
-  # What to do if any check fails: "warn" | "error"
-  action_on_fail: "warn"
+enabled: true
 
-# ------------------------------------------------------------------------------
-# I/O routing for pipeline memory dict (Hydra-driven executors use these keys)
-# ------------------------------------------------------------------------------
+histogram_after:
+bins: 256
+max_zero_frac: 0.15
+max_saturated_frac: 0.10
+
+stats_after:
+mean_adu_range: [50.0, 50000.0]
+std_adu_max: 20000.0
+
+Optional per-channel stats (for [B,C,H,W])
+
+per_channel_stats:
+enabled: true
+mean_range: [10.0, 60000.0]
+max_nan_frac: 0.0
+
+action_on_fail: “warn”                 # “warn” | “error”
+
+——————————————————————————
+
+I/O routing (Hydra-driven executors consume these keys)
+
+——————————————————————————
+
 io:
-  input_key: "raw_frames"        # upstream producer key
-  output_key: "adc_corrected"    # downstream consumer key (dark.yaml expects this)
+input_key: “raw_frames”                # upstream producer key
+output_key: “adc_corrected”            # downstream consumer key (dark.yaml expects this)
 
-# ------------------------------------------------------------------------------
-# Caching + DVC integration (optional; used by pipeline driver)
-# ------------------------------------------------------------------------------
+——————————————————————————
+
+Diagnostics (optional artifacts for debugging)
+
+——————————————————————————
+
+diagnostics:
+enabled: false
+outdir: “${oc.env:RUN_DIR, runs}/calib/adc/diagnostics”
+save_debug_images: false               # write small PNG grids (costly)
+sample_indices:
+frames: []                           # e.g., [0, 128, 256]
+channels: []                         # e.g., [0, 5, 31]
+export_stats_csv: false
+
+——————————————————————————
+
+Caching & DVC
+
+——————————————————————————
+
 cache:
-  write_intermediate: true
-  # Where to persist intermediates if enabled
-  out_dir: "${oc.env:RUN_DIR, runs}/calib/adc"
-  # Named stage for DVC (if pipeline tracks it); empty to disable
-  dvc_stage_name: "calib_adc"
+write_intermediate: true
+out_dir: “${oc.env:RUN_DIR, runs}/calib/adc”
+dvc_stage_name: “calib_adc”
+cache_key:
+offset_method: “${offset_correction.method}”
+gain_method: “${gain_correction.method}”
+linearization: “${linearization.method}”
 
-# ------------------------------------------------------------------------------
-# Logging & runtime
-# ------------------------------------------------------------------------------
+——————————————————————————
+
+Logging & runtime
+
+——————————————————————————
+
 logging:
-  level: "INFO"                 # "DEBUG" | "INFO" | "WARNING" | "ERROR"
-  log_sample_stats: true        # per-batch sample stats after stage
-  save_debug_images: false      # if true, write small PNG grids to cache.out_dir (costly)
+level: “INFO”                          # “DEBUG” | “INFO” | “WARNING” | “ERROR”
+log_sample_stats: true
+save_debug_images: false
 
 runtime:
-  num_workers: 2               # for table/map loading and optional histogramming
-  seed: 1337
+num_workers: 2                         # table/map loading & histogramming
+seed: 1337
+per_frame_budget_ms: 40                # soft guardrail for throughput
 
-# ------------------------------------------------------------------------------
-# Developer safety: strict validation
-# ------------------------------------------------------------------------------
+——————————————————————————
+
+Validation — strict developer safety
+
+——————————————————————————
+
 validation:
-  # If method != "none", the corresponding file must exist (fail fast)
-  require_existing_paths: true
-  # Confirm shapes at load-time (C, H, W) compatibility with first batch seen
-  check_shape_compatibility: true
+
+If a method requires a file, it must exist (fail fast)
+
+require_existing_paths: true
+
+Confirm shapes at load-time (C,H,W) compatibility with first batch
+
+check_shape_compatibility: true
+
+If auto methods are selected, assert decision logic is sane
+
+require_auto_logic_sanity: true
+
+Ensure finite inputs before processing
+
+require_finite_inputs: true
