@@ -2,14 +2,20 @@
 # ⚡ Prefetch Factor — Fast I/O
 # ------------------------------------------------------------------------------
 # Purpose:
-#   • Aggressive prefetching for high-bandwidth SSDs / NVMe.
-#   • Good for HPC/local workstations with large RAM.
+#   • Aggressive prefetching for high-bandwidth SSDs / NVMe storage.
+#   • Ideal for HPC clusters or local workstations with abundant RAM & I/O.
+#   • Boosts GPU utilization by reducing data-loading bottlenecks.
 # ==============================================================================
 
-prefetch_factor: 4
+prefetch_factor: 4              # each worker preloads 4 batches in advance
+persistent_workers: true        # keep workers alive across epochs for speed
 
 notes: |
-  Fast mode:
-  • Each DataLoader worker preloads 4 batches.
-  • Reduces GPU idle time on fast disks.
-  • May consume more memory; avoid on Kaggle small-memory nodes.
+  Fast I/O mode:
+  • Each DataLoader worker preloads 4 batches ahead of time.
+  • Great for systems with high I/O throughput (NVMe, SSD RAID, HPC clusters).
+  • Reduces GPU idle time significantly when disk I/O would otherwise bottleneck.
+  • Requires more CPU RAM; avoid on Kaggle or memory-limited cloud nodes.
+  • Recommended for local dev rigs and HPC with ≥64 GB system RAM.
+  • If I/O is still the bottleneck and memory is plentiful, consider
+    `local/prefetch_factor=heavy` (8) for maximum prefetching.
