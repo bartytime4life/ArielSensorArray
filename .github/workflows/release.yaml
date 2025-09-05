@@ -1,359 +1,379 @@
-name: release
-
+upgrade, name: release
 on:
-  push:
-    tags: ['v[0-9]+.[0-9]+.[0-9]+']
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: 'SemVer tag to release (e.g., v1.2.3). If empty, no tag will be created.'
-        required: false
-        default: ''
-      prerelease:
-        description: 'Mark the release as pre-release'
-        required: false
-        default: 'false'
-      notes:
-        description: 'Optional extra release notes'
-        required: false
-        default: ''
-
+push:
+tags: \['v\[0-9]+.\[0-9]+.\[0-9]+']
+workflow\_dispatch:
+inputs:
+tag:
+description: 'SemVer tag to release (e.g., v1.2.3). If empty, no tag will be created.'
+required: false
+default: ''
+prerelease:
+description: 'Mark the release as pre-release'
+required: false
+default: 'false'
+type: choice
+options: \['false','true']
+notes:
+description: 'Optional extra release notes'
+required: false
+default: ''
 permissions:
-  contents: write
-  packages: write
-  attestations: write
-  id-token: write
-
+contents: write
+packages: write
+attestations: write
+id-token: write
 env:
-  PYTHON_DEFAULT: '3.11'
-  POETRY_VERSION: '1.8.3'
-  POETRY_VIRTUALENVS_IN_PROJECT: "true"
-  POETRY_NO_INTERACTION: "1"
-  PIP_DISABLE_PIP_VERSION_CHECK: "1"
-  PIP_NO_PYTHON_VERSION_WARNING: "1"
-  HF_HOME: ${{ github.workspace }}/.cache/huggingface
-  MPLBACKEND: "Agg"
-  TRANSFORMERS_OFFLINE: "1"
-  PACKAGE_NAME: ${{ github.event.repository.name }}
-  # Reproducible builds hint (used by some toolchains)
-  SOURCE_DATE_EPOCH: ${{ github.event.repository.pushed_at || 1704067200 }}
+PYTHON\_DEFAULT: '3.11'
+POETRY\_VERSION: '1.8.3'
+POETRY\_VIRTUALENVS\_IN\_PROJECT: "true"
+POETRY\_NO\_INTERACTION: "1"
+PIP\_DISABLE\_PIP\_VERSION\_CHECK: "1"
+PIP\_NO\_PYTHON\_VERSION\_WARNING: "1"
+HF\_HOME: \${{ github.workspace }}/.cache/huggingface
+MPLBACKEND: "Agg"
+TRANSFORMERS\_OFFLINE: "1"
+PACKAGE\_NAME: \${{ github.event.repository.name }}
 
+# Reproducible builds hint (fallback epoch = 2024-01-01)
+
+SOURCE\_DATE\_EPOCH: \${{ github.event.repository.pushed\_at || 1704067200 }}
 concurrency:
-  group: release-${{ github.ref || github.run_id }}
-  cancel-in-progress: false
-
+group: release-\${{ github.ref || github.run\_id }}
+cancel-in-progress: false
 jobs:
-  ensure-tag:
-    name: Ensure Tag (optional)
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.tag != '' }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout (full history)
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Create and push tag
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag "${{ inputs.tag }}"
-          git push origin "${{ inputs.tag }}"
-
-  test:
-    name: Test • py${{ matrix.python }}
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python: ['3.10', '3.11', '3.12']
-    steps:
-      - name: Checkout (full history for version/changelog)
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Setup Python
-        id: setup-py
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python }}
-          cache: 'pip'
-
-      - name: Install Poetry via pipx (isolated)
-        uses: pipxproject/pipx-action@v1
-        with:
-          python_version: ${{ matrix.python }}
-          pipx_args: "install poetry==${{ env.POETRY_VERSION }}"
-
-      - name: Cache Poetry & virtualenv
-        uses: actions/cache@v4
-        with:
-          path: |
-            .venv
-            ~/.cache/pip
-            ~/.cache/pypoetry
-          key: poetry-${{ runner.os }}-${{ matrix.python }}-${{ hashFiles('**/poetry.lock') }}
-          restore-keys: |
-            poetry-${{ runner.os }}-${{ matrix.python }}-
-
-      - name: Install dependencies (Poetry)
-        run: |
-          poetry env use ${{ steps.setup-py.outputs.python-path }}
-          poetry install --no-interaction --with dev
-
-      - name: Static checks (ruff/black/mypy if present)
-        run: |
-          set -e
-          if poetry run python -c "import importlib; import sys; sys.exit(0 if importlib.util.find_spec('ruff') else 1)"; then
-            poetry run ruff check .
-          fi
-          if poetry run python -c "import importlib; import sys; sys.exit(0 if importlib.util.find_spec('black') else 1)"; then
-            poetry run black --check .
-          fi
-          if poetry run python -c "import importlib; import sys; sys.exit(0 if importlib.util.find_spec('mypy') else 1)"; then
-            # don’t fail the build on type warnings by default
-            poetry run mypy . || true
-          fi
-
-      - name: Run unit tests (with coverage)
-        run: |
-          if [ -d "tests" ] || [ -d "test" ]; then
-            poetry run pytest -q --maxfail=1 --disable-warnings --cov --cov-report=xml
-          else
-            echo "No tests/ directory detected; continuing."
-          fi
-
-      - name: Validate package metadata (build sdist/wheel to smoke-check)
-        run: |
-          poetry build
-          python -m pip install --upgrade twine
-          python -m twine check dist/*
-
-      - name: Fast self-test (SpectraMind CLI)
-        run: |
-          if poetry run which spectramind >/dev/null 2>&1; then
-            poetry run spectramind test --fast || (echo "::error::spectramind self-test failed"; exit 1)
-          else
-            echo "spectramind CLI not found; skipping self-test."
-          fi
-
-  build:
-    name: Build sdist/wheel + SBOM
-    needs: [test]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout (full history)
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Set up Python ${{ env.PYTHON_DEFAULT }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_DEFAULT }}
-          cache: 'pip'
-
-      - name: Install Poetry
-        run: |
-          python -m pip install --upgrade pip wheel
-          python -m pip install "poetry==${{ env.POETRY_VERSION }}"
-
-      - name: Build distributions (release)
-        env:
-          # encourage deterministic wheels where possible
-          SOURCE_DATE_EPOCH: ${{ env.SOURCE_DATE_EPOCH }}
-        run: |
-          poetry install --no-interaction --only main
-          poetry build
-          ls -lah dist/
-
-      - name: Upload dist artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: dist
-          path: dist/*
-          if-no-files-found: error
-          retention-days: 21
-
-      - name: Generate SBOM (source tree)
-        uses: anchore/sbom-action@v0
-        with:
-          path: .
-          format: spdx-json
-          output-file: sbom.source.spdx.json
-
-      - name: Upload SBOM (source)
-        uses: actions/upload-artifact@v4
-        with:
-          name: sbom
-          path: sbom.source.spdx.json
-          retention-days: 30
-
-      - name: Attest build provenance (dist/*)
-        uses: actions/attest-build-provenance@v1
-        with:
-          subject-path: "dist/*"
-
-  docker:
-    name: Docker • GHCR (+ SBOM + provenance)
-    needs: [test]
-    runs-on: ubuntu-latest
-    if: ${{ github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && inputs.tag != '') }}
-    outputs:
-      digest: ${{ steps.push.outputs.digest }}
-      version: ${{ steps.meta.outputs.version }}
-      image: ${{ steps.meta.outputs.image }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Derive version & image ref
-        id: meta
-        run: |
-          REF="${{ github.ref_name }}"
-          if [ -z "$REF" ] || [ "$REF" = "workflow_dispatch" ]; then REF="${{ inputs.tag }}"; fi
-          VERSION="${REF#v}"
-          IMAGE="ghcr.io/${{ github.repository }}"
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "image=$IMAGE" >> $GITHUB_OUTPUT
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Docker cache
-        uses: actions/cache@v4
-        with:
-          path: /tmp/.buildx-cache
-          key: buildx-${{ github.sha }}
-          restore-keys: |
-            buildx-
-
-      - name: Login to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build & Push
-        id: push
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          platforms: linux/amd64
-          tags: |
-            ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}
-            ${{ steps.meta.outputs.image }}:latest
-          build-args: |
-            VERSION=${{ steps.meta.outputs.version }}
-          labels: |
-            org.opencontainers.image.title=${{ github.event.repository.name }}
-            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
-            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.created=${{ github.event.head_commit.timestamp || '' }}
-          cache-from: type=local,src=/tmp/.buildx-cache
-          cache-to: type=local,dest=/tmp/.buildx-cache,mode=max
-
-      - name: Generate SBOM (image)
-        uses: anchore/sbom-action@v0
-        with:
-          image: ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}
-          format: spdx-json
-          output-file: image.sbom.spdx.json
-
-      - name: Upload SBOM (image)
-        uses: actions/upload-artifact@v4
-        with:
-          name: image-sbom
-          path: image.sbom.spdx.json
-          retention-days: 30
-
-      - name: Attest image provenance
-        uses: actions/attest-build-provenance@v1
-        with:
-          subject-name: ${{ steps.meta.outputs.image }}
-          subject-digest: ${{ steps.push.outputs.digest }}
-          push-to-registry: true
-
-  pypi:
-    name: Publish PyPI (trusted publisher)
-    needs: [build]
-    runs-on: ubuntu-latest
-    if: ${{ github.ref_type == 'tag' && (secrets.PYPI_API_TOKEN != '' || true) }}
-    steps:
-      - name: Download dist
-        uses: actions/download-artifact@v4
-        with:
-          name: dist
-          path: dist
-      # Prefer OIDC Trusted Publishing if project is configured on PyPI; fallback to token if provided
-      - name: Publish via PyPI (OIDC / token)
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          packages_dir: dist
-          skip_existing: true
-          verbose: true
-          # When Trusted Publisher is configured on PyPI, omit password and rely on OIDC.
-          password: ${{ secrets.PYPI_API_TOKEN }}
-
-  gh-release:
-    name: GitHub Release
-    needs: [build, docker, pypi]
-    runs-on: ubuntu-latest
-    if: ${{ github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && inputs.tag != '') }}
-    steps:
-      - name: Determine tag/version & prerelease
-        id: meta
-        run: |
-          TAG="${{ github.ref_name }}"
-          if [ -z "$TAG" ] || [ "$TAG" = "workflow_dispatch" ]; then TAG="${{ inputs.tag }}"; fi
-          V="${TAG#v}"
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
-          echo "version=$V" >> $GITHUB_OUTPUT
-          PR="false"
-          case "${TAG,,}" in
-            *-alpha*|*-beta*|*-rc*) PR="true" ;;
-          esac
-          if [ "${{ inputs.prerelease }}" = "true" ]; then PR="true"; fi
-          echo "prerelease=$PR" >> $GITHUB_OUTPUT
-
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: _artifacts
-
-      - name: Compose release body
-        id: notes
-        run: |
-          EXTRA="${{ inputs.notes }}"
-          echo "body<<EOF" >> $GITHUB_OUTPUT
-          echo "${EXTRA}" >> $GITHUB_OUTPUT
-          echo "" >> $GITHUB_OUTPUT
-          echo "## Artifacts" >> $GITHUB_OUTPUT
-          find _artifacts -type f -maxdepth 3 -print | sed 's/^/- /' >> $GITHUB_OUTPUT
-          echo "" >> $GITHUB_OUTPUT
-          echo "## Build Info" >> $GITHUB_OUTPUT
-          echo "- Commit: $GITHUB_SHA" >> $GITHUB_OUTPUT
-          echo "- Ref: $GITHUB_REF" >> $GITHUB_OUTPUT
-          echo "- Run ID: $GITHUB_RUN_ID" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.meta.outputs.tag }}
-          name: ${{ steps.meta.outputs.tag }}
-          prerelease: ${{ steps.meta.outputs.prerelease }}
-          generate_release_notes: true
-          body: ${{ steps.notes.outputs.body }}
-          files: |
-            _artifacts/dist/*
-            _artifacts/sbom/sbom.source.spdx.json
-            _artifacts/image-sbom/image.sbom.spdx.json
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+ensure-tag:
+name: Ensure Tag (optional)
+if: \${{ github.event\_name == 'workflow\_dispatch' && inputs.tag != '' }}
+runs-on: ubuntu-latest
+steps:
+\- name: Checkout (full history)
+uses: actions/checkout\@v4
+with:
+fetch-depth: 0
+\- name: Create and push annotated tag
+run: |
+set -euo pipefail
+TAG="\${{ inputs.tag }}"
+if git rev-parse -q --verify "refs/tags/\${TAG}" >/dev/null; then
+echo "::notice::Tag \${TAG} already exists; skipping."
+exit 0
+fi
+git config user.name "github-actions\[bot]"
+git config user.email "github-actions\[bot]@users.noreply.github.com"
+git tag -a "\${TAG}" -m "Release \${TAG}"
+git push origin "\${TAG}"
+test:
+name: Test • py\${{ matrix.python }}
+runs-on: ubuntu-latest
+strategy:
+fail-fast: false
+matrix:
+python: \['3.10', '3.11', '3.12']
+steps:
+\- name: Checkout (full history for version/changelog)
+uses: actions/checkout\@v4
+with:
+fetch-depth: 0
+\- name: Setup Python
+id: setup-py
+uses: actions/setup-python\@v5
+with:
+python-version: \${{ matrix.python }}
+cache: 'pip'
+\- name: Install Poetry via pipx (isolated)
+uses: pipxproject/pipx-action\@v1
+with:
+python\_version: \${{ matrix.python }}
+pipx\_args: "install poetry==\${{ env.POETRY\_VERSION }}"
+\- name: Cache Poetry & virtualenv
+uses: actions/cache\@v4
+with:
+path: |
+.venv
+\~/.cache/pip
+\~/.cache/pypoetry
+key: poetry-\${{ runner.os }}-\${{ matrix.python }}-\${{ hashFiles('\*\*/poetry.lock') }}
+restore-keys: |
+poetry-\${{ runner.os }}-\${{ matrix.python }}-
+\- name: Install dependencies (Poetry)
+run: |
+poetry env use \${{ steps.setup-py.outputs.python-path }}
+poetry install --no-interaction --with dev
+\- name: Static checks (ruff/black/mypy if present)
+run: |
+set -e
+if poetry run python - <<'PY'; then :; fi
+import importlib,sys
+sys.exit(0 if importlib.util.find\_spec('ruff') else 1)
+PY
+then poetry run ruff check .; fi
+if poetry run python - <<'PY'; then :; fi
+import importlib,sys
+sys.exit(0 if importlib.util.find\_spec('black') else 1)
+PY
+then poetry run black --check .; fi
+if poetry run python - <<'PY'; then :; fi
+import importlib,sys
+sys.exit(0 if importlib.util.find\_spec('mypy') else 1)
+PY
+then poetry run mypy . || true; fi
+\- name: Run unit tests (with coverage)
+run: |
+if \[ -d "tests" ] || \[ -d "test" ]; then
+poetry run pytest -q --maxfail=1 --disable-warnings --cov --cov-report=xml
+else
+echo "No tests/ directory detected; continuing."
+fi
+\- name: Validate package metadata (build sdist/wheel to smoke-check)
+run: |
+poetry build
+python -m pip install --upgrade twine
+python -m twine check dist/\*
+\- name: Fast self-test (SpectraMind CLI)
+run: |
+if poetry run which spectramind >/dev/null 2>&1; then
+poetry run spectramind selftest --fast || (echo "::error::spectramind self-test failed"; exit 1)
+else
+echo "spectramind CLI not found; skipping self-test."
+fi
+build:
+name: Build sdist/wheel + SBOM + Checksums
+needs: \[test]
+runs-on: ubuntu-latest
+steps:
+\- name: Checkout (full history)
+uses: actions/checkout\@v4
+with:
+fetch-depth: 0
+\- name: Set up Python \${{ env.PYTHON\_DEFAULT }}
+id: setup-py
+uses: actions/setup-python\@v5
+with:
+python-version: \${{ env.PYTHON\_DEFAULT }}
+cache: 'pip'
+\- name: Install Poetry
+run: |
+python -m pip install --upgrade pip wheel
+python -m pip install "poetry==\${{ env.POETRY\_VERSION }}"
+\- name: Build distributions (release)
+env:
+SOURCE\_DATE\_EPOCH: \${{ env.SOURCE\_DATE\_EPOCH }}
+run: |
+poetry install --no-interaction --only main
+poetry build
+ls -lah dist/
+\- name: Generate checksums
+run: |
+mkdir -p checksums
+(cd dist && sha256sum \* | tee ../checksums/SHA256SUMS.txt)
+(cd dist && shasum -a 512 \* | tee ../checksums/SHA512SUMS.txt)
+\- name: Upload dist artifacts
+uses: actions/upload-artifact\@v4
+with:
+name: dist
+path: |
+dist/\*
+checksums/\*
+if-no-files-found: error
+retention-days: 21
+\- name: Generate SBOM (source tree)
+uses: anchore/sbom-action\@v0
+with:
+path: .
+format: spdx-json
+output-file: sbom.source.spdx.json
+\- name: Upload SBOM (source)
+uses: actions/upload-artifact\@v4
+with:
+name: sbom
+path: sbom.source.spdx.json
+retention-days: 30
+\- name: Attest build provenance (dist/*)
+uses: actions/attest-build-provenance\@v1
+with:
+subject-path: "dist/*"
+docker:
+name: Docker • GHCR (+ SBOM + provenance)
+needs: \[test]
+runs-on: ubuntu-latest
+if: \${{ github.ref\_type == 'tag' || (github.event\_name == 'workflow\_dispatch' && inputs.tag != '') }}
+outputs:
+digest: \${{ steps.push.outputs.digest }}
+version: \${{ steps.meta.outputs.version }}
+image: \${{ steps.meta.outputs.image }}
+steps:
+\- name: Checkout
+uses: actions/checkout\@v4
+\- name: Derive version & image ref
+id: meta
+run: |
+set -euo pipefail
+REF="\${{ github.ref\_name }}"
+if \[ -z "\$REF" ] || \[ "\$REF" = "workflow\_dispatch" ]; then REF="\${{ inputs.tag }}"; fi
+VERSION="\${REF#v}"
+IMAGE="ghcr.io/\${{ github.repository }}"
+echo "version=\$VERSION" >> \$GITHUB\_OUTPUT
+echo "image=\$IMAGE" >> \$GITHUB\_OUTPUT
+\- name: Set up QEMU
+uses: docker/setup-qemu-action\@v3
+\- name: Set up Buildx
+uses: docker/setup-buildx-action\@v3
+\- name: Docker cache
+uses: actions/cache\@v4
+with:
+path: /tmp/.buildx-cache
+key: buildx-\${{ github.sha }}
+restore-keys: |
+buildx-
+\- name: Login to GHCR
+uses: docker/login-action\@v3
+with:
+registry: ghcr.io
+username: \${{ github.actor }}
+password: \${{ secrets.GITHUB\_TOKEN }}
+\- name: Build & Push
+id: push
+uses: docker/build-push-action\@v6
+with:
+context: .
+push: true
+platforms: linux/amd64
+tags: |
+\${{ steps.meta.outputs.image }}:\${{ steps.meta.outputs.version }}
+\${{ steps.meta.outputs.image }}\:latest
+build-args: |
+VERSION=\${{ steps.meta.outputs.version }}
+labels: |
+org.opencontainers.image.title=\${{ github.event.repository.name }}
+org.opencontainers.image.version=\${{ steps.meta.outputs.version }}
+org.opencontainers.image.source=\${{ github.server\_url }}/\${{ github.repository }}
+org.opencontainers.image.revision=\${{ github.sha }}
+org.opencontainers.image.created=\${{ github.event.head\_commit.timestamp || '' }}
+cache-from: type=local,src=/tmp/.buildx-cache
+cache-to: type=local,dest=/tmp/.buildx-cache,mode=max
+\- name: Generate SBOM (image)
+uses: anchore/sbom-action\@v0
+with:
+image: \${{ steps.meta.outputs.image }}:\${{ steps.meta.outputs.version }}
+format: spdx-json
+output-file: image.sbom.spdx.json
+\- name: Upload SBOM (image)
+uses: actions/upload-artifact\@v4
+with:
+name: image-sbom
+path: image.sbom.spdx.json
+retention-days: 30
+\- name: Attest image provenance
+uses: actions/attest-build-provenance\@v1
+with:
+subject-name: \${{ steps.meta.outputs.image }}
+subject-digest: \${{ steps.push.outputs.digest }}
+push-to-registry: true
+pypi:
+name: Publish PyPI (trusted publisher)
+needs: \[build]
+runs-on: ubuntu-latest
+if: \${{ github.ref\_type == 'tag' }}
+steps:
+\- name: Download dist
+uses: actions/download-artifact\@v4
+with:
+name: dist
+path: dist
+\# Prefer OIDC Trusted Publishing if project is configured on PyPI; falls back to token if provided
+\- name: Publish via PyPI (OIDC / token)
+uses: pypa/gh-action-pypi-publish\@release/v1
+with:
+packages\_dir: dist
+skip\_existing: true
+verbose: true
+password: \${{ secrets.PYPI\_API\_TOKEN }}
+changelog:
+name: Generate Changelog
+needs: \[build, docker]
+runs-on: ubuntu-latest
+outputs:
+body: \${{ steps.compose.outputs.body }}
+steps:
+\- name: Checkout (full history)
+uses: actions/checkout\@v4
+with:
+fetch-depth: 0
+\- name: Compute range
+id: range
+run: |
+set -euo pipefail
+TAG="\${{ github.ref\_name }}"
+if \[ -z "\$TAG" ] || \[ "\$TAG" = "workflow\_dispatch" ]; then TAG="\${{ inputs.tag || '' }}"; fi
+LAST=\$(git describe --tags --abbrev=0 --exclude="\${TAG}" 2>/dev/null || echo "")
+echo "tag=\${TAG}" >> \$GITHUB\_OUTPUT
+echo "prev=\${LAST}" >> \$GITHUB\_OUTPUT
+\- name: Generate simple Conventional Commit changelog
+id: gen
+run: |
+set -euo pipefail
+PREV="\${{ steps.range.outputs.prev }}"
+CURR="\${{ steps.range.outputs.tag }}"
+if \[ -z "\$CURR" ]; then CURR="\$(git rev-parse --short HEAD)"; fi
+echo "## Changes" > CHANGELOG\_SNIPPET.md
+if \[ -n "\$PREV" ]; then
+RANGE="\${PREV}..\${CURR}"
+else
+RANGE="\${CURR}"
+fi
+git log --pretty=format:'- %s (%h) — %an' \$RANGE >> CHANGELOG\_SNIPPET.md || true
+echo "changelog<\<EOF" >> \$GITHUB\_OUTPUT
+cat CHANGELOG\_SNIPPET.md >> \$GITHUB\_OUTPUT
+echo -e "\nEOF" >> \$GITHUB\_OUTPUT
+\- name: Compose release body
+id: compose
+run: |
+EXTRA="\${{ inputs.notes }}"
+echo "body<<'EOF'" >> \$GITHUB\_OUTPUT
+echo "\${EXTRA}" >> \$GITHUB\_OUTPUT
+echo "" >> \$GITHUB\_OUTPUT
+cat CHANGELOG\_SNIPPET.md >> \$GITHUB\_OUTPUT
+echo "" >> \$GITHUB\_OUTPUT
+echo "## Artifacts" >> \$GITHUB\_OUTPUT
+echo "- Wheels/sdist + checksums (artifact: dist)" >> \$GITHUB\_OUTPUT
+echo "- SBOMs (source + image)" >> \$GITHUB\_OUTPUT
+echo "EOF" >> \$GITHUB\_OUTPUT
+gh-release:
+name: GitHub Release
+needs: \[build, docker, pypi, changelog]
+runs-on: ubuntu-latest
+if: \${{ github.ref\_type == 'tag' || (github.event\_name == 'workflow\_dispatch' && inputs.tag != '') }}
+steps:
+\- name: Determine tag/version & prerelease
+id: meta
+run: |
+TAG="\${{ github.ref\_name }}"
+if \[ -z "\$TAG" ] || \[ "\$TAG" = "workflow\_dispatch" ]; then TAG="\${{ inputs.tag }}"; fi
+V="\${TAG#v}"
+echo "tag=\$TAG" >> \$GITHUB\_OUTPUT
+echo "version=\$V" >> \$GITHUB\_OUTPUT
+PR="false"
+case "\${TAG,,}" in
+*-alpha*|*-beta*|*-rc*) PR="true" ;;
+esac
+if \[ "\${{ inputs.prerelease }}" = "true" ]; then PR="true"; fi
+echo "prerelease=\$PR" >> \$GITHUB\_OUTPUT
+\- name: Download artifacts
+uses: actions/download-artifact\@v4
+with:
+path: \_artifacts
+\- name: Create Release
+uses: softprops/action-gh-release\@v2
+with:
+tag\_name: \${{ steps.meta.outputs.tag }}
+name: \${{ steps.meta.outputs.tag }}
+prerelease: \${{ steps.meta.outputs.prerelease }}
+generate\_release\_notes: true
+body: \${{ needs.changelog.outputs.body }}
+files: |
+\_artifacts/dist/\*
+\_artifacts/sbom/sbom.source.spdx.json
+\_artifacts/image-sbom/image.sbom.spdx.json
+env:
+GITHUB\_TOKEN: \${{ secrets.GITHUB\_TOKEN }}
