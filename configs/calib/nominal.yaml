@@ -1,0 +1,42 @@
+# configs/calibration/nominal.yaml
+# ================================================================
+# SpectraMind V50 — Calibration Profile (Nominal)
+# Purpose: Default leaderboard-safe kill chain (≤ 9h, reproducible)
+# Composes atomic stage configs under configs/calib/method/*
+# ================================================================
+
+defaults:
+  - method/adc        # analog-to-digital correction
+  - method/dark       # dark current subtraction
+  - method/flat       # flat-field correction
+  - method/cds        # correlated double sampling
+  - method/photometry # aperture/PSF photometry extraction
+  - method/trace      # spectral trace extraction & alignment
+  - method/phase      # orbital phase folding / binning
+  - method/corel      # conformal uncertainty calibration (COREL)
+
+profile:
+  name: "nominal"
+  description: >
+    Balanced calibration chain for leaderboard submissions:
+    • Physics-faithful ADC, dark, flat, CDS
+    • Nominal photometry & trace extraction
+    • Phase binning at ~200 bins/orbit (FGS1-first emphasis)
+    • COREL calibration for uncertainty coverage
+    Target: ≤9h runtime across ~1100 planets on Kaggle GPU.
+  runtime_budget_hours: 9
+  reproducibility: true
+  ci_safe: true
+
+tuning:
+  phase_bins: 200        # coarse enough for speed, fine enough for accuracy
+  fgs1_weight: 58.0      # align with challenge metric (FGS1 ≈58× weight)
+  savgol_window: 51      # Savitzky–Golay detrend (nominal setting)
+  outlier_sigma_clip: 5  # jitter spike rejection threshold
+  corel_quantile: 0.95   # conformal calibration coverage target
+  seed: 42               # deterministic baseline
+
+logging:
+  save_intermediates: true   # keep intermediate calibrated frames
+  log_level: INFO
+  outputs_dir: ${hydra:run.dir}/calibration_nominal
