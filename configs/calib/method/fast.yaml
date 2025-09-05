@@ -1,0 +1,178 @@
+# FILE: configs/calib/method/fast.yaml
+# ==============================================================================
+# 🚀 FAST Mode — Method Config (CI/Smoke/Dev)
+# ------------------------------------------------------------------------------
+# Purpose
+#   Centralized, conservative overrides that make the full calibration chain
+#   complete quickly and deterministically for CI, smoke tests, and rapid
+#   iteration on Kaggle. This file DOES NOT perform calibration by itself; it
+#   supplies per-stage override values that the pipeline executor applies on top
+#   of each stage’s default config (adc, dark, flat, cds, photometry, trace,
+#   phase, temperature, corel, …).
+#
+# How it’s used
+#   - The executor (or your Hydra composition) reads this file and applies
+#     `fast.overrides.<stage>.*` as recursive updates to that stage’s config.
+#   - It’s complementary to each stage’s own `profile_overrides.fast`, and
+#     can serve as a single switch for “fast” across the whole chain.
+#
+# Example composition
+#   spectramind calibrate +calib.method.fast=fast
+#
+# Notes
+#   - The choices here bias towards minimal I/O, no heavy plots, no conformal,
+#     smaller windows/knobs, and safe numerics. Adjust per your runtime budget.
+# ==============================================================================
+
+fast:
+  enabled: true
+
+  # ---------------------------------------------------------------------------
+  # Global runtime / diagnostics knobs (soft guidance for the executor)
+  # ---------------------------------------------------------------------------
+  runtime:
+    use_mixed_precision: true          # AMP where it’s safe (no scientific diffs)
+    deterministic_kernels: true
+    num_workers: 2
+    seed: 1337
+
+  diagnostics:
+    save_plots: false
+    save_images: false
+    keep_intermediates: false
+    log_level: "WARN"
+
+  # ---------------------------------------------------------------------------
+  # Per-stage overrides (applied on top of each stage’s defaults)
+  # ---------------------------------------------------------------------------
+  overrides:
+
+    # ---------- ADC ----------
+    adc:
+      reference_pixel.use: false
+      overscan.enabled: false
+      amplifiers.enabled: false
+      linearization.method: "none"
+      gain.illumination.enabled: false
+      bad_pixels.enabled: false
+      uncertainty.enabled: false
+      diagnostics.enabled: false
+      qc.on_fail: "warn"
+
+    # ---------- DARK ----------
+    dark:
+      master.mode: "select_by_metadata"
+      build.enabled: false
+      scaling.temperature_compensation.enabled: false
+      overscan.enabled: false
+      amplifiers.enabled: false
+      residual_plane.enabled: false
+      cosmic_rays.enabled: false
+      persistence.enabled: false
+      application.propagate_uncertainty: false
+      diagnostics.save_residuals: false
+      qc.on_fail: "warn"
+
+    # ---------- FLAT ----------
+    flat:
+      build.enabled: false
+      illumination.enabled: true
+      illumination.method: "gaussian"
+      normalization.clip.enabled: true
+      bad_pixel_repair.enabled: true
+      temporal_weighting.enabled: false
+      application.propagate_uncertainty: false
+      diagnostics.save_gain_map: false
+      diagnostics.save_illumination_map: false
+      diagnostics.save_masks: false
+
+    # ---------- CDS ----------
+    cds:
+      reset_source.mode: "pattern"
+      pairing.policy: "n_minus_1"
+      pairing.order_by: "index"
+      temporal_filter.enabled: false
+      uncertainty.enabled: false
+      diagnostics.enabled: false
+
+    # ---------- TEMPERATURE ----------
+    temperature:
+      telemetry.interpolation.smoothing.enabled: true
+      telemetry.interpolation.smoothing.window_s: 8.0
+      dynamics.enabled: true
+      dynamics.detector.time_constant_s: 30.0
+      dynamics.optics.time_constant_s: 90.0
+      uncertainty.enabled: false
+      diagnostics.save_plots: false
+
+    # ---------- PHOTOMETRY ----------
+    photometry:
+      type: "aperture"
+      centroid.smoothing.enabled: true
+      centroid.smoothing.method: "ma"
+      centroid.smoothing.window: 5
+      background.method: "local-median"
+      spectral_trace.per_column_centroid: false
+      use_variance_map: false
+      diagnostics.save_profiles: false
+      diagnostics.per_column_qc: false
+      jitter_decorrelation.enabled: false
+
+    # ---------- TRACE (normalization on extracted spectra) ----------
+    trace:
+      strategy: "polynomial"
+      polynomial.order: 2
+      polynomial.window: 41
+      spline.knots: 12
+      fft.cutoff_hz: 0.02
+      instrument.fgs1.prefer_strategy: "polynomial"
+      instrument.airs.prefer_strategy: "spline"
+      diagnostics.save_plots: false
+      diagnostics.symbolic_overlay: false
+      diagnostics.fft_diagnostics: false
+      diagnostics.coverage_check: false
+
+    # ---------- PHASE (timing/phase alignment) ----------
+    phase:
+      alignment.method: "cross_correlation"
+      alignment.cross_correlation.window: 128
+      drift_model.max_iter: 4
+      resampling.target_rate_hz: null
+      barycentric.enabled: true            # keep astronomy-correct time; fast-safe
+      barycentric.relativistic: false
+      uncertainty.enabled: false
+      diagnostics.save_fft_plots: false
+      diagnostics.save_template_residuals: false
+
+    # ---------- COREL (graph calibration / conformal) ----------
+    corel:
+      model.arch: "gcn"
+      model.hidden_dim: 32
+      model.num_layers: 2
+      train.epochs: 10
+      reg.laplacian_smooth.weight: 5.0e-4
+      conformal.enabled: false
+      logging.log_graph_stats: false
+
+  # ---------------------------------------------------------------------------
+  # Optional hard caps / guards the executor may enforce globally in fast mode
+  # ---------------------------------------------------------------------------
+  guards:
+    max_frames_per_target: null          # e.g., 6000 to decimate very long sequences
+    max_columns_per_spectrum: null       # e.g., 283 (no-op) or sub-sample for CI
+    downsample_factor_time: 1            # 1 = keep; >1 = simple decimation for smoke
+    halt_on_warning: false               # fast mode should warn, not halt
+    fail_on_missing_reference: false
+
+  # ---------------------------------------------------------------------------
+  # Quick rationale (for future maintainers / CI logs)
+  # ---------------------------------------------------------------------------
+  notes: |
+    FAST mode trades detail for determinism and speed:
+      • No heavy linearization, per-amp, or conformal stages.
+      • Simpler backgrounds (local-median), fixed aperture photometry, and
+        polynomial trace normalization to preserve transit shape without costly fits.
+      • Conservative diagnostics (plots off) and minimal uncertainty propagation.
+      • Phase: keep simple cross-correlation; barycentric kept ON but with
+        relativistic terms OFF to remain astronomy-correct yet cheap.
+      • COREL: tiny GCN with Laplacian prior and no conformal for quick NLL sanity.
