@@ -1,73 +1,268 @@
 name: SVG Optimize
 
 on:
-  pull_request:
-  push:
-    branches: [ main ]
-  workflow_dispatch:
+pull\_request:
+paths:
+\- "**/\*.svg"
+\- ".svgo.json"
+\- ".github/workflows/svg-optimize.yml"
+push:
+branches: \[ main ]
+paths:
+\- "**/\*.svg"
+\- ".svgo.json"
+\- ".github/workflows/svg-optimize.yml"
+workflow\_dispatch: {}
+
+# Default to least-privilege; elevate per-job as needed
 
 permissions:
-  contents: write
+contents: read
+
+concurrency:
+group: svg-optimize-\${{ github.ref }}
+cancel-in-progress: true
+
+defaults:
+run:
+shell: bash -Eeuo pipefail
 
 jobs:
-  check:
-    name: Lint SVGs
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
-    steps:
-      - uses: actions/checkout@v4
+check:
+name: Lint/Verify SVGs (PR)
+if: github.event\_name == 'pull\_request'
+runs-on: ubuntu-latest
+steps:
+\- name: Checkout (shallow)
+uses: actions/checkout\@v4
+with:
+fetch-depth: 0
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
+```
+  - name: Setup Node (v20) with npm cache
+    uses: actions/setup-node@v4
+    with:
+      node-version: 20
+      cache: npm
 
-      - name: Install SVGO
-        run: |
-          npm init -y
-          npm install svgo@^3.3.2 --save-dev
+  - name: Bootstrap minimal package (for cache) and install svgo
+    run: |
+      if [[ ! -f package.json ]]; then
+        npm init -y >/dev/null 2>&1
+      fi
+      npm install --no-audit --no-fund --save-dev svgo@^3.3.2
+      npm ls svgo
 
-      - name: Optimize SVGs (dry-run)
-        run: |
-          npx svgo -c .svgo.json -f assets/diagrams -o .svgo-tmp || true
-          npx svgo -c .svgo.json -f docs -o .svgo-tmp || true
-          # now optimize in-place and check diff
-          npx svgo -c .svgo.json -f assets/diagrams -o assets/diagrams || true
-          npx svgo -c .svgo.json -f docs -o docs || true
-          git diff --name-only --exit-code || (echo "❌ SVGs not optimized. Run 'make optimize-svg' locally." && exit 1)
+  - name: Ensure .svgo.json exists (safe defaults)
+    run: |
+      if [[ ! -f .svgo.json ]]; then
+        cat > .svgo.json <<'JSON'
+        {
+          "multipass": true,
+          "js2svg": { "indent": 0, "pretty": false },
+          "plugins": [
+            "preset-default",
+            { "name": "removeViewBox", "active": false },
+            { "name": "removeDimensions", "active": false },
+            { "name": "sortAttrs", "params": { "xmlnsOrder": "alphabetical" } }
+          ]
+        }
+        JSON
+        echo "Created default .svgo.json"
+      fi
+      cat .svgo.json
 
-  fix:
-    name: Auto-fix SVGs
-    runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request'
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: true
+  - name: Detect SVG targets
+    id: detect
+    run: |
+      mapfile -t FILES < <(git ls-files '*.svg' ':!:**/node_modules/**')
+      if (( ${#FILES[@]} == 0 )); then
+        echo "No SVG files tracked by git."
+        echo "has_svg=false" >> "$GITHUB_OUTPUT"
+      else
+        printf '%s\n' "${FILES[@]}" > svg-filelist.txt
+        echo "Found ${#FILES[@]} SVG(s)."
+        echo "has_svg=true" >> "$GITHUB_OUTPUT"
+      fi
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
+  - name: Optimize (dry-run preview to tmp) — optional
+    if: steps.detect.outputs.has_svg == 'true'
+    run: |
+      rm -rf .svgo-tmp
+      mkdir -p .svgo-tmp
+      # Preview optimize tracked SVGs into a mirror tmp tree
+      while IFS= read -r f; do
+        out=".svgo-tmp/$f"
+        mkdir -p "$(dirname "$out")"
+        npx svgo -c .svgo.json -i "$f" -o "$out" || true
+      done < svg-filelist.txt
 
-      - name: Install SVGO
-        run: |
-          npm init -y
-          npm install svgo@^3.3.2 --save-dev
+  - name: Optimize in-place and compute diff
+    if: steps.detect.outputs.has_svg == 'true'
+    run: |
+      while IFS= read -r f; do
+        npx svgo -c .svgo.json -i "$f" -o "$f" || true
+      done < svg-filelist.txt
+      git status --porcelain
+      git diff --name-only > svgo.changed || true
+      git diff > svgo.patch || true
+      if [[ -s svgo.changed ]]; then
+        echo "❌ SVGs not optimized according to current .svgo.json."
+        echo "Files changed:"
+        cat svgo.changed
+        exit 1
+      else
+        echo "✅ All SVGs are already optimized."
+      fi
 
-      - name: Optimize SVGs in-place
-        run: |
-          npx svgo -c .svgo.json -f assets/diagrams -o assets/diagrams || true
-          npx svgo -c .svgo.json -f docs -o docs || true
+  - name: Upload diff artifacts (if any)
+    if: failure() && steps.detect.outputs.has_svg == 'true'
+    uses: actions/upload-artifact@v4
+    with:
+      name: svgo-diff
+      path: |
+        svgo.patch
+        svg-filelist.txt
+      if-no-files-found: ignore
+      retention-days: 7
 
-      - name: Commit & Push
-        run: |
-          if [ -n "$(git status --porcelain)" ]; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add assets/diagrams docs
-            git commit -m "chore(svg): optimize SVGs via CI"
-            git push
-          else
-            echo "No changes to commit."
-          fi
+  - name: PR Summary
+    if: always()
+    run: |
+      {
+        echo "### SVG Optimize — PR Check"
+        if [[ -f svgo.changed && -s svgo.changed ]]; then
+          echo ""
+          echo "**Changes detected** — please run locally:"
+          echo ""
+          echo "\`\`\`bash"
+          echo "make optimize-svg  # or"
+          echo "npx svgo -c .svgo.json -f ."
+          echo "\`\`\`"
+          echo ""
+          echo "<details><summary>Changed files</summary>"
+          echo ""
+          sed 's/^/- /' svgo.changed || true
+          echo ""
+          echo "</details>"
+        else
+          echo ""
+          echo "No changes required. ✅"
+        fi
+      } >> "$GITHUB_STEP_SUMMARY"
+```
+
+fix:
+name: Auto-fix SVGs (main / dispatch)
+if: github.event\_name != 'pull\_request' && github.ref == 'refs/heads/main' && github.event.repository.fork == false
+runs-on: ubuntu-latest
+permissions:
+contents: write
+steps:
+\- name: Checkout (full)
+uses: actions/checkout\@v4
+with:
+persist-credentials: true
+fetch-depth: 0
+
+```
+  - name: Setup Node (v20) with npm cache
+    uses: actions/setup-node@v4
+    with:
+      node-version: 20
+      cache: npm
+
+  - name: Bootstrap minimal package (for cache) and install svgo
+    run: |
+      if [[ ! -f package.json ]]; then
+        npm init -y >/dev/null 2>&1
+      fi
+      npm install --no-audit --no-fund --save-dev svgo@^3.3.2
+      npm ls svgo
+
+  - name: Ensure .svgo.json exists (safe defaults)
+    run: |
+      if [[ ! -f .svgo.json ]]; then
+        cat > .svgo.json <<'JSON'
+        {
+          "multipass": true,
+          "js2svg": { "indent": 0, "pretty": false },
+          "plugins": [
+            "preset-default",
+            { "name": "removeViewBox", "active": false },
+            { "name": "removeDimensions", "active": false },
+            { "name": "sortAttrs", "params": { "xmlnsOrder": "alphabetical" } }
+          ]
+        }
+        JSON
+        echo "Created default .svgo.json"
+      fi
+
+  - name: Detect SVG targets
+    id: detect
+    run: |
+      mapfile -t FILES < <(git ls-files '*.svg' ':!:**/node_modules/**')
+      if (( ${#FILES[@]} == 0 )); then
+        echo "No SVG files tracked by git."
+        echo "has_svg=false" >> "$GITHUB_OUTPUT"
+      else
+        printf '%s\n' "${FILES[@]}" > svg-filelist.txt
+        echo "Found ${#FILES[@]} SVG(s)."
+        echo "has_svg=true" >> "$GITHUB_OUTPUT"
+      fi
+
+  - name: Optimize SVGs in-place
+    if: steps.detect.outputs.has_svg == 'true'
+    run: |
+      while IFS= read -r f; do
+        npx svgo -c .svgo.json -i "$f" -o "$f" || true
+      done < svg-filelist.txt
+
+  - name: Commit & Push if modified
+    run: |
+      if [[ -n "$(git status --porcelain)" ]]; then
+        git config user.name  "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git add -A
+        git commit -m "chore(svg): optimize SVGs via CI"
+        git push
+        echo "changes_pushed=true" >> "$GITHUB_OUTPUT"
+      else
+        echo "No changes to commit."
+        echo "changes_pushed=false" >> "$GITHUB_OUTPUT"
+
+  - name: Upload optimized diff (for traceability)
+    if: steps.detect.outputs.has_svg == 'true'
+    run: |
+      git diff HEAD~1...HEAD --name-only > svgo.changed || true
+      git diff HEAD~1...HEAD > svgo.patch || true
+    shell: bash -Eeuo pipefail
+
+  - name: Upload artifacts
+    if: steps.detect.outputs.has_svg == 'true'
+    uses: actions/upload-artifact@v4
+    with:
+      name: svgo-optimized
+      path: |
+        svgo.patch
+        svg-filelist.txt
+        .svgo.json
+      if-no-files-found: ignore
+      retention-days: 7
+
+  - name: Job Summary
+    if: always()
+    run: |
+      {
+        echo "### SVG Optimize — Auto-fix"
+        if [[ -f svgo.changed && -s svgo.changed ]]; then
+          echo ""
+          echo "**Optimized and committed** the following files:"
+          echo ""
+          sed 's/^/- /' svgo.changed || true
+        else
+          echo ""
+          echo "No changes required. ✅"
+        fi
+      } >> "$GITHUB_STEP_SUMMARY"
+```
