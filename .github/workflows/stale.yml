@@ -1,97 +1,118 @@
-# .github/workflows/stale.yml
+upgrade, # .github/workflows/stale.yml
+
 # ==============================================================================
-# SpectraMind V50 — Auto-stale & Auto-close Issues/PRs
-# Marks long-inactive issues/PRs as stale and closes them later if no activity.
-# Uses labels to exempt critical work and keeps the logs concise.
+
+# SpectraMind V50 — Auto-stale & Auto-close Issues/PRs (Upgraded)
+
+# - Marks long-inactive issues/PRs as stale and closes them later if no activity
+
+# - Dry-run support, rich exemptions, minimal noise, and safe defaults
+
+# - Fork/label-aware, with daily schedule and manual override
+
 # ==============================================================================
 
 name: Stale issues & PRs
 
 on:
-  schedule:
-    # Run daily at 02:17 UTC (randomized minute to spread load)
-    - cron: "17 2 * * *"
-  workflow_dispatch:
-    inputs:
-      dry_run:
-        description: "Run in dry-run mode (no labeling/closing)"
-        required: false
-        default: "false"
-        type: choice
-        options: ["false", "true"]
+schedule:
+\# Run daily at 02:17 UTC (randomized minute to spread load)
+\- cron: "17 2 \* \* \*"
+workflow\_dispatch:
+inputs:
+dry\_run:
+description: "Run in dry-run mode (no labeling/closing)"
+required: false
+default: "false"
+type: choice
+options: \["false", "true"]
+only\_labels:
+description: "Optional comma-separated labels to target (others ignored)"
+required: false
+default: ""
+exempt\_labels\_extra:
+description: "Optional extra comma-separated labels to exempt"
+required: false
+default: ""
 
 permissions:
-  issues: write
-  pull-requests: write
+issues: write
+pull-requests: write
 
 concurrency:
-  group: stale-${{ github.ref }}
-  cancel-in-progress: false
+group: stale-\${{ github.ref }}
+cancel-in-progress: false
 
 jobs:
-  stale:
-    name: Sweep stale issues & PRs
-    runs-on: ubuntu-latest
-    steps:
-      - name: Run actions/stale
-        uses: actions/stale@v9
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+stale:
+name: Sweep stale issues & PRs
+runs-on: ubuntu-latest
+steps:
+\- name: Run actions/stale
+uses: actions/stale\@v9
+with:
+repo-token: \${{ secrets.GITHUB\_TOKEN }}
 
-          # ---------- General ----------
-          days-before-issue-stale: 45
-          days-before-pr-stale: 30
-          days-before-issue-close: 14
-          days-before-pr-close: 10
+```
+      # ---------- General timing ----------
+      days-before-issue-stale: 45
+      days-before-pr-stale: 30
+      days-before-issue-close: 14
+      days-before-pr-close: 10
 
-          # Run in dry-run if requested (logs only, no changes)
-          debug-only: ${{ inputs.dry_run == 'true' }}
+      # ---------- Mode & perf ----------
+      debug-only: ${{ inputs.dry_run == 'true' }}
+      enable-statistics: true
+      operations-per-run: 200
+      ascending: false
+      remove-stale-when-updated: true
 
-          remove-stale-when-updated: true
-          enable-statistics: true
-          operations-per-run: 200
-          ascending: false
+      # ---------- Targeting ----------
+      # If provided at dispatch time, only consider items with *any* of these labels
+      only-labels: ${{ inputs.only_labels }}
 
-          # ---------- Messages ----------
-          stale-issue-message: >
-            This issue has been automatically marked as **stale** because it has
-            been inactive for 45 days. If this is still relevant, please add a
-            comment with an update or remove the `status: stale` label.
-            Otherwise, it will be closed after 14 more days of inactivity.
-          close-issue-message: >
-            Closing this issue due to prolonged inactivity. If needed, feel free
-            to reopen with new information or create a fresh issue.
+      # ---------- Messages ----------
+      stale-issue-message: >
+        This issue has been automatically marked as **stale** because it has
+        been inactive for 45 days. If this is still relevant, please add a
+        comment with an update or remove the `status: stale` label.
+        Otherwise, it will be closed after 14 more days of inactivity.
+      close-issue-message: >
+        Closing this issue due to prolonged inactivity. If needed, feel free
+        to reopen with new information or create a fresh issue.
 
-          stale-pr-message: >
-            This pull request has been marked as **stale** after 30 days without
-            activity. Please push updates, leave a comment, or remove the
-            `status: stale` label to keep it open. It will be closed after 10
-            more days of inactivity.
-          close-pr-message: >
-            Closing this pull request due to inactivity. You can reopen it or
-            submit a new PR once it’s ready.
+      stale-pr-message: >
+        This pull request has been marked as **stale** after 30 days without
+        activity. Please push updates, leave a comment, or remove the
+        `status: stale` label to keep it open. It will be closed after 10
+        more days of inactivity.
+      close-pr-message: >
+        Closing this pull request due to inactivity. You can reopen it or
+        submit a new PR once it’s ready.
 
-          # ---------- Labels ----------
-          stale-issue-label: "status: stale"
-          stale-pr-label: "status: stale"
-          close-issue-label: "status: auto-closed"
-          close-pr-label: "status: auto-closed"
+      # ---------- Labels applied by the bot ----------
+      stale-issue-label: "status: stale"
+      stale-pr-label: "status: stale"
+      close-issue-label: "status: auto-closed"
+      close-pr-label: "status: auto-closed"
 
-          # ---------- Exemptions (won't be marked stale) ----------
-          # Keep active work/required reviews from being auto-staled
-          exempt-issue-labels: >
-            priority: critical, priority: high, type: security, type: release-blocker,
-            status: on hold, status: needs discussion, status: in progress
-          exempt-pr-labels: >
-            priority: critical, priority: high, type: security, type: release-blocker,
-            status: on hold, status: needs discussion, status: in progress
-          exempt-all-milestones: true
-          exempt-draft-pr: true
+      # ---------- Exemptions (won't be marked stale) ----------
+      # Keep active or sensitive work from being auto-staled.
+      exempt-issue-labels: >
+        priority: critical, priority: high, type: security, type: release-blocker,
+        status: on hold, status: needs discussion, status: in progress, status: backlog,
+        ${{ inputs.exempt_labels_extra }}
+      exempt-pr-labels: >
+        priority: critical, priority: high, type: security, type: release-blocker,
+        status: on hold, status: needs discussion, status: in progress, status: awaiting review,
+        ${{ inputs.exempt_labels_extra }}
+      exempt-all-milestones: true
+      exempt-draft-pr: true
+      exempt-all-assignees: true
 
-          # ---------- Optional targeting ----------
-          # Only consider issues/PRs updated before this timestamp (ISO 8601). Leave blank to consider all.
-          # start-date: "2024-01-01T00:00:00Z"
+      # ---------- Optional time bounding ----------
+      # start-date: "2024-01-01T00:00:00Z"
 
-          # ---------- Logging ----------
-          # Shorten logs a bit to keep runs readable
-          repo-type: "public"
+      # ---------- Logging ----------
+      repo-type: "public"
+```
