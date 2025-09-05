@@ -1,337 +1,374 @@
-# .github/workflows/submission.yml
+upgrade, # .github/workflows/submission.yml
+
 # ==============================================================================
+
 # SpectraMind V50 — Submission Pipeline (predict → validate → package → submit)
+
 # - Reproducible: Poetry, pinned Python, cached deps
-# - Safe-by-default: dry-run unless explicitly submitted via dispatch input
-# - Guardrails: only submits on main/default branch and when secrets are present
+
+# - Safe-by-default: DRY-RUN unless explicitly submitted **and** on default branch
+
+# - Guardrails: only submits when secrets present and branch is default
+
 # - Artifacts: submission.csv, manifest, logs, zipped bundle for archival
-# - Extras: stronger preflight checks, summary table, optional status peek
+
+# - Extras: stronger preflight checks, CSV head preview, SHA256, summary table
+
 # ==============================================================================
 
 name: Submission
 
 on:
-  workflow_dispatch:
-    inputs:
-      submit:
-        description: "Actually submit to Kaggle? (default: no)"
-        required: true
-        default: "no"
-        type: choice
-        options: ["no", "yes"]
-      competition:
-        description: "Kaggle competition slug"
-        required: true
-        default: "neurips-2025-ariel"
-        type: string
-      message:
-        description: "Submission message (appears on Kaggle)"
-        required: false
-        default: "CI submission from ${GITHUB_REPOSITORY}@${GITHUB_SHA}"
-        type: string
-      hydra_overrides:
-        description: "Optional Hydra overrides (e.g., +predict.batch=64 +repro.seed=1337)"
-        required: false
-        default: ""
-        type: string
-  push:
-    branches: [ "main" ]
-    paths:
-      - "src/**"
-      - "configs/**"
-      - "pyproject.toml"
-      - "poetry.lock"
-      - ".github/workflows/submission.yml"
+workflow\_dispatch:
+inputs:
+submit:
+description: "Actually submit to Kaggle? (default: no)"
+required: true
+default: "no"
+type: choice
+options: \["no", "yes"]
+competition:
+description: "Kaggle competition slug"
+required: true
+default: "neurips-2025-ariel"
+type: string
+message:
+description: "Submission message (appears on Kaggle)"
+required: false
+default: "CI submission from \${GITHUB\_REPOSITORY}@\${GITHUB\_SHA}"
+type: string
+hydra\_overrides:
+description: "Optional Hydra overrides (e.g., +predict.batch=64 +repro.seed=1337)"
+required: false
+default: ""
+type: string
+push:
+branches: \[ "main" ]
+paths:
+\- "src/**"
+\- "configs/**"
+\- "pyproject.toml"
+\- "poetry.lock"
+\- ".github/workflows/submission.yml"
 
 concurrency:
-  group: submission-${{ github.ref }}
-  cancel-in-progress: true
+group: submission-\${{ github.ref }}
+cancel-in-progress: true
 
 permissions:
-  contents: read
+contents: read
 
 env:
-  PYTHONUNBUFFERED: "1"
-  PIP_DISABLE_PIP_VERSION_CHECK: "1"
-  PIP_NO_PYTHON_VERSION_WARNING: "1"
-  POETRY_VERSION: "1.8.3"
-  DEFAULT_PY: "3.12"
+PYTHONUNBUFFERED: "1"
+PIP\_DISABLE\_PIP\_VERSION\_CHECK: "1"
+PIP\_NO\_PYTHON\_VERSION\_WARNING: "1"
+POETRY\_VERSION: "1.8.3"
+DEFAULT\_PY: "3.12"
 
-  # Kaggle guardrails: default to dry-run unless submit=='yes' AND conditions hold
-  DRY_RUN: ${{ github.event_name == 'workflow_dispatch'
-               && inputs.submit == 'yes'
-               && github.ref == 'refs/heads/main'
-               && github.event.pull_request == null
-               && secrets.KAGGLE_USERNAME != ''
-               && secrets.KAGGLE_KEY != ''
-               && 'false' || 'true' }}
+# Kaggle guardrails:
 
-  COMPETITION: ${{ github.event.inputs.competition || 'neurips-2025-ariel' }}
-  SUBMIT_MESSAGE: ${{ github.event.inputs.message || format('CI submission from {0}@{1}', github.repository, github.sha) }}
+# DRY\_RUN is false ONLY when:
+
+# - manual dispatch
+
+# - submit == 'yes'
+
+# - on the repository default branch
+
+# - not a PR context
+
+# - Kaggle secrets present
+
+DRY\_RUN: \${{ github.event\_name == 'workflow\_dispatch'
+&& inputs.submit == 'yes'
+&& github.ref == format('refs/heads/{0}', github.event.repository.default\_branch)
+&& github.event.pull\_request == null
+&& secrets.KAGGLE\_USERNAME != ''
+&& secrets.KAGGLE\_KEY != ''
+&& 'false' || 'true' }}
+
+COMPETITION: \${{ github.event.inputs.competition || 'neurips-2025-ariel' }}
+SUBMIT\_MESSAGE: \${{ github.event.inputs.message || format('CI submission from {0}@{1}', github.repository, github.sha) }}
 
 jobs:
-  predict:
-    name: Build • Predict • Validate • Package
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
+predict:
+name: Build • Predict • Validate • Package
+runs-on: ubuntu-latest
+timeout-minutes: 60
 
-    outputs:
-      submission_path: ${{ steps.paths.outputs.submission_path }}
-      bundle_path: ${{ steps.bundle.outputs.bundle_path }}
-      sha256: ${{ steps.paths.outputs.sha256 }}
-      rows: ${{ steps.paths.outputs.rows }}
-      size_human: ${{ steps.paths.outputs.size_human }}
+```
+outputs:
+  submission_path: ${{ steps.paths.outputs.submission_path }}
+  bundle_path: ${{ steps.bundle.outputs.bundle_path }}
+  sha256: ${{ steps.paths.outputs.sha256 }}
+  rows: ${{ steps.paths.outputs.rows }}
+  size_human: ${{ steps.paths.outputs.size_human }}
 
-    steps:
-      # ----- Checkout ----------------------------------------------------------
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+steps:
+  # ----- Checkout ----------------------------------------------------------
+  - name: Checkout
+    uses: actions/checkout@v4
+    with:
+      fetch-depth: 0
 
-      # ----- Python / Poetry ---------------------------------------------------
-      - name: Set up Python ${{ env.DEFAULT_PY }}
-        id: setup-python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.DEFAULT_PY }}
-          cache: "pip"
+  # ----- Python / Poetry ---------------------------------------------------
+  - name: Set up Python ${{ env.DEFAULT_PY }}
+    id: setup-python
+    uses: actions/setup-python@v5
+    with:
+      python-version: ${{ env.DEFAULT_PY }}
+      cache: "pip"
 
-      - name: Install Poetry
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install "poetry==${POETRY_VERSION}"
+  - name: Install Poetry
+    run: |
+      python -m pip install --upgrade pip
+      python -m pip install "poetry==${POETRY_VERSION}"
 
-      - name: Configure Poetry (in-project venv)
-        run: |
-          poetry config virtualenvs.in-project true
-          poetry config installer.max-workers 10
+  - name: Configure Poetry (in-project venv)
+    run: |
+      poetry config virtualenvs.in-project true
+      poetry config installer.max-workers 10
 
-      - name: Cache deps
-        uses: actions/cache@v4
-        with:
-          path: |
-            .venv
-            ~/.cache/pip
-            ~/.cache/pypoetry
-          key: poetry-${{ runner.os }}-py${{ env.DEFAULT_PY }}-${{ hashFiles('**/poetry.lock') }}
-          restore-keys: |
-            poetry-${{ runner.os }}-py${{ env.DEFAULT_PY }}-
-            poetry-${{ runner.os }}-
+  - name: Cache deps
+    uses: actions/cache@v4
+    with:
+      path: |
+        .venv
+        ~/.cache/pip
+        ~/.cache/pypoetry
+      key: poetry-${{ runner.os }}-py${{ env.DEFAULT_PY }}-${{ hashFiles('**/poetry.lock') }}
+      restore-keys: |
+        poetry-${{ runner.os }}-py${{ env.DEFAULT_PY }}-
+        poetry-${{ runner.os }}-
 
-      - name: Install project (no-root ok)
-        run: |
-          poetry install --no-ansi --no-interaction --no-root || poetry install --no-ansi --no-interaction
+  - name: Install project (no-root ok)
+    run: |
+      poetry install --no-ansi --no-interaction --no-root || poetry install --no-ansi --no-interaction
 
-      # ----- Optional DVC data (best-effort) -----------------------------------
-      - name: DVC pull (optional)
-        run: |
-          python -m pip install --upgrade "dvc[all]" || python -m pip install --upgrade dvc
-          dvc --version || true
-          dvc pull --run-cache --force || true
+  # ----- Optional DVC data (best-effort) -----------------------------------
+  - name: DVC pull (optional)
+    run: |
+      python -m pip install --upgrade "dvc[all]" || python -m pip install --upgrade dvc
+      dvc --version || true
+      dvc pull --run-cache --force || true
 
-      # ----- Selftest / sanity -------------------------------------------------
-      - name: Selftest (fast)
-        run: |
-          poetry run spectramind selftest --fast 2>&1 | tee selftest.log
+  # ----- Selftest / sanity -------------------------------------------------
+  - name: Selftest (fast)
+    run: |
+      poetry run spectramind selftest --fast 2>&1 | tee selftest.log
 
-      # ----- Predict -----------------------------------------------------------
-      - name: Predict
-        run: |
-          mkdir -p outputs/predictions
-          OV="${{ github.event.inputs.hydra_overrides }}"
-          echo "Hydra overrides: ${OV:-<none>}"
-          if [ -n "$OV" ]; then
-            poetry run spectramind predict \
-              --out-csv outputs/predictions/submission.csv \
-              $OV 2>&1 | tee predict.log
-          else
-            poetry run spectramind predict \
-              --out-csv outputs/predictions/submission.csv \
-              2>&1 | tee predict.log
-          fi
+  # ----- Predict -----------------------------------------------------------
+  - name: Predict
+    run: |
+      mkdir -p outputs/predictions
+      OV="${{ github.event.inputs.hydra_overrides }}"
+      echo "Hydra overrides: ${OV:-<none>}"
+      if [ -n "$OV" ]; then
+        poetry run spectramind predict \
+          --out-csv outputs/predictions/submission.csv \
+          $OV 2>&1 | tee predict.log
+      else
+        poetry run spectramind predict \
+          --out-csv outputs/predictions/submission.csv \
+          2>&1 | tee predict.log
+      fi
 
-      - name: Locate submission / compute size
-        id: paths
-        run: |
-          set -euo pipefail
-          SUB="outputs/predictions/submission.csv"
-          [ -f "$SUB" ] || SUB="outputs/submission.csv"
-          if [ ! -f "$SUB" ]; then
-            echo "::error::No submission.csv produced."
-            exit 1
-          fi
-          echo "submission_path=$SUB" >> "$GITHUB_OUTPUT"
-          du -h "$SUB" | awk '{print "size_human="$1}' >> "$GITHUB_OUTPUT"
-          ROWS=$(wc -l "$SUB" | awk '{print $1}')
-          echo "rows=$ROWS" >> "$GITHUB_OUTPUT"
-          sha256sum "$SUB" | awk '{print "sha256="$1}' >> "$GITHUB_OUTPUT"
-          echo "Detected submission at: $SUB (rows=$ROWS)"
+  - name: Locate submission / compute size / preview head
+    id: paths
+    run: |
+      set -euo pipefail
+      SUB="outputs/predictions/submission.csv"
+      [ -f "$SUB" ] || SUB="outputs/submission.csv"
+      if [ ! -f "$SUB" ]; then
+        echo "::error::No submission.csv produced."
+        exit 1
+      fi
+      echo "submission_path=$SUB" >> "$GITHUB_OUTPUT"
+      du -h "$SUB" | awk '{print "size_human="$1}' >> "$GITHUB_OUTPUT"
+      ROWS=$(wc -l "$SUB" | awk '{print $1}')
+      echo "rows=$ROWS" >> "$GITHUB_OUTPUT"
+      SHA=$(sha256sum "$SUB" | awk '{print $1}')
+      echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
+      echo "----- CSV HEAD (first 3 lines) -----"
+      head -n 3 "$SUB" || true
+      echo "Detected submission at: $SUB (rows=$ROWS, sha256=$SHA)"
 
-      # ----- Validate submission (schema/shape/range/etc.) ---------------------
-      - name: Validate submission
-        run: |
-          # Use repo validator if available; else perform basic CSV checks.
-          (poetry run spectramind validate-submission --path '${{ steps.paths.outputs.submission_path }}') || \
-          python - <<'PY'
+  # ----- Validate submission (schema/shape/range/etc.) ---------------------
+  - name: Validate submission
+    run: |
+      # Use repo validator if available; else perform basic CSV checks.
+      (poetry run spectramind validate-submission --path '${{ steps.paths.outputs.submission_path }}') || \
+      python - <<'PY'
+```
+
 import csv, os, sys
-p = os.environ["SUB"]
+p = os.environ\["SUB"]
 rows = 0
 with open(p, newline="") as f:
-    r = csv.reader(f)
-    header = next(r)
-    if not header or len(header) < 2:
-        raise SystemExit("Expected >=2 columns in header")
-    # Weak domain check: first column likely id/name, others numeric floats
-    for i, row in enumerate(r, start=2):
-        if not row or any(c is None or c=="" for c in row):
-            raise SystemExit(f"Empty cell at row {i}")
-        # Try float parse for non-id columns:
-        for c in row[1:3]:  # spot-check
-            try:
-                float(c)
-            except Exception:
-                pass
-        rows += 1
+r = csv.reader(f)
+header = next(r)
+\# Basic checks: header present and at least 2 columns; first col non-empty
+if not header or len(header) < 2:
+raise SystemExit("Expected >=2 columns in header")
+if header\[0].strip()=="":
+raise SystemExit("First header column must be non-empty")
+for i, row in enumerate(r, start=2):
+if not row or any(c is None or c=="" for c in row\[:2]):
+raise SystemExit(f"Empty required cell at row {i}")
+rows += 1
 print(f"Basic CSV checks passed • rows={rows}")
 PY
-        env:
-          SUB: ${{ steps.paths.outputs.submission_path }}
+env:
+SUB: \${{ steps.paths.outputs.submission\_path }}
 
-      # ----- Manifest & bundle -------------------------------------------------
-      - name: Write manifest
-        run: |
-          mkdir -p artifacts
-          cat > artifacts/submission_manifest.json <<JSON
-          {
-            "repo": "${{ github.repository }}",
-            "sha": "${{ github.sha }}",
-            "run_id": "${{ github.run_id }}",
-            "run_attempt": "${{ github.run_attempt }}",
-            "branch": "${{ github.ref }}",
-            "competition": "${{ env.COMPETITION }}",
-            "submission_path": "${{ steps.paths.outputs.submission_path }}",
-            "submission_sha256": "${{ steps.paths.outputs.sha256 }}",
-            "submission_rows": "${{ steps.paths.outputs.rows }}",
-            "submission_size": "${{ steps.paths.outputs.size_human }}",
-            "created_at_utc": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-          }
-          JSON
-          jq . artifacts/submission_manifest.json || cat artifacts/submission_manifest.json
+```
+  # ----- Manifest & bundle -------------------------------------------------
+  - name: Write manifest
+    run: |
+      mkdir -p artifacts
+      cat > artifacts/submission_manifest.json <<JSON
+      {
+        "repo": "${{ github.repository }}",
+        "sha": "${{ github.sha }}",
+        "run_id": "${{ github.run_id }}",
+        "run_attempt": "${{ github.run_attempt }}",
+        "branch": "${{ github.ref }}",
+        "default_branch": "${{ github.event.repository.default_branch }}",
+        "dry_run": "${{ env.DRY_RUN }}",
+        "competition": "${{ env.COMPETITION }}",
+        "submission_path": "${{ steps.paths.outputs.submission_path }}",
+        "submission_sha256": "${{ steps.paths.outputs.sha256 }}",
+        "submission_rows": "${{ steps.paths.outputs.rows }}",
+        "submission_size": "${{ steps.paths.outputs.size_human }}",
+        "created_at_utc": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+      }
+      JSON
+      jq . artifacts/submission_manifest.json || cat artifacts/submission_manifest.json
 
-      - name: Package bundle (zip)
-        id: bundle
-        run: |
-          BUNDLE="submission_bundle_${{ github.run_id }}.zip"
-          zip -r "$BUNDLE" \
-            "${{ steps.paths.outputs.submission_path }}" \
-            artifacts/submission_manifest.json \
-            configs \
-            selftest.log \
-            predict.log \
-            || true
-          echo "bundle_path=$BUNDLE" >> "$GITHUB_OUTPUT"
+  - name: Package bundle (zip)
+    id: bundle
+    run: |
+      BUNDLE="submission_bundle_${{ github.run_id }}.zip"
+      zip -r "$BUNDLE" \
+        "${{ steps.paths.outputs.submission_path }}" \
+        artifacts/submission_manifest.json \
+        configs \
+        selftest.log \
+        predict.log \
+        || true
+      echo "bundle_path=$BUNDLE" >> "$GITHUB_OUTPUT"
 
-      # ----- Upload artifacts --------------------------------------------------
-      - name: Upload submission
-        uses: actions/upload-artifact@v4
-        with:
-          name: submission.csv
-          path: ${{ steps.paths.outputs.submission_path }}
-          if-no-files-found: error
-          retention-days: 21
+  # ----- Upload artifacts --------------------------------------------------
+  - name: Upload submission
+    uses: actions/upload-artifact@v4
+    with:
+      name: submission.csv
+      path: ${{ steps.paths.outputs.submission_path }}
+      if-no-files-found: error
+      retention-days: 30
 
-      - name: Upload manifest & logs & bundle
-        uses: actions/upload-artifact@v4
-        with:
-          name: submission-artifacts
-          path: |
-            artifacts/submission_manifest.json
-            selftest.log
-            predict.log
-            ${{ steps.bundle.outputs.bundle_path }}
-          if-no-files-found: error
-          retention-days: 21
+  - name: Upload manifest & logs & bundle
+    uses: actions/upload-artifact@v4
+    with:
+      name: submission-artifacts
+      path: |
+        artifacts/submission_manifest.json
+        selftest.log
+        predict.log
+        ${{ steps.bundle.outputs.bundle_path }}
+      if-no-files-found: error
+      retention-days: 30
 
-      # ----- Job summary -------------------------------------------------------
-      - name: Summary
-        run: |
-          {
-            echo "## Submission Package"
-            echo ""
-            echo "| Field | Value |"
-            echo "|------:|:------|"
-            echo "| Competition | \`${{ env.COMPETITION }}\` |"
-            echo "| File | \`${{ steps.paths.outputs.submission_path }}\` |"
-            echo "| Rows | \`${{ steps.paths.outputs.rows }}\` |"
-            echo "| Size | \`${{ steps.paths.outputs.size_human }}\` |"
-            echo "| SHA256 | \`${{ steps.paths.outputs.sha256 }}\` |"
-            echo "| Bundle | \`${{ steps.bundle.outputs.bundle_path }}\` |"
-            echo ""
-            echo "> DRY_RUN = \`${{ env.DRY_RUN }}\`  (false → we will attempt submission next)"
-          } >> "$GITHUB_STEP_SUMMARY"
+  # ----- Job summary -------------------------------------------------------
+  - name: Summary
+    run: |
+      {
+        echo "## Submission Package"
+        echo ""
+        echo "| Field | Value |"
+        echo "|------:|:------|"
+        echo "| Competition | \`${{ env.COMPETITION }}\` |"
+        echo "| File | \`${{ steps.paths.outputs.submission_path }}\` |"
+        echo "| Rows | \`${{ steps.paths.outputs.rows }}\` |"
+        echo "| Size | \`${{ steps.paths.outputs.size_human }}\` |"
+        echo "| SHA256 | \`${{ steps.paths.outputs.sha256 }}\` |"
+        echo "| Bundle | \`${{ steps.bundle.outputs.bundle_path }}\` |"
+        echo ""
+        echo "> DRY_RUN = \`${{ env.DRY_RUN }}\`  (false → we will attempt submission next)"
+      } >> "$GITHUB_STEP_SUMMARY"
+```
 
-  submit:
-    name: Submit to Kaggle (guarded)
-    needs: predict
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+submit:
+name: Submit to Kaggle (guarded)
+needs: predict
+runs-on: ubuntu-latest
+timeout-minutes: 20
+if: \${{ env.DRY\_RUN == 'false' }}
 
-    if: ${{ env.DRY_RUN == 'false' }}
+```
+env:
+  KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+  KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+  COMPETITION: ${{ env.COMPETITION }}
+  SUBMIT_MESSAGE: ${{ env.SUBMIT_MESSAGE }}
 
-    env:
-      KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
-      KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
-      COMPETITION: ${{ env.COMPETITION }}
-      SUBMIT_MESSAGE: ${{ env.SUBMIT_MESSAGE }}
+steps:
+  - name: Checkout
+    uses: actions/checkout@v4
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+  - name: Fetch built submission artifact
+    uses: actions/download-artifact@v4
+    with:
+      name: submission.csv
+      path: .
 
-      - name: Fetch built submission artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: submission.csv
-          path: .
+  - name: Verify credentials & file
+    run: |
+      test -n "${KAGGLE_USERNAME}" || (echo "::error::KAGGLE_USERNAME secret not set"; exit 1)
+      test -n "${KAGGLE_KEY}" || (echo "::error::KAGGLE_KEY secret not set"; exit 1)
+      test -f "submission.csv" || (echo "::error::submission.csv artifact missing"; exit 1)
+      ls -lh submission.csv
+      head -n 2 submission.csv || true
 
-      - name: Verify credentials & file
-        run: |
-          test -n "${KAGGLE_USERNAME}" || (echo "::error::KAGGLE_USERNAME secret not set"; exit 1)
-          test -n "${KAGGLE_KEY}" || (echo "::error::KAGGLE_KEY secret not set"; exit 1)
-          test -f "submission.csv" || (echo "::error::submission.csv artifact missing"; exit 1)
-          ls -lh submission.csv
+  - name: Install Kaggle CLI
+    run: |
+      python -m pip install --upgrade pip
+      python -m pip install kaggle
+      mkdir -p ~/.kaggle
+      printf '{"username":"%s","key":"%s"}' "$KAGGLE_USERNAME" "$KAGGLE_KEY" > ~/.kaggle/kaggle.json
+      chmod 600 ~/.kaggle/kaggle.json
+      kaggle --version
 
-      - name: Install Kaggle CLI
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install kaggle
-          mkdir -p ~/.kaggle
-          printf '{"username":"%s","key":"%s"}' "$KAGGLE_USERNAME" "$KAGGLE_KEY" > ~/.kaggle/kaggle.json
-          chmod 600 ~/.kaggle/kaggle.json
-          kaggle --version
-
-      - name: Submit to Kaggle
-        id: ksubmit
-        run: |
-          echo "Submitting to competition: ${COMPETITION}"
-          kaggle competitions submit \
-            -c "${COMPETITION}" \
-            -f submission.csv \
-            -m "${SUBMIT_MESSAGE}" 2>&1 | tee submit.log
+  - name: Submit to Kaggle (retry 3x)
+    id: ksubmit
+    run: |
+      set -euo pipefail
+      echo "Submitting to competition: ${COMPETITION}"
+      n=0; max=3
+      until [ $n -ge $max ]; do
+        if kaggle competitions submit -c "${COMPETITION}" -f submission.csv -m "${SUBMIT_MESSAGE}"; then
           echo "ok=true" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        n=$((n+1))
+        echo "Submit attempt $n/${max} failed; retrying..."
+        sleep $((10*n))
+      done
+      echo "::error::Kaggle submission failed after ${max} attempts"
+      exit 1
 
-      - name: Optional status peek
-        if: ${{ steps.ksubmit.outputs.ok == 'true' }}
-        run: |
-          echo "Recent submissions:"
-          kaggle competitions submissions -c "${COMPETITION}" | head -n 20 || true
+  - name: Optional status peek
+    if: ${{ steps.ksubmit.outputs.ok == 'true' }}
+    run: |
+      echo "Recent submissions:"
+      kaggle competitions submissions -c "${COMPETITION}" | head -n 20 || true
 
-      - name: Upload submit logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: submission-submit-logs
-          path: submit.log
-          if-no-files-found: warn
-          retention-days: 14
+  - name: Upload submit logs
+    if: always()
+    uses: actions/upload-artifact@v4
+    with:
+      name: submission-submit-logs
+      path: ~/.kaggle
+      if-no-files-found: ignore
+      retention-days: 14
+```
