@@ -1,49 +1,44 @@
-# 🧭 `configs/calib/architecture.md`
+🧭 configs/calib/architecture.md
 
-**SpectraMind V50** · **NeurIPS 2025 Ariel Data Challenge**  
-**Document type:** Architecture & schema reference for *profile-level* calibration chains
+SpectraMind V50 · NeurIPS 2025 Ariel Data Challenge
+Document type: Architecture & schema reference for profile-level calibration chains
+Version: v1.4 (upgraded)
 
----
+⸻
 
-## 0) Purpose
+0) Purpose
 
-This document defines the **architecture, composition rules, and contracts** for the *profile-level* calibration
-configs in `configs/calib/` (e.g., `nominal.yaml`, `fast.yaml`, `strict.yaml`).  
-These profiles **compose** method YAMLs from `configs/calib/method/` (ADC, dark, flat, CDS, photometry, trace, phase, corel)
-into a reproducible **kill chain** that turns raw frames into science-ready light curves.
+This document defines the architecture, composition rules, schema, and I/O contracts for the profile-level calibration configs in configs/calib/ (e.g., nominal.yaml, fast.yaml, strict.yaml).
+Profiles compose method YAMLs (ADC, dark, flat, CDS, photometry, trace, phase, optional COREL) into a reproducible kill chain that turns raw frames into science-ready light curves.
+All configs are Hydra-composable, override-friendly, and DVC-tracked for reproducibility.
 
----
+⸻
 
-## 1) Scope & placement
-
-```
+1) Scope & placement
 
 configs/
 └─ calib/
-├─ nominal.yaml           # default leaderboard-safe chain (≤ 9h)
-├─ fast.yaml              # CI/smoke-friendly chain
-├─ strict.yaml            # full diagnostics/audit chain
-├─ architecture.md        # (this file)
-└─ method/                # atomic method configs (one per stage)
-├─ adc.yaml
-├─ dark.yaml
-├─ flat.yaml
-├─ cds.yaml
-├─ photometry.yaml
-├─ trace.yaml
-├─ phase.yaml
-└─ corel.yaml          # optional post-inference calibration (μ/σ graph)
+   ├─ nominal.yaml           # default leaderboard-safe chain (≤ 9h)
+   ├─ fast.yaml              # CI/smoke-friendly chain
+   ├─ strict.yaml            # full diagnostics/audit chain
+   ├─ architecture.md        # (this file)
+   ├─ adc.yaml               # method configs (atomic; one per stage)
+   ├─ dark.yaml
+   ├─ flat.yaml
+   ├─ cds.yaml
+   ├─ photometry.yaml
+   ├─ trace.yaml
+   ├─ phase.yaml
+   └─ top_level_calib.yaml   # optional post-inference σ-calibration (temperature/COREL)
 
-````
+Rules
+	•	Each method file is atomic (one stage per file) and owns its io, validation, quality_checks, logging, and cache sections.
+	•	A profile is a Hydra config that lists method files in execution order and may add overrides.
 
-- **Profile configs** (this folder) orchestrate a *sequence* of **method configs** (`calib/method/*`).
-- A profile must be **Hydra-composable**, **override-friendly**, and **self-validating**.
+⸻
 
----
+2) Kill-chain overview
 
-## 2) Kill-chain overview
-
-```mermaid
 flowchart LR
   A[ADC] --> B[Dark]
   B --> C[Flat]
@@ -51,37 +46,35 @@ flowchart LR
   D --> E[Photometry]
   E --> F[Trace normalization]
   F --> G[Phase alignment]
-  G -. optional .-> H[COREL (graph μ/σ)]
-````
+  G -. optional .-> H[Top-level σ calibration<br/>(Temperature / COREL)]
 
-* **ADC**: offset/gain(PRNU), ref pixels/overscan, linearization, clamps
-* **Dark**: master selection/build, exposure/temperature scaling, hot-pixel repair
-* **Flat**: master/spectral flats, PRNU renormalization, optional illumination field
-* **CDS**: RESET/SIGNAL pairing, robust differencing, optional temporal filters
-* **Photometry**: `aperture | psf | optimal` extraction; background & centroiding
-* **Trace**: along-wavelength continuum + along-time detrend; masks & QC
-* **Phase**: ephemeris fold, windows, binning; flags & coverage checks
-* **COREL** (*optional post-inference*): GNN over bins to calibrate μ/σ (scale or delta head)
+	•	ADC: offset/gain(PRNU), ref pixels/overscan cleanup, optional linearization, clamps
+	•	Dark: master or per-pixel map, exposure/temperature scaling, hot-pixel repair
+	•	Flat: master or spectral flats, PRNU renormalization, optional illumination field
+	•	CDS: RESET/SIGNAL pairing, robust differencing, optional temporal filters
+	•	Photometry: aperture | psf | optimal extraction; background & centroiding
+	•	Trace: along-wavelength continuum removal + along-time detrend; robust masks & QC
+	•	Phase: ephemeris fold, windows, binning; flags & coverage checks
+	•	Top-level calibration (optional): temperature scaling or COREL GNN for σ (and optional μ post-scale)
 
----
+⸻
 
-## 3) Profile schema
+3) Profile schema
 
-Every `configs/calib/*.yaml` profile should follow this structure:
+Every configs/calib/<profile>.yaml follows:
 
-```yaml
 # configs/calib/<profile>.yaml
 defaults:
-  - method/adc
-  - method/dark
-  - method/flat
-  - method/cds
-  - method/photometry
-  - method/trace
-  - method/phase
-  # - method/corel      # optional post-inference step
+  - adc
+  - dark
+  - flat
+  - cds
+  - photometry
+  - trace
+  - phase
+  # - top_level_calib   # optional (post-inference σ calibration)
 
-# Optional: central toggles/overrides for the chain
+# Optional: centralized overrides/toggles
 calib:
   method:
     adc.enabled: true
@@ -91,262 +84,230 @@ calib:
     photometry.enabled: true
     trace.enabled: true
     phase.enabled: true
-    # corel.enabled: false
-```
+    # top_level_calib.method: temperature  # or: corel
 
-> **Rule:** method files are **atomic** (one stage per file), and profiles compose them **in order**.
+Composition rules
+	•	Order in defaults == execution order.
+	•	Stage I/O keys must chain: each stage’s io.output_key becomes the next stage’s io.input_key.
+	•	Profiles may override any nested key via Hydra dot-paths (see §7).
 
----
+⸻
 
-## 4) I/O contracts (stage interfaces)
+4) Stage interfaces (I/O contracts)
 
-| Stage      | input\_key       | output\_key      | Typical shapes                      |
-| ---------- | ---------------- | ---------------- | ----------------------------------- |
-| ADC        | `raw_frames`     | `adc_corrected`  | `[B,H,W]` or `[B,C,H,W]`            |
-| Dark       | `adc_corrected`  | `dark_corrected` | `[B,H,W]` or `[B,C,H,W]`            |
-| Flat       | `dark_corrected` | `flat_corrected` | `[B,H,W]` or `[B,C,H,W]`            |
-| CDS        | `flat_corrected` | `cds_corrected`  | `[B,H,W]` or `[B,C,H,W]`            |
-| Photometry | `cds_corrected`  | `photometry`     | Flux `[B]` or `[B,C]` (+ ancillary) |
-| Trace      | `photometry`     | `trace_norm`     | Flux `[B]` or `[B,C]`               |
-| Phase      | `trace_norm`     | `phase_fold`     | Phase `[B]`; binned `[M]` / `[M,C]` |
-| COREL\*    | `inference`      | `corel`          | μ/σ `[B,C]`; metrics dict           |
+Stage	input_key	output_key	Typical shapes
+ADC	raw_frames	adc_corrected	[B,H,W] or [B,C,H,W]
+Dark	adc_corrected	dark_corrected	[B,H,W] or [B,C,H,W]
+Flat	dark_corrected	flat_corrected	[B,H,W] or [B,C,H,W]
+CDS	flat_corrected	cds_corrected	[B,H,W] or [B,C,H,W]
+Photometry	cds_corrected	photometry	Flux [B] or [B,C] (+ ancillary)
+Trace	photometry	trace_norm	Flux [B] or [B,C]
+Phase	trace_norm	phase_fold	Phase [B]; binned [M] / [M,C]
+σ-Calib*	preds_pt	preds_calibrated.pt	μ/σ [N,B]; metrics JSON
 
-**Conventions (examples)**
+Conventions (key fields)
+	•	Photometry: photometry_flux, photometry_flux_var, photometry_sky, photometry_centroid_x|y, photometry_flags
+	•	Trace: trace_flux_norm, trace_flux_scale, trace_flags, channel_grid
+	•	Phase: phase_series, binned_phase, binned_flux, binned_flux_err, windows, phase_flags
 
-* Photometry fields: `photometry_flux`, `photometry_flux_var`, `photometry_sky`, `photometry_flags`, centroid XY
-* Trace fields: `trace_flux_norm`, `trace_flux_scale`, `trace_flags`, `channel_grid`
-* Phase fields: `phase_series`, `binned_phase`, `binned_flux`, `binned_flux_err`, `windows`, `phase_flags`
+Keys & shapes are defined in each method YAML’s io block and enforced by validation.
 
-> These keys are bound in the **method** YAMLs (`<method>.io.*`) and must remain consistent across the chain.
+⸻
 
----
+5) Profiles matrix
 
-## 5) Profiles matrix
+Aspect	fast	nominal	strict
+Purpose	CI/smoke & dev	Kaggle leaderboard	Full science audit
+Diagnostics	minimal	light	extensive
+ADC	basic offset/gain	ref-pixel/overscan as needed	full + LUT/linearization
+Dark	single master	master + exposure scaling + hot repair	per-pixel map + temp scaling
+Flat	master only (optional illum)	master/spectral + illum corr	spectral + per-channel illum
+CDS	simple frame diff	pairing (timestamp/index), robust	full pairing + temporal filters
+Photometry	aperture small radius	aperture/psf per instrument	optimal/psf + full variance model
+Trace	low-order poly	poly/spline as data require	spline/LOWESS + masks
+Phase	coarse bins	balanced bins	fine bins + strict QC
+Runtime	shortest	≤ 9 h safe	longest
 
-| Aspect      | **fast**                         | **nominal**                            | **strict**                          |
-| ----------- | -------------------------------- | -------------------------------------- | ----------------------------------- |
-| Purpose     | CI/smoke & dev                   | Kaggle leaderboard                     | Full science audit                  |
-| Diagnostics | minimal                          | light                                  | extensive                           |
-| ADC         | basic offset/gain, no heavy refs | ref-pixel/overscan as needed           | full per-amp, LUT/linearization     |
-| Dark        | single master, no plane fit      | master + scaling, hot-pixel repair     | select/build master, residual plane |
-| Flat        | optional or master only          | master/spectral + illum corr as needed | spectral flats + illum correction   |
-| CDS         | off or simple diff               | full pairing (timestamp/index)         | full pairing + temporal filters     |
-| Photometry  | aperture small radius            | method chosen (ap/psf/opt)             | optimal/psf + full variance model   |
-| Trace       | light norm (poly low-order)      | poly/spline as data require            | spline/lowess + robust masks        |
-| Phase       | coarse bins                      | balanced bins                          | fine bins + strict QC               |
-| Runtime     | shortest                         | ≤ 9h safe                              | longest                             |
 
----
+⸻
 
-## 6) Composition patterns
+6) Composition patterns (skeletons)
 
-### 6.1 Nominal (example skeleton)
+Nominal
 
-```yaml
-# configs/calib/nominal.yaml
 defaults:
-  - method/adc
-  - method/dark
-  - method/flat
-  - method/cds
-  - method/photometry
-  - method/trace
-  - method/phase
+  - adc
+  - dark
+  - flat
+  - cds
+  - photometry
+  - trace
+  - phase
+calib.method:
+  photometry.photometry.method: aperture
+  photometry.aperture.radius_px: 8
+  trace.along_wavelength.method: poly
+  phase.binning.nbins: 200
 
-calib:
-  method:
-    photometry.photometry.method: aperture
-    photometry.aperture.radius_px: 8
-    trace.along_wavelength.method: poly
-    phase.binning.nbins: 200
-```
+Fast
 
-### 6.2 Fast (example skeleton)
-
-```yaml
-# configs/calib/fast.yaml
 defaults:
-  - method/adc
-  - method/photometry
-  - method/trace
-  - method/phase
+  - adc
+  - photometry
+  - trace
+  - phase
+calib.method:
+  adc.diagnostics.enabled: false
+  photometry.photometry.method: aperture
+  photometry.aperture.radius_px: 6
+  trace.along_time.enabled: false
+  phase.binning.nbins: 120
 
-calib:
-  method:
-    adc.diagnostics.save_images: false
-    photometry.photometry.method: aperture
-    photometry.aperture.radius_px: 6
-    trace.along_time.enabled: false
-    phase.binning.nbins: 120
-```
+Strict
 
-### 6.3 Strict (example skeleton)
-
-```yaml
-# configs/calib/strict.yaml
 defaults:
-  - method/adc
-  - method/dark
-  - method/flat
-  - method/cds
-  - method/photometry
-  - method/trace
-  - method/phase
-  # - method/corel
+  - adc
+  - dark
+  - flat
+  - cds
+  - photometry
+  - trace
+  - phase
+calib.method:
+  adc.reference_pixel.use: true
+  dark.per_pixel_map.convert_units.enabled: true
+  flat.illumination_correction.enabled: true
+  cds.temporal_filter.enabled: true
+  photometry.photometry.method: optimal
+  trace.along_wavelength.method: spline
+  trace.along_wavelength.spline.knots: 16
+  phase.binning.nbins: 400
 
-calib:
-  method:
-    adc.reference_pixel.use: true
-    adc.overscan.enabled: true
-    dark.residual_plane.enabled: true
-    flat.illumination_correction.enabled: true
-    cds.temporal_filter.enabled: true
-    photometry.photometry.method: optimal
-    trace.along_wavelength.method: spline
-    trace.along_wavelength.spline.knots: 16
-    phase.binning.nbins: 400
-```
 
----
+⸻
 
-## 7) Hydra overrides — quick recipes
+7) Hydra overrides — quick recipes
 
-**Nearest-timestamp CDS within 3s**
+Nearest-timestamp CDS within 3 s
 
-```bash
-spectramind calibrate \
-  --config-name calib/nominal \
-  calib.method.cds.pairing.order_by=timestamp \
-  calib.method.cds.pairing.policy=nearest \
-  calib.method.cds.pairing.window_s=3.0
-```
+spectramind calibrate --config-name calib/nominal \
+  calib.cds.pairing.order_by=timestamp \
+  calib.cds.pairing.policy=nearest \
+  calib.cds.pairing.window_s=3.0
 
-**Switch photometry to PSF fit**
+Switch photometry to PSF fit
 
-```bash
-spectramind calibrate \
-  --config-name calib/nominal \
-  calib.method.photometry.photometry.method=psf \
-  calib.method.photometry.psf.model=gaussian_moffat
-```
+spectramind calibrate --config-name calib/nominal \
+  calib.photometry.photometry.method=psf \
+  calib.photometry.psf.model=gaussian_moffat
 
-**Spline continuum with 12 knots**
+Spline continuum with 12 knots
 
-```bash
-spectramind calibrate \
-  --config-name calib/nominal \
-  calib.method.trace.along_wavelength.method=spline \
-  calib.method.trace.along_wavelength.spline.knots=12
-```
+spectramind calibrate --config-name calib/nominal \
+  calib.trace.along_wavelength.method=spline \
+  calib.trace.along_wavelength.spline.knots=12
 
-**Enable COREL calibration (GAT, 50 epochs)**
+Enable temperature σ-calibration per bin
 
-```bash
-spectramind calibrate \
-  --config-name calib/nominal \
-  calib.method.corel.method=corel \
-  calib.method.corel.model.arch=gat \
-  calib.method.corel.train.epochs=50
-```
+spectramind calibrate --config-name calib/nominal \
+  calib.top_level_calib.method=temperature \
+  calib.top_level_calib.temperature.per_bin=true
 
-> Use `--cfg job --resolve` to print the composed config for auditing.
 
----
+⸻
 
-## 8) Validation strategy
+8) Validation strategy (per stage)
+	•	Files: validation.require_existing_paths=true when a stage references LUTs/maps/masters.
+	•	Shapes: validation.check_shape_compatibility=true (enforce (C,H,W) alignment).
+	•	Metadata: enforce keys where needed (CDS: timestamps/reset flags; Phase: ephemeris).
+	•	Numerics: require_finite_inputs=true at each stage; clamp/epsilon guards enabled by default.
 
-* **Files**: `validation.require_existing_paths=true` for methods using LUTs/maps/masters
-* **Shapes**: `validation.check_shape_compatibility=true` (map/LUT vs batch)
-* **Metadata**: enforce keys when required (e.g., CDS timestamps/flags; Phase ephemeris)
-* **Numerics**: `assert_finite_output=true` to block NaN/Inf propagation
+Common failure hints
+	•	ADC negative flood → verify offset_correction order and post_subtraction_clamp (dark stage).
+	•	Dark residual banding → enable per_pixel_map or check exposure/temperature units.
+	•	Flat explosion → ensure renormalize_to_mean_one=true and PRNU epsilon sane.
+	•	CDS unpaired → adjust pairing.policy/window_s or provide is_reset flags.
+	•	Phase mis-center → confirm period/t0 and time units (BJD_TDB vs MJD/UNIX).
 
-**Common failure hints**
+⸻
 
-* ADC negative flood → relax `post_subtraction_clamp.min_adu` slightly or verify offset order
-* Dark residual banding → enable `residual_plane` or check master scaling units
-* Flat explosion → ensure `renormalize_to_mean_one=true` and verify PRNU epsilon
-* CDS unpaired → adjust `pairing.policy/window_s` or supply `is_reset` flags
-* Phase mis-center → confirm period/t0 and time units (BJD\_TDB vs MJD/UNIX)
+9) DVC & caching
+	•	Each stage can emit intermediates to ${RUN_DIR}/calib/<stage> for provenance.
+	•	Large artifacts (masters, flats, masks, LUTs) should be DVC dependencies.
+	•	Inputs + config hashes unchanged ⇒ DVC cache hit (skip compute).
 
----
+Recommended outputs
 
-## 9) DVC & caching
+${RUN_DIR}/calib/adc
+${RUN_DIR}/calib/dark
+${RUN_DIR}/calib/flat
+${RUN_DIR}/calib/cds
+${RUN_DIR}/calib/photometry
+${RUN_DIR}/calib/trace
+${RUN_DIR}/calib/phase
 
-* Each stage can emit intermediates to `${RUN_DIR}`; large artifacts (masters, flats, masks) should be **DVC deps**.
-* Profiles may set `cache.write_intermediate=true` per method or in chain-level overrides.
-* When inputs + config hashes are unchanged, DVC **skips re-run**.
 
-**Recommended out dirs (per method)**
+⸻
 
-* ADC → `${RUN_DIR}/calib/adc`
-* Dark → `${RUN_DIR}/calib/dark`
-* Flat → `${RUN_DIR}/calib/flat`
-* CDS → `${RUN_DIR}/calib/cds`
-* Photometry → `${RUN_DIR}/calib/photometry`
-* Trace → `${RUN_DIR}/calib/trace`
-* Phase → `${RUN_DIR}/calib/phase`
+10) Diagnostics & QC
 
----
+Enable selectively to remain Kaggle-safe:
+	•	diagnostics.enabled=false for images; keep sample sizes tiny in fast/nominal.
+	•	Use QC gates as soft guards in sweeps (action_on_fail: "warn") and make strict for audits.
 
-## 10) Diagnostics & QC
+Suggested quick QC set (nominal)
+	•	ADC/Flat histograms: zero/saturation pile-ups
+	•	CDS pairing integrity: unpaired fraction < 10%
+	•	Photometry flux stats: robust std sanity
+	•	Trace stats: post-norm median ~1, invalid frac < 1%
 
-Enable diagnostics selectively to remain Kaggle-safe:
+⸻
 
-* Images/plots: `diagnostics.save_images/plots=false` for speed in **fast** and **nominal**
-* Keep `save_samples` small (e.g., 2)
-* Use QC gates as **soft guards** (`on_fail: "warn"`) during sweep, **strict** for audits
+11) Performance guidance
+	•	Prefer float32 within calibration; quantize to integers only if required downstream.
+	•	Use median over mean for robustness (dark combine/background).
+	•	Avoid heavy spline grids in fast profile (reduce knots/grid, disable deep robust loops).
+	•	Tune runtime.num_workers conservatively on Kaggle.
 
----
+⸻
 
-## 11) Performance guidance
+12) Reproducibility & logging
+	•	Log the composed config (--cfg job --resolve) and a run hash (e.g., ${RUN_DIR}/run_hash_summary_v50.json).
+	•	Record method artifact paths & checksums (e.g., master dark/flat, LUTs, masks).
+	•	Append a one-line summary to logs/v50_debug_log.md where possible.
 
-* Prefer `float32` during calibration; quantize only if required.
-* Use **median** over **mean** for robustness (dark combine, mesh background).
-* Avoid expensive spline grids in **fast**; reduce `knots/grid`, disable heavy robust loops.
-* Control worker count via `runtime.num_workers` per method.
+⸻
 
----
+13) Testing checklist
+	•	All required files exist (maps/LUTs/masters).
+	•	Shapes compatible across stages.
+	•	Required metadata present (CDS pairing, Phase ephemeris).
+	•	No NaN/Inf after each stage.
+	•	QC gates pass or warn with clear diagnostics.
+	•	CI smoke (calib/fast) finishes within budget.
 
-## 12) Reproducibility
+⸻
 
-* Log the **composed config** and a **run hash** (e.g., `${RUN_DIR}/run_hash_summary_v50.json`).
-* Store *method artifact versions* (master filenames, LUT checksums) in the run log.
-* Prefer DVC-tracked references for masters & flats with stable paths.
+14) Glossary
 
----
+ADC — Analog-to-Digital Conversion stage (bias/PRNU/linearization)
+PRNU — Photo-Response Non-Uniformity (pixel/channel gain variations)
+CDS — Correlated Double Sampling (RESET/SIGNAL differencing)
+SNR — Signal-to-Noise Ratio (often μ/σ)
+OOT — Out-Of-Transit (used for normalization & QC)
 
-## 13) Testing checklist
+⸻
 
-* [ ] Files exist (maps/LUTs/masters)
-* [ ] Shape compatibility across stages
-* [ ] Required metadata present (CDS pairing, Phase ephemeris, etc.)
-* [ ] No NaN/Inf after each stage
-* [ ] QC gates pass or warn with clear diagnostics
-* [ ] CI smoke (`calib/fast`) runs within tight budget
+15) Changelog (profiles)
+	•	v1.4 — Unified top-level σ-calibration entry; expanded CDS pairing & diagnostics; revised I/O contracts.
+	•	v1.3 — Strict adds per-amp ADC LUTs, dark residual plane, spline-trace; Phase coverage checks.
+	•	v1.2 — Nominal refines CDS pairing & Photometry defaults; Fast trims trace/diagnostics further.
+	•	v1.1 — Initial profile set (fast/nominal/strict), base chain & Hydra overrides.
 
----
+⸻
 
-## 14) Glossary
+16) Quick-start
 
-* **ADC** — Analog-to-Digital Conversion stage (bias/PRNU/linearization)
-* **PRNU** — Photo-Response Non-Uniformity (gain map / flat)
-* **CDS** — Correlated Double Sampling (RESET/SIGNAL differencing)
-* **SNR** — Signal-to-Noise Ratio, often μ/σ in this context
-* **OOT** — Out-Of-Transit (used for normalization and QC)
-
----
-
-## 15) Changelog (profiles)
-
-* **v1.3** — Strict profile adds per-amp ADC LUTs, dark residual plane, spline-trace; Phase coverage checks
-* **v1.2** — Nominal refines CDS pairing & Photometry defaults; Fast trims trace/diagnostics further
-* **v1.1** — Initial profile set (fast/nominal/strict), base chain & Hydra overrides
-
----
-
-## 16) Quick-start
-
-```bash
 # Nominal (Kaggle-ready)
 spectramind calibrate --config-name calib/nominal
 
@@ -355,10 +316,5 @@ spectramind calibrate --config-name calib/fast
 
 # Strict (science audit)
 spectramind calibrate --config-name calib/strict
-```
 
-**With these conventions, `configs/calib/` defines robust, Hydra-composable calibration chains that
-remain reproducible, physics-informed, and Kaggle-safe.**
-
-```
-```
+With these conventions, configs/calib/ defines robust, Hydra-composable calibration chains that remain reproducible, physics-informed, and Kaggle-safe.
