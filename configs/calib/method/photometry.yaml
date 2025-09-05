@@ -1,86 +1,215 @@
 # configs/calib/method/photometry.yaml
 # ==============================================================================
-# 📐 Photometric Extraction — Method Config
+# 📐 Photometric Extraction — Method Config (Upgraded, Mission-Grade)
 # Purpose
-#   Extract stellar flux time series from calibrated frames (FGS1/AIRS traces).
+#   Extract stellar flux time series from calibrated frames (FGS1 imaging /
+#   AIRS spectral traces). Supports aperture, PSF, and Horne (1986) optimal
+#   extraction with instrument-aware defaults, jitter-robust centroiding,
+#   dynamic/background models, variance/weight maps, and rich diagnostics.
 # Usage
-#   Composed by calib/nominal.yaml; after flat and CDS.
-#   Override examples:
-#     spectramind calibrate calib.method.photometry.type=aperture calib.method.photometry.aperture.radius_px=8
-#     spectramind calibrate calib.method.photometry.type=psf calib.method.photometry.psf.model=gaussian
+#   Composed by calib/{nominal,fast,strict}.yaml after flat and CDS.
+#   Examples:
+#     spectramind calibrate calib.method.photometry.type=aperture \
+#       calib.method.photometry.aperture.radius_px=8
+#     spectramind calibrate calib.method.photometry.type=psf \
+#       calib.method.photometry.psf.model=gaussian
 # ==============================================================================
 
 photometry:
   enabled: true
 
+  # ---------------------------------------------------------------------------
   # Method selection
-  type: "aperture"               # "aperture" | "psf" | "optimal"
+  # ---------------------------------------------------------------------------
+  type: "aperture"                 # aperture | psf | optimal
+  use_variance_map: true           # ingest per-pixel variance if available
+  use_weight_map: false            # e.g., bad-pixel/quality masks (0..1)
 
-  # Common centroiding options
+  # ---------------------------------------------------------------------------
+  # Instrument-aware defaults & geometry
+  # ---------------------------------------------------------------------------
+  instrument:
+    fgs1:
+      default_type: "aperture"
+      pixel_scale_as_per_px: 0.10
+      typical_fwhm_px: 3.0
+      dynamic_aperture: true       # scale radius with FWHM estimate
+      dyn_radius_factor: 1.6       # r = factor * FWHM
+    airs:
+      default_type: "optimal"
+      column_axis: 1               # axis index for wavelength dimension
+      crossdisp_axis: 0            # spatial axis orthogonal to dispersion
+      per_column_centroid: true
+      per_column_fwhm: true
+      trace_profile_window_px: 15
+
+  # ---------------------------------------------------------------------------
+  # Centroiding / tracking (robust to jitter)
+  # ---------------------------------------------------------------------------
   centroid:
-    method: "gaussian"           # "barycenter" | "gaussian" | "2d-moffat"
+    method: "gaussian"             # barycenter | gaussian | 2d-moffat
     window_px: 9
     max_shift_px: 3.0
     robust: true
+    ransac:                        # optional outlier-resistant fit
+      enabled: true
+      residual_sigma: 3.5
+      max_trials: 50
+    smoothing:
+      enabled: true                # smooth centroid timeline
+      method: "savgol"             # ma | savgol
+      window: 11
+      polyorder: 2
 
+  # ---------------------------------------------------------------------------
   # Background estimation
+  # ---------------------------------------------------------------------------
   background:
-    method: "annulus"            # "annulus" | "local-median" | "global"
+    method: "annulus"              # annulus | local-median | global | 2d-poly
     annulus_inner_px: 12
     annulus_outer_px: 20
+    two_d_poly:
+      order: 2                     # used when method=2d-poly
+      tile_px: 32                  # fit background on tiles
     sigma_clip:
       enabled: true
       sigma: 3.0
       iters: 3
+    separate_bg_for_instrument: true
 
-  # Aperture photometry parameters
+  # ---------------------------------------------------------------------------
+  # Aperture photometry
+  # ---------------------------------------------------------------------------
   aperture:
     radius_px: 8.0
-    shape: "circular"            # "circular" | "elliptical"
+    shape: "circular"              # circular | elliptical
     ellipse:
       a_px: 8.0
       b_px: 6.0
       theta_deg: 0.0
+    fractional_pixels: "exact"     # exact | nearest | bilinear
+    encircled_energy_correction: true
 
-  # PSF photometry parameters
+  # ---------------------------------------------------------------------------
+  # PSF-fitting photometry
+  # ---------------------------------------------------------------------------
   psf:
-    model: "gaussian"            # "gaussian" | "moffat" | "empirical"
+    model: "gaussian"              # gaussian | moffat | empirical
     fwhm_px: 3.0
-    beta: 2.5                    # used for moffat
+    beta: 2.5                      # moffat shape
     grid_size_px: 15
     fit_window_px: 11
+    spatially_variable: false      # fit PSF per-frame/region if true
     regularization: 1.0e-3
+    empirical_psf_path: null       # optional EPSF (npz/psfex/fits)
 
-  # Horne (1986) optimal extraction
+  # ---------------------------------------------------------------------------
+  # Horne (1986) optimal extraction (primarily AIRS)
+  # ---------------------------------------------------------------------------
   optimal:
     enabled: false
     profile_window_px: 11
     variance_floor: 1.0e-6
+    gain_e_per_dn: 1.0             # for variance modeling if not provided
+    read_noise_e: 5.0
     cosmic_ray_reject:
       enabled: true
       sigma: 5.0
+      grow_px: 1
 
-  # Per-wavelength (spectral trace) handling for AIRS
+  # ---------------------------------------------------------------------------
+  # Spectral trace handling (AIRS)
+  # ---------------------------------------------------------------------------
   spectral_trace:
     enabled: true
-    column_axis: 1               # axis index of wavelength dimension
+    column_axis: 1
     per_column_centroid: true
-    per_column_aperture: false   # if true, radius scales with FWHM per column
+    per_column_aperture: false
+    scale_radius_with_fwhm: true
+    min_radius_px: 3.0
+    max_radius_px: 12.0
+    tilt_correction:
+      enabled: true                # correct small trace tilt across columns
+      max_tan_theta: 0.1
+    background_per_column: true
 
-  # Output formatting
+  # ---------------------------------------------------------------------------
+  # Saturation, bleed, and bad pixels
+  # ---------------------------------------------------------------------------
+  quality_masks:
+    use_saturation_mask: true
+    saturation_level_dn: 65000.0
+    bleed_mask:
+      enabled: true
+      grow_px: 1
+    bad_pixel_map: "calib/detector/bpm.npy"   # optional
+    interpolate_bad_pixels: true              # local median or PSF model
+    interpolation_method: "local-median"      # local-median | psf-fit
+
+  # ---------------------------------------------------------------------------
+  # Motion/jitter decorrelation (optional)
+  # ---------------------------------------------------------------------------
+  jitter_decorrelation:
+    enabled: false
+    regressors: ["dx", "dy", "bg"] # remove linear correlation with motion/bg
+    poly_order: 1
+
+  # ---------------------------------------------------------------------------
+  # Output / products
+  # ---------------------------------------------------------------------------
   outputs:
     save_lightcurves: true
     save_centroids: true
     save_background: false
+    save_aperture_radii: true
+    save_variance_series: true
     output_dir: "outputs/calib/photometry"
 
+  # ---------------------------------------------------------------------------
+  # Diagnostics & sanity
+  # ---------------------------------------------------------------------------
   diagnostics:
     save_cutouts: false
     save_profiles: true
+    per_column_qc: true
+    centroid_timeseries_plot: true
+    ee_curve_plot: true
     output_dir: "outputs/diagnostics/calib/photometry"
+    audit_flags:
+      warn_low_snr: true
+      warn_large_shift: true
+      fail_on_missing_variance: false
+
+  # ---------------------------------------------------------------------------
+  # Profile-specific overrides (fast / strict) to dial cost vs accuracy
+  # ---------------------------------------------------------------------------
+  profile_overrides:
+    fast:
+      type: "aperture"
+      centroid.smoothing.enabled: true
+      centroid.smoothing.method: "ma"
+      centroid.smoothing.window: 5
+      background.method: "local-median"
+      spectral_trace.per_column_centroid: false
+      use_variance_map: false
+      diagnostics.save_profiles: false
+    strict:
+      type: "optimal"
+      psf.spatially_variable: true
+      optimal.enabled: true
+      spectral_trace.per_column_aperture: true
+      background.method: "2d-poly"
+      background.two_d_poly.order: 3
+      jitter_decorrelation.enabled: true
+      use_weight_map: true
 
   notes: |
-    • For FGS1 (imaging/photometer), use circular aperture; for AIRS (spectral trace),
-      enable per-column centroiding and (optionally) optimal extraction.
-    • Background estimation critically affects transit depth stability—prefer annulus with sigma-clip.
-    • PSF/optimal methods improve SNR in crowded or undersampled regimes; aperture is fastest for Kaggle.
+    • FGS1: circular aperture with dynamic radius ~1.6×FWHM is robust and fast.
+    • AIRS: per-column centroiding and optimal extraction maximize SNR where
+      variance maps are available; otherwise aperture with FWHM scaling.
+    • Annulus+sigma-clip background is stable; 2D polynomial is preferred in
+      spatially varying backgrounds (strict).
+    • Provide variance/read-noise for correct optimal weights; otherwise set a
+      sensible variance_floor and gain/read_noise.
+    • Quality masks (saturation, bleed, BPM) should be applied before measuring
+      flux; interpolate masked pixels locally or via PSF modeling when feasible.
