@@ -3,17 +3,24 @@
 # ------------------------------------------------------------------------------
 # Purpose:
 #   • Enable page-locked (pinned) host memory in DataLoader.
-#   • Speeds up host→GPU transfers by avoiding OS paging overhead.
+#   • Accelerates host→GPU transfers by avoiding OS paging overhead.
+#   • Standard best practice for CUDA training/inference with DataLoader.
 # ------------------------------------------------------------------------------
 # When to Use
-#   • ✅ GPU training/inference (especially large batches).
-#   • ⚠️ Not needed on CPU-only runs (ignored).
+#   • ✅ GPU training/inference (especially with large batches).
+#   • ✅ Kaggle / HPC runs where throughput matters.
+#   • ⚠️ Ignored on CPU-only runs (no benefit).
 # ==============================================================================
 
 pin_memory: true
+persistent_workers: true     # usually paired with pin_memory for throughput
 
 notes: |
   Pin memory enabled:
-  • Faster transfers from host (CPU) to device (GPU).
-  • Recommended for most Kaggle/HPC GPU runs.
-  • Slightly higher host RAM usage; avoid if memory is tight.
+  • Host memory is page-locked → DMA transfers to GPU are faster.
+  • Recommended default for most Kaggle/HPC GPU runs (T4, A10, L4, A100).
+  • Slightly higher host RAM usage; disable in tight-memory or debug contexts.
+  • Combine with `prefetch_factor=2` or `fast`/`heavy` profiles for maximum GPU utilization.
+  • Safe to leave enabled: has no effect on CPU-only jobs.
+  • For mission-grade reproducibility, always log whether pin_memory was enabled in
+    v50_debug_log.md along with config hash.
