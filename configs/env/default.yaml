@@ -1,0 +1,126 @@
+# ==============================================================================
+# configs/env/default.yaml — Baseline Development Environment (SpectraMind V50)
+# ------------------------------------------------------------------------------
+# Purpose
+#   Local development environment for SpectraMind V50 pipeline.
+#   Provides reproducible Python + CUDA stack, Poetry-based dependency locking,
+#   and Hydra configuration integration.
+#
+# Usage
+#   spectramind train +env=default
+#   spectramind calibrate +env=default
+#
+# Notes
+#   - This is the "single source of truth" for local dev environments.
+#   - Kaggle/CI/Docker profiles inherit from this baseline with overrides.
+# ==============================================================================
+
+# ----------------------------
+# Python & Package Management
+# ----------------------------
+python:
+  version: "3.10.13"       # Match Kaggle & Docker runtime for parity
+  package_manager: poetry  # Poetry for lockfile + deterministic installs
+  poetry_lock: "poetry.lock"
+  pyproject: "pyproject.toml"
+
+# ----------------------------
+# CUDA / GPU Configuration
+# ----------------------------
+cuda:
+  version: "11.8"          # Match Kaggle GPU runtime
+  cudnn: "8.7.0"
+  deterministic: true       # Ensures reproducibility
+  benchmark: false          # Disable autotune for deterministic runs
+  allow_tf32: false
+
+# ----------------------------
+# Reproducibility Controls
+# ----------------------------
+reproducibility:
+  seed: 1337                # Global RNG seed
+  torch_deterministic: true # torch.use_deterministic_algorithms(True)
+  pythonhashseed: 0
+  numpy_seed: 1337
+
+# ----------------------------
+# Logging & Tracking
+# ----------------------------
+logging:
+  level: "INFO"
+  handlers: ["console", "file"]
+  log_file: "logs/spectramind_v50.log"
+  mlflow:
+    enabled: true
+    tracking_uri: "file:./mlruns"
+  wandb:
+    enabled: false          # Optional, disabled by default
+
+# ----------------------------
+# Hydra Integration
+# ----------------------------
+hydra:
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: multiruns/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra.job.num}
+  job:
+    chdir: true
+
+# ----------------------------
+# Dependencies (Base Set)
+# ----------------------------
+dependencies:
+  core:
+    - torch==2.2.2
+    - torchvision==0.17.2
+    - torchaudio==2.2.2
+    - torch_geometric==2.5.3
+    - numpy==1.26.4
+    - pandas==2.2.2
+    - scipy==1.13.1
+    - scikit-learn==1.5.0
+    - hydra-core==1.3.2
+    - omegaconf==2.3.0
+  dev:
+    - pytest==8.2.2
+    - black==24.4.2
+    - isort==5.13.2
+    - flake8==7.0.0
+    - mypy==1.10.0
+  tracking:
+    - mlflow==2.14.1
+    - wandb==0.17.2
+  viz:
+    - matplotlib==3.9.1
+    - seaborn==0.13.2
+    - plotly==5.22.0
+
+# ----------------------------
+# DVC / Data Versioning
+# ----------------------------
+dvc:
+  enabled: true
+  remote: "gcs://spectramind-v50-data"
+  cache: ".dvc/cache"
+  config: ".dvc/config"
+
+# ----------------------------
+# Containerization (Optional)
+# ----------------------------
+docker:
+  base_image: "python:3.10-slim"
+  requirements_file: "requirements.txt"
+  cuda_support: true
+  pinned_versions: true
+
+# ----------------------------
+# Validation (Self-Test)
+# ----------------------------
+selftest:
+  check_python: true
+  check_cuda: true
+  check_dvc: true
+  check_poetry: true
+  fail_fast: true
