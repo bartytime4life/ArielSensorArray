@@ -1,14 +1,55 @@
 # ==============================================================================
-# 🚀 Kaggle Devices — NVIDIA A10 GPU
+# 🚀 Kaggle Devices — NVIDIA A10 GPU (SpectraMind V50)
 # ------------------------------------------------------------------------------
 # Purpose:
-#   - Kaggle upgraded GPU runtime (A10, 24 GB).
+#   • Kaggle upgraded GPU runtime (A10, 24 GB, Ampere architecture).
+#   • Configures AMP and runtime guardrails for ≤ 9-hour Kaggle walltime.
+#   • Reproducible and leaderboard-safe by default.
+#
+# Usage:
+#   spectramind train local=devices/kaggle_a10 trainer=kaggle_safe
+#
+# Notes:
+#   • Kaggle runs are offline-only — no internet, datasets must be pre-attached.
+#   • A10 GPUs (Ampere) support bf16 and fp16 AMP efficiently; default here is 16-mixed.
+#   • Runtime capped at 9h for leaderboard compliance.
 # ==============================================================================
 
 _target_: torch.device
-devices: 1
-precision: 16-mixed
-deterministic: true
-cudnn_benchmark: true
-timeout_hours: 9
-notes: "Kaggle GPU quota: A10 runtime, ~9h max walltime."
+
+# Device orchestration
+devices: 1                   # Kaggle provides one A10 GPU per runtime
+autodetect: false            # fixed: Kaggle always provisions 1 GPU
+
+# Precision / numerical stability
+precision: 16-mixed          # AMP (fp16) default; override to bf16-mixed/32 if needed
+deterministic: true          # enforce deterministic ops for reproducibility
+cudnn_benchmark: true        # enable conv autotune (safe with fixed input shapes)
+
+# Reproducibility guardrails
+seed: 2025
+numpy_seed: 2025
+pythonhashseed: 0
+
+# Threading controls (Kaggle ~2 vCPUs typical)
+max_threads: 2
+intraop_threads: 2
+interop_threads: 1
+
+# Runtime guardrails
+timeout_hours: 9             # Kaggle hard runtime cap
+gradient_clip_val: 1.0       # stabilize gradients for small/mid-batch sizes
+
+# Diagnostics
+log_device_info: true        # log GPU + driver on startup
+profile_runtime: false        # disable by default (avoid overhead under 9h cap)
+
+# Metadata
+notes: |
+  Kaggle A10 device profile (24 GB Ampere GPU).
+  - Designed for leaderboard training/inference in Kaggle’s sandbox.
+  - AMP (16-mixed) precision by default; bf16-mixed also viable on Ampere.
+  - Deterministic kernels + fixed seeds ensure reproducibility.
+  - Threads capped for Kaggle’s vCPU constraints.
+  - Runtime guardrails keep runs ≤ 9h.
+  - Logs GPU/device info at startup for audit.
