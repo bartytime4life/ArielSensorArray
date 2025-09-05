@@ -1,32 +1,50 @@
 <!DOCTYPE html>
+
 <html lang="en" data-build-env="local" data-build-run="—" data-build-ts="—">
 <head>
-  <!-- SpectraMind V50 — Diagnostics Dashboard (Hardened Seed)
-       - Offline, zero-deps, print-friendly
-       - CLI can overwrite build metadata via data-* on <html> or #build-* spans
-       - Images swapped to iframes when ?embed=umap,tsne (csv list) is present
+  <!--
+    SpectraMind V50 — Diagnostics Dashboard (Hardened v2)
+    - Offline, zero-deps, print-friendly, accessible
+    - Autoloads optional ./diagnostic_summary.json and ./log_table.json if present
+    - Query params:
+        ?embed=umap,tsne,shap,mu,fft,symbolic,calibration   → swap imgs → iframes
+        ?assets=./outputs/diagnostics                         → base path for assets
+        ?open=report|readme                                   → auto-navigate to links
+    - Keyboard shortcuts:
+        r: soft refresh assets, t: theme toggle, p: print, g: jump to KPIs
+    - CLI may overwrite:
+        <html data-build-*> and innerText of #build-* spans, and call window.SMV50.init(...)
   -->
   <meta charset="utf-8" />
   <title>SpectraMind V50 — Diagnostics Dashboard</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light dark" />
+  <meta name="theme-color" content="#0ea5e9" />
+  <meta name="robots" content="noindex, nofollow, noarchive" />
   <meta http-equiv="Referrer-Policy" content="no-referrer" />
   <meta http-equiv="X-Content-Type-Options" content="nosniff" />
-  <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; frame-src 'self' blob:; base-uri 'none'; form-action 'none'">
   <meta http-equiv="Cross-Origin-Opener-Policy" content="same-origin">
   <meta http-equiv="Cross-Origin-Embedder-Policy" content="require-corp">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; frame-src 'self' blob:; base-uri 'none'; form-action 'none'">
 
   <style>
     :root{
-      --bg:#f7f7fb;--surface:#fff;--ink:#1f2328;--muted:#6b7280;--accent:#2b2d42;--accent-2:#5da9ff;
+      --bg:#f7f7fb;--surface:#fff;--ink:#1f2328;--muted:#6b7280;
+      --accent:#2b2d42;--accent-2:#0ea5e9;
       --border:#e7e7ee;--ok:#16a34a;--warn:#f59e0b;--err:#dc2626;
       --radius:16px;--pad:16px;--gap:16px;--ts:200ms ease;
       --fs-xxl:clamp(22px,2.4vw,28px);--fs-xl:clamp(18px,2vw,22px);--fs-lg:16px;--fs-md:14px;--fs-sm:12px;
     }
+    [data-theme="dark"]{
+      --bg:#0c1116;--surface:#0f141a;--ink:#d1d5db;--muted:#9aa4af;
+      --accent:#8ab4ff;--accent-2:#60a5fa;--border:#1f2a36;
+      --ok:#22c55e;--warn:#f59e0b;--err:#f87171;
+    }
     @media (prefers-color-scheme: dark){
       :root{
-        --bg:#0c1116;--surface:#0f141a;--ink:#d1d5db;--muted:#9aa4af;--accent:#8ab4ff;--accent-2:#60a5fa;--border:#1f2a36;
+        --bg:#0c1116;--surface:#0f141a;--ink:#d1d5db;--muted:#9aa4af;
+        --accent:#8ab4ff;--accent-2:#60a5fa;--border:#1f2a36;
         --ok:#22c55e;--warn:#f59e0b;--err:#f87171;
       }
     }
@@ -37,6 +55,7 @@
     html,body{height:100%;background:var(--bg);color:var(--ink);
       font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,"Helvetica Neue",Arial,"Noto Sans",sans-serif;line-height:1.45;margin:0}
     a{color:var(--accent-2);text-decoration:none} a:hover{text-decoration:underline}
+    code,kbd{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace}
     .sr-only{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(1px,1px,1px,1px);white-space:nowrap;border:0}
 
     .wrap{max-width:1400px;margin:0 auto;padding:20px;display:grid;gap:var(--gap);grid-template-columns:1fr}
@@ -55,6 +74,8 @@
     .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
     .btn:focus-visible{outline:3px solid color-mix(in oklab,var(--accent-2)40%,transparent);outline-offset:3px;border-radius:8px}
 
+    .kbd{display:inline-block;border:1px solid var(--border);border-bottom-width:2px;border-radius:6px;padding:1px 6px;background:color-mix(in oklab,var(--surface)90%,var(--bg)10%);font-weight:700}
+
     .grid{display:grid;gap:var(--gap);grid-template-columns:repeat(12,1fr);grid-auto-rows:minmax(120px,auto)}
     .span-12{grid-column:span 12}.span-8{grid-column:span 8}.span-6{grid-column:span 6}.span-4{grid-column:span 4}.span-3{grid-column:span 3}
     @media (max-width:1200px){.span-8,.span-6,.span-4{grid-column:span 12}.span-3{grid-column:span 6}}
@@ -71,7 +92,7 @@
     .kpi{background:color-mix(in oklab,var(--surface)85%,var(--bg)15%);border:1px dashed var(--border);border-radius:12px;padding:12px;display:grid;gap:6px}
     .kpi .label{color:var(--muted);font-size:var(--fs-sm)}
     .kpi .value{font-size:var(--fs-xl);font-weight:800}
-    .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-weight:700;font-size:var(--fs-sm);color:#fff}
+    .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-weight:700;font-size:var(--fs-sm);color:#fff;white-space:nowrap}
     .pill.ok{background:var(--ok)} .pill.warn{background:var(--warn)} .pill.err{background:var(--err)}
 
     .preview{display:grid;place-items:center;background:color-mix(in oklab,var(--surface)92%,var(--bg)8%);border:1px dashed var(--border);border-radius:12px;padding:8px;min-height:220px;overflow:hidden}
@@ -83,15 +104,20 @@
     .link:hover{border-color:var(--accent-2)}
 
     .table{width:100%;border-collapse:collapse;border:1px solid var(--border);border-radius:12px;overflow:hidden;font-size:var(--fs-sm)}
-    .table th,.table td{padding:10px;border-bottom:1px solid var(--border);text-align:left}
+    .table th,.table td{padding:10px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top}
     .table thead th{background:color-mix(in oklab,var(--surface)80%,var(--bg)20%);font-size:var(--fs-md)}
+    .td-status{white-space:nowrap}
+
+    .hint{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 
     @media print{
       header.appbar, .toolbar, footer{display:none!important}
       body{background:#fff;color:#000}
       .card{box-shadow:none;border-color:#999}
+      a::after{content:" (" attr(href) ")";font-size:11px;color:#555}
     }
   </style>
+
 </head>
 <body>
 <a href="#main" class="sr-only">Skip to main content</a>
@@ -102,10 +128,11 @@
     <span class="badge" title="Ariel Data Challenge 2025">Ariel 2025</span>
   </div>
   <div class="toolbar" role="toolbar" aria-label="Dashboard actions">
-    <button class="btn" id="refreshBtn" title="Soft reload images (cache-bust)" aria-label="Soft refresh assets">↻ Soft Refresh</button>
-    <button class="btn" id="toggleThemeBtn" title="Toggle light/dark/auto" aria-pressed="false">☯ Theme</button>
-    <a class="btn" href="./report.html" title="Open detailed diagnostics report" role="button">Open Full Report</a>
-    <a class="btn primary" href="../README.md" title="Open project README" role="button">Project README</a>
+    <button class="btn" id="refreshBtn" title="Soft reload images (cache-bust)" aria-label="Soft refresh assets"><span aria-hidden="true">↻</span> Soft Refresh</button>
+    <button class="btn" id="toggleThemeBtn" title="Toggle light/dark/auto" aria-pressed="false"><span aria-hidden="true">☯</span> Theme</button>
+    <button class="btn" id="printBtn" title="Print / save as PDF"><span aria-hidden="true">🖨</span> Print</button>
+    <a class="btn" id="openReport" href="./report.html" title="Open detailed diagnostics report" role="button">Open Full Report</a>
+    <a class="btn primary" id="openReadme" href="../README.md" title="Open project README" role="button">Project README</a>
   </div>
 </header>
 
@@ -113,8 +140,11 @@
   <!-- Overview / KPIs -->
   <section class="card span-12" aria-labelledby="sec-overview">
     <h3 id="sec-overview">Overview</h3>
+    <div class="muted hint">
+      <span>Seed dashboard — safe before first run. CLI overwrites KPIs, build info, and figures post-diagnostics.</span>
+      <span>Shortcuts: <span class="kbd">r</span> refresh • <span class="kbd">t</span> theme • <span class="kbd">p</span> print</span>
+    </div>
     <div class="muted">
-      Seed dashboard — safe before first run. CLI overwrites KPIs, build info, and figures post‑diagnostics.<br/>
       Build: <span id="build-env">local</span> • Run: <span id="build-run">—</span> • TS (UTC): <span id="build-ts">—</span>
     </div>
     <div class="kpis" role="list">
@@ -137,17 +167,19 @@
   </section>
 
   <!-- Quick links -->
+
   <section class="card span-12" aria-labelledby="sec-links">
     <h3 id="sec-links">Quick Links</h3>
     <div class="links">
       <a class="link" href="./ARCHITECTURE.md" title="Open architecture document">📐 Architecture</a>
       <a class="link" href="./log_table.md" title="Open CLI call summary (if generated)">🪵 CLI Log Table</a>
       <a class="link" href="./COMPARISON_GUIDE.md" title="Open comparison guide">📊 Comparison Guide</a>
-      <a class="link" href="./diagnostics_dashboard.html?embed=umap,tsne" title="Open interactive embeds">🧩 Embed UMAP & t‑SNE</a>
+      <a class="link" href="./diagnostics_dashboard.html?embed=umap,tsne" title="Open interactive embeds">🧩 Embed UMAP & t-SNE</a>
     </div>
   </section>
 
   <!-- Visuals -->
+
   <section class="card span-6" aria-labelledby="sec-umap">
     <h3 id="sec-umap">UMAP — Latent Clusters</h3>
     <div class="preview"><img alt="UMAP clusters (placeholder)" loading="lazy" data-asset="umap" src="./umap_clusters.png" /></div>
@@ -155,8 +187,8 @@
   </section>
 
   <section class="card span-6" aria-labelledby="sec-tsne">
-    <h3 id="sec-tsne">t‑SNE — Latent Projection</h3>
-    <div class="preview"><img alt="t‑SNE projection (placeholder)" loading="lazy" data-asset="tsne" src="./tsne_projection.png" /></div>
+    <h3 id="sec-tsne">t-SNE — Latent Projection</h3>
+    <div class="preview"><img alt="t-SNE projection (placeholder)" loading="lazy" data-asset="tsne" src="./tsne_projection.png" /></div>
     <div class="muted">Hook: <code>data-asset="tsne"</code></div>
   </section>
 
@@ -191,27 +223,29 @@
   </section>
 
   <!-- Recent CLI Calls -->
+
   <section class="card span-6" aria-labelledby="sec-cli">
-    <h3 id="sec-cli">Recent CLI Calls (seed)</h3>
+    <h3 id="sec-cli">Recent CLI Calls</h3>
     <table class="table" aria-describedby="cli-desc">
       <caption id="cli-desc" class="sr-only">Recent CLI calls (time, command, status)</caption>
       <thead><tr><th style="width:30%">When</th><th>Command</th><th style="width:15%">Status</th></tr></thead>
       <tbody id="cli-rows" data-table="cli">
-        <tr><td>—</td><td><code>spectramind diagnose dashboard</code></td><td><span class="pill warn">PENDING</span></td></tr>
-        <tr><td>—</td><td><code>spectramind train +diagnostics.light=true</code></td><td><span class="pill warn">PENDING</span></td></tr>
-        <tr><td>—</td><td><code>spectramind analyze-log --md</code></td><td><span class="pill warn">PENDING</span></td></tr>
+        <tr><td>—</td><td><code>spectramind diagnose dashboard</code></td><td class="td-status"><span class="pill warn">PENDING</span></td></tr>
+        <tr><td>—</td><td><code>spectramind train +diagnostics.light=true</code></td><td class="td-status"><span class="pill warn">PENDING</span></td></tr>
+        <tr><td>—</td><td><code>spectramind analyze-log --md</code></td><td class="td-status"><span class="pill warn">PENDING</span></td></tr>
       </tbody>
     </table>
     <div class="muted">Generator replaces this seed. See <a href="./log_table.md">log_table.md</a>.</div>
   </section>
 
   <!-- How-To -->
+
   <section class="card span-12" aria-labelledby="sec-howto">
     <h3 id="sec-howto">Regenerate This Dashboard</h3>
     <ol>
       <li>Run diagnostics (example): <code>spectramind diagnose dashboard +diagnostics.light=true</code></li>
-      <li>Optional: <code>spectramind analyze-log --md</code> → updates <code>assets/log_table.md</code></li>
-      <li>Open <code>assets/report.html</code> for full details</li>
+      <li>Optional: <code>spectramind analyze-log --md --json</code> → updates <code>log_table.md</code> / <code>log_table.json</code></li>
+      <li>Open <code>report.html</code> for full details</li>
     </ol>
     <div class="muted">CLI overwrites KPI text and <code>img[data-asset]</code> sources (or swaps to sidecar HTMLs).</div>
   </section>
@@ -219,7 +253,7 @@
 
 <footer role="contentinfo" class="wrap">
   <section class="card span-12">
-    <div class="muted">SpectraMind V50 — Ariel Data Challenge 2025 • Neuro‑symbolic, physics‑informed AI for exoplanet spectroscopy</div>
+    <div class="muted">SpectraMind V50 — Ariel Data Challenge 2025 • Neuro-symbolic, physics-informed AI for exoplanet spectroscopy</div>
   </section>
 </footer>
 
@@ -227,19 +261,35 @@
 (function(){
   "use strict";
 
-  // Build metadata placeholders the generator can overwrite
+  // ---------- Utilities ----------
   const htmlEl = document.documentElement;
+  const q = (sel, root=document) => root.querySelector(sel);
+  const qa = (sel, root=document) => Array.from(root.querySelectorAll(sel));
   const setText = (id, v) => { const el = document.getElementById(id); if(el) el.textContent = v; };
+  const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+
+  // Build metadata placeholders (generator can overwrite data-* on <html>)
   setText("build-env", htmlEl.getAttribute("data-build-env") || "local");
   setText("build-run", htmlEl.getAttribute("data-build-run") || "—");
   setText("build-ts",  htmlEl.getAttribute("data-build-ts")  || new Date().toISOString());
 
-  // Theme toggle: auto → dark → light
+  // Params
+  const params = new URLSearchParams(location.search);
+  const assetsBase = (() => {
+    const p = params.get("assets");
+    try {
+      if (!p) return "./";
+      const url = new URL(p, location.href);
+      return url.pathname.endsWith("/") ? url.pathname : url.pathname + "/";
+    } catch { return "./"; }
+  })();
+
+  // ---------- Theme toggle (auto → dark → light) ----------
   const toggleBtn = document.getElementById('toggleThemeBtn');
   function setTheme(mode){
     if(mode==='auto'){ document.documentElement.removeAttribute('data-theme'); localStorage.removeItem('smv50_theme'); }
     else { document.documentElement.setAttribute('data-theme', mode); localStorage.setItem('smv50_theme', mode); }
-    toggleBtn && toggleBtn.setAttribute('aria-pressed', mode === 'dark' || (mode !== 'light' && document.documentElement.matches('[data-theme="dark"]')));
+    toggleBtn && toggleBtn.setAttribute('aria-pressed', (mode==='dark') ? 'true' : 'false');
   }
   function applyStoredTheme(){
     const s = localStorage.getItem('smv50_theme');
@@ -251,16 +301,17 @@
   });
   applyStoredTheme();
 
-  // Idempotent init (generators can call multiple times)
+  // ---------- Idempotent init (generators may call multiple times) ----------
   function init(opts = {}){
-    // 1) Apply cache-bust to all assets with data-asset (img or iframe src)
-    const stamp = opts.stamp || Date.now();
-    document.querySelectorAll('[data-asset]').forEach(node => {
-      const src = node.getAttribute('src');
-      if(!src) return;
+    // 1) Cache-bust/retarget assets (img or iframe) honoring ?assets= base
+    const stamp = String(opts.stamp || Date.now());
+    qa('[data-asset]').forEach(node => {
+      const src0 = node.getAttribute('src');
+      const src = src0 || ("./" + (node.getAttribute('data-asset') || "") + ".png");
       try {
-        const u = new URL(src, location.href);
-        u.searchParams.set('v', String(stamp));
+        const isAbs = /^(https?:)?\/\//i.test(src);
+        const u = isAbs ? new URL(src, location.href) : new URL(src.replace(/^\.\/+/, ''), new URL(assetsBase, location.href));
+        u.searchParams.set('v', stamp);
         node.setAttribute('src', u.toString());
       } catch {}
     });
@@ -271,8 +322,13 @@
         const el = document.querySelector(`[data-kpi="${key}"]`);
         if(!el) return;
         if(key === 'status'){
-          el.textContent = val?.text ?? 'OK';
-          el.className = `pill ${val?.level ?? 'ok'}`;
+          if (typeof val === 'string') {
+            el.textContent = val.toUpperCase();
+            el.className = `pill ${val.toLowerCase()==='ok'?'ok':(val.toLowerCase()==='warn'?'warn':(val.toLowerCase()==='error'?'err':'ok'))}`;
+          } else {
+            el.textContent = (val?.text ?? 'OK');
+            el.className = `pill ${val?.level ?? 'ok'}`;
+          }
           el.setAttribute('aria-live', 'polite');
         }else{
           el.textContent = String(val);
@@ -281,13 +337,17 @@
     }
 
     // 3) Inject tables if provided
-    if(opts.tables && opts.tables.cli){
+    if(opts.tables && Array.isArray(opts.tables.cli)){
       const tbody = document.querySelector('[data-table="cli"]');
       if(tbody){
         tbody.innerHTML = '';
         opts.tables.cli.forEach(row => {
           const tr = document.createElement('tr');
-          tr.innerHTML = `<td>${row.when ?? '—'}</td><td><code>${row.cmd ?? ''}</code></td><td><span class="pill ${row.level ?? 'ok'}">${row.status ?? 'OK'}</span></td>`;
+          const when = row.when ?? '—';
+          const cmd  = row.cmd ?? '';
+          const status = row.status ?? 'OK';
+          const level  = row.level ?? (String(status).toLowerCase().startsWith('ok') ? 'ok' : (String(status).toLowerCase().includes('fail') ? 'err' : 'warn'));
+          tr.innerHTML = `<td>${when}</td><td><code>${cmd}</code></td><td class="td-status"><span class="pill ${level}">${status}</span></td>`;
           tbody.appendChild(tr);
         });
       }
@@ -297,8 +357,11 @@
   // Soft refresh: cache-bust all images with ?v=timestamp
   document.getElementById('refreshBtn')?.addEventListener('click', ()=> init({ stamp: Date.now() }));
 
+  // Print button
+  document.getElementById('printBtn')?.addEventListener('click', ()=> window.print());
+
   // Defensive loader: if an image fails, mark it and show a subtle fallback border
-  document.querySelectorAll('img[data-asset]').forEach(img=>{
+  qa('img[data-asset]').forEach(img=>{
     img.addEventListener('error', ()=>{
       img.alt = (img.alt||'Asset') + ' (unavailable)';
       img.style.opacity = '0.65';
@@ -309,36 +372,97 @@
 
   // Partial embed control: ?embed=umap,tsne (csv)
   (function handleEmbedParam(){
-    const params = new URLSearchParams(location.search);
     const csv = params.get('embed');
     if(!csv) return;
     const targets = new Set(csv.split(',').map(s=>s.trim()).filter(Boolean));
     const sidecar = {
-      'umap':'./umap.html','tsne':'./tsne.html','shap':'./shap_overlay.html',
-      'mu':'./mu_spectrum.html','fft':'./fft_power.html','symbolic':'./symbolic_heatmap.html',
-      'calibration':'./calibration_curve.html'
+      'umap':'umap.html','tsne':'tsne.html','shap':'shap_overlay.html',
+      'mu':'mu_spectrum.html','fft':'fft_power.html','symbolic':'symbolic_heatmap.html',
+      'calibration':'calibration_curve.html'
     };
     targets.forEach(key=>{
       const img = document.querySelector(`img[data-asset="${key}"]`);
-      const src = sidecar[key];
-      if(img && src){
-        const frame = document.createElement('iframe');
-        frame.src = src; frame.loading = 'lazy'; frame.title = key + ' interactive view';
-        frame.setAttribute('aria-label', frame.title);
-        frame.style.width = '100%'; frame.style.height = '380px';
-        frame.style.border = '1px solid var(--border)'; frame.style.borderRadius = '10px';
-        img.parentElement.replaceChild(frame, img);
+      const srcRel = sidecar[key];
+      if(img && srcRel){
+        try{
+          const src = new URL(srcRel, new URL(assetsBase, location.href)).toString();
+          const frame = document.createElement('iframe');
+          frame.src = src;
+          frame.loading = 'lazy';
+          frame.title = key + ' interactive view';
+          frame.setAttribute('aria-label', frame.title);
+          frame.style.width = '100%'; frame.style.height = '380px';
+          frame.style.border = '1px solid var(--border)'; frame.style.borderRadius = '10px';
+          img.parentElement.replaceChild(frame, img);
+        }catch{}
       }
     });
   })();
 
-  // Expose init for generators
+  // Auto-open helpers: ?open=report|readme
+  (function handleOpenParam(){
+    const open = (params.get('open') || '').toLowerCase();
+    if(open==='report'){ q('#openReport')?.click(); }
+    if(open==='readme'){ q('#openReadme')?.click(); }
+  })();
+
+  // ---------- Optional autoloaders ----------
+  async function fetchIfExists(url, opts){
+    const ctrl = new AbortController();
+    const to = setTimeout(()=>ctrl.abort(), clamp(Number(opts?.timeout||2000), 500, 10000));
+    try{
+      const res = await fetch(url, { signal: ctrl.signal, cache: 'no-store' });
+      clearTimeout(to);
+      if(!res.ok) throw new Error(String(res.status));
+      return await res.json();
+    }catch(_){ clearTimeout(to); return null; }
+  }
+
+  async function autoload(){
+    // diagnostic_summary.json
+    const diag = await fetchIfExists('./diagnostic_summary.json', { timeout: 2500 });
+    if(diag){
+      const status = (diag.status || 'OK').toUpperCase();
+      const level = (status.includes('FAIL')||status.includes('ERR')) ? 'err' : (status.includes('WARN')?'warn':'ok');
+      init({
+        kpi:{
+          status: { text: status, level },
+          gll: (diag.gll_delta ?? diag.gllDelta ?? '—'),
+          coverage: (diag.coverage ?? diag.conformal_coverage ?? '—')
+        }
+      });
+    }
+
+    // log_table.json
+    const logs = await fetchIfExists('./log_table.json', { timeout: 2000 });
+    if(logs && Array.isArray(logs.rows)){
+      init({ tables: { cli: logs.rows.map(r => ({
+        when: r.when || r.time || '—',
+        cmd: r.command || r.cmd || '',
+        status: r.status || 'OK',
+        level: r.level || undefined
+      }))}});
+    }
+  }
+
+  // Keyboard shortcuts: r (refresh), t (theme), p (print), g (jump to KPIs)
+  document.addEventListener('keydown', (e)=>{
+    if (e.target && /input|textarea|select/i.test(e.target.tagName)) return;
+    if (e.key==='r' || e.key==='R'){ e.preventDefault(); init({ stamp: Date.now() }); }
+    else if (e.key==='t' || e.key==='T'){ e.preventDefault(); toggleBtn?.click(); }
+    else if (e.key==='p' || e.key==='P'){ e.preventDefault(); window.print(); }
+    else if (e.key==='g' || e.key==='G'){ e.preventDefault(); document.getElementById('sec-overview')?.scrollIntoView({behavior:'smooth',block:'start'}); }
+  });
+
+  // Expose init for generators (immutable interface)
   window.SMV50 = Object.freeze({ init });
 
-  // Optional initial init
+  // Initial run
   init();
+  autoload();
 
 })();
 </script>
+
 </body>
 </html>
