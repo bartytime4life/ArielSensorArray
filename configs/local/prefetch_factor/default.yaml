@@ -1,15 +1,22 @@
 # ==============================================================================
-# 📦 Prefetch Factor — Default
+# 📦 Prefetch Factor — Default (Balanced Mode)
 # ------------------------------------------------------------------------------
 # Purpose:
-#   • Balanced setting for typical local/Kaggle runs.
-#   • Each worker prefetches 2 batches in advance.
+#   • Balanced prefetching for most local development and Kaggle leaderboard runs.
+#   • Keeps GPU utilization high without stressing memory.
+#   • Serves as the safe "general-purpose" profile for training and validation.
 # ==============================================================================
 
-prefetch_factor: 2
+prefetch_factor: 2              # each worker preloads 2 batches ahead of time
+persistent_workers: true        # keep workers alive across epochs for efficiency
 
 notes: |
-  Default prefetch factor:
-  • Each DataLoader worker preloads 2 batches.
-  • Safe balance between memory usage and throughput.
-  • Works well for Kaggle (≤9h runtime) and local GPU dev.
+  Default (Balanced) mode:
+  • Each DataLoader worker preloads 2 batches, reducing GPU idle time.
+  • Provides a safe trade-off between memory footprint and throughput.
+  • Persistent workers remain alive across epochs → faster epoch restarts.
+  • Optimized for Kaggle (~≤9h runtime) and local GPU dev boxes.
+  • Recommended baseline setting: stable on T4/A10/L4 GPUs and CPUs.
+  • For extreme low-memory debugging → use `local/prefetch_factor=debug`.
+  • For maximum throughput on HPC/SSD nodes → use `local/prefetch_factor=fast`
+    (4) or `local/prefetch_factor=heavy` (8).
