@@ -1,59 +1,111 @@
 # configs/calib/method/trace.yaml
 # ==============================================================================
-# 📏 Trace Normalization — Method Config
+# 📏 Trace Normalization — Method Config (Upgraded, Mission-Grade)
 # Purpose
 #   Normalize extracted spectral traces (1D profiles from 2D detector images)
 #   to remove baseline drift, flat background, and instrument throughput bias.
+#   Supports FGS1 vs AIRS asymmetry, hybrid detrend, FFT options, and diagnostics.
 # Usage
-#   Composed by calib/nominal.yaml in the calibration kill chain.
-#   Override example:
-#     spectramind calibrate calib.method.trace.strategy=polynomial
+#   Composed by calib/nominal.yaml / fast.yaml / strict.yaml in the kill chain.
+#   Example override:
+#     spectramind calibrate calib.method.trace.strategy=fft
 # ==============================================================================
 
 trace:
   enabled: true
 
-  # Normalization strategy for extracted spectral traces
-  strategy: "polynomial"          # options: polynomial | spline | median | hybrid
+  # ---------------------------------------------------------------------------
+  # General strategy
+  # ---------------------------------------------------------------------------
+  strategy: "polynomial"          # options: polynomial | spline | median | hybrid | fft
 
-  # Polynomial normalization settings
+  # ---------------------------------------------------------------------------
+  # Polynomial baseline fitting
+  # ---------------------------------------------------------------------------
   polynomial:
     order: 3                      # polynomial order for baseline fitting
-    robust: true                  # use robust fitting (RANSAC or Huber loss)
-    window: 51                    # moving window size for local baseline estimation
+    robust: true                  # robust fitting (Huber or RANSAC)
+    window: 51                    # moving window size for local estimation
 
-  # Spline normalization settings
+  # ---------------------------------------------------------------------------
+  # Spline baseline fitting
+  # ---------------------------------------------------------------------------
   spline:
-    knots: 20                     # number of spline knots across the trace
-    smoothing_factor: 0.5         # regularization weight (0 = interpolate exactly)
+    knots: 20                     # number of spline knots
+    smoothing_factor: 0.5         # 0 = exact interpolation
 
-  # Median filtering (useful for removing outliers & cosmic rays)
+  # ---------------------------------------------------------------------------
+  # Median filter baseline
+  # ---------------------------------------------------------------------------
   median:
-    kernel_size: 5                # odd integer, size of moving median window
-    iterative: true               # repeat median filtering until convergence
+    kernel_size: 5                # odd integer
+    iterative: true               # repeat until convergence
 
-  # Hybrid strategy (combine polynomial + spline or median)
+  # ---------------------------------------------------------------------------
+  # Hybrid blending (polynomial + spline or median)
+  # ---------------------------------------------------------------------------
   hybrid:
     primary: "polynomial"
     secondary: "spline"
-    blend_weight: 0.7             # weight applied to primary vs secondary normalization
+    blend_weight: 0.7             # primary vs secondary weight
 
-  # Edge handling for normalization
+  # ---------------------------------------------------------------------------
+  # FFT-based detrending (frequency-domain baseline removal)
+  # ---------------------------------------------------------------------------
+  fft:
+    cutoff_hz: 0.01               # low-pass cutoff in normalized freq
+    detrend_mode: "highpass"      # options: highpass | bandstop
+    window: "hann"                # FFT window function
+    preserve_transit_band: true   # keep transit-scale frequencies
+
+  # ---------------------------------------------------------------------------
+  # Instrument-aware settings
+  # ---------------------------------------------------------------------------
+  instrument:
+    fgs1:
+      extra_weight: 58.0          # aligns with challenge metric
+      prefer_strategy: "polynomial"
+    airs:
+      prefer_strategy: "spline"
+      regional_overrides: true    # allow detector-region tuning
+
+  # ---------------------------------------------------------------------------
+  # Edge handling
+  # ---------------------------------------------------------------------------
   edges:
-    extend: true                  # extrapolate fit beyond trace boundaries
-    pad: 16                       # number of pixels to pad before fitting
+    extend: true
+    pad: 16
 
-  # Outlier rejection during baseline estimation
+  # ---------------------------------------------------------------------------
+  # Outlier rejection
+  # ---------------------------------------------------------------------------
   outliers:
-    sigma_clip: 4.0               # reject pixels >4σ from baseline fit
-    max_iter: 5                   # maximum rejection iterations
+    sigma_clip: 4.0
+    max_iter: 5
 
-  # Throughput normalization
-  throughput_correction: true     # normalize by instrument throughput profile if available
-  throughput_profile: "calib/trace/throughput.npy"  # external throughput file path
+  # ---------------------------------------------------------------------------
+  # Throughput correction
+  # ---------------------------------------------------------------------------
+  throughput_correction: true
+  throughput_profile: "calib/trace/throughput.npy"
+
+  # ---------------------------------------------------------------------------
+  # Diagnostics & symbolic hooks
+  # ---------------------------------------------------------------------------
+  diagnostics:
+    save_plots: true
+    export_residuals: true
+    symbolic_overlay: true        # allow symbolic rule checks on residuals
+    fft_diagnostics: true         # export FFT power spectra before/after detrend
+    coverage_check: true          # per-bin coverage diagnostics (COREL-ready)
 
   notes: |
-    Trace normalization removes low-frequency trends in extracted spectra.
-    Polynomial is fast and stable, spline is flexible, and median is robust
-    to cosmic rays. Hybrid can combine methods for challenging datasets.
-    Throughput correction ensures relative flux calibration across wavelength.
+    Trace normalization is critical for robust transit extraction.
+    - Polynomial: fast, stable; works well for FGS1.
+    - Spline: flexible for AIRS wavelength-dependent baselines.
+    - Median: robust against cosmic rays & spikes.
+    - FFT: removes low-frequency drifts in frequency domain [oai_citation:1‡FFT and UMAP_ A Comprehensive Technical Reference.pdf](file-service://file-KH1edKdSQWaqiLiUkKdtoW).
+    - Hybrid: combine methods for challenging systematics.
+    Instrument-aware tuning allows FGS1 emphasis (weighted ≈58×) [oai_citation:2‡FGS1 Binning Strategies in Signal Processing and Machine Learning.pdf](file-service://file-ByCYzh8yGePmRDrGaJZicj).
+    Throughput correction ensures flux calibration across wavelength.
+    Diagnostics export symbolic overlays, FFT spectra, and residuals for audit.
