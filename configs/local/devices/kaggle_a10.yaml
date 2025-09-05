@@ -1,0 +1,14 @@
+# ==============================================================================
+# 🚀 Kaggle Devices — NVIDIA A10 GPU
+# ------------------------------------------------------------------------------
+# Purpose:
+#   - Kaggle upgraded GPU runtime (A10, 24 GB).
+# ==============================================================================
+
+_target_: torch.device
+devices: 1
+precision: 16-mixed
+deterministic: true
+cudnn_benchmark: true
+timeout_hours: 9
+notes: "Kaggle GPU quota: A10 runtime, ~9h max walltime."
