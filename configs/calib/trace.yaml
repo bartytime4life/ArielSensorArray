@@ -1,214 +1,405 @@
-# FILE: configs/calib/trace.yaml
-# ==============================================================================
-# TRACE NORMALIZATION — SpectraMind V50 Calibration Kill Chain (stage 06)
-# ------------------------------------------------------------------------------
-# Purpose
-#   Normalize spectral traces to remove broad continuum/blaze shapes and slow
-#   temporal drifts before phase alignment & modeling. Supports:
-#     • Along-wavelength continuum/blaze removal (per frame)
-#     • Along-time baseline detrending (per channel)
-#     • Polynomial or spline fits with robust masking/windows
-#
-# Contract
-#   In : io.input_key
-#        Expected dict keys from upstream extraction (photometry stage):
-#          - photometry_flux        [B] or [B,C] (time × channels)
-#          - photometry_flux_var    [B] or [B,C] (optional)
-#          - (optionally) channel_grid [C] (wavelength bins or indices)
-#   Out: io.output_key
-#        - trace_flux_norm          [B] or [B,C]
-#        - trace_flux_scale         [B] or [B,C]  (the baseline/divisor applied)
-#        - trace_flags              [B] or [B,C]
-#
-# Notes
-#   • Works for broadband (FGS1, C=1) and spectral (AIRS, C>1).
-#   • If both along_wavelength and along_time are enabled, wavelength norm applies first,
-#     then time detrend on the continuum-flattened series.
-# ==============================================================================
+FILE: configs/calib/trace.yaml
 
-version: 1
+==============================================================================
+
+TRACE NORMALIZATION — SpectraMind V50 Calibration Kill Chain (stage 06, upgraded)
+
+——————————————————————————
+
+Purpose
+
+Normalize spectral traces to remove broad continuum/blaze shapes and slow
+
+temporal drifts before phase alignment & modeling. Supports:
+
+• Along-wavelength continuum/blaze removal (per frame)
+
+• Along-time baseline detrending (per channel)
+
+• Polynomial / spline / LOWESS / high-pass fits with robust masking/windows
+
+• Optional percentile/whitening post-scale for stubborn residual slopes
+
+
+
+Contract
+
+In : io.input_key
+
+Expected dict keys from upstream extraction (photometry stage):
+
+- photometry_flux         [B] or [B,C] (time × channels)
+
+- photometry_flux_var     [B] or [B,C] (optional)
+
+- (optional) channel_grid [C] (wavelength bins or indices)
+
+Out: io.output_key
+
+- trace_flux_norm           [B] or [B,C]
+
+- trace_flux_scale          [B] or [B,C]  (the divisor applied = wave_cont * time_trend)
+
+- trace_flags               [B] or [B,C]
+
+
+
+Notes
+
+• Works for broadband (FGS1, C=1) and spectral (AIRS, C>1).
+
+• If both along_wavelength and along_time are enabled, wavelength norm applies first,
+
+then time detrend on the continuum-flattened series.
+
+• All operations are variance-aware if weights.use_variance=true and var is provided.
+
+==============================================================================
+
+version: 2
 enabled: true
 
-# ------------------------------------------------------------------------------
-# Instrument/channel context
-# ------------------------------------------------------------------------------
+——————————————————————————
+
+Instrument/channel context
+
+——————————————————————————
+
 instrument:
-  # "FGS1" | "AIRS"
-  name: "AIRS"
-  # If true and C>1, apply per-channel operations; otherwise treat as single series
-  per_channel: true
 
-# ------------------------------------------------------------------------------
-# Along-wavelength continuum/blaze normalization (per frame)
-# ------------------------------------------------------------------------------
+“FGS1” | “AIRS”
+
+name: “AIRS”
+
+If true and C>1, apply per-channel operations; otherwise treat as single series
+
+per_channel: true
+
+Optional explicit channel count guard (set null to skip)
+
+channels_expected: null
+
+——————————————————————————
+
+Along-wavelength continuum/blaze normalization (per frame)
+
+——————————————————————————
+
 along_wavelength:
-  enabled: true
+enabled: true
 
-  # Fit domain & grid
-  # If a wavelength grid is available, pass through upstream as "channel_grid" (nm or μm).
-  # Otherwise indices [0..C-1] are used.
-  domain:
-    use_channel_grid_if_available: true
+Fit domain & grid
 
-  # Baseline fit method: "poly" (least squares) | "spline" (cubic B-spline) | "lowess"
-  method: "poly"
+domain:
+# If a wavelength grid is available, pass through upstream as “channel_grid” (nm or μm).
+use_channel_grid_if_available: true
+# If grid missing, synthesize index grid [0..C-1]
+fallback_indices: true
 
-  # Fit configuration
-  poly:
-    degree: 3
-  spline:
-    # number of interior knots (roughness control). Effective only if method=="spline"
-    knots: 12
-    smoothing_lambda: 0.0      # 0 => interpolating spline; >0 => smoothing
-  lowess:
-    frac: 0.15                 # fraction of points used for local regression
-    iters: 1
+Baseline fit method: “poly” | “spline” | “lowess” | “auto”
 
-  # Robust fitting & masks
-  robust:
-    sigma_clip: 3.0            # iterative sigma clip on residuals
-    max_iters: 3
-  # Exclude spectral features when estimating continuum:
-  # Provide ranges in the same units as channel_grid (or in indices if grid absent)
-  # Each entry is [min, max] (inclusive).
-  exclude_windows: []           # e.g., [[1.35, 1.43], [1.80, 1.95]]
-  # Alternatively, an explicit binary mask path (C,) 1=use, 0=exclude
-  include_mask_path: null
+“auto” selects “spline” for C>=64 else “poly”
 
-  # Regularization & scaling
-  renormalize_to_median_one: true   # scale continuum so median(baseline)=1 before dividing
-  epsilon: 1.0e-8                   # avoid division by ~0
+method: “auto”
 
-# ------------------------------------------------------------------------------
-# Along-time baseline detrending (per channel)
-# ------------------------------------------------------------------------------
+Fit configuration
+
+poly:
+degree: 3
+center_and_scale: true       # stabilize vandermonde
+spline:
+# number of interior knots (roughness control)
+knots: 12
+# 0 => interpolating spline; >0 => smoothing
+smoothing_lambda: 0.0
+boundary: “not-a-knot”       # “not-a-knot” | “natural” | “clamped”
+lowess:
+frac: 0.15                   # fraction of points used for local regression
+iters: 1
+
+Robust fitting & masks
+
+robust:
+sigma_clip: 3.0              # iterative sigma clip on residuals
+max_iters: 3
+# Clip strategy for outliers during fit
+clip_mode: “two-sided”       # “upper” | “lower” | “two-sided”
+
+Spectral exclusion: avoid known molecular bands during continuum estimate
+
+exclude:
+windows: []                  # e.g., [[1.35, 1.43], [1.80, 1.95]] (units match channel_grid if present)
+include_mask_path: null      # optional (C,) binary mask path (1=use, 0=exclude)
+# Optional molecule dictionary → windows (applied ahead of ‘windows’); keys free-form
+molecules: {}                # e.g., { “H2O”: [[1.33,1.47]], “CO2”: [[1.95,2.05]] }
+apply_molecule_windows: false
+
+Regularization & scaling
+
+renormalize_to_median_one: true   # scale continuum so median(baseline)=1 before dividing
+
+Optional post continuum-per-frame scale: “none” | “percentile” | “zscore”
+
+post_scale:
+mode: “none”
+percentile:
+p_ref: 50                    # rescale so median == 1
+eps: 1.0e-8
+zscore:
+ref_window: null             # [min,max] in channel units to compute μ/σ, null => all
+eps: 1.0e-8
+epsilon: 1.0e-8                   # avoid division by ~0
+
+——————————————————————————
+
+Along-time baseline detrending (per channel)
+
+——————————————————————————
+
 along_time:
-  enabled: true
+enabled: true
 
-  # Detrend method: "poly" | "spline" | "highpass"
-  method: "poly"
+Detrend method: “poly” | “spline” | “highpass” | “auto”
 
-  poly:
-    degree: 2                # low-order temporal polynomial per channel
-  spline:
-    knots: 10
-    smoothing_lambda: 0.0
-  highpass:
-    # moving window (frames) for high-pass median filter
-    window_frames: 31
-    # optionally remove only ultra-low frequency via FFT with cutoff fraction of Nyquist
-    fft_cutoff_frac: null    # e.g., 0.02 ; set null to disable FFT mode
+“auto” selects “poly” for B<=256 else “spline”
 
-  # Robust options for time fits
-  robust:
-    sigma_clip: 3.0
-    max_iters: 2
+method: “auto”
 
-  # Detrend target:
-  #   "divide"  => flux_out = flux / trend  (common for multiplicative drifts)
-  #   "subtract"=> flux_out = flux - trend  (useful for additive residuals)
-  target: "divide"
-  epsilon: 1.0e-8
+poly:
+degree: 2                      # low-order temporal polynomial per channel
+center_and_scale: true
+spline:
+knots: 10
+smoothing_lambda: 0.0
+boundary: “natural”
+highpass:
+# moving window (frames) for median filter; odd number recommended
+window_frames: 31
+# optionally remove ultra-low frequency via FFT with cutoff fraction of Nyquist
+fft_cutoff_frac: null          # e.g., 0.02 ; set null to disable FFT mode
+taper_frac: 0.05               # cosine taper to reduce edge artifacts (0..0.2)
 
-# ------------------------------------------------------------------------------
-# Weighting (optional variance-aware fits)
-# ------------------------------------------------------------------------------
+Robust options for time fits
+
+robust:
+sigma_clip: 3.0
+max_iters: 2
+
+Detrend target:
+
+“divide”  => flux_out = flux / trend  (common for multiplicative drifts)
+
+“subtract”=> flux_out = flux - trend  (additive residuals)
+
+target: “divide”
+epsilon: 1.0e-8
+
+Optional smoothing of the per-channel trend before applying (safety)
+
+smooth_trend:
+enabled: false
+window_frames: 7               # simple moving-average
+
+——————————————————————————
+
+Weighting (optional variance-aware fits)
+
+——————————————————————————
+
 weights:
-  use_variance: true                  # if photometry_flux_var is present
-  min_var: 1.0e-8                     # floor to avoid extreme weights
+use_variance: true               # if photometry_flux_var is present
+min_var: 1.0e-8                  # floor to avoid extreme weights
 
-# ------------------------------------------------------------------------------
-# Bad/flag handling
-# ------------------------------------------------------------------------------
+Optional per-stage weight exponents (downweight overly noisy points)
+
+exponent:
+wavelength_stage: 1.0
+time_stage: 1.0
+
+——————————————————————————
+
+Bad/flag handling
+
+——————————————————————————
+
 flags:
-  # If true, any NaN/Inf after normalization is flagged and filled by local interpolation
-  handle_invalid: true
-  interpolation:
-    method: "linear"                  # "linear" | "nearest" | "spline"
-    max_gap_frames: 5
-  # Cap extremely large/small normalized values (safety net)
-  clamp:
-    enabled: true
-    min_value: 0.1
-    max_value: 10.0
 
-# ------------------------------------------------------------------------------
-# Quality checks (soft guards; do not mutate data)
-# ------------------------------------------------------------------------------
+If true, any NaN/Inf after normalization is flagged and filled by interpolation
+
+handle_invalid: true
+interpolation:
+method: “linear”               # “linear” | “nearest” | “spline”
+max_gap_frames: 5
+
+Cap extremely large/small normalized values (safety net)
+
+clamp:
+enabled: true
+min_value: 0.1
+max_value: 10.0
+
+Emit per-channel summary flags (bitfield or bools) in diagnostics
+
+emit_summary_flags: true
+
+——————————————————————————
+
+Quality checks (soft guards; do not mutate data)
+
+——————————————————————————
+
 quality_checks:
-  enabled: true
+enabled: true
 
-  sampling_fraction: 0.10
-  min_samples: 2
+sampling_fraction: 0.10
+min_samples: 2
 
-  # Post-normalization stats
-  stats_after:
-    # Expect ~unity median after along_wavelength & along_time divide
-    median_range: [0.7, 1.3]
-    robust_std_max: 1.0e0         # relaxed; tighten per dataset
+Post-normalization stats
 
-  # Percentiles sanity (catch wild tails)
-  percentiles_after:
-    p_low: 1
-    p_high: 99
-    max_span: 2.5                  # p99/p1 should not exceed this factor
+stats_after:
+# Expect ~unity median after along_wavelength & along_time divide
+median_range: [0.7, 1.3]
+robust_std_max: 1.0e0         # relaxed; tighten per dataset
 
-  # Fraction of invalids created by normalization
-  invalid_frac_max: 0.01
+Percentiles sanity (catch wild tails)
 
-  action_on_fail: "warn"           # "warn" | "error"
+percentiles_after:
+p_low: 1
+p_high: 99
+max_span: 2.5                  # p99/p1 should not exceed this factor
 
-# ------------------------------------------------------------------------------
-# Outputs (keys & bookkeeping)
-# ------------------------------------------------------------------------------
+Fraction of invalids created by normalization
+
+invalid_frac_max: 0.01
+
+Optional coherence check across channels: median absolute diff of medians
+
+cross_channel:
+enabled: true
+mad_of_medians_max: 0.25
+
+action_on_fail: “warn”           # “warn” | “error”
+
+——————————————————————————
+
+Diagnostics (optional artifacts for debugging)
+
+——————————————————————————
+
+diagnostics:
+enabled: false
+
+Save a small sample of frames/channels for plots (indices)
+
+sample:
+frames: []                     # e.g., [0, 128, 256]
+channels: []                   # e.g., [10, 50, 120]
+save_plots:
+continuum_fits: false
+time_trends: false
+outdir: “outputs/diagnostics/calib_trace”
+
+——————————————————————————
+
+Outputs (keys & bookkeeping)
+
+——————————————————————————
+
 output:
-  # Store the divisor (continuum × temporal trend) for diagnostics
-  save_scale: true
-  # Concatenate flags from this stage with upstream flags?
-  accumulate_flags: true
 
-# ------------------------------------------------------------------------------
-# I/O routing for pipeline memory dict
-# ------------------------------------------------------------------------------
+Store the divisor (continuum × temporal trend) for diagnostics
+
+save_scale: true
+
+Concatenate flags from this stage with upstream flags?
+
+accumulate_flags: true
+
+Also export per-stage separate components for debugging
+
+export_components:
+wave_continuum: false
+time_trend: false
+
+——————————————————————————
+
+I/O routing for pipeline memory dict
+
+——————————————————————————
+
 io:
-  input_key: "photometry"
-  # Input fields expected under input_key:
-  fields_in:
-    flux: "photometry_flux"
-    var:  "photometry_flux_var"    # optional
-    chan: "channel_grid"           # optional
-  # Output fields written under output_key:
-  output_key: "trace_norm"
-  fields_out:
-    flux_norm:  "trace_flux_norm"
-    flux_scale: "trace_flux_scale"
-    flags:      "trace_flags"
+input_key: “photometry”
 
-# ------------------------------------------------------------------------------
-# Caching & DVC
-# ------------------------------------------------------------------------------
+Input fields expected under input_key:
+
+fields_in:
+flux: “photometry_flux”
+var:  “photometry_flux_var”    # optional
+chan: “channel_grid”           # optional
+
+Output fields written under output_key:
+
+output_key: “trace_norm”
+fields_out:
+flux_norm:  “trace_flux_norm”
+flux_scale: “trace_flux_scale”
+flags:      “trace_flags”
+
+——————————————————————————
+
+Caching & DVC
+
+——————————————————————————
+
 cache:
-  write_intermediate: true
-  out_dir: "${oc.env:RUN_DIR, runs}/calib/trace"
-  dvc_stage_name: "calib_trace"
+write_intermediate: true
+out_dir: “${oc.env:RUN_DIR, runs}/calib/trace”
+dvc_stage_name: “calib_trace”
 
-# ------------------------------------------------------------------------------
-# Logging & runtime
-# ------------------------------------------------------------------------------
+Optional cache key hints (affects file naming/logging)
+
+cache_key:
+instrument: “${instrument.name}”
+method_w: “${along_wavelength.method}”
+method_t: “${along_time.method}”
+
+——————————————————————————
+
+Logging & runtime
+
+——————————————————————————
+
 logging:
-  level: "INFO"                     # "DEBUG" | "INFO" | "WARNING" | "ERROR"
-  log_sample_stats: true
-  save_debug_plots: false           # save continuum fits and time trends for samples
+level: “INFO”                    # “DEBUG” | “INFO” | “WARNING” | “ERROR”
+log_sample_stats: true
+save_debug_plots: false
 
 runtime:
-  num_workers: 2
-  seed: 1337
+num_workers: 2
+seed: 1337
 
-# ------------------------------------------------------------------------------
-# Validation (fail fast for missing/incompatible resources)
-# ------------------------------------------------------------------------------
+Guard to keep per-batch normalization bounded (ms)
+
+per_batch_budget_ms: 250
+
+——————————————————————————
+
+Validation (fail fast for missing/incompatible resources)
+
+——————————————————————————
+
 validation:
-  require_existing_paths: true      # masks present if paths given
-  check_shape_compatibility: true   # [B] or [B,C] consistently handled
-  # If exclude_windows are provided and channel_grid exists, ensure overlap sanity
-  require_domain_checks: true
+require_existing_paths: true      # masks present if paths given
+check_shape_compatibility: true   # [B] or [B,C] consistently handled
+
+If exclude.windows provided and channel_grid exists, ensure overlap sanity
+
+require_domain_checks: true
+
+Ensure positive length for frames/channels
+
+require_nonempty: true
+
+Ensure finite inputs
+
+require_finite_flux: true
