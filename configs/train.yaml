@@ -30,6 +30,11 @@ defaults:
   - local/seed: default            # {default|fast|random|kaggle}
   - local/prefetch_factor: default # {default|fast|debug|heavy}
 
+  # Per-stage DataLoader policies (persistent_workers)
+  - local/persistent_workers: train                 # applies to training loader
+  - local/persistent_workers@val_loader: val        # applies to validation loader
+  - local/persistent_workers@test_loader: test      # applies to test/inference loader
+
   # Core pipeline groups
   - data: nominal                  # data/{nominal|kaggle|debug}.yaml
   - model: v50                     # model architecture & heads (FGS1+AIRS fusion)
@@ -96,8 +101,12 @@ data:
   eval_batch_size: 64
   num_workers: 4
   pin_memory: true
-  prefetch_factor: ${prefetch_factor}   # wired to local/prefetch_factor group
-  persistent_workers: true
+  prefetch_factor: ${prefetch_factor}      # wired to local/prefetch_factor group
+  persistent_workers: ${persistent_workers}  # from local/persistent_workers=train
+
+# Note:
+# • `persistent_workers` only has effect when `num_workers > 0`.
+# • For GPU, pair with `pin_memory: true` for optimal H2D transfer throughput.
 
 # ----------------------------------------------------------------------
 # Optimizer/Scheduler quick knobs (base values in optimizer/*.yaml)
@@ -176,6 +185,14 @@ eval:
     - "mae"
     - "calibration/error_vs_sigma" # σ-vs-residual diagnostic
   num_workers: ${data.num_workers}
+  persistent_workers: ${val_loader.persistent_workers}  # from local/persistent_workers@val_loader
+
+# ----------------------------------------------------------------------
+# (Optional) test/inference loader policy wiring
+# ----------------------------------------------------------------------
+test:
+  num_workers: ${data.num_workers}
+  persistent_workers: ${test_loader.persistent_workers} # from local/persistent_workers@test_loader
 
 # ----------------------------------------------------------------------
 # Diagnostics hooks (lightweight by default; heavy viz off for Kaggle)
@@ -259,9 +276,11 @@ cli:
 #      local/precision=32 | 16-mixed | bf16-mixed | 64
 #      local/prefetch_factor=default | fast | debug | heavy
 #      local/seed=default | fast | random | kaggle
+#      local/persistent_workers=train | val | test (per-stage via @val_loader/@test_loader)
 #  • Increase epochs + enable uncertainty.calibration.corel for leaderboard pushes.
 #  • For smoke/CI runs, override:
 #      training.epochs=1 data.num_workers=0 training.limit_train_batches=0.1
 #      diagnostics.html_report=false
+#  • `persistent_workers` only applies when `num_workers > 0`.
 # ----------------------------------------------------------------------
 ```
