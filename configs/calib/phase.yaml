@@ -1,0 +1,60 @@
+# ==============================================================================
+# SpectraMind V50 — Calibration Method Config
+# Phase Folding & Binning (FGS1 + AIRS)
+# ------------------------------------------------------------------------------
+# Purpose:
+#   Configure phase-folding and binning for light curve calibration.
+#   This aligns raw frame sequences (FGS1, AIRS) to orbital phase,
+#   applies binning, and produces transit-phase light curves suitable
+#   for downstream modeling.
+#
+# References:
+#   - Ariel mission calibration protocols (ESA/Ariel pipeline)
+#   - FGS1 binning strategies [oai_citation:2‡FGS1 Binning Strategies in Signal Processing and Machine Learning.pdf](file-service://file-ByCYzh8yGePmRDrGaJZicj)
+#   - NeurIPS 2025 Ariel Challenge preprocessing practices [oai_citation:3‡Advanced Techniques for Exoplanet Spectrum Extraction (NeurIPS Ariel Data Challenge 2024–2025).pdf](file-service://file-8dtJibU1RNLHYacRH9AmsG)
+# ==============================================================================
+
+method:
+  name: phase
+  description: >
+    Fold raw time-series light curves onto orbital phase and bin into
+    evenly spaced phase bins. Designed to boost SNR while preserving
+    the transit shape.
+
+params:
+  # -------------------------------
+  # Phase folding
+  # -------------------------------
+  fold_to_orbital_phase: true       # Fold light curves to phase (0–1)
+  use_ephemeris: true               # Use ephemeris metadata if available
+  normalize_to_out_of_transit: true # Normalize baseline flux outside transit to 1.0
+
+  # -------------------------------
+  # FGS1 binning
+  # -------------------------------
+  fgs1_bins: 200        # Default bin count (nominal mode)
+  fgs1_bins_strict: 400 # Strict mode (higher detail, slower)
+  fgs1_bins_fast: 100   # Fast mode (coarser, faster runtime)
+  fgs1_bin_strategy: uniform # Options: [uniform, adaptive, snr-weighted]
+
+  # -------------------------------
+  # AIRS binning (optional)
+  # -------------------------------
+  airs_bins: null       # Default: no additional binning for AIRS
+  airs_bin_strategy: null
+
+  # -------------------------------
+  # Outlier handling
+  # -------------------------------
+  clip_sigma: 5.0       # Sigma threshold for flux outlier rejection
+  replace_with: median  # Options: [median, nan, interpolate]
+
+  # -------------------------------
+  # Output
+  # -------------------------------
+  output_format: parquet
+  save_diagnostics: true            # Save phase-folded plots & stats
+  diagnostics:
+    plot_lightcurve: true
+    plot_binned_overlay: true
+    export_phase_residuals: true
