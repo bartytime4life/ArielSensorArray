@@ -1,181 +1,337 @@
-# FILE: configs/calib/flat.yaml
-# ==============================================================================
-# FLAT-FIELD CALIBRATION — SpectraMind V50 Calibration Kill Chain (stage 03)
-# ------------------------------------------------------------------------------
-# Purpose
-#   Correct pixel-to-pixel and channel-wise sensitivity variations (PRNU), remove
-#   large-scale illumination gradients, and normalize frames for downstream CDS /
-#   photometry / trace steps.
-#
-# Contract
-#   In:  io.input_key   (typically produced by configs/calib/dark.yaml)
-#   Out: io.output_key  (consumed by cds/photometry/trace stages)
-#
-# Notes
-#   * Supports master flats (white-light) and spectral flats (C×H×W).
-#   * All files can be DVC artifacts (use ${oc.env:DATA_DIR, data} root).
-#   * If a required file is missing, behavior follows validation.require_existing_paths.
-# ==============================================================================
+FILE: configs/calib/flat.yaml
 
-version: 1
+==============================================================================
+
+FLAT-FIELD CALIBRATION — SpectraMind V50 Calibration Kill Chain (stage 03, upgraded)
+
+——————————————————————————
+
+Purpose
+
+Correct pixel-to-pixel and channel-wise sensitivity variations (PRNU), remove
+
+large-scale illumination gradients, and normalize frames for downstream CDS /
+
+photometry / trace steps.
+
+
+
+Contract
+
+In:  io.input_key   (typically produced by configs/calib/dark.yaml)
+
+Out: io.output_key  (consumed by cds/photometry/trace stages)
+
+
+
+Notes
+
+* Supports master flats (white-light) and spectral flats (C×H×W).
+
+* All files can be DVC artifacts (use ${oc.env:DATA_DIR, data} root).
+
+* If a required file is missing, behavior follows validation.require_existing_paths.
+
+* Operations are numerically safe (eps floors, NaN/Inf guards) and deterministic.
+
+==============================================================================
+
+version: 2
 enabled: true
 
-# ------------------------------------------------------------------------------
-# Flat model and application order
-# ------------------------------------------------------------------------------
+——————————————————————————
+
+Flat model and application order
+
+——————————————————————————
+
 flat_model:
-  # method: "none" | "master" | "spectral" | "hybrid"
-  #  - master  : single H×W (or C×H×W with C=1) gain map
-  #  - spectral: per-channel C×H×W gain maps aligned to the cube
-  #  - hybrid  : spectral first (if C matches), then master as residual shaper
-  method: "master"
 
-  # Normalize the flat so that the mean gain = 1 (prevents flux scaling shifts).
-  renormalize_to_mean_one: true
-  # Numerical floor to avoid division by tiny values
-  epsilon: 1.0e-6
+method: “none” | “master” | “spectral” | “hybrid” | “auto”
 
-  # Optional masking when computing statistics/renormalization
-  # (1 = valid, 0 = masked-out)
-  valid_mask_path: "${oc.env:DATA_DIR, data}/calib/masks/flat_valid_mask.npy"
+- master  : single H×W (or C×H×W with C=1) gain map
 
-  # ------------------------
-  # MASTER FLAT SETTINGS
-  # ------------------------
-  master:
-    # Accepts NPY (H×W) or (C×H×W). If C dimension is present and >1, the first plane is used
-    # unless spectral mode is active (method == "spectral" or "hybrid").
-    path: "${oc.env:DATA_DIR, data}/calib/flat/master_flat.npy"
+- spectral: per-channel C×H×W gain maps aligned to the cube
 
-    # Optional illumination (vignetting) normalization on the master flat itself.
-    # If enabled, estimate a smooth illumination field and divide it out so that
-    # the master encodes *only* pixel-scale PRNU.
-    illumination_normalization:
-      enabled: true
-      # "poly2d" (least-squares polynomial) | "spline2d" (thin-plate or bicubic) | "gaussian"
-      method: "poly2d"
-      poly:
-        degree_x: 3
-        degree_y: 3
-      spline:
-        grid: [16, 16]  # control grid for spline fit
-      gaussian:
-        sigma_px: 15.0
-      # Exclude outliers (e.g., dust, bad pixels) while fitting the smooth surface
-      robust:
-        enabled: true
-        sigma_clip: 3.0
-        max_iters: 3
+- hybrid  : spectral first (if C matches), then master as residual shaper
 
-  # ------------------------
-  # SPECTRAL FLAT SETTINGS
-  # ------------------------
-  spectral:
-    # Spectral flat cube (NPY C×H×W). C must match the model’s channel dimension or a
-    # channel-remapping section must be supplied in the pipeline.
-    path: "${oc.env:DATA_DIR, data}/calib/flat/spectral_flat_cube.npy"
-    # Optionally smooth along the spectral axis to reduce high-frequency noise
-    spectral_smoothing:
-      enabled: false
-      # "median" | "gaussian"
-      method: "median"
-      width_channels: 3
-    # Optional per-channel renormalization to set each channel’s mean gain to 1
-    per_channel_norm: true
+- auto    : choose “spectral” if cube C matches spectral.flat C, else “master”
 
-  # ------------------------
-  # ILLUMINATION GRADIENT FIT (applied to science frames *after* PRNU correction)
-  # ------------------------
-  illumination_correction:
+method: “master”
+
+Normalize the flat so that the mean gain = 1 (prevents flux scaling shifts).
+
+renormalize_to_mean_one: true
+
+Optional per-channel renormalization (applies after spectral/master selection)
+
+per_channel_norm: false            # set true to force mean gain=1 per channel
+
+Numerical floors / clamping
+
+epsilon: 1.0e-6                    # avoid division by ~0
+clamp_gain:
+enabled: true
+min_gain: 0.1                    # clamp gain before inversion
+max_gain: 10.0
+
+Optional masking when computing statistics/renormalization
+
+(1 = valid, 0 = masked-out)
+
+valid_mask_path: “${oc.env:DATA_DIR, data}/calib/masks/flat_valid_mask.npy”
+
+————————
+
+MASTER FLAT SETTINGS
+
+————————
+
+master:
+# Accepts NPY (H×W) or (C×H×W). If C>1, the first plane is used unless spectral/hybrid is active.
+path: “${oc.env:DATA_DIR, data}/calib/flat/master_flat.npy”
+
+# Optional illumination (vignetting) normalization on the master flat itself.
+# If enabled, estimate a smooth illumination field and divide it out so that
+# the master encodes *only* pixel-scale PRNU.
+illumination_normalization:
+  enabled: true
+  # "poly2d" (least-squares polynomial) | "spline2d" (bicubic/TP) | "gaussian"
+  method: "poly2d"
+  poly:
+    degree_x: 3
+    degree_y: 3
+  spline:
+    grid: [16, 16]              # control grid for spline fit
+  gaussian:
+    sigma_px: 15.0
+  # Exclude outliers (e.g., dust, bad pixels) while fitting the smooth surface
+  robust:
     enabled: true
-    # Fit a smooth field to the corrected science frame and divide it out
-    method: "spline2d"    # "poly2d" | "spline2d" | "gaussian"
-    poly:
-      degree_x: 2
-      degree_y: 2
-    spline:
-      grid: [24, 24]
-    gaussian:
-      sigma_px: 25.0
-    # Robust statistics to avoid stars/trace influencing the estimate
-    robust:
-      enabled: true
-      sigma_clip: 3.0
-      max_iters: 3
-    # If true, illumination is normalized to mean 1.0 before division
-    renormalize_to_mean_one: true
+    sigma_clip: 3.0
+    max_iters: 3
 
-# ------------------------------------------------------------------------------
-# Bad pixel support (post-flat cleanup)
-# ------------------------------------------------------------------------------
+————————
+
+SPECTRAL FLAT SETTINGS
+
+————————
+
+spectral:
+# Spectral flat cube (NPY C×H×W). C must match the model’s channel dimension or a
+# channel-remapping section must be supplied in the pipeline.
+path: “${oc.env:DATA_DIR, data}/calib/flat/spectral_flat_cube.npy”
+
+# Channel remapping (optional): map science channels to spectral flat channels
+# Example: [0,2,1,...] to permute; or null to disable
+channel_remap: null
+
+# Optionally smooth along the spectral axis to reduce high-frequency noise
+spectral_smoothing:
+  enabled: false
+  method: "median"               # "median" | "gaussian"
+  width_channels: 3
+
+# Optional per-channel renormalization to set each channel’s mean gain to 1
+per_channel_norm: true
+
+# Optional per-channel illumination removal (large-scale field on each plane)
+per_channel_illumination_normalization:
+  enabled: false
+  method: "spline2d"
+  spline:
+    grid: [12, 12]
+  robust:
+    enabled: true
+    sigma_clip: 3.0
+    max_iters: 2
+
+————————
+
+ILLUMINATION GRADIENT FIT (applied to science frames after PRNU correction)
+
+————————
+
+illumination_correction:
+enabled: true
+# Fit a smooth field to the corrected science frame and divide it out
+method: “spline2d”               # “poly2d” | “spline2d” | “gaussian”
+poly:
+degree_x: 2
+degree_y: 2
+spline:
+grid: [24, 24]
+gaussian:
+sigma_px: 25.0
+# Robust statistics to avoid stars/trace influencing the estimate
+robust:
+enabled: true
+sigma_clip: 3.0
+max_iters: 3
+# If true, illumination is normalized to mean 1.0 before division
+renormalize_to_mean_one: true
+# Optional masked fit (1=valid)
+valid_mask_path: “${oc.env:DATA_DIR, data}/calib/masks/illum_valid_mask.npy”
+
+——————————————————————————
+
+Bad pixel support (post-flat cleanup)
+
+——————————————————————————
+
 bad_pixel_handling:
-  enabled: true
-  bpm_path: "${oc.env:DATA_DIR, data}/calib/masks/bad_pixel_map.npy"
-  replace:
-    mode: "median8"         # "median4" | "median8" | "gaussian3"
-    max_replace_fraction: 0.05
+enabled: true
+bpm_path: “${oc.env:DATA_DIR, data}/calib/masks/bad_pixel_map.npy”
+replace:
+mode: “median8”                  # “median4” | “median8” | “gaussian3”
+max_replace_fraction: 0.05
+# Optional morphological expand to catch halos around hot pixels
+dilate:
+enabled: false
+radius_px: 1
 
-# ------------------------------------------------------------------------------
-# Quality checks (soft guards that do not alter data)
-# ------------------------------------------------------------------------------
+——————————————————————————
+
+Numerical safety & invalid handling
+
+——————————————————————————
+
+safety:
+
+Replace any NaN/Inf produced by division with local median or zero
+
+handle_invalid: true
+fill:
+method: “median3”                # “median3” | “nearest” | “zero”
+
+Optional output clamping after correction (protects downstream stats)
+
+clamp_output:
+enabled: true
+min_adu: -1.0e3
+max_adu: 1.0e7
+
+——————————————————————————
+
+Diagnostics (optional artifacts for debugging)
+
+——————————————————————————
+
+diagnostics:
+enabled: false
+outdir: “outputs/diagnostics/calib_flat”
+save_debug_images: false           # before/after frames & illumination fields
+sample_indices:
+frames: []                       # e.g., [0, 128, 256]
+channels: []                     # e.g., [0, 50, 120]
+export_stats_csv: false
+
+——————————————————————————
+
+Quality checks (soft guards that do not alter data)
+
+——————————————————————————
+
 quality_checks:
-  enabled: true
+enabled: true
 
-  # Verify flat map statistics (before application)
-  flat_stats:
-    expected_mean_range: [0.8, 1.2]
-    max_std: 0.5              # large std implies unstable/invalid flat
-    max_zero_frac: 0.02
-    max_nan_frac: 0.0
+Verify flat map statistics (before application)
 
-  # After applying flat: check that frame variance isn’t exploding/imploding
-  residual_stats:
-    # Evaluate on a random subset to reduce overhead
-    sampling_fraction: 0.10
-    min_samples: 2
-    # Per-frame checks
-    mean_adu_range: [10.0, 50000.0]
-    std_adu_range: [0.5, 25000.0]
+flat_stats:
+expected_mean_range: [0.8, 1.2]
+max_std: 0.5                    # large std implies unstable/invalid flat
+max_zero_frac: 0.02
+max_nan_frac: 0.0
+# Per-channel checks (spectral mode)
+per_channel:
+enabled: true
+mean_range: [0.6, 1.4]
+max_nan_frac: 0.0
 
-  # Histogram sanity: ensure no massive pile-up at zeros after division/clamping
-  residual_histogram:
-    bins: 256
-    max_at_zero_frac: 0.10
+After applying flat: check that frame variance isn’t exploding/imploding
 
-  action_on_fail: "warn"      # "warn" | "error"
+residual_stats:
+sampling_fraction: 0.10
+min_samples: 2
+mean_adu_range: [10.0, 50000.0]
+std_adu_range: [0.5, 25000.0]
 
-# ------------------------------------------------------------------------------
-# I/O routing for pipeline memory dict
-# ------------------------------------------------------------------------------
+Histogram sanity: ensure no massive pile-up at zeros after division/clamping
+
+residual_histogram:
+bins: 256
+max_at_zero_frac: 0.10
+
+Cross-channel coherence (AIRS): median absolute deviation of per-channel medians
+
+cross_channel:
+enabled: true
+mad_of_medians_max: 0.35
+
+action_on_fail: “warn”            # “warn” | “error”
+
+——————————————————————————
+
+I/O routing for pipeline memory dict
+
+——————————————————————————
+
 io:
-  input_key: "dark_corrected"
-  output_key: "flat_corrected"
+input_key: “dark_corrected”
+output_key: “flat_corrected”
 
-# ------------------------------------------------------------------------------
-# Caching & DVC
-# ------------------------------------------------------------------------------
+Optional additional outputs for debugging (saved only if diagnostics.enabled)
+
+extra_outputs:
+illumination_field_key: “flat_illum_field”   # per-frame smooth field (if computed)
+gain_map_key: “flat_gain_map_applied”        # effective gain used (H×W or C×H×W)
+
+——————————————————————————
+
+Caching & DVC
+
+——————————————————————————
+
 cache:
-  write_intermediate: true
-  out_dir: "${oc.env:RUN_DIR, runs}/calib/flat"
-  dvc_stage_name: "calib_flat"
+write_intermediate: true
+out_dir: “${oc.env:RUN_DIR, runs}/calib/flat”
+dvc_stage_name: “calib_flat”
+cache_key:
+method: “${flat_model.method}”
+per_channel_norm: “${flat_model.per_channel_norm}”
 
-# ------------------------------------------------------------------------------
-# Logging & runtime
-# ------------------------------------------------------------------------------
+——————————————————————————
+
+Logging & runtime
+
+——————————————————————————
+
 logging:
-  level: "INFO"               # "DEBUG" | "INFO" | "WARNING" | "ERROR"
-  log_sample_stats: true
-  save_debug_images: false    # grids of before/after & illumination fields
+level: “INFO”                     # “DEBUG” | “INFO” | “WARNING” | “ERROR”
+log_sample_stats: true
+save_debug_images: false          # grids of before/after & illumination fields
 
 runtime:
-  num_workers: 2
-  seed: 1337
+num_workers: 2
+seed: 1337
+per_frame_budget_ms: 60           # soft guardrail to keep this stage snappy
 
-# ------------------------------------------------------------------------------
-# Validation — fail fast for missing/incompatible resources
-# ------------------------------------------------------------------------------
+——————————————————————————
+
+Validation — fail fast for missing/incompatible resources
+
+——————————————————————————
+
 validation:
-  require_existing_paths: true        # paths referenced by method must exist
-  check_shape_compatibility: true     # (C,H,W) compatibility with first batch
-  # If spectral flats are requested, ensure a compatible channel dimension is supplied
-  require_spectral_compatibility: true
+require_existing_paths: true      # paths referenced by method must exist
+check_shape_compatibility: true   # (C,H,W) compatibility with first batch
+require_spectral_compatibility: true   # if spectral/hybrid/auto→spectral chosen
+
+If auto is selected, verify decision logic is sane (C match or fall back)
+
+require_auto_logic_sanity: true
+
+Ensure finite inputs & positive mean on valid regions of flat
+
+require_finite_inputs: true
+require_positive_mean_gain: true
