@@ -1,0 +1,19 @@
+# ==============================================================================
+# 📌 Pin Memory — Enabled
+# ------------------------------------------------------------------------------
+# Purpose:
+#   • Enable page-locked (pinned) host memory in DataLoader.
+#   • Speeds up host→GPU transfers by avoiding OS paging overhead.
+# ------------------------------------------------------------------------------
+# When to Use
+#   • ✅ GPU training/inference (especially large batches).
+#   • ⚠️ Not needed on CPU-only runs (ignored).
+# ==============================================================================
+
+pin_memory: true
+
+notes: |
+  Pin memory enabled:
+  • Faster transfers from host (CPU) to device (GPU).
+  • Recommended for most Kaggle/HPC GPU runs.
+  • Slightly higher host RAM usage; avoid if memory is tight.
