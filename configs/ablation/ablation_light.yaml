@@ -1,115 +1,356 @@
-# ==============================================================================
-# SpectraMind V50 — Ablation Profile: LIGHT (fast CI / smoke)
-# - Minimal epochs, small batch, CPU-friendly defaults
-# - Disables heavy diagnostics (UMAP/t‑SNE/SHAP)
-# - Exports lean leaderboard (Markdown/CSV only)
-# - Suitable for PRs, nightly smoke, CI budget environments
-# ==============================================================================
+==============================================================================
+
+SpectraMind V50 — Ablation Profile: LIGHT (fast CI / smoke, upgraded)
+
+- CPU-friendly, minimal epochs, tiny batch, deterministic by default
+
+- Heavy diagnostics disabled (UMAP/t-SNE/SHAP); lean symbolic/FFT only
+
+- Exports lean leaderboard (Markdown/CSV) + optional manifest
+
+- Perfect for PR checks, CI smoke runs, and budget environments
+
+==============================================================================
 
 defaults:
-  - override hydra/job_logging: colorlog
-  - override hydra/hydra_logging: colorlog
-  - _self_
+	•	override hydra/job_logging: colorlog
+	•	override hydra/hydra_logging: colorlog
+	•	self
 
-# -------------------------
-# Global Reproducibility
-# -------------------------
+———————––
+
+Global Reproducibility
+
+———————––
+
 seed: 1337
 deterministic: true
+pythonhashseed: 0
+cudnn_deterministic: true
+cublas_workspace: “:16:8”
 num_workers: 0
+benchmark: false
+allow_tf32: false
 
-# -------------------------
-# Curriculum Toggles
-# -------------------------
+———————––
+
+Data / Paths (lightweight)
+
+———————––
+
+data:
+root: /kaggle/input/neurips-2025-ariel-data-challenge   # ignored in CI if not present
+cache_dir: .cache/ariel_light
+fgs1:
+enable: true
+dtype: float32
+airs:
+enable: true
+dtype: float32
+splits:
+train: configs/splits/train_ids.csv
+valid: configs/splits/valid_ids.csv
+test:  configs/splits/test_ids.csv
+loader:
+shuffle: true
+pin_memory: false
+persistent_workers: false
+prefetch_factor: 2
+drop_last: false
+
+———————––
+
+Curriculum Toggles
+
+———————––
+
 curriculum:
-  mae_pretrain: false
-  contrastive:  false
-  gll_finetune: true
-  symbolic_finetune: false
+mae_pretrain: false
+contrastive:  false
+gll_finetune: true
+symbolic_finetune: false
+schedule:
+warmup_epochs: 0
+hold_epochs: 0
 
 masking:
-  random: true
-  block: false
-  molecule_aware: false
-  snr_aware: false
+random: true
+block: false
+molecule_aware: false
+snr_aware: false
+temporal_dropout: false
+dual_view: false
+visualize: false
 
-# -------------------------
-# Loss Weights (coarse)
-# -------------------------
+———————––
+
+Model (minimal, quick)
+
+———————––
+
+model:
+name: spectramind_v50_light
+fgs1:
+encoder: mamba_ssm
+hidden: 256
+depth: 6
+dropout: 0.1
+jit: false
+airs:
+encoder: gnn
+backend: gatconv
+heads: 2
+hidden: 128
+layers: 3
+use_edge_features: false
+temporal_posenc: none
+dropout: 0.1
+decoder:
+mu_head: multi_scale
+sigma_head: flow_uncertainty
+quantile_head: false
+dropout: 0.0
+fusion:
+strategy: mean           # simple & fast
+attention_fusion: false
+symbolic_overlay: false
+
+———————––
+
+Loss Weights (coarse)
+
+———————––
+
 loss:
-  gll: 1.0
-  fft_smoothness: 0.05
-  asymmetry: 0.0
-  nonnegativity: 0.05
-  photonic_alignment: 0.0
-  symbolic: 0.0
-  entropy_reg: 0.0
+gll: 1.0
+fft_smoothness: 0.05
+asymmetry: 0.0
+nonnegativity: 0.05
+photonic_alignment: 0.0
+symbolic: 0.0
+entropy_reg: 0.0
+components:
+smoothness: true
+nonneg: true
+asym: false
+photonic_align: false
 
-# -------------------------
-# Uncertainty Calibration
-# -------------------------
+———————––
+
+Optimizer / Scheduler (quick)
+
+———————––
+
+optim:
+name: adamw
+lr: 3.0e-4
+weight_decay: 0.01
+betas: [0.9, 0.999]
+eps: 1.0e-8
+grad_clip_norm: 1.0
+grad_accum_steps: 1
+
+sched:
+name: cosine
+warmup_steps: 0
+min_lr: 1.0e-6
+t_mult: 1.0
+
+———————––
+
+Uncertainty Calibration (lean)
+
+———————––
+
 uncertainty:
-  temperature_scaling: true
-  corel: false
-  quantile: false
-  conformal_prediction: false
-  per_bin_eval: false
+temperature_scaling: true     # cheap & effective
+corel: false
+quantile: false
+conformal_prediction: false
+per_bin_eval: false
+outputs:
+save_plots: false
+save_csv: true
+outdir: outputs/calibration_light
 
-# -------------------------
-# Symbolic Ablations
-# -------------------------
+———————––
+
+Symbolic (lean)
+
+———————––
+
 symbolic:
-  nonnegativity: true
-  fft_smoothness: false
-  asymmetry: false
-  photonic_alignment: false
-  violation_weight: 1.0
-  normalize_losses: true
-  trace_outputs: false
+nonnegativity: true
+fft_smoothness: false
+asymmetry: false
+photonic_alignment: false
+violation_weight: 1.0
+normalize_losses: true
+trace_outputs: false
+export_masks: false
 
-# -------------------------
-# Runtime & Training (FAST)
-# -------------------------
+———————––
+
+Runtime & Training (FAST)
+
+———————––
+
 runtime:
-  device: auto               # prefer cpu in CI; your runner can map 'auto' to cpu
-  epochs: 1
-  batch_size: 8
-  mixed_precision: false
-  checkpoint_interval: 0
-  log_interval: 100
-  max_runtime_hours: 1.5
+device: auto                 # prefer cpu in CI; ‘auto’ resolver maps to cpu if no CUDA
+epochs: 1
+batch_size: 8
+mixed_precision: false
+checkpoint_interval: 0
+keep_last_n_checkpoints: 0
+log_interval: 100
+save_best_on: none
+early_stop:
+enable: false
+max_runtime_hours: 1.0
+kaggle_internet_off: true
+seed_reprobarrier: true
 
-# -------------------------
-# Diagnostics Hooks (lean)
-# -------------------------
+———————––
+
+Diagnostics Hooks (lean)
+
+———————––
+
 diagnostics:
-  enable_umap: false
-  enable_tsne: false
-  enable_shap: false
-  enable_symbolic: true
-  enable_fft: true
-  gll_heatmap: true
-  zscore_hist: false
-  export_json: true
-  export_png: true
+enable_umap: false
+enable_tsne: false
+enable_shap: false
+enable_symbolic: true
+enable_fft: true
+enable_cli_heatmaps: false
+gll_heatmap: true
+zscore_hist: false
+shap:
+topk_bins: 0
+overlay_symbolic: false
+export_png: false
+export_json: false
+fft:
+power_spectrum: true
+autocorr: false
+export_png: false
+export_csv: false
+exports:
+export_json: true
+export_png: true
+outdir: outputs/diagnostics_light
+dashboard:
+generate_html: false
 
-# -------------------------
-# Export / Leaderboard
-# -------------------------
+———————––
+
+Export / Leaderboard
+
+———————––
+
 export:
-  html: false
-  markdown: true
-  zip: false
-  leaderboard_top_n: 3
-  open_browser: false
-  outdir: outputs/ablate_light
+html: false
+markdown: true
+zip: false
+leaderboard_top_n: 3
+open_browser: false
+outdir: outputs/ablate_light
+leaderboard:
+md_path: outputs/ablate_light/leaderboard.md
+csv_path: outputs/ablate_light/leaderboard.csv
+include_metrics: [“gll”, “rmse”, “mae”]
+manifest:
+write: true
+path: outputs/ablate_light/manifest.json
+include_hashes: true
 
-# -------------------------
-# Hydra Sweep / Run dirs
-# -------------------------
+———————––
+
+Ablation Engine (auto_ablate_v50)
+
+———————––
+
+ablation:
+enable: true
+top_n: 3
+retries: 0
+metrics:
+- gll
+- l2_smoothness
+export:
+html: false
+markdown: true
+open_html: false
+outdir: outputs/ablate_light
+zip_top_n:
+enable: false
+path: null
+
+———————––
+
+CLI / Logging
+
+———————––
+
+cli:
+enable_guardrails: true
+dry_run: false
+confirm: false
+write_version_on_start: true
+debug_log: logs/v50_debug_log.md
+events_log: logs/v50_event_log.jsonl
+version_banner: true
+
+logging:
+level: INFO
+to_file: true
+file: logs/train_light.log
+mlflow:
+enable: false
+wandb:
+enable: false
+
+———————––
+
+Submission (optional local packaging)
+
+———————––
+
+submission:
+validate: true
+validator:
+gll_threshold: null
+schema_check: true
+bundle:
+enable: true
+out_csv: outputs/submission.csv
+out_zip: outputs/submission_bundle_light.zip
+
+———————––
+
+Hydra Sweep / Run dirs
+
+———————––
+
 hydra:
-  sweep:
-    dir: outputs/multirun_light/${now:%Y-%m-%d}/${now:%H-%M-%S}
-    subdir: ${hydra.job.num}
-  run:
-    dir: outputs/singlerun_light/${now:%Y-%m-%d_%H-%M-%S}
+sweep:
+dir: outputs/multirun_light/${now:%Y-%m-%d}/${now:%H-%M-%S}
+subdir: ${hydra.job.num}
+run:
+dir: outputs/singlerun_light/${now:%Y-%m-%d_%H-%M-%S}
+job:
+chdir: true
+output_subdir: null
+
+———————––
+
+Safety / CI Guards
+
+———————––
+
+safety:
+fail_fast: true
+assert_kaggle_runtime: false
+disk_space_min_gb: 2
+gpu_required: false
+internet_required: false
