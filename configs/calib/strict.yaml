@@ -1,0 +1,109 @@
+# configs/calibration/strict.yaml
+# ================================================================
+# SpectraMind V50 — Calibration Profile (Strict / Full Diagnostics)
+# Purpose: Maximum-fidelity kill chain with deep QA & audit outputs
+# Composes atomic stage configs under configs/calibration/method/*
+# Designed to remain Kaggle-safe (~≤9h) but uses full-precision paths
+# ================================================================
+
+defaults:
+  - method/adc
+  - method/dark
+  - method/flat
+  - method/cds
+  - method/photometry
+  - method/trace
+  - method/phase
+  - method/corel
+
+profile:
+  name: "strict"
+  description: >
+    Full-fidelity calibration chain with expanded diagnostics and
+    strict QA checks. Heavier compute than 'nominal': deeper trace
+    alignment, PSF photometry, finer phase binning, and full COREL
+    coverage evaluation. Emits rich intermediates + audit artifacts.
+  runtime_budget_hours: 9
+  reproducibility: true
+  ci_safe: false            # heavy; not intended for CI smoke runs
+
+diagnostics:
+  enable: true              # write plots, JSON summaries, metrics
+  save_intermediates: true  # persist per-stage products for audit
+  generate_reports: true    # HTML/Markdown summaries
+  failure_on_warnings: false
+
+qa_checks:
+  enable: true
+  # Sanity checks and guards (fail early on physics/shape errors)
+  assert_nonneg_flux: true
+  assert_no_nans: true
+  assert_monotone_wavelength_axis: true
+  assert_fgs1_vs_airs_consistency: true
+  assert_conservation_on_flatfield: true
+
+tuning:
+  # Heavier but still safe for Kaggle end-to-end
+  phase_bins: 400                 # finer than nominal (200)
+  savgol_window: 101              # strong low-freq detrend window
+  savgol_polyorder: 3
+  outlier_sigma_clip: 5           # balanced spike rejection
+  fgs1_weight: 58.0               # preserve metric geometry
+  seed: 42
+
+# Trace extraction/alignment — precise settings
+trace:
+  max_iters: 200                  # deeper iterative alignment
+  subpixel_refine: true           # subpixel centroid/trace refine
+  low_precision: false            # use full precision math
+  envelope_smooth_window: 31
+  cross_corr_window: 128
+  allow_recover_on_divergence: true
+
+# Photometry — PSF fit + richer aperture sweep
+photometry:
+  mode: "aperture_psf_hybrid"     # try PSF fit, fallback to aperture
+  psf_fit: true
+  psf_model: "moffat"             # or "gaussian"; configurable in method file
+  apertures: [1.5, 2.0, 2.5, 3.0, 3.5]
+  sky_annulus: [4.5, 6.0]
+  robust_background: true
+  background_sigma_clip: 3.5
+
+# Phase folding / binning — fine resolution + robust detrending
+phase:
+  bins: ${tuning.phase_bins}
+  detrend:
+    kind: "savgol"
+    window: ${tuning.savgol_window}
+    polyorder: ${tuning.savgol_polyorder}
+  normalize_out_of_transit: true
+  reject_outliers:
+    sigma: ${tuning.outlier_sigma_clip}
+    max_iter: 2
+
+# COREL / uncertainty calibration — full mode with evaluation
+corel:
+  enabled: true
+  mode: "full"                    # full graph/conformal pass
+  target_quantile: 0.98           # stricter coverage target
+  kfolds: 5                       # evaluate stability/coverage
+  eval:
+    save_plots: true
+    save_csv: true
+    per_bin_coverage: true
+    molecule_region_summary: true
+
+# I/O & logging
+logging:
+  log_level: DEBUG
+  outputs_dir: ${hydra:run.dir}/calibration_strict
+  save_intermediates: ${diagnostics.save_intermediates}
+  artifact_manifest: true          # write manifest of all outputs
+
+# Repro hooks (hashes, env, versions)
+repro:
+  record_env: true                 # torch/cuda/numpy/pandas versions
+  record_git_hash: true
+  record_config_hash: true
+  write_manifest_json: true
