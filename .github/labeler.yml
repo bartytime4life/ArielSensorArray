@@ -1,44 +1,296 @@
-# Path-based label rules for actions/labeler@v5
+.github/labeler.yml
 
-# Core code areas
-area:cli:
-  - "src/cli/**"
-  - "spectramind/**"
-area:data:
-  - "data/**"
-  - "datasets/**"
-area:modeling:
-  - "src/model/**"
-  - "src/pipelines/**"
-  - "src/features/**"
-area:physics:
-  - "docs/physics/**"
-  - "references/**"
+—————————————————————————–
 
-# Languages / stacks
-lang:python:
-  - "**/*.py"
-lang:js:
-  - "**/*.js"
-  - "**/*.ts"
-  - "**/*.tsx"
+Path-based label rules for actions/labeler@v5 (upgraded)
 
-# Tooling / CI
-ci:
-  - ".github/workflows/**"
-  - "Makefile"
-  - "Dockerfile"
-deps:
-  - "pyproject.toml"
-  - "poetry.lock"
-  - "package.json"
-  - "package-lock.json"
-  - "requirements*.txt"
+- DRY via anchors, negates common vendor/build dirs
 
-# Docs & tests
-type:docs:
-  - "README.md"
-  - "docs/**"
-  - "**/*.md"
-type:test:
-  - "tests/**"
+- Covers core areas, stacks, tooling, docs/tests, security, notebooks, docker
+
+- Suited for PRs from forks (no checkout required by labeler)
+
+Docs: https://github.com/actions/labeler
+
+—————————————————————————–
+
+––––– Reusable ignore sets ————————————————
+
+_ignores: &ignores
+	•	“!vendor/**”
+	•	“!third_party/**”
+	•	“!.venv/**”
+	•	“!venv/**”
+	•	“!node_modules/**”
+	•	“!dist/**”
+	•	“!build/**”
+	•	“!site/**”          # mkdocs build
+	•	“!outputs/**”
+	•	“!artifacts/**”
+	•	“!.dvc/cache/**”
+
+––––– Core code areas —————————————————–
+
+“area:cli”:
+	•	changed-files:
+	•	any-glob-to-any-file:
+	•	“src/cli/**”
+	•	“spectramind/**”
+	•	*ignores
+
+“area:data”:
+	•	changed-files:
+	•	any-glob-to-any-file:
+	•	“data/**”
+	•	“datasets/**”
+	•	“src/data/**”
+	•	*ignores
+
+“area:modeling”:
+	•	changed-files:
+	•	any-glob-to-any-file:
+	•	“src/model/**”
+	•	“src/models/**”
+	•	“src/pipelines/**”
+	•	“src/features/**”
+	•	“src/encoders/**”
+	•	“src/decoders/**”
+	•	*ignores
+
+“area:diagnostics”:
+	•	changed-files:
+	•	any-glob-to-any-file:
+	•	“src/diagnostics/**”
+	•	“src/visualization/**”
+	•	“src/plots/**”
+	•	*ignores
+
+“area:physics”:
+	•	changed-files:
+	•	any-glob-to-any-file:
+	•	“docs/physics/**”
+	•	“references/**”
+	•	*ignores
+
+––––– Languages / stacks –––––––––––––––––––––––––
+
+“lang:python”:
+	•	changed-files:
+	•	any-glob-to-any-file:
+	•	“**/*.py”
+	•	“**/*.pyi”
+	•	*ignores
+
+“lang:js”:
+	•	changed-files:
+	•	any-glob-to-any-file:
+	•	“**/*.js”
+	•	“**/*.cjs”
+	•	“**/*.mjs”
+	•	“**/*.ts”
+	•	“**/*.tsx”
+	•	*ignores
+
+“lang:docker”:
+	•	changed-files:
+	•	any-glob-to-any-file:
+	•	“Dockerfile”
+	•	“docker/**”
+	•	“**/*.dockerfile”
+	•	*ignores
+
+“lang:yaml”:
+	•	changed-files:
+	•	any-glob-to-any-file:
+	•	“**/*.yml”
+	•	“**/*.yaml”
+	•	*ignores
+
+“lang:markdown”:
+	•	changed-files:
+	•	any-glob-to-any-file:
+	•	“**/*.md”
+	•	“/.mdx”
+	•	*ignores
+
+“lang:make”:
+	•	changed-files:
+	•	any-glob-to-any-file:
+	•	“Makefile”
+	•	“**/*.mk”
+	•	*ignores
+
+––––– Tooling / CI / Security ––––––––––––––––––––––
+
+“ci”:
+	•	changed-files:
+	•	any-glob-to-any-file:
+	•	“.github/workflows/**”
+	•	“.github/actions/**”
+	•	“Makefile”
+	•	“Taskfile.yml”
+	•	*ignores
+
+“deps”:
+	•	changed-files:
+	•	any-glob-to-any-file:
+	•	“pyproject.toml”
+	•	“poetry.lock”
+	•	“requirements*.txt”
+	•	“requirements/**”
+	•	“package.json”
+	•	“package-lock.json”
+	•	“pnpm-lock.yaml”
+	•	“yarn.lock”
+	•	*ignores
+
+“security”:
+	•	changed-files:
+	•	any-glob-to-any-file:
+	•	“.github/workflows/codeql*”
+	•	“.github/workflows/codeql”
+	•	“.github/codeql/**”
+	•	“SECURITY.md”
+	•	“.github/SECURITY*”
+	•	“.github/dependabot.yml”
+	•	“.github/renovate*”
+	•	“licenses”
+	•	“LICENSE*”
+	•	*ignores
+
+“container:build”:
+	•	changed-files:
+	•	any-glob-to-any-file:
+	•	“Dockerfile”
+	•	“docker/**”
+	•	“.dockerignore”
+	•	*ignores
+
+“lint”:
+	•	changed-files:
+	•	any-glob-to-any-file:
+	•	“.pre-commit-config.yaml”
+	•	“.ruff.toml”
+	•	“ruff.toml”
+	•	“pyproject.toml”     # ruff/black/isort often configured here
+	•	“.flake8”
+	•	“.editorconfig”
+	•	*ignores
+
+––––– Docs & tests & notebooks —————————————––
+
+“type:docs”:
+	•	changed-files:
+	•	any-glob-to-any-file:
+	•	“README.md”
+	•	“docs/**”
+	•	“mkdocs.yml”
+	•	“**/*.md”
+	•	“**/*.mdx”
+	•	“docs_site/**”
+	•	*ignores
+
+“type:test”:
+	•	changed-files:
+	•	any-glob-to-any-file:
+	•	“tests/**”
+	•	“**/test_*.py”
+	•	“**/*_test.py”
+	•	“.github/workflows/test*.yml”
+	•	*ignores
+
+“type:notebook”:
+	•	changed-files:
+	•	any-glob-to-any-file:
+	•	“notebooks/**”
+	•	“**/*.ipynb”
+	•	“/.ipynb”
+	•	*ignores
+
+––––– Config / CLI surface / schemas ———————————––
+
+“type:cli-surface”:
+	•	changed-files:
+	•	any-glob-to-any-file:
+	•	“src/cli/**”
+	•	“**/cli_*.py”
+	•	“**/*cli.py”
+	•	*ignores
+
+“type:config”:
+	•	changed-files:
+	•	any-glob-to-any-file:
+	•	“configs/**”
+	•	“**/*.conf”
+	•	“**/*.ini”
+	•	“**/*.toml”
+	•	“**/*.json”
+	•	“**/*.yaml”
+	•	“**/*.yml”
+	•	*ignores
+
+“type:schema”:
+	•	changed-files:
+	•	any-glob-to-any-file:
+	•	“**/schema.{json,yml,yaml}”
+	•	“/schemas/”
+	•	*ignores
+
+––––– Repo meta ———————————————————–
+
+“repo:meta”:
+	•	changed-files:
+	•	any-glob-to-any-file:
+	•	“.github/ISSUE_TEMPLATE/**”
+	•	“.github/PULL_REQUEST_TEMPLATE*”
+	•	“.github/CODEOWNERS”
+	•	“.gitignore”
+	•	“.gitattributes”
+	•	“CODE_OF_CONDUCT.md”
+	•	“CONTRIBUTING.md”
+	•	*ignores
+
+“area:docs-site”:
+	•	changed-files:
+	•	any-glob-to-any-file:
+	•	“mkdocs.yml”
+	•	“docs/assets/**”
+	•	“docs/styles/**”
+	•	*ignores
+
+––––– Monorepo-friendly (optional; keep if you adopt packages/*) ———
+
+“area:pkg”:
+	•	changed-files:
+	•	any-glob-to-any-file:
+	•	“packages/*/**”
+	•	“libs/*/**”
+	•	*ignores
+
+––––– Kaggle / DVC integration —————————————––
+
+“area:kaggle”:
+	•	changed-files:
+	•	any-glob-to-any-file:
+	•	“notebooks/kaggle/**”
+	•	“.github/workflows/kaggle*.yml”
+	•	“kaggle.md”
+	•	*ignores
+
+“area:dvc”:
+	•	changed-files:
+	•	any-glob-to-any-file:
+	•	“.dvc/**”
+	•	“dvc.yaml”
+	•	“dvc.lock”
+	•	*ignores
+
+––––– Performance profiling / dashboards ———————————
+
+“area:dashboards”:
+	•	changed-files:
+	•	any-glob-to-any-file:
+	•	“dashboards/**”
+	•	“reports/**”
+	•	“report.md”
+	•	*ignores
