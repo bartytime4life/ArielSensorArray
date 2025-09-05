@@ -1,0 +1,23 @@
+# ==============================================================================
+# ⚙️ DataLoader Workers — Test / Inference
+# ------------------------------------------------------------------------------
+# Purpose
+#   • Configure number of worker threads for test/inference dataloaders.
+#   • Test is read-once and throughput-sensitive for Kaggle submission runs.
+# ==============================================================================
+
+num_workers: 2   # safe Kaggle default; scale up for HPC inference
+
+# ------------------------------------------------------------------------------
+# Notes
+# ------------------------------------------------------------------------------
+# • Test loader is read-once → reproducibility less critical.
+# • Use 2 for Kaggle GPU runs (stable + efficient).
+# • Use 8–16 for HPC inference sweeps if hardware allows.
+# • If debugging submission packaging, set to 0 for determinism.
+# ==============================================================================
+notes: |
+  Test dataloader workers.
+  • Throughput-focused but still safe on Kaggle.
+  • For large HPC inference, tune higher.
+  • For audit runs, use 0 for strict reproducibility.
