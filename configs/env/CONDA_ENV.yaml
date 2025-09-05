@@ -47,21 +47,23 @@ dependencies:
   - wheel
 
   # --- Numerical / Data ---
-  - numpy
-  - pandas
-  - scipy
-  - pyarrow            # fast parquet/arrow IO
+  - numpy=1.26
+  - pandas=2.2
+  - scipy=1.13
+  - pyarrow
   - fastparquet
+  - polars>=1.5
 
   # --- Visualization ---
-  - matplotlib
-  - seaborn
-  - graphviz           # system libs
-  - python-graphviz    # Python bindings
+  - matplotlib=3.9
+  - seaborn=0.13
+  - graphviz
+  - python-graphviz
   - tqdm
+  - plotly=5.22
 
   # --- ML / Graph / Utils ---
-  - scikit-learn
+  - scikit-learn=1.5
   - networkx
 
   # --- Jupyter / Notebooks ---
@@ -71,11 +73,11 @@ dependencies:
   - ipywidgets
 
   # --- PyTorch (GPU by default) ---
-  - pytorch::pytorch
+  - pytorch::pytorch=2.4
   - pytorch::torchvision
   - pytorch::torchaudio
-  - pytorch-cuda=12.1     # GPU toolchain; change to `cpuonly` for CPU envs (see header)
-  - cudnn                 # remove for CPU-only
+  - pytorch-cuda=12.1
+  - cudnn
 
   # --- Lint / QA / Test ---
   - pre-commit
@@ -85,6 +87,7 @@ dependencies:
   - mypy
   - pytest
   - pytest-cov
+  - bandit
 
   # --- Docs toolchain (optional; used by docs workflows) ---
   - mkdocs
@@ -127,33 +130,25 @@ dependencies:
   - pip:
       - shap>=0.45
       - umap-learn>=0.5
-      - plotly>=5.22
 
   # --- (Optional) PyTorch Geometric stack ------------------------------------
-  # NOTE:
-  #  • These wheels depend on your exact torch + CUDA combo.
-  #  • For CUDA 12.1 + torch 2.4.* you can use the cu121 indexes below.
-  #  • If you change torch/CUDA versions, update the -f links accordingly.
   - pip:
-      # core metapackage
       - torch-geometric>=2.5
-      # low-level deps (match your torch/cuda build)
       - torch-scatter -f https://data.pyg.org/whl/torch-2.4.0+cu121.html
       - torch-sparse  -f https://data.pyg.org/whl/torch-2.4.0+cu121.html
       - torch-cluster -f https://data.pyg.org/whl/torch-2.4.0+cu121.html
       - torch-spline-conv -f https://data.pyg.org/whl/torch-2.4.0+cu121.html
 
-  # --- (Optional) HF ecosystem commonly used in V50 toolchain -----------------
+  # --- (Optional) HF ecosystem used in V50 -----------------------------------
   - pip:
       - transformers>=4.42
       - accelerate>=0.32
       - datasets>=2.20
       - huggingface_hub>=0.23
       - peft>=0.11
-      # uncomment if you plan to quantize large models locally
       # - bitsandbytes>=0.43
 
-  # --- Install local project in editable mode (PEP 517) ---
+  # --- Install local project in editable mode ---
   - pip:
       - -e .
 
@@ -162,14 +157,14 @@ variables:
   HYDRA_FULL_ERROR: "1"
   TRANSFORMERS_CACHE: "/workspace/.hf_cache"
   HF_HOME: "/workspace/.hf_cache"
-  MPLBACKEND: "Agg"                  # safe headless matplotlib default
+  MPLBACKEND: "Agg"
 
 # --- Notes --------------------------------------------------------------------
 # • CUDA Match: Ensure your host has a compatible NVIDIA driver for CUDA 12.1.
-# • CPU/Kaggle: If you use CPU-only runners or Kaggle CPU images:
+# • CPU/Kaggle: For CPU-only runners or Kaggle CPU images:
 #     - swap `pytorch-cuda=12.1` -> `cpuonly` and remove `cudnn`
 #     - remove/ignore the PyG CUDA wheel links or switch to CPU builds
-# • Post-activation (recommended):
+# • Post-activation:
 #     pre-commit install -t pre-commit -t pre-push
 #     pytest -q
 #     spectramind --help
