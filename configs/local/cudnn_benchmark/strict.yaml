@@ -1,0 +1,13 @@
+# ==============================================================================
+# 🔒 cuDNN Autotune — Strict Reproducible Mode
+# ------------------------------------------------------------------------------
+# Purpose:
+#   • Disable autotune to enforce determinism.
+#   • Layer this with deterministic=true for audits.
+# ==============================================================================
+
+cudnn_benchmark: false
+
+notes: |
+  Strict reproducibility: cuDNN autotune disabled.
+  Use with local/precision/strict_deterministic.yaml to fully lock kernel choices.
