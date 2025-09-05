@@ -1,0 +1,15 @@
+# ==============================================================================
+# 🚀 Precision — BF16 Automatic Mixed Precision (AMP)
+# ------------------------------------------------------------------------------
+# Purpose:
+#   • Preferred on A100/H100-class GPUs.
+#   • Wider exponent range than FP16 → fewer overflows, stable training.
+# ==============================================================================
+
+precision: bf16-mixed
+deterministic: true
+cudnn_benchmark: true
+
+notes: |
+  BF16 AMP: robust mixed precision with excellent stability on Ampere/Hopper.
+  Recommended for A100/H100 clusters and modern cloud/HPC nodes.
