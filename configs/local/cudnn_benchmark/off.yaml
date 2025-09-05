@@ -1,0 +1,13 @@
+# ==============================================================================
+# 🚫 cuDNN Autotune — Disabled
+# ------------------------------------------------------------------------------
+# Purpose:
+#   • Deterministic execution (no kernel search).
+#   • Good for reproducibility and debugging.
+# ==============================================================================
+
+cudnn_benchmark: false
+
+notes: |
+  cuDNN autotuner disabled: fixed kernel selection, fully reproducible.
+  Slower for varying input shapes, but guarantees stable kernel choice.
