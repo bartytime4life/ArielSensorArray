@@ -1,31 +1,28 @@
-# 🏗️ `.github/` Architecture — SpectraMind V50
+🏗️ .github/ Architecture — SpectraMind V50 (Upgraded)
 
-This document is the **source-of-truth architecture** for everything under the `.github/` directory:  
-workflows (CI/CD), issue/PR governance, review automation, and security/compliance.  
-It codifies **NASA-grade reproducibility** and **CLI-first** operation for the NeurIPS 2025 Ariel Data Challenge [oai_citation:0‡SpectraMind V50 Technical Plan for the NeurIPS 2025 Ariel Data Challenge.pdf](file-service://file-6PdU5f5knreHjmSdSauj3w) [oai_citation:1‡SpectraMind V50 Project Analysis (NeurIPS 2025 Ariel Data Challenge).pdf](file-service://file-QRDy8Xn69XgxEjZgtZZ8FK).
+This is the source-of-truth for everything under .github/: CI/CD workflows, issue/PR governance, review automation, and security/compliance guardrails. It encodes NASA-grade reproducibility and CLI-first operation for the NeurIPS 2025 Ariel Data Challenge.
 
----
+⸻
 
-## 0) Design Goals
+0) Design Goals
+	•	Reproducibility First — every result reconstructable from CLI → Hydra config → run hash → DVC artifact.
+	•	CI as Pre-Flight — treat the pipeline like flight hardware: selftest, consistency checks, smoke E2E on every PR.
+	•	Kaggle-Aware Discipline — enforce ≤ 9 h GPU budget, deterministic seeds where feasible, explicit perf variance tracking.
+	•	Security & Least Privilege — minimal GITHUB_TOKEN scopes, pinned actions, secret hygiene, container/image scanning.
 
-- **Reproducibility First** — every run is reconstructable from **CLI → Hydra config → run hash → DVC artifact** [oai_citation:2‡Hydra for AI Projects: A Comprehensive Guide.pdf](file-service://file-MpHwv9Z1E3qqzGXaQ3agpL) [oai_citation:3‡SpectraMind V50 Technical Plan for the NeurIPS 2025 Ariel Data Challenge.pdf](file-service://file-6PdU5f5knreHjmSdSauj3w)  
-- **CI as Pre-Flight** — treat pipeline like a flight instrument: **selftest**, **consistency checks**, **smoke E2E** on each PR [oai_citation:4‡SpectraMind V50 Technical Plan for the NeurIPS 2025 Ariel Data Challenge.pdf](file-service://file-6PdU5f5knreHjmSdSauj3w)  
-- **Kaggle-aware Discipline** — enforce ≤9h GPU budget and deterministic seeds where possible [oai_citation:5‡Kaggle Platform: Comprehensive Technical Guide.pdf](file-service://file-CrgG895i84phyLsyW9FQgf)  
-- **Security & Least Privilege** — minimal GITHUB_TOKEN perms, pinned actions, secret hygiene [oai_citation:6‡Radiation: A Comprehensive Technical Reference.pdf](file-service://file-Ta3DQ7U5AXfZBw4jAecJfL)
+⸻
 
----
+1) Directory Map (contract)
 
-## 1) Directory Map (contract)
-
-```text
 .github/
-├─ README.md                          # Meta & governance (what this folder is)
-├─ ARCHITECTURE.md                    # ← You are here (wiring & policies)
-├─ CODEOWNERS                         # Auto-review routing by path
-├─ CONTRIBUTING.md                    # Contributor rules, local dev, style, tests
-├─ SECURITY.md                        # Coordinated disclosure policy & contacts
-├─ SUPPORT.md                         # Support channels & triage pathways
-├─ PULL_REQUEST_TEMPLATE.md           # Author-side reproducibility checklist
+├─ README.md                         # Meta & governance (what this folder is)
+├─ ARCHITECTURE.md                   # ← You are here (wiring & policies)
+├─ CODEOWNERS                        # Auto-review routing by path
+├─ CONTRIBUTING.md                   # Contributor rules, local dev, style, tests
+├─ SECURITY.md                       # Coordinated disclosure & contacts
+├─ SUPPORT.md                        # Support channels & triage pathways
+├─ PULL_REQUEST_TEMPLATE.md          # Author-side reproducibility checklist
+├─ REVIEW_CHECKLIST.md               # One-pager triage table (for reviewers)
 ├─ ISSUE_TEMPLATE/
 │  ├─ bug_report.yml
 │  ├─ feature_request.yml
@@ -35,81 +32,80 @@ It codifies **NASA-grade reproducibility** and **CLI-first** operation for the N
 │  ├─ config_update.yml
 │  ├─ task_tracking.yml
 │  └─ README.md
-├─ workflows/
-│  ├─ ci.yml
-│  ├─ tests.yml
-│  ├─ diagnostics.yml
-│  ├─ ci-dashboard.yml
-│  ├─ submission.yml
-│  ├─ kaggle-submit.yml
-│  ├─ hash-check.yml
-│  ├─ docs.yml
-│  ├─ pages.yml
-│  ├─ lint.yml
-│  ├─ bandit.yml
-│  ├─ codeql.yml
-│  ├─ pip-audit.yml
-│  ├─ docker-trivy.yml
-│  ├─ hadolint.yml
-│  ├─ artifact-sweeper.yml
-│  ├─ benchmark.yml
-│  ├─ pr-title-lint.yml
-│  ├─ labeler.yml
-│  └─ pr-review-checklist.yml         # Auto-comment Quick Triage table
-└─ REVIEW_CHECKLIST.md                # One-pager triage table (for reviewers)
+└─ workflows/
+   ├─ ci.yml                         # build + quick smoke
+   ├─ tests.yml                      # unit/integration matrix
+   ├─ diagnostics.yml                # artifacts: GLL heatmap, FFT/UMAP/t-SNE, symbolic overlays
+   ├─ ci-dashboard.yml               # job summary → CI_DASHBOARD.md
+   ├─ submission.yml                 # pack + validate (manual or tag)
+   ├─ kaggle-submit.yml              # guarded dispatch for leaderboard
+   ├─ hash-check.yml                 # config composition + DVC pointer integrity
+   ├─ docs.yml                       # docs build (MkDocs/Pages bundle)
+   ├─ pages.yml                      # publish docs/diagnostics preview
+   ├─ lint.yml                       # ruff/black/isort/markdownlint/yamllint
+   ├─ bandit.yml                     # python SAST
+   ├─ codeql.yml                     # code scanning
+   ├─ pip-audit.yml                  # Python vuln scan
+   ├─ docker-trivy.yml               # image/package scan
+   ├─ hadolint.yml                   # Dockerfile lint
+   ├─ artifact-sweeper.yml           # storage hygiene
+   ├─ benchmark.yml                  # perf drift (≤ 9 h guard)
+   ├─ pr-title-lint.yml              # Conventional PR titles
+   ├─ labeler.yml                    # path-based labels
+   └─ pr-review-checklist.yml        # bot triage table (idempotent comment)
 
-🔗 Companion docs:
-	•	Workflows/README & architecture — job-by-job details
-	•	Issue templates/architecture — template intent & triage flow
-	•	PR templates & review guide — author/reviewer responsibilities
+Companion docs
+	•	workflows/README.md — job-by-job details & required checks
+	•	ISSUE_TEMPLATE/README.md — template intent and triage flow
+	•	PULL_REQUEST_TEMPLATE.md + REVIEW_CHECKLIST.md — author/reviewer contracts
 
 ⸻
 
 2) Workflow Architecture
 
-2.1 Execution graph (high-level)
+2.1 High-level execution graph
 
-PR opened/sync
-   ├─ ci.yml (build + unit smoke) ─┬─ tests.yml (matrix) ─┬─ diagnostics.yml
-   │                               │                     └─ ci-dashboard.yml → pages.yml
-   ├─ lint.yml / bandit.yml / codeql.yml / pip-audit.yml / hadolint.yml / docker-trivy.yml
-   ├─ hash-check.yml (config hashes, DVC pointers) [oai_citation:7‡SpectraMind V50 Technical Plan for the NeurIPS 2025 Ariel Data Challenge.pdf](file-service://file-6PdU5f5knreHjmSdSauj3w)
-   └─ pr-review-checklist.yml (bot comment with triage table)
+PR opened/synchronized
+	•	ci.yml (build + import + quick smoke)
+	•	tests.yml (matrix: unit/integration)
+	•	diagnostics.yml (plots/artifacts) → ci-dashboard.yml → pages.yml (preview)
+	•	Static/security: lint.yml, bandit.yml, codeql.yml, pip-audit.yml, hadolint.yml, docker-trivy.yml
+	•	Integrity: hash-check.yml (Hydra/DVC/run-hash)
+	•	Reviewer assist: pr-review-checklist.yml (single auto-updated comment)
 
-Tag / release / manual:
-   ├─ submission.yml (pack + validate)
-   └─ kaggle-submit.yml (guarded, manual-only)
+Tag / release / manual dispatch
+	•	submission.yml (pack + validate)
+	•	kaggle-submit.yml (guarded manual submit; no-internet runtime parity)
 
-2.2 Minimal Permissions
+2.2 Minimal permissions (least privilege)
 
-Every workflow specifies:
+Every workflow declares the narrowest scopes it needs:
 
 permissions:
   contents: read
-  pull-requests: write    # only if commenting is required
-  security-events: write  # only for code scanning jobs
-  id-token: write         # only for OIDC publish steps
+  pull-requests: write        # only if commenting
+  issues: write               # only if posting issue comments
+  security-events: write      # only for code scanning upload
+  id-token: write             # only for OIDC-based publish
 
-Why? Principle of least privilege reduces blast radius ￼.
+Action pins are commit-SHA locked; marketplace tags are not allowed.
 
-2.3 Concurrency Guards
-
-All long-running workflows use:
+2.3 Concurrency guards
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-Prevents duplicate runners on rapid pushes.
+Prevents duplicate runners on rapid force-pushes.
 
-2.4 Required Checks (branch protection)
+2.4 Required checks (branch protection)
 
-Main requires the following to merge:
-	•	ci / build green (sets up env, imports, quick smoke)
-	•	tests / unit+integration green (matrix as defined)
-	•	lint + bandit + codeql + pip-audit green
-	•	hash-check green (Hydra/DVC config integrity) ￼
-	•	(optional) diagnostics artifacts uploaded for reviewer inspection
+Merges to main require:
+	•	Build (ci.yml)
+	•	Tests (tests.yml matrix)
+	•	Static/Security (lint, bandit, codeql, pip-audit, hadolint, docker-trivy)
+	•	Integrity (hash-check.yml)
+	•	(Optional) Diagnostics artifacts attached for reviewer inspection
 
 ⸻
 
@@ -117,102 +113,100 @@ Main requires the following to merge:
 
 3.1 Issues (YAML forms)
 
-Each template enforces complete repro context. Examples:
-	•	Bug report requires: exact spectramind CLI, config hash, log excerpt, environment ￼
-	•	Feature request requires: CLI mapping + Hydra config changes + artifacts/logging plan ￼
-	•	Performance issue requires: metrics table, variance, hardware & seeds (Kaggle-aware) ￼
-	•	Security report: safe/dry-run repro, no secrets, mitigation & acceptance criteria ￼
+Each template forces repro context:
+	•	Bug — exact spectramind ... CLI, Hydra overrides, config/run hash, environment, log excerpt.
+	•	Feature — CLI mapping, Hydra diffs, data/artifact lineage plan, validation metrics to be added.
+	•	Performance — metrics table (baseline vs PR), hardware, seeds, variance bounds, Kaggle budget.
+	•	Security — safe/dry-run PoC, affected surface, impact, suggested mitigation & acceptance criteria.
+	•	Config update — explicit Hydra group/override changes; update hash-check baselines.
 
 3.2 PRs
-	•	Author must use PULL_REQUEST_TEMPLATE.md (CLI commands, Hydra diffs, DVC stages, run hash) ￼
-	•	Reviewer uses REVIEW_CHECKLIST.md + full Review Guide; bot posts triage table on every PR
-	•	Auto-update triage: .github/workflows/pr-review-checklist.yml updates a single comment via marker
+	•	Authors must include: copy-pasteable CLI, Hydra diffs, DVC stage updates, run hash, plots, runtime numbers, risk notes.
+	•	Reviewers use: REVIEW_CHECKLIST.md + full Review Guide.
+The bot (pr-review-checklist.yml) posts an idempotent triage comment updated on every sync, edit, label change, or draft toggle.
 
 ⸻
 
 4) CI/CD Contracts
 
 4.1 Reproducibility loop
-	•	CLI-first: all jobs shell out to spectramind subcommands ￼
-	•	Hydra logging: config composition is saved + hashed per run ￼
-	•	DVC discipline: large artifacts tracked/versioned, no binaries in Git ￼
-	•	Run hash: emitted to logs/v50_debug_log.md and linked in PR
+	•	CLI-first: jobs shell out to spectramind subcommands (no notebook-only logic).
+	•	Hydra logging: config composition captured & hashed; diff visible in PR.
+	•	DVC discipline: large artifacts versioned; no model binaries in Git.
+	•	Run hash: emitted to logs/v50_debug_log.md; linked in PR body and CI summary.
 
 4.2 Diagnostics & Dashboard
-	•	diagnostics.yml produces GLL heatmaps, FFT/UMAP/t-SNE, symbolic overlays, attaches as artifacts ￼ ￼
-	•	ci-dashboard.yml bundles HTML dashboard; pages.yml can publish preview
+	•	diagnostics.yml renders: GLL heatmap, FFT/UMAP/t-SNE, symbolic/physics overlays, calibration checks.
+	•	ci-dashboard.yml builds a Markdown/HTML summary (status tiles, last runtimes, perf deltas).
+pages.yml can publish a preview (PR-scoped) when docs flag is set.
 
 4.3 Kaggle-aware constraints
-	•	Enforce aggregate runtime budget (≤9h for ~1100 planets) and deterministic seeds where feasible ￼
-	•	benchmark.yml tracks drift; perf regressions block merge until justified
+	•	Enforce ≤ 9 h aggregate GPU budget (w/ seed determinism where feasible).
+	•	benchmark.yml detects perf drift; significant slowdowns block merge unless justified.
 
 ⸻
 
 5) Security Architecture
-	•	Action pinning: all third-party actions pinned to a commit SHA
-	•	Secret hygiene: no secrets in repo; use environment-protected secrets for deploy; bots must not echo secrets
-	•	Scanning suite: bandit, codeql, pip-audit, docker-trivy, hadolint run on PRs
-	•	Disclosure: SECURITY.md + security_report.yml for coordinated, responsible reporting ￼
+	•	Action pinning — all third-party actions are pinned to commit SHAs.
+	•	Secret hygiene — secrets never echoed; environment protections enforced; no secrets in PR artifacts.
+	•	Scanning suite — bandit, codeql, pip-audit, docker-trivy, hadolint run on PRs and daily on main.
+	•	Disclosure — SECURITY.md + security_report.yml for coordinated reporting; 72 h acknowledgement, triage & advisory flow.
+	•	Permissions audits — quarterly review of workflow scopes & environment rules.
 
 ⸻
 
 6) Automation Inventory
 
 Automation	Purpose	Trigger
-pr-review-checklist.yml	Auto-comment reviewer triage table; updates in place	PR open/sync/label
-Labeler + PR title lint	Apply area labels, enforce conventional titles	PR opened/edited
-Artifact sweeper	Clean aged artifacts (reduce storage costs)	Scheduled (weekly)
-Docs + Pages	Build docs & publish dashboard bundle (preview)	PR/docs changes / manual
+pr-review-checklist.yml	Auto-comment reviewer triage (updates in place)	PR open/sync/edit/label
+labeler.yml	Path-based labels (areas, stacks, CI, docs/tests)	PR opened/sync
+pr-title-lint.yml	Conventional title enforcement	PR opened/edited
+artifact-sweeper.yml	Clean aged artifacts (cost control)	Scheduled (weekly)
+docs.yml → pages.yml	Build docs & diagnostics preview	PR docs/diag changes
+ci-dashboard.yml	Job status → CI dashboard	On workflow completions
+benchmark.yml	Track perf drift vs baseline	Nightly + PR (heavy labels)
 
 
 ⸻
 
 7) CODEOWNERS & Review Routing
 
-Use path-based ownership to auto-request reviews:
+Keep ownership minimal but complete to avoid orphans:
 
 # Models & training
-/src/models/        @team-ml
-/src/training/      @team-ml
+/src/models/            @team-ml
+/src/training/          @team-ml
 
 # Diagnostics, dashboard
-/tools/             @team-dx
+/tools/                 @team-dx
 
 # CI/Infra
-/.github/           @team-infra
+/.github/               @team-infra
 
 # Configs
-/configs/           @team-ml @team-infra
+/configs/               @team-ml @team-infra
 
-Keep ownership minimal but complete to avoid orphaned changes.
 
 ⸻
 
 8) Maintenance & SRE Playbook
-	•	Action refresh: quarterly validate pinned SHAs & major updates
-	•	Permissions audit: quarterly review workflow permissions & env protections
-	•	Required checks: adjust only via PR + approval from @team-infra
-	•	Incident: if CI outage, set temporary label ci-bypass-approved with link to incident doc; remove within 24h
+	•	Action refresh — quarterly validate pinned SHAs; review release notes for breaking changes.
+	•	Permissions audit — quarterly review workflow permissions + environment protections.
+	•	Required checks — change only via PR; approval from @team-infra required.
+	•	Incident mode — if CI outage, apply temporary label ci-bypass-approved with incident link; remove within 24 h.
 
 ⸻
 
-9) Author/Reviewer Contracts (TL;DR)
-	•	Authors: Provide copy-pasteable CLI, Hydra diffs, DVC stage updates, run hash, plots, runtime numbers ￼ ￼
-	•	Reviewers: Block merges lacking repro, metrics/plots, Kaggle budget compliance, or with security red flags ￼ ￼
+9) Author / Reviewer TL;DR
+	•	Authors: submit exact CLI, Hydra diffs, DVC stage updates, run hash, plots, runtime; call out breaking changes, migrations, and risk mitigations.
+	•	Reviewers: block merges lacking repro, metrics/plots, Kaggle budget compliance, or with security red flags.
 
 ⸻
 
-10) References
-	•	SpectraMind V50 Technical Plan — CLI-first, Hydra, DVC, CI guardrails ￼
-	•	SpectraMind V50 Project Analysis — repo structure & reproducibility audit ￼
-	•	Hydra for AI Projects — composition, overrides, config hashing ￼
-	•	Kaggle Platform Guide — runtime/leaderboard constraints & environment model ￼
-	•	Physics/Spectroscopy refs — scientific integrity & symbolic/physics checks ￼ ￼
+10) Implementation Notes (how to keep this real)
+	•	Hash & integrity: hash-check.yml recomputes config composition hashes, verifies DVC pointers and expected files; PR must update baselines intentionally.
+	•	Pinned runners: self-hosted or ubuntu-latest with explicit toolchain versions (Python, Poetry, CUDA) reproducibly installed via setup steps.
+	•	Determinism: CI injects seeds via env; reports per-seed variance; regression gates compare medians & 95% CI.
+	•	Notebook parity: submission workflows re-use the same library entrypoints; Kaggle kernels are thin wrappers calling spectramind commands; no internet.
 
 ⸻
-
-Mission Reminder
-
-CI is pre-flight.
-Only reproducible, validated, secure, and Kaggle-compliant changes fly.
-
