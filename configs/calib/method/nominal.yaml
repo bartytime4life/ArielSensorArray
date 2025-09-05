@@ -1,0 +1,87 @@
+# ==============================================================================
+# 🌌 Nominal Calibration — Method Config (v1.3)
+# ------------------------------------------------------------------------------
+# Purpose
+#   Default, leaderboard-safe calibration chain for Ariel Challenge runs.
+#   Balanced between runtime (≤ 9h Kaggle GPU) and scientific fidelity.
+#   Applies full ADC → dark → flat → CDS → photometry → trace → phase chain,
+#   with medium binning and robust detrending.
+#
+# Usage (Hydra-style)
+#   spectramind calibrate +calib/method=nominal
+# ==============================================================================
+
+# --- ADC (Analog-to-Digital Conversion) ---
+adc:
+  enabled: true
+  offset:
+    method: per_channel          # correct offsets per detector channel
+    table_path: data/calib/adc/offsets_nominal.npy
+  gain:
+    method: prnu                  # Pixel Response Non-Uniformity gain correction
+    table_path: data/calib/adc/gain_nominal.npy
+  linearization:
+    method: lut                   # response LUT linearization
+    lut_path: data/calib/adc/lin_lut_nominal.npy
+  overscan:
+    enabled: true                 # use overscan regions for bias drift
+    regions:
+      A: {y: [0,2047], x: [2048,2095]}
+      B: {y: [0,2047], x: [2096,2143]}
+
+# --- Dark Current Correction ---
+dark:
+  enabled: true
+  master_dark_path: data/calib/dark/master_dark_nominal.fits
+  scaling: exposure_time          # scale dark by integration time
+
+# --- Flat-Field Correction ---
+flat:
+  enabled: true
+  master_flat_path: data/calib/flat/master_flat_nominal.fits
+  method: normalized_division     # normalize then divide raw frames
+
+# --- Correlated Double Sampling (CDS) ---
+cds:
+  enabled: true
+  method: difference_pairs        # subtract consecutive reads
+  robust: true                    # reject cosmic-ray spikes
+
+# --- Photometry Extraction ---
+photometry:
+  aperture:
+    type: circular
+    radius: 12                    # medium radius for nominal balance
+  background:
+    method: annulus
+    inner_radius: 15
+    outer_radius: 20
+  detrending:
+    method: savgol                # Savitzky–Golay filter
+    window: 101
+    polyorder: 3
+  normalization:
+    method: baseline_out_of_transit
+
+# --- Trace Extraction (Spectrometer) ---
+trace:
+  extraction: sum_columns         # sum spatial pixels along trace
+  jitter_correction: fgs1_align   # align AIRS using FGS1 photometry
+  cosmic_ray_reject: sigma_clip
+  sigma_clip:
+    sigma: 5.0
+    max_iters: 3
+
+# --- Phase Folding & Binning ---
+phase:
+  method: uniform
+  bins: 200                       # balanced bin count (nominal setting)
+  fold_ephemeris: true
+  jitter_residual_correction: true
+
+# --- COREL Calibration (optional, post-processing) ---
+corel:
+  enabled: true
+  method: binwise_conformal
+  coverage_target: 0.68
+  per_bin_csv_out: outputs/corel_nominal.csv
