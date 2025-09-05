@@ -1,0 +1,146 @@
+# ==============================================================================
+# configs/env/docker.yaml — Dockerized Runtime Environment (SpectraMind V50)
+# ------------------------------------------------------------------------------
+# Purpose
+#   Defines containerized runtime environment for SpectraMind V50.
+#   Provides mission-grade reproducibility across local, CI, and Kaggle:
+#     - Docker image as portable, frozen environment
+#     - Pinned Python + CUDA versions
+#     - Poetry lockfile for dependencies
+#     - Deterministic runs aligned with MCP standards
+#
+# Usage
+#   # Build container
+#   docker build -t spectramind:v50 -f docker/Dockerfile .
+#
+#   # Run inside container
+#   docker run --gpus all -it --rm -v $(pwd):/workspace spectramind:v50 \
+#     spectramind train +env=docker
+#
+# Notes
+#   - Mirrors `default.yaml` with containerization overrides
+#   - Built images can be archived in GitHub Container Registry for long-term use
+# ==============================================================================
+
+# ----------------------------
+# Base Inheritance
+# ----------------------------
+defaults:
+  - override /env: default
+
+# ----------------------------
+# Docker Environment Settings
+# ----------------------------
+docker:
+  enabled: true
+  base_image: "nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04"
+  maintainer: "SpectraMind V50 Team"
+  workdir: "/workspace"
+  entrypoint: "spectramind"
+  volumes:
+    - "./data:/workspace/data"
+    - "./outputs:/workspace/outputs"
+    - "./models:/workspace/models"
+    - "./artifacts:/workspace/artifacts"
+  environment:
+    PYTHONUNBUFFERED: "1"
+    PYTHONHASHSEED: "0"
+    CUDA_LAUNCH_BLOCKING: "1"
+    HYDRA_FULL_ERROR: "1"
+  gpu:
+    enabled: true
+    driver: "nvidia"
+    runtime: "nvidia"
+
+# ----------------------------
+# Python & Package Management
+# ----------------------------
+python:
+  version: "3.10.13"
+  package_manager: poetry
+  poetry_lock: "poetry.lock"
+  pyproject: "pyproject.toml"
+
+# ----------------------------
+# CUDA / GPU Configuration
+# ----------------------------
+cuda:
+  version: "11.8"
+  cudnn: "8.7.0"
+  deterministic: true
+  benchmark: false
+  allow_tf32: false
+
+# ----------------------------
+# Logging & Tracking
+# ----------------------------
+logging:
+  level: "INFO"
+  handlers: ["console", "file"]
+  log_file: "/workspace/logs/spectramind_v50.log"
+  mlflow:
+    enabled: true
+    tracking_uri: "file:/workspace/mlruns"
+  wandb:
+    enabled: false
+
+# ----------------------------
+# Hydra Integration
+# ----------------------------
+hydra:
+  run:
+    dir: /workspace/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: /workspace/multiruns/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra.job.num}
+  job:
+    chdir: true
+
+# ----------------------------
+# Dependencies
+# ----------------------------
+dependencies:
+  core:
+    - torch==2.2.2
+    - torchvision==0.17.2
+    - torchaudio==2.2.2
+    - torch_geometric==2.5.3
+    - numpy==1.26.4
+    - pandas==2.2.2
+    - scipy==1.13.1
+    - scikit-learn==1.5.0
+    - hydra-core==1.3.2
+    - omegaconf==2.3.0
+  dev:
+    - pytest==8.2.2
+    - black==24.4.2
+    - isort==5.13.2
+    - flake8==7.0.0
+    - mypy==1.10.0
+  tracking:
+    - mlflow==2.14.1
+    - wandb==0.17.2
+  viz:
+    - matplotlib==3.9.1
+    - seaborn==0.13.2
+    - plotly==5.22.0
+
+# ----------------------------
+# DVC / Data Versioning
+# ----------------------------
+dvc:
+  enabled: true
+  remote: "gcs://spectramind-v50-docker"
+  cache: "/workspace/.dvc/cache"
+  config: "/workspace/.dvc/config"
+
+# ----------------------------
+# Validation (Self-Test)
+# ----------------------------
+selftest:
+  check_python: true
+  check_cuda: true
+  check_poetry: true
+  check_dvc: true
+  check_docker: true
+  fail_fast: true
