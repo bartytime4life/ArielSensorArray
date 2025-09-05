@@ -1,0 +1,19 @@
+# ==============================================================================
+# 🛰️ SpectraMind V50 — DataLoader Persistent Workers (TRAIN)
+# ------------------------------------------------------------------------------
+# Purpose:
+#   • Control whether DataLoader worker processes persist across training epochs.
+#   • Helps avoid process re-spawn overhead and improves throughput.
+#
+# When to Use
+#   • ✅ Long multi-epoch training on GPU → set to true for speed.
+#   • ⚠️ If workers may leak memory or hang, set to false for safety.
+# ==============================================================================
+
+persistent_workers: true
+
+notes: |
+  Training loaders:
+  • Persistent workers enabled for faster per-epoch startup.
+  • Recommended for Kaggle/HPC runs where DataLoader overhead matters.
+  • Disable only in debugging/CI where worker churn is safer.
