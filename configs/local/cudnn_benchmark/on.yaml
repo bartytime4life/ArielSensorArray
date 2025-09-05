@@ -1,0 +1,13 @@
+# ==============================================================================
+# ⚡ cuDNN Autotune — Enabled
+# ------------------------------------------------------------------------------
+# Purpose:
+#   • Let cuDNN benchmark kernels and pick fastest.
+#   • Good for high throughput when input shapes are consistent.
+# ==============================================================================
+
+cudnn_benchmark: true
+
+notes: |
+  cuDNN autotuner enabled: best performance when batch/shape sizes
+  remain fixed across iterations. May reduce reproducibility.
