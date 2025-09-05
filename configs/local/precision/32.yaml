@@ -1,0 +1,20 @@
+
+---
+
+### `configs/local/precision/32.yaml`
+```yaml
+# ==============================================================================
+# 🧮 Precision — FP32 (strict)
+# ------------------------------------------------------------------------------
+# Purpose:
+#   • Maximum numerical stability and debuggability.
+#   • Good for CI/CPU or sensitive diagnostics.
+# ==============================================================================
+
+precision: 32
+deterministic: true
+cudnn_benchmark: false
+
+notes: |
+  Full FP32 with deterministic ops where feasible.
+  Expect slower throughput vs AMP; preferred for debugging/validation.
