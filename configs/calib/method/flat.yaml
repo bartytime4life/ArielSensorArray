@@ -1,13 +1,14 @@
 # configs/calib/method/flat.yaml
 # ==============================================================================
-# 🧭 Flat Fielding — Method Config (Upgraded)
+# 🧭 Flat Fielding — Method Config (Upgraded, Mission-Grade)
 # Purpose
 #   Correct pixel-to-pixel sensitivity and large-scale illumination patterns
 #   using master flat(s). Supports 2D and wavelength-dependent 3D flats, robust
-#   stacking, BPM integration, vignette guards, and rich diagnostics.
+#   stacking, BPM integration, vignette/saturation guards, temporal weighting,
+#   uncertainty propagation, and rich diagnostics. Instrument-aware (FGS1/AIRS).
 # Usage
-#   Composed by calib/nominal.yaml; typically after dark subtraction (and CDS).
-#   Override example:
+#   Composed by calib/{nominal,fast,strict}.yaml after dark subtraction (and CDS).
+#   Override:
 #     spectramind calibrate calib.method.flat.master_flat_path=calib_refs/flat/master_flat.fits
 # ==============================================================================
 
@@ -15,45 +16,61 @@ flat:
   enabled: true
 
   # ---------------------------------------------------------------------------
-  # Input master flat(s)
-  #   - A single file path OR a list of flats to be stacked into a master.
-  #   - Formats supported by the loader: .npy, .npz, .fits
+  # Instrument awareness (geometry & dispersion axis)
   # ---------------------------------------------------------------------------
-  master_flat_path:
-    - "calib_refs/flat/master_flat.npy"        # single or multiple paths
-  master_flat_fallback: null                    # optional fallback path if primary missing
+  instrument:
+    fgs1:
+      dispersion_axis: null          # FGS1 is imaging; no λ dimension
+      apply_slit_profile: false
+    airs:
+      dispersion_axis: 1             # wavelength/columns axis for λ-dependent flats
+      crossdisp_axis: 0
 
   # ---------------------------------------------------------------------------
-  # Wavelength / column handling for spectral instruments
+  # Input master flat(s)
+  #   - A single path OR a list of flats to be stacked into a master.
+  #   - Formats: .npy, .npz, .fits
+  # ---------------------------------------------------------------------------
+  master_flat_path:
+    - "calib_refs/flat/master_flat.npy"         # single/multiple
+  master_flat_fallback: null                     # optional fallback path
+  loader:
+    prefer_memory_map: true
+    dtype: "float32"
+
+  # ---------------------------------------------------------------------------
+  # Wavelength / column handling for spectral instruments (AIRS)
   #   - For 3D flats (λ-dependent), choose how a slice is selected/applied.
   # ---------------------------------------------------------------------------
   wavelength_mode:
-    type: "auto"       # "auto" | "per_column" | "fixed" | "interpolate"
-    fixed_index: 0     # used if type="fixed"
-    per_column_axis: 1 # which axis is wavelength/columns for "per_column"
+    type: "auto"        # auto | per_column | fixed | interpolate
+    fixed_index: 0
+    per_column_axis: 1
     interpolate:
       enabled: true
-      axis: 1          # interpolation axis for λ dimension
-      method: "linear" # "linear" | "spline" | "nearest"
+      axis: 1
+      method: "linear"  # linear | spline | nearest
+      regularize: 1.0e-3
 
   # ---------------------------------------------------------------------------
   # Build/stack a master flat from multiple inputs (optional)
   # ---------------------------------------------------------------------------
   build:
     enabled: true
-    combine: "median"                # "median" | "mean" | "sigma_clip"
+    combine: "median"                 # median | mean | sigma_clip
     sigma_clip:
       low_sigma: 4.0
       high_sigma: 4.0
       max_iter: 5
-    normalize_each: true             # normalize each input before stack
-    per_input_normalization: "median" # "median" | "mean" | "percentile"
+    normalize_each: true              # normalize each input before stack
+    per_input_normalization: "median" # median | mean | percentile
     percentile: 50.0
     cosmic_reject:
       enabled: true
-      method: "lacosmic"             # "lacosmic" | "none"
+      method: "lacosmic"              # lacosmic | none
       thresh: 5.0
-    save_intermediate: false         # write intermediates to diagnostics dir
+    save_intermediate: false
+    intermediates_dir: "outputs/diagnostics/calib/flat/intermediate"
 
   # ---------------------------------------------------------------------------
   # Illumination / Gradient correction (large-scale flat field)
@@ -61,23 +78,27 @@ flat:
   # ---------------------------------------------------------------------------
   illumination:
     enabled: true
-    method: "polynomial"             # "polynomial" | "spline" | "gaussian"
+    method: "polynomial"              # polynomial | spline | gaussian
     polynomial_order: 3
     gaussian_sigma_px: 35
-    robust: true                     # robust fit to suppress hot/cold pixels
+    robust: true
     apply_before_normalize: true
+    tile:
+      enabled: false                  # optionally model on tiles, then stitch
+      tile_px: 128
+      overlap_px: 16
 
   # ---------------------------------------------------------------------------
   # Flat normalization (to unit mean/median) to avoid flux rescaling
   # ---------------------------------------------------------------------------
   normalization:
     enabled: true
-    method: "median"                 # "median" | "mean" | "percentile"
+    method: "median"                  # median | mean | percentile
     percentile: 50.0
     clip:
       enabled: true
-      low: 0.2                       # clip extreme low responses before normalize
-      high: 5.0                      # clip extreme high responses before normalize
+      low: 0.2                        # clip low responses before normalization
+      high: 5.0                       # clip high responses before normalization
 
   # ---------------------------------------------------------------------------
   # Bad Pixel Mask (BPM) + hot columns/rows handling
@@ -87,24 +108,24 @@ flat:
   hot_structure:
     detect_hot_columns: true
     detect_hot_rows: true
-    threshold_sigma: 6.0             # identify columns/rows deviating by > Nσ
+    threshold_sigma: 6.0
   bad_pixel_repair:
     enabled: true
-    strategy: "inpaint"              # "inpaint" | "median" | "nearest" | "mask"
+    strategy: "inpaint"               # inpaint | median | nearest | mask
     inpaint_window: 3
-    propagate_mask: true             # keep track of repaired locations for downstream
+    propagate_mask: true              # keep track of repaired locations
 
   # ---------------------------------------------------------------------------
   # Saturation & vignette guards
   # ---------------------------------------------------------------------------
   saturation_guard:
     enabled: true
-    saturation_level_dn: 0.98        # relative to detector full-well if scaled (0..1)
+    saturation_level_dn: 0.98         # relative to detector full-well (0..1)
     mask_saturated: true
   vignette_guard:
     enabled: true
-    threshold: 0.6                   # relative throughput below which pixels are masked
-    grow_radius_px: 1                # dilate mask to be conservative at edges
+    threshold: 0.6                    # relative throughput below which pixels masked
+    grow_radius_px: 1
 
   # ---------------------------------------------------------------------------
   # Per-order / slit throughput correction (for slit/slice spectrographs)
@@ -113,6 +134,7 @@ flat:
     enabled: false
     profile_file: "calib_refs/flat/slit_throughput_profile.npy"
     normalize_profile: true
+    apply_axis: 0
 
   # ---------------------------------------------------------------------------
   # Temporal / thermal weighting (optional)
@@ -120,21 +142,49 @@ flat:
   # ---------------------------------------------------------------------------
   temporal_weighting:
     enabled: false
-    reference_meta: "calib_refs/flat/flat_metadata.csv"  # CSV with time, temp, id
+    reference_meta: "calib_refs/flat/flat_metadata.csv"   # CSV with time, temp, id
     weight_by:
-      time_scale_sec: 86400          # e-fold scale (1 day)
-      temp_scale_C: 2.0              # e-fold per 2°C difference
+      time_scale_sec: 86400            # e-fold time scale (1 day)
+      temp_scale_C: 2.0                # e-fold per 2°C difference
+    blend_strategy: "softmax"          # softmax | linear
 
   # ---------------------------------------------------------------------------
   # Application controls
   #   - How to handle divide-by-zero/NaNs and order of operations.
   # ---------------------------------------------------------------------------
   application:
-    order: ["illumination", "normalization", "divide"]  # processing order
-    epsilon: 1.0e-6                # added to denominator to avoid divide-by-zero
-    replace_invalid_with: 1.0      # substitute for NaN/Inf in flat denominator
-    propagate_uncertainty: true    # create/update variance map if available
-    variance_model: "poisson"      # "poisson" | "empirical" | "none"
+    order: ["illumination", "normalization", "divide"]   # processing order
+    epsilon: 1.0e-6                  # denominator guard
+    replace_invalid_with: 1.0        # substitute for NaN/Inf in denominator
+    propagate_uncertainty: true      # update variance map if available
+    variance_model: "poisson"        # poisson | empirical | none
+    variance_scaling:
+      include_flat_noise: true       # include flat shot/read noise in propagation
+      flat_snr_floor: 300.0          # guard against unrealistically high SNR
+
+  # ---------------------------------------------------------------------------
+  # Profile-specific overrides (fast / strict) to dial cost vs accuracy
+  # ---------------------------------------------------------------------------
+  profile_overrides:
+    fast:
+      build.enabled: false
+      illumination.enabled: true
+      illumination.method: "gaussian"
+      normalization.method: "median"
+      bad_pixel_repair.enabled: true
+      temporal_weighting.enabled: false
+      application.propagate_uncertainty: false
+      diagnostics.save_gain_map: false
+      diagnostics.save_illumination_map: false
+    strict:
+      build.enabled: true
+      build.combine: "sigma_clip"
+      illumination.method: "spline"
+      normalization.clip.enabled: true
+      bad_pixel_repair.strategy: "inpaint"
+      temporal_weighting.enabled: true
+      application.propagate_uncertainty: true
+      application.variance_model: "empirical"
 
   # ---------------------------------------------------------------------------
   # Diagnostics & outputs
@@ -152,16 +202,20 @@ flat:
       illum_map: "illumination_map.png"
       vignette_mask: "vignette_mask.png"
       bpm_mask: "bpm_mask.png"
+    audit_flags:
+      warn_on_large_gradient: true
+      warn_on_low_throughput: true
+      fail_on_missing_bpm: false
 
   notes: |
     • Divide science frames by a master flat normalized to unit response to avoid
-      rescaling astrophysical flux. For 3D (λ-dependent) flats, use per-column
-      or interpolated slices aligned to the dispersion axis.
+      rescaling astrophysical flux. For 3D (λ-dependent) flats, use per-column or
+      interpolated slices aligned to the dispersion axis (AIRS).
     • Illumination removal prevents imprinting large-scale gradients into science data.
-    • Robust stacking with sigma-clipping and cosmic ray rejection improves the
-      stability of the master flat.
-    • BPM and hot-column/row handling protect downstream photometry; repaired pixels
-      remain flagged for QA and uncertainty propagation.
+    • Robust stacking with sigma-clipping and cosmic ray rejection improves master flat
+      stability; normalize inputs before combining to suppress gain differences.
+    • BPM and hot-column/row handling protect downstream photometry; repaired pixels remain
+      flagged for QA and uncertainty propagation.
     • Use vignette and saturation guards to mask unreliable edge/overexposed regions.
-    • When propagate_uncertainty=true, the variance map is updated to reflect the
-      flat-field division and any interpolation/repair operations.
+    • With propagate_uncertainty=true, update the variance map to account for flat division,
+      interpolation/repair operations, and flat noise; use flat_snr_floor to avoid underestimating σ.
