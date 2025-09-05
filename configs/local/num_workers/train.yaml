@@ -1,0 +1,25 @@
+# ==============================================================================
+# ⚙️ DataLoader Workers — Training
+# ------------------------------------------------------------------------------
+# Purpose
+#   • Configure number of worker threads for training dataloaders.
+#   • Balance throughput vs. determinism across GPU/CPU environments.
+#   • Hydra-safe override, isolated from validation/test settings.
+# ==============================================================================
+
+num_workers: 4   # default; adjust for Kaggle/HPC runtime
+
+# ------------------------------------------------------------------------------
+# Notes
+# ------------------------------------------------------------------------------
+# • Workers handle background data loading and preprocessing.
+# • More workers → higher throughput, but higher CPU/memory use.
+# • Too many workers on Kaggle kernels may cause OOM or watchdog restarts.
+# • 4 workers is usually safe; tune upward (8–16) on HPC with more cores.
+# • For strict reproducibility (CI), prefer num_workers=0.
+# ==============================================================================
+notes: |
+  Training dataloader workers.
+  • Use 0 for reproducibility/debug.
+  • Use 2–4 for Kaggle kernels (safe under 9h limit).
+  • Use 8–16 for HPC clusters if CPU allows.
