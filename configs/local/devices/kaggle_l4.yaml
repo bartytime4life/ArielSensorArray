@@ -1,0 +1,14 @@
+# ==============================================================================
+# 🚀 Kaggle Devices — NVIDIA L4 GPU
+# ------------------------------------------------------------------------------
+# Purpose:
+#   - Kaggle experimental GPU runtime (L4, 24 GB, newer arch).
+# ==============================================================================
+
+_target_: torch.device
+devices: 1
+precision: 16-mixed
+deterministic: true
+cudnn_benchmark: true
+timeout_hours: 9
+notes: "Kaggle GPU quota: L4 runtime, ~9h max walltime."
