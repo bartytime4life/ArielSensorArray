@@ -1,0 +1,228 @@
+# FILE: configs/local/deterministic.yaml
+
+# ==============================================================================
+
+# 🔒 Global Determinism — Reproducibility Overlay (v1.0)
+
+# ------------------------------------------------------------------------------
+
+# Purpose:
+
+# • Enforce end-to-end determinism across the run (framework + kernels + RNG).
+
+# • Layer on TOP of any device/trainer/precision profile (Hydra last-merge wins).
+
+# • Safe for CI/Kaggle audits and reproducible ablations.
+
+# ------------------------------------------------------------------------------
+
+# Usage:
+
+# spectramind train local/deterministic=true
+
+# # or explicitly in defaults (ensure this merges LAST):
+
+# defaults:
+
+# - local/deterministic
+
+# ==============================================================================
+
+deterministic: true                # torch/cuDNN deterministic kernels where available
+cudnn\_benchmark: false             # disable autotuner (non-deterministic)
+global\_seed: 1337                  # master RNG (PyTorch/Lightning wrapper reads it)
+numpy\_seed: 1337                   # numpy RNG (if pipeline uses numpy)
+python\_hash\_seed: 0                # export as PYTHONHASHSEED=0 for stable dict orders
+
+# Optional toggles (uncomment if your stack reads these keys)
+
+# torch\_compile\_deterministic: true
+
+# allow\_tf32: false                 # force off TF32 to avoid precision drift on Ampere+
+
+# matmul\_precision: highest         # torch.set\_float32\_matmul\_precision("highest")
+
+notes: |
+Determinism overlay for reproducible runs. Apply on top of any base config.
+Expect small throughput hit. Prefer for CI, audits, and ablations.
+
+# FILE: configs/local/precision/strict\_deterministic.yaml
+
+# ==============================================================================
+
+# 🔒 Precision Add-on — Strict Determinism Layer (v1.2)
+
+# ------------------------------------------------------------------------------
+
+# Purpose
+
+# • Enforce determinism regardless of the base precision profile.
+
+# • Guarantees reproducible runs across GPUs, CI, and Kaggle kernels.
+
+# • Pairs with `32`, `16_mixed`, `bf16_mixed`, or `auto_mixed`.
+
+# ------------------------------------------------------------------------------
+
+# Usage
+
+# spectramind train local/precision=16\_mixed,strict\_deterministic
+
+#
+
+# defaults:
+
+# - local/precision: 16\_mixed
+
+# - local/precision: strict\_deterministic  # merge last
+
+# ==============================================================================
+
+deterministic: true
+cudnn\_benchmark: false
+
+# Optional seeds (uncomment if consumed by your runner)
+
+# global\_seed: 1337
+
+# numpy\_seed: 1337
+
+# python\_hash\_seed: 0
+
+notes: |
+Layer this on top of any precision profile to force deterministic kernels.
+May reduce throughput by \~5–15%. Use for reproducible ablations & audits.
+
+# FILE: configs/local/precision/32.yaml
+
+# ==============================================================================
+
+# 🧮 Precision — FP32 (Strict, Debug-Safe)
+
+# ------------------------------------------------------------------------------
+
+# Purpose:
+
+# • Maximum numerical stability and scientific debuggability.
+
+# • Reference mode for CI, CPU-only runs, and symbolic/diagnostic validation.
+
+# • Ensures deterministic ops where feasible (reproducibility priority).
+
+# ==============================================================================
+
+precision: 32
+deterministic: true
+cudnn\_benchmark: false
+
+notes: |
+Full FP32 with strict determinism.
+Best for debugging, CI, or scientific validation. Slower than AMP.
+Prefer `16_mixed`/`bf16_mixed` for leaderboard-scale training.
+
+# FILE: configs/local/precision/16\_mixed.yaml
+
+# ==============================================================================
+
+# ⚡ Precision — FP16 Automatic Mixed Precision (AMP)
+
+# ------------------------------------------------------------------------------
+
+# Purpose:
+
+# • High throughput on NVIDIA T4/A10/L4/A100.
+
+# • Reduces memory footprint; enables larger batches.
+
+# • Determinism enforced (slight perf cost) for reproducibility.
+
+# ==============================================================================
+
+precision: 16-mixed
+deterministic: true
+cudnn\_benchmark: false
+
+# Optional (if your trainer reads them)
+
+# amp:
+
+# dtype: float16
+
+# loss\_scaler: dynamic  # dynamic loss scaling to mitigate overflow
+
+notes: |
+FP16 AMP with determinism. Fastest on most Kaggle GPUs.
+Watch for overflow/underflow; dynamic loss scaling recommended.
+For maximum speed (non-deterministic), override deterministic=false locally.
+
+# FILE: configs/local/precision/bf16\_mixed.yaml
+
+# ==============================================================================
+
+# ⚡ Precision — BF16 Automatic Mixed Precision (AMP)
+
+# ------------------------------------------------------------------------------
+
+# Purpose:
+
+# • Best overall stability/speed on A100/H100 (wider exponent than FP16).
+
+# • Great default for large-scale training; reduced overflow risk vs FP16.
+
+# • Determinism enforced for reproducibility.
+
+# ==============================================================================
+
+precision: bf16-mixed
+deterministic: true
+cudnn\_benchmark: false
+
+# Optional (if your trainer reads them)
+
+# amp:
+
+# dtype: bfloat16
+
+# loss\_scaler: none    # usually unnecessary for BF16
+
+notes: |
+BF16 AMP with determinism. Prefer on A100/H100.
+If runtime is tight and exact reproducibility is not required, you may relax determinism.
+
+# FILE: configs/local/precision/auto\_mixed.yaml
+
+# ==============================================================================
+
+# 🧠 Precision — Auto-Select Mixed Precision
+
+# ------------------------------------------------------------------------------
+
+# Strategy:
+
+# • Prefer BF16 when supported → else FP16 → else FP32
+
+# • Deterministic overlay applied for reproducibility by default.
+
+# ------------------------------------------------------------------------------
+
+# Implementation note:
+
+# Your launcher should translate this intent at runtime. If not, keep this as a
+
+# conservative FP32 fallback or explicitly override to bf16\_mixed/16\_mixed.
+
+# ==============================================================================
+
+precision: auto-mixed
+deterministic: true
+cudnn\_benchmark: false
+
+# Hints for runtime selector (ignored by Hydra if not parsed)
+
+auto\_policy:
+prefer: \[bf16-mixed, 16-mixed, 32]
+fallback: 32
+
+notes: |
+Intent profile. If the runtime cannot auto-negotiate, it falls back to FP32 deterministically.
+On A100/H100 choose `bf16_mixed`; on T4/A10/L4 choose `16_mixed` for best speed.
