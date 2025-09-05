@@ -1,14 +1,54 @@
 # ==============================================================================
-# 🎮 Local Devices — Single-GPU profile
+# 🎮 Local Devices — Single-GPU Profile (SpectraMind V50)
 # ------------------------------------------------------------------------------
 # Purpose:
-#   - Run on the first available CUDA device.
-#   - Autodetects if CUDA is present, otherwise falls back to CPU.
+#   • Run on a single CUDA device (defaults to CUDA:0 if available).
+#   • Autodetect CUDA; fallback to CPU if not present (portable).
+#   • Everyday dev setting with AMP (automatic mixed precision).
+#
+# Usage:
+#   spectramind train local=devices/single_gpu
+#
+# Notes:
+#   • Provides mixed precision (16-mixed) for speed and memory efficiency.
+#   • Deterministic by default for reproducibility; disable for max throughput.
+#   • Designed for RTX, Quadro, or A100/A10 class GPUs in local workstations.
 # ==============================================================================
 
 _target_: torch.device
-devices: 1               # use first CUDA device (CUDA:0)
-precision: 16-mixed      # automatic mixed precision
-deterministic: true
-cudnn_benchmark: true
-notes: "Default single-GPU dev setting with AMP."
+
+# Device orchestration
+devices: 1                   # use first CUDA device (CUDA:0); fallback to CPU if no CUDA
+autodetect: true             # try CUDA, then MPS (Apple), then CPU
+
+# Precision / numerical stability
+precision: 16-mixed           # AMP by default; override to bf16-mixed/32 if needed
+deterministic: true           # enforce deterministic ops where feasible
+cudnn_benchmark: true         # allow autotune for conv kernels with stable shapes
+
+# Reproducibility guardrails
+seed: 1337
+numpy_seed: 1337
+pythonhashseed: 0
+
+# Threading controls
+max_threads: 8                # cap OpenMP threads for local dev
+intraop_threads: 4
+interop_threads: 4
+
+# Runtime profiling / diagnostics
+log_device_info: true         # log GPU/driver properties on startup
+profile_runtime: false        # set true for torch.profiler/NSight traces
+
+# Safety guardrails
+gradient_clip_val: 1.0        # safe default for small-batch dev runs
+timeout_hours: null           # no walltime cap locally; set in Kaggle/HPC profiles
+
+# Metadata
+notes: |
+  Single-GPU dev profile for local workstations.
+  - Autodetects CUDA, else falls back to CPU.
+  - AMP (16-mixed) by default for speed/efficiency.
+  - Deterministic kernels for reproducibility.
+  - Tuned thread caps for balanced throughput on desktops.
+  - Logs device info on startup for audit trails.
