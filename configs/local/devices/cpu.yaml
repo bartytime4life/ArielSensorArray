@@ -1,0 +1,15 @@
+# ==============================================================================
+# 🖥️ Local Devices — CPU-only profile
+# ------------------------------------------------------------------------------
+# Purpose:
+#   - Force training/inference on CPU (useful for portability tests and CI).
+#   - Typically combined with local=default or local=debug profiles.
+# ==============================================================================
+
+_target_: torch.device
+devices: cpu
+
+precision: 32            # float32 for numerical stability
+deterministic: true
+cudnn_benchmark: false
+notes: "For portability/CI smoke tests — disables CUDA entirely."
