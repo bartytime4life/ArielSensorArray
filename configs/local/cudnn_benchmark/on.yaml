@@ -1,13 +1,39 @@
 # ==============================================================================
-# ⚡ cuDNN Autotune — Enabled
+# ⚡ cuDNN Autotune — Enabled (v1.2)
 # ------------------------------------------------------------------------------
-# Purpose:
-#   • Let cuDNN benchmark kernels and pick fastest.
-#   • Good for high throughput when input shapes are consistent.
+# Purpose
+#   • Enable cuDNN benchmarking: autotuner profiles multiple kernels and picks
+#     the fastest for given tensor shapes.
+#   • Best choice when batch size and input shapes remain consistent across
+#     training iterations (common in leaderboard-scale training).
+# ------------------------------------------------------------------------------
+# Trade-offs
+#   • ⚡ Speed: Major speedup if shapes are fixed and conv-heavy ops dominate.
+#   • ❌ Reproducibility: Kernel choice depends on driver, CUDA/cuDNN version,
+#       and hardware → results may differ across environments.
+#   • ⚠️ If determinism is required, pair with:
+#         local/precision/strict_deterministic.yaml
 # ==============================================================================
-
 cudnn_benchmark: true
 
+# ------------------------------------------------------------------------------
+# Extended Controls (optional)
+# ------------------------------------------------------------------------------
+# deterministic: false        # leave nondeterministic kernels allowed
+# allow_tf32: true            # (Ampere+) enable TensorFloat32 for matmuls
+# torch_compile_tune: true    # (PyTorch 2.x) allow Inductor/cuDNN kernel fusion
+
+# ------------------------------------------------------------------------------
+# 📓 Notes
+# ------------------------------------------------------------------------------
 notes: |
-  cuDNN autotuner enabled: best performance when batch/shape sizes
-  remain fixed across iterations. May reduce reproducibility.
+  cuDNN autotuner enabled → kernels profiled, fastest chosen.
+
+  • Best performance when shapes remain fixed across batches/epochs.
+  • Expect 5–25% throughput improvement vs. cudnn_benchmark=false.
+  • Kernel choice may vary by GPU, driver, or cuDNN version.
+  • Use for Kaggle leaderboard runs, HPC training, or long epochs with
+    stable shapes.
+
+  ✅ Recommended: leaderboard training, HPC fixed-shape workloads  
+  ❌ Avoid: CI pipelines, ablations, or reproducibility audits
