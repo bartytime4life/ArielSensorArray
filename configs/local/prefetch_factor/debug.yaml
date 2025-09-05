@@ -1,0 +1,15 @@
+# ==============================================================================
+# 🐞 Prefetch Factor — Debug / Low-Memory
+# ------------------------------------------------------------------------------
+# Purpose:
+#   • Conservative prefetching for debugging or memory-constrained runs.
+#   • Minimizes memory pressure when inspecting small jobs.
+# ==============================================================================
+
+prefetch_factor: 1
+
+notes: |
+  Debug mode:
+  • Each worker preloads only 1 batch at a time.
+  • Simplifies reproducibility and makes step-through debugging easier.
+  • Slower, but avoids memory spikes.
