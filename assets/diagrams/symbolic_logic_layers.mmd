@@ -1,141 +1,177 @@
-%% --------------------------------------------------------------------
+%% ––––––––––––––––––––––––––––––––––
 %% SpectraMind V50 — Symbolic Logic Layers (Mermaid)
 %% Constraint graph and diagnostic flows over predicted spectra μ, σ.
-%% Shown: rule families, evaluators, aggregation, and violation routing.
-%% --------------------------------------------------------------------
+%% Upgraded: clearer swimlanes, legend, optional paths, and edge labels.
+%% ––––––––––––––––––––––––––––––––––
 
 flowchart TD
 
-  %% =========================
-  %% Styling
-  %% =========================
-  classDef hdr fill:#0b3d91,stroke:#0b3d91,color:#ffffff,font-weight:bold;
-  classDef data fill:#f3f3f3,stroke:#9e9e9e,color:#333;
-  classDef rule fill:#fce4ec,stroke:#d81b60,color:#880e4f;
-  classDef ev fill:#e3f2fd,stroke:#1e88e5,color:#0d47a1;
-  classDef agg fill:#fff8e1,stroke:#ffb300,color:#6d4c00;
-  classDef diag fill:#ede7f6,stroke:#7e57c2,color:#4527a0;
-  classDef out fill:#e0f7fa,stroke:#00acc1,color:#006064;
-  classDef op fill:#e8f5e9,stroke:#43a047,color:#1b5e20;
+%% =========================
+%% Global direction & layout
+%% =========================
+%% keeps long subgraphs from stretching too wide
+%% (renderers may ignore; left for clarity of intent)
+%% flowchart TD
 
-  %% =========================
-  %% Header
-  %% =========================
-  H([Symbolic Logic Layers • Constraint Engine]):::hdr
+%% =========================
+%% Class styling
+%% =========================
+classDef hdr  fill:#0b3d91,stroke:#0b3d91,color:#ffffff,font-weight:bold;
+classDef data fill:#f3f3f3,stroke:#9e9e9e,color:#333;
+classDef rule fill:#fce4ec,stroke:#d81b60,color:#880e4f;
+classDef ev   fill:#e3f2fd,stroke:#1e88e5,color:#0d47a1;
+classDef agg  fill:#fff8e1,stroke:#ffb300,color:#6d4c00;
+classDef diag fill:#ede7f6,stroke:#7e57c2,color:#4527a0;
+classDef out  fill:#e0f7fa,stroke:#00acc1,color:#006064;
+classDef op   fill:#e8f5e9,stroke:#43a047,color:#1b5e20;
+classDef aux  fill:#eeeeee,stroke:#9e9e9e,color:#666,font-style:italic;
 
-  %% Inputs (model outputs + context)
-  I1[(Predicted μ(λ))]:::data
-  I2[(Predicted σ(λ))]:::data
-  I3[(Spectral Graph / Masks\nH₂O, CO₂, CH₄ bands; λ adjacency)]:::data
-  I4[(Aux Context\nSNR, transit phase, instrument regions)]:::data
+%% =========================
+%% Header
+%% =========================
+H([Symbolic Logic Layers • Constraint Engine]):::hdr
 
-  H-->I1
-  H-->I2
-  H-->I3
-  H-->I4
+%% =========================
+%% Inputs (model outputs + context)
+%% =========================
+subgraph INP[Inputs]
+direction TB
+I1[(Predicted μ(λ))]:::data
+I2[(Predicted σ(λ))]:::data
+I3[(Spectral Graph / Masks\nH₂O, CO₂, CH₄ bands; λ adjacency)]:::data
+I4[(Aux Context\nSNR, transit phase, instrument regions)]:::data
+end
 
-  %% =========================
-  %% Rule Families
-  %% =========================
-  subgraph RF[Rule Families]
-    direction TB
-    R1[Non‑negativity\nμ(λ) ≥ 0]:::rule
-    R2[Smoothness\n||∇μ||₁/₂ constraints]:::rule
-    R3[Asymmetry Guard\nphysically implausible lobes]:::rule
-    R4[FFT Coherence\nband‑limited / power ratio checks]:::rule
-    R5[Molecular Alignment\npeak positions within band masks]:::rule
-    R6[Monotone Segments (optional)\nlocal monotonicity windows]:::rule
-  end
+H–>INP
+H–>LEGEND
 
-  I1-->RF
-  I3-->R5
-  I4-->R2
-  I4-->R3
+%% =========================
+%% Rule Families
+%% =========================
+subgraph RF[Rule Families]
+direction TB
+R1[Non-negativity\nμ(λ) ≥ 0]:::rule
+R2[Smoothness\nTV / Sobolev norms]:::rule
+R3[Asymmetry Guard\nphysically implausible lobes]:::rule
+R4[FFT Coherence\nband-limited / power ratio checks]:::rule
+R5[Molecular Alignment\npeak positions within band masks]:::rule
+R6[Monotone Segments (optional)\nlocal monotonicity windows]:::rule
+end
 
-  %% =========================
-  %% Evaluators
-  %% =========================
-  subgraph EV[Evaluators (Per‑λ / window / global)]
-    direction TB
-    E1[Clamp/Barrier Loss\nReLU(-μ) or softplus]:::ev
-    E2[Gradient Penalty\nTV / Sobolev kernel]:::ev
-    E3[Asymmetry Metric\nleft/right energy delta]:::ev
-    E4[FFT Checks\nbandpower ratios; high‑freq penalty]:::ev
-    E5[Band Matching\nargmax/centroid vs expected lines]:::ev
-    E6[Coverage Modulation\nσ‑aware weighting]:::ev
-  end
+%% Bind inputs to rule families
+I1– μ feeds all rule families –>RF
+I3– band masks –>R5
+I4– context (window sizes, regions) –>R2
+I4– context (regions) –>R3
 
-  R1-->E1
-  R2-->E2
-  R3-->E3
-  R4-->E4
-  R5-->E5
-  R6-->E2
-  I2-->E6
-  E1-->E6
-  E2-->E6
-  E3-->E6
-  E4-->E6
-  E5-->E6
+%% =========================
+%% Evaluators
+%% =========================
+subgraph EV[Evaluators (Per-λ / window / global)]
+direction TB
+E1[Clamp/Barrier Loss\nReLU(-μ) / softplus]:::ev
+E2[Gradient Penalty\nTV (L1/L2) / Sobolev kernel]:::ev
+E3[Asymmetry Metric\nleft/right energy delta]:::ev
+E4[FFT Checks\nbandpower ratios; high-freq penalty]:::ev
+E5[Band Matching\nargmax/centroid vs expected lines]:::ev
+E6[Coverage Modulation\nσ-aware weighting & masks]:::ev
+end
 
-  %% =========================
-  %% Aggregation & Scoring
-  %% =========================
-  subgraph AGG[Aggregation & Scoring]
-    direction TB
-    A1[Per‑λ Violation Map\nv(λ) per rule]:::agg
-    A2[Rule Scores\nweighted by σ, masks]:::agg
-    A3[Global Symbolic Score\nΣ w_r · score_r]:::agg
-    A4[(symbolic_violations.json)]:::out
-  end
+%% Rule → Evaluator mapping
+R1–>E1
+R2–>E2
+R3–>E3
+R4–>E4
+R5–>E5
+R6-. optional .->E2
 
-  E6-->A1
-  A1-->A2-->A3-->A4
+%% σ and evaluator fusion
+I2– σ(λ) –>E6
+E1–>E6
+E2–>E6
+E3–>E6
+E4–>E6
+E5–>E6
 
-  %% =========================
-  %% Diagnostics & Feedback
-  %% =========================
-  subgraph DG[Diagnostics & Feedback]
-    direction TB
-    D1[Overlay Plots\nv(λ) on μ(λ)]:::diag
-    D2[Band Heatmaps\nper‑molecule violations]:::diag
-    D3[Top‑K Violated Rules\nper planet]:::diag
-    D4[HTML Cards & Tables]:::diag
-    D5[(symbolic_rule_table.html)]:::out
-  end
+%% =========================
+%% Aggregation & Scoring
+%% =========================
+subgraph AGG[Aggregation & Scoring]
+direction TB
+A1[Per-λ Violation Map\nv_r(λ) per rule]:::agg
+A2[Rule Scores\nσ-weighted, masked, windowed]:::agg
+A3[Global Symbolic Score\nΣ_r w_r · score_r]:::agg
+A4[(symbolic_violations.json)]:::out
+end
 
-  A1-->D1
-  A2-->D2
-  A2-->D3
-  A3-->D4
-  D4-->D5
+E6– per-λ v_r(λ) –>A1
+A1– pooling & weights –>A2
+A2– Σ over rules –>A3
+A3–>A4
 
-  %% =========================
-  %% Training Hooks (Optional)
-  %% =========================
-  subgraph TR[Training Hooks (Optional)]
-    direction TB
-    T1[Symbolic Loss Term\nλ·A3 added to GLL]:::op
-    T2[Curriculum\nincrease λ over epochs]:::op
-    T3[Selective Backprop\nmask high‑confidence bands]:::op
-  end
+%% =========================
+%% Diagnostics & Feedback
+%% =========================
+subgraph DG[Diagnostics & Feedback]
+direction TB
+D1[Overlay Plots\nv(λ) over μ(λ)]:::diag
+D2[Band Heatmaps\nper-molecule violations]:::diag
+D3[Top-K Violated Rules\nper planet]:::diag
+D4[HTML Cards & Tables]:::diag
+D5[(symbolic_rule_table.html)]:::out
+end
 
-  A3-->T1
-  T1-->T2
-  T1-->T3
+A1–>D1
+A2–>D2
+A2–>D3
+A3–>D4
+D4–>D5
 
-  %% =========================
-  %% Outputs to Other Systems
-  %% =========================
-  O1[(diagnostic_summary.json)]:::out
-  O2[(report.html overlays)]:::out
-  O3[(dashboard assets)]:::out
+%% =========================
+%% Training Hooks (Optional)
+%% =========================
+subgraph TR[Training Hooks (Optional)]
+direction TB
+T1[Symbolic Loss Term\nλ_sym · A3 added to GLL]:::op
+T2[Curriculum\nincrease λ_sym over epochs]:::op
+T3[Selective Backprop\nmask high-confidence bands]:::op
+end
 
-  A1-->O1
-  D1-->O2
-  D2-->O3
-  D3-->O3
-  D4-->O2
+A3-. optional .->T1
+T1-. optional .->T2
+T1-. optional .->T3
 
-  %% Helpful labels
-  %% linkStyle etc can be customized if needed; defaults are readable.
+%% =========================
+%% Outputs to Other Systems
+%% =========================
+subgraph OUTS[Outputs]
+direction TB
+O1[(diagnostic_summary.json)]:::out
+O2[(report.html overlays)]:::out
+O3[(dashboard assets)]:::out
+end
+
+A1–>O1
+D1–>O2
+D2–>O3
+D3–>O3
+D4–>O2
+
+%% =========================
+%% Legend / Notes
+%% =========================
+subgraph LEGEND[Legend]
+direction TB
+L1[Solid arrows = required flow]:::aux
+L2[Dashed arrows = optional path]:::aux
+L3[σ-aware weighting down-weights\nlow-confidence bins during scoring]:::aux
+L4[Band masks provide molecule-specific\nconstraints to Band Matching]:::aux
+end
+
+%% Tidy header links
+H–>RF
+H–>EV
+H–>AGG
+H–>DG
+H–>TR
+H–>OUTS
