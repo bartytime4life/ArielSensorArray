@@ -2,18 +2,39 @@
 # 🛰️ SpectraMind V50 — DataLoader Persistent Workers (TRAIN)
 # ------------------------------------------------------------------------------
 # Purpose:
-#   • Control whether DataLoader worker processes persist across training epochs.
-#   • Helps avoid process re-spawn overhead and improves throughput.
+#   • Configure whether DataLoader worker processes persist across training epochs
+#     (workers stay alive instead of being respawned every epoch).
+#   • Reduces per-epoch startup overhead, improving throughput on long jobs.
 #
 # When to Use
-#   • ✅ Long multi-epoch training on GPU → set to true for speed.
-#   • ⚠️ If workers may leak memory or hang, set to false for safety.
+#   • ✅ Default: true — multi-epoch GPU training benefits significantly.
+#   • 🚀 Recommended for Kaggle/HPC runs with large datasets and many epochs.
+#   • ⚠️ Set to false if:
+#       – Running CI/smoke tests (short jobs, reproducibility > speed).
+#       – Debugging worker code (ensures clean respawn each epoch).
+#       – Memory leaks or dangling worker state suspected.
+#
+# Hydra Usage:
+#   spectramind train local/persistent_workers=train
+#
+# Implementation Note:
+#   Persistent workers only take effect if `num_workers > 0`. With num_workers=0,
+#   data loading happens in the main process, so this flag is ignored.
 # ==============================================================================
 
 persistent_workers: true
 
 notes: |
   Training loaders:
-  • Persistent workers enabled for faster per-epoch startup.
-  • Recommended for Kaggle/HPC runs where DataLoader overhead matters.
-  • Disable only in debugging/CI where worker churn is safer.
+  • Enabled by default for Kaggle/HPC multi-epoch training → avoids worker churn.
+  • Saves seconds to minutes per epoch on large jobs.
+  • Disable in:
+      – Debug/CI mode (safer, reproducible, avoids hidden worker state).
+      – CPU-only jobs where DataLoader overhead is minimal anyway.
+  • Pair with:
+      – pin_memory: true on GPU for max host→device transfer speed.
+      – num_workers tuned per environment (≥2 on GPU, ≤1 in CI).
+  • Environment-aware defaults:
+      – Kaggle leaderboard → true
+      – HPC long runs → true
+      – CI quick checks → false
