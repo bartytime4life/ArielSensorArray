@@ -1,0 +1,17 @@
+# ==============================================================================
+# 🌱 Local Seed — Default
+# ------------------------------------------------------------------------------
+# Purpose:
+#   - Standard seed set for reproducibility in local runs.
+#   - Covers Python, NumPy, PyTorch CPU/GPU.
+# ==============================================================================
+
+seed: 42
+numpy_seed: 42
+torch_seed: 42
+pythonhashseed: 42
+
+deterministic: true
+cudnn_benchmark: false
+
+notes: "Default deterministic seed profile (42 everywhere)."
