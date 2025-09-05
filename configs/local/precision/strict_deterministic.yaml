@@ -1,0 +1,14 @@
+# ==============================================================================
+# 🔒 Precision Add-on — Strict Determinism Layer
+# ------------------------------------------------------------------------------
+# Purpose:
+#   • Enforce determinism regardless of base precision profile.
+#   • Pair with 16_mixed / bf16_mixed / 32 when exact reproducibility is required.
+# ==============================================================================
+
+deterministic: true
+cudnn_benchmark: false
+
+notes: |
+  Layer this on top of any precision profile to force deterministic kernels
+  (may reduce throughput). Useful for reproducible ablations & audits.
