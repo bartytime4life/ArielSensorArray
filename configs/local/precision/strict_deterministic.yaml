@@ -1,14 +1,47 @@
 # ==============================================================================
-# 🔒 Precision Add-on — Strict Determinism Layer
+# 🔒 Precision Add-on — Strict Determinism Layer (v1.2)
 # ------------------------------------------------------------------------------
-# Purpose:
-#   • Enforce determinism regardless of base precision profile.
-#   • Pair with 16_mixed / bf16_mixed / 32 when exact reproducibility is required.
+# Purpose
+#   • Enforce determinism regardless of the base precision profile.
+#   • Guarantees reproducible runs across GPUs, CI, and Kaggle kernels.
+#   • Pairs with `16_mixed`, `bf16_mixed`, or `32` precision configs.
+# ------------------------------------------------------------------------------
+# Usage
+#   spectramind train local/precision=16_mixed,strict_deterministic
+#
+#   # Example: enforce determinism on FP16 AMP
+#   defaults:
+#     - local/precision: 16_mixed
+#     - local/precision: strict_deterministic
+#
+# Hydra merges this file *last*, overriding any conflicting keys.
 # ==============================================================================
 
-deterministic: true
-cudnn_benchmark: false
+# Enforce determinism at framework + backend level
+deterministic: true          # Torch/cuDNN deterministic ops where available
+cudnn_benchmark: false       # disable autotuner (non-deterministic kernels)
 
+# ------------------------------------------------------------------------------
+# Extended Controls (optional overrides; uncomment if needed)
+# ------------------------------------------------------------------------------
+# torch_compile_deterministic: true   # (PyTorch ≥2.2) enforce deterministic compile
+# global_seed: 1337                   # fixed RNG seed for CI smoke tests
+# numpy_seed: 1337                    # NumPy RNG seed (if reproducibility requires)
+# python_hash_seed: 0                 # ensure stable hashing (PYTHONHASHSEED=0)
+
+# ------------------------------------------------------------------------------
+# 📓 Notes
+# ------------------------------------------------------------------------------
+# • This is a *layer*, not a standalone precision mode.
+# • Always combine with a base profile (32 / 16_mixed / bf16_mixed / auto_mixed).
+# • Expect ~5–15% slower training vs. non-deterministic runs.
+# • Use for:
+#     - Reproducible ablations
+#     - CI/benchmark baselines
+#     - Symbolic diagnostics & audits
+# • Not recommended for leaderboard-scale runs unless reproducibility is priority.
+# ==============================================================================
 notes: |
-  Layer this on top of any precision profile to force deterministic kernels
-  (may reduce throughput). Useful for reproducible ablations & audits.
+  Strict determinism enforced.
+  Layer on top of any precision profile to guarantee reproducible results.
+  May reduce throughput by disabling kernel autotuning and non-deterministic ops.
