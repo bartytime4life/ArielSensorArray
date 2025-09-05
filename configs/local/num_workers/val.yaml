@@ -1,22 +1,35 @@
 # ==============================================================================
-# ⚙️ DataLoader Workers — Validation
+# ⚙️ DataLoader Workers — Validation (v1.2)
 # ------------------------------------------------------------------------------
 # Purpose
 #   • Configure number of worker threads for validation dataloaders.
-#   • Validation is less frequent; reproducibility often prioritized.
+#   • Validation is less frequent; determinism and stability are prioritized
+#     over raw throughput.
+# ------------------------------------------------------------------------------
+# Trade-offs
+#   • ✅ Stability: Lower worker count reduces concurrency issues.
+#   • 🔒 Reproducibility: num_workers=0 ensures identical sample order in CI.
+#   • ⚡ Speed: Higher worker counts may speed up validation, but rarely critical
+#     since val runs only once per epoch/checkpoint.
 # ==============================================================================
 
-num_workers: 2   # conservative default for stable validation
+num_workers: 2   # conservative default for Kaggle/HPC validation
 
 # ------------------------------------------------------------------------------
-# Notes
+# Extended Controls (optional, if supported by runner/trainer)
 # ------------------------------------------------------------------------------
-# • Validation typically runs less often than training → lower worker count OK.
-# • Determinism > speed here, since val is for checkpoint gating.
-# • Use 0 in CI to ensure identical order of samples across runs.
-# ==============================================================================
+# prefetch_factor: 2        # number of batches prefetched per worker (default=2)
+# persistent_workers: true  # keep workers alive between validation passes
+# pin_memory: true          # speed up GPU transfers by pinning host memory
+
+# ------------------------------------------------------------------------------
+# 📓 Notes
+# ------------------------------------------------------------------------------
 notes: |
   Validation dataloader workers.
-  • Use fewer workers for stability.
-  • Use 0 for CI regression tests.
-  • 2 workers is safe default for Kaggle/HPC.
+
+  • Use fewer workers for stability (validation is not throughput-critical).
+  • Use 0 for CI regression tests → guarantees identical sample ordering.
+  • 2 workers is a safe default for Kaggle/HPC (stable + efficient).
+  • Increase cautiously (e.g. 4) on HPC if validation dataset is very large.
+  • Keep deterministic sampling for checkpoint gating and reproducibility audits.
