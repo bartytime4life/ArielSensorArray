@@ -1,0 +1,19 @@
+# ==============================================================================
+# 🛰️ SpectraMind V50 — Gradient Accumulation (TEST/INFERENCE)
+# ------------------------------------------------------------------------------
+# Purpose:
+#   • Test/inference phase does not use backward passes.
+#   • Accumulation setting has no effect but preserved for Hydra consistency.
+#
+# When to Use
+#   • 🚫 Always 1 — no gradients in inference.
+#   • ✅ Included to keep interface uniform across all phases.
+# ==============================================================================
+
+accumulate_grad_batches: 1
+
+notes: |
+  Test/inference loaders:
+  • No backprop → accumulation unused.
+  • Kept for reproducibility and Hydra group symmetry.
+  • Avoid confusion: effective batch size = eval_batch_size, not controlled here.
