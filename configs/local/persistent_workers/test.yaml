@@ -2,18 +2,30 @@
 # 🛰️ SpectraMind V50 — DataLoader Persistent Workers (TEST/INFERENCE)
 # ------------------------------------------------------------------------------
 # Purpose:
-#   • Control worker persistence during test/inference runs.
-#   • Inference is often one-shot; persistent workers rarely help.
+#   • Configure whether DataLoader worker processes persist across test/inference
+#     iterations (instead of respawning each epoch).
+#   • Helps when inference spans many batches, but adds overhead if only one pass.
 #
 # When to Use
-#   • 🚫 Typically false, since test loaders run only once.
-#   • ✅ May set true if inference spans many batches (e.g. large ensembles).
+#   • 🚫 Default: false — most inference is one-shot (no benefit).
+#   • ✅ True if:
+#       – Running very large test sets with repeated passes (ensembles, MC dropout).
+#       – Need stable workers to avoid process re-spawn overhead.
+#   • ⚠️ Disable in CI/smoke runs for determinism and minimal memory footprint.
+#
+# Hydra Usage:
+#   spectramind predict local/persistent_workers@test_loader=test
 # ==============================================================================
 
 persistent_workers: false
 
 notes: |
   Test loaders:
-  • Persistent workers disabled by default (single-pass inference).
-  • Keeps inference deterministic and lightweight.
-  • Enable only if running long batched inference jobs.
+  • Disabled by default (single-pass inference, no epoch boundaries).
+  • Ensures reproducibility in CI and Kaggle leaderboard submissions.
+  • For advanced use (ensembles, multi-pass calibration), set true to
+    avoid worker churn overhead.
+  • Environment-aware best practices:
+      – Kaggle/CI leaderboard runs → keep false (safe/deterministic).
+      – Local/HPC long inference jobs → may enable true if repeated passes.
+  • Always pair with `pin_memory: true` when GPU is used for maximal throughput.
