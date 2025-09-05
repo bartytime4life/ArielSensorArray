@@ -1,15 +1,3 @@
-# .github/ISSUE\_TEMPLATE/task\_tracking.yml
-
-# ==============================================================================
-
-# SpectraMind V50 — Task Tracking (GitHub Issue Form)
-
-# Purpose: Plan and track a small, shippable unit of work with CLI-first reproducibility,
-
-# Hydra/DVC/CI integration, physics-informed rigor, and clear acceptance criteria.
-
-# ==============================================================================
-
 name: "📌 Task Tracking"
 description: "Plan and track a unit of work for SpectraMind V50 (CLI-first, reproducible, testable, physics-aware)"
 title: "\[task] <short summary>"
