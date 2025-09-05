@@ -1,0 +1,29 @@
+# ==============================================================================
+# 🛰️ SpectraMind V50 — Gradient Accumulation (TRAINING)
+# ------------------------------------------------------------------------------
+# Purpose:
+#   • Control how many forward/backward passes to accumulate before optimizer step.
+#   • Allows training with an effectively larger batch size than fits in GPU memory.
+#   • Essential knob for scaling up batch size under Kaggle/HPC GPU memory limits.
+# ------------------------------------------------------------------------------
+# When to Use
+#   • ✅ Increase (>1) if:
+#       – Model or batch does not fit in GPU memory directly.
+#       – Want to simulate larger global batch size for stable updates.
+#   • 🚫 Keep =1 if GPU memory is sufficient for desired batch size.
+#   • ⚠️ Note: Effective batch size = batch_size × accumulate_grad_batches.
+#     Ensure LR scaling (linear rule) if you change this factor.
+# ==============================================================================
+
+accumulate_grad_batches: 1
+
+notes: |
+  Training loaders:
+  • Default =1 (no accumulation; optimizer step every batch).
+  • Use >1 to simulate large batches on limited-memory GPUs:
+      – Example: batch_size=32, accumulate_grad_batches=4 → effective batch=128.
+  • LR scaling rule of thumb: multiply learning rate by accumulate_grad_batches.
+  • Critical for Kaggle environments:
+      – T4/A10 GPUs may require accumulation to reach target effective batch size.
+      – Balance runtime (≤9h) vs. stability.
+  • Always log chosen accumulation factor in v50_debug_log.md with config hash.
