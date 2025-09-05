@@ -1,0 +1,31 @@
+{
+  "$schema": "https://mermaid.js.org/config/schema.json",
+  "theme": "dark",
+  "startOnLoad": false,
+  "securityLevel": "strict",
+  "arrowMarkerAbsolute": true,
+  "deterministicIds": true,
+  "deterministicIDSeed": "spectramind-v50-dark",
+  "logLevel": "error",
+  "wrap": true,
+  "fontFamily": "Inter, Roboto, Segoe UI, Helvetica Neue, Arial, ui-sans-serif, system-ui, sans-serif",
+  "themeCSS": ".edgeLabel{padding:2px 6px;border-radius:6px}.node rect,.node circle,.node ellipse{shape-rendering:geometricPrecision}.cluster rect{rx:12px;ry:12px}.mermaid svg{max-width:100%;height:auto}.mermaid .messageText{font-variant-ligatures:none}",
+  "themeVariables": {
+    "background": "#0f172a",
+    "primaryColor": "#0ea5e9",
+    "primaryTextColor": "#f8fafc",
+    "primaryBorderColor": "#38bdf8",
+
+    "secondaryColor": "#0891b2",
+    "secondaryTextColor": "#e0f2f1",
+    "secondaryBorderColor": "#22d3ee",
+
+    "tertiaryColor": "#6d28d9",
+    "tertiaryTextColor": "#ede9fe",
+    "tertiaryBorderColor": "#a78bfa",
+
+    "lineColor": "#94a3b8",
+    "textColor": "#f1f5f9",
+    "fontSize": "14px"
+  }
+}
