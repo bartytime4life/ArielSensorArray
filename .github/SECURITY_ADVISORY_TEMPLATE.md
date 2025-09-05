@@ -60,7 +60,7 @@ Document precise technical information for reproducibility and validation:
 ## 📑 Verification Steps
 Step-by-step reproducibility procedure for confirming the fix:
 1. Checkout patched commit.  
-2. Run `spectramind test --deep`.  
+2. Run `spectramind selftest --deep`.  
 3. Validate no failures in `selftest.py` and no reproducibility drift in `run_hash_summary_v50.json`.  
 4. Confirm CI logs pass security scans (`.github/workflows/security.yml`).  
 
@@ -94,3 +94,6 @@ Step-by-step reproducibility procedure for confirming the fix:
 ✦ **Note:** All advisories must preserve *reproducibility first principles*.  
 Patches must be tied to Hydra configs, DVC artifacts, and Git commit hashes.  
 Every advisory is itself a reproducible artifact.
+
+
+⸻
