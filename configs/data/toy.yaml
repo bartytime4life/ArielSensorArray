@@ -1,22 +1,20 @@
 # configs/data/toy.yaml
 # ==============================================================================
-# 🧸 SpectraMind V50 — Toy Dataset Config (Upgraded)
+# 🧸 SpectraMind V50 — Toy Dataset Config (ULTRA–UPGRADED)
 # ------------------------------------------------------------------------------
 # Purpose:
 #   Minimal synthetic dataset for CI, debugging, and dev loops.
 #   Provides deterministic AIRS/FGS1 cubes with synthetic μ/σ targets.
 #   Ensures full pipeline smoke test in < 2 min (calibrate → train → diagnose → submit).
 #
-# Usage:
-#   # Fast CI/dev run
+# Fast usage:
 #   spectramind train data=toy trainer=ci_fast
-#
-#   # Local quick test with debug profile
-#   spectramind train data=toy local=debug
+#   spectramind train data=toy loader.batch_size=8 runtime.max_minutes=3
 #
 # Notes:
-#   • Deterministic: run hash + seed ensure reproducibility.
-#   • DVC-tracked, Hydra-safe, Kaggle/CI guardrails applied.
+#   • Deterministic: generator manifest + seed ensure reproducibility.
+#   • Hydra-safe, DVC-friendly, Kaggle/CI guardrails applied.
+#   • Compatible with ariel_toy_dataset.py (.npz/.npy/.pkl + splits + manifest).
 #   • Not for leaderboard submissions — debugging only.
 # ==============================================================================
 
@@ -33,87 +31,170 @@ defaults:
 dataset:
   name: "toy_v50"
   description: "Synthetic toy dataset (FGS1 + AIRS) for CI/debug"
-  version: "1.0"
+  version: "1.2"
   source: "synthetic-generator"
   dvc_stage: "data/toy"
   dvc_remote: "storage"
   cache: "data/cache/toy"
   hash: "${now:%Y%m%d}_${now:%H%M%S}"
 
+  # Canonical toy shapes
+  t_fgs1: 128
+  t_airs: 32
+  channels_fgs1: 32
+  num_bins: 283
+  num_planets: 64
+
+  # Loader preference order (faster array paths first)
+  file_priority:
+    arrays_first: true   # prefer .npz/.npy over PKL bundles
+
 provenance:
   git_commit: null
   dvc_rev: null
   created_at: "${now:%Y-%m-%d %H:%M:%S}"
+  tags: ["toy", "v50", "synthetic"]
 
 # ----------------------------------------------------------------------
-# File paths (DVC-tracked)
+# File paths (DVC-tracked or local workspace)
 # ----------------------------------------------------------------------
 paths:
   raw_dir: "data/raw/toy"
   processed_dir: "data/processed/toy"
-  fgs1_file: "${paths.raw_dir}/fgs1_toy.npy"   # shape (64, 128, 32)
-  airs_file: "${paths.raw_dir}/airs_toy.npy"   # shape (64, 32, 283)
-  labels_file: "${paths.raw_dir}/labels_toy.csv"
+  artifacts_dir: "outputs/diagnostics/data_toy"
+
+  # --- PKL bundles (single-file per split) produced by generator (mode=toy) ---
+  train_file_pkl: "${paths.raw_dir}/train.pkl"
+  val_file_pkl:   "${paths.raw_dir}/val.pkl"
+  test_file_pkl:  "${paths.raw_dir}/test.pkl"
+
+  # --- Array exports from generator (.npz preferred; fall back to .npy) ---
+  fgs1_train_npz: "${paths.raw_dir}/fgs1_train.npz"   # key 'fgs1' → (N, T_fgs1, 32)
+  airs_train_npz: "${paths.raw_dir}/airs_train.npz"   # key 'airs' → (N, T_airs, 283)
+  fgs1_train_npy: "${paths.raw_dir}/fgs1_train.npy"
+  airs_train_npy: "${paths.raw_dir}/airs_train.npy"
+
+  fgs1_val_npz: "${paths.raw_dir}/fgs1_val.npz"
+  airs_val_npz: "${paths.raw_dir}/airs_val.npz"
+  fgs1_val_npy: "${paths.raw_dir}/fgs1_val.npy"
+  airs_val_npy: "${paths.raw_dir}/airs_val.npy"
+
+  fgs1_test_npz: "${paths.raw_dir}/fgs1_test.npz"
+  airs_test_npz: "${paths.raw_dir}/airs_test.npz"
+  fgs1_test_npy: "${paths.raw_dir}/fgs1_test.npy"
+  airs_test_npy: "${paths.raw_dir}/airs_test.npy"
+
+  labels_file: "${paths.raw_dir}/labels.csv"               # optional labels from generator
+  toy_manifest_json: "${paths.raw_dir}/toy_manifest.json"  # generator manifest (hashes, shapes)
+
+  # Splits (source from generator + export/mirror for run)
+  split_indices_dir_src: "${paths.raw_dir}/splits"
+  split_indices_dir:     "${paths.processed_dir}/splits"
+
   submission_template: "data/sample_submission.csv"
 
+  # Caches
+  tensor_cache_dir: "data/cache/toy/tensors"
+  preview_dir: "${paths.artifacts_dir}/previews"
+
 # ----------------------------------------------------------------------
-# Shape & generation controls
+# IO (fast & hermetic)
+# ----------------------------------------------------------------------
+io:
+  allow_npz: true
+  allow_pickle: true
+  prefer_npz: true             # try .npz → .npy → .pkl
+  memmap: false                # tiny toy files; no need for memmap
+  strict_endianness: false
+  fail_on_missing: true
+  internet_access: false
+  external_urls: []
+
+# ----------------------------------------------------------------------
+# Interface contract
+# ----------------------------------------------------------------------
+interface:
+  num_bins: ${dataset.num_bins}
+  t_fgs1: ${dataset.t_fgs1}
+  t_airs: ${dataset.t_airs}
+  channels_fgs1: ${dataset.channels_fgs1}
+  output_dir: "${hydra.run.dir}"
+
+# ----------------------------------------------------------------------
+# Shape & ingestion schema (accept legacy shapes; transpose if needed)
 # ----------------------------------------------------------------------
 schema:
   fgs1:
     expected_rank: 3
-    expected_shape: [64, 128, 32]
+    accepted_shapes:
+      - [-1, ${interface.t_fgs1}, ${interface.channels_fgs1}]  # preferred (N,128,32)
+      - [${dataset.num_planets}, ${interface.t_fgs1}, ${interface.channels_fgs1}]
+      - [-1, 32, 32]                                           # very old smoke export (transpose)
     dtype: "float32"
+    allow_nan: false
+    allow_inf: false
   airs:
     expected_rank: 3
-    expected_shape: [64, 32, 283]
+    accepted_shapes:
+      - [-1, ${interface.t_airs}, ${interface.num_bins}]       # preferred (N,32,283)
     dtype: "float32"
+    allow_nan: false
+    allow_inf: false
   labels:
-    required_columns: ["planet_id", "target_mu[0:283]", "target_sigma[0:283]"]
-
-generation:
-  n_samples: 64
-  fgs1_len: 128
-  bins: 283
-  with_targets: true
-  seed: 1337
+    required_columns:
+      - "planet_id"
+      - "target_mu[0:283]"
+      - "target_sigma[0:283]"
+    allow_missing_targets: false
 
 # ----------------------------------------------------------------------
-# Loader parameters (CI-safe)
-# ----------------------------------------------------------------------
-loader:
-  batch_size: 8
-  num_workers: 0
-  pin_memory: false
-  persistent_workers: false
-  shuffle: true
-
-# ----------------------------------------------------------------------
-# Calibration (synthetic placeholders)
+# Calibration (toy bypass or preview-only)
 # ----------------------------------------------------------------------
 calibration:
-  enabled: false          # toy dataset bypasses heavy calibration
+  enabled: false                 # toy dataset bypasses heavy calibration
   steps: []
   save_intermediate: false
+  save_preview_png: true
+  preview_stride: 16
   output_dir: "${paths.processed_dir}/calibrated"
 
 # ----------------------------------------------------------------------
-# Augmentations (lightweight only)
+# Preprocessing (minimal & deterministic)
+# ----------------------------------------------------------------------
+preprocessing:
+  normalize_flux: true
+  standardize_time: true
+  clip_outliers: true
+  outlier_sigma: 6.0
+  detrend:
+    enabled: true
+    method: "polyfit"            # polyfit|savgol|none
+    degree: 2
+    savgol:
+      window_length: 7
+      polyorder: 2
+      mode: "interp"
+  smoothing:
+    enabled: false
+  resample_time:
+    enabled: false
+    target_len: ${interface.t_airs}
+    method: "linear"
+
+# ----------------------------------------------------------------------
+# Augmentations (OFF for CI determinism)
 # ----------------------------------------------------------------------
 augmentation:
-  jitter:
-    enabled: false
-  dropout:
-    enabled: false
-  mask:
-    enabled: false
-  snr_dropout:
-    enabled: false
-  temporal_shift:
+  jitter:   { enabled: false }
+  dropout:  { enabled: false }
+  mask:     { enabled: false }
+  snr_dropout: { enabled: false }
+  temporal_shift: { enabled: false }
+  noise_injection:
     enabled: false
 
 # ----------------------------------------------------------------------
-# Symbolic / physics-aware toggles
+# Symbolic / physics-aware toggles (mostly off; keep basic safety)
 # ----------------------------------------------------------------------
 symbolic:
   enforce_nonnegativity: true
@@ -130,62 +211,109 @@ symbolic:
     enabled: false
 
 # ----------------------------------------------------------------------
-# Splits (fixed for reproducibility)
+# Splits (deterministic & exportable)
+#   Prefer generator-provided splits; otherwise derive here.
 # ----------------------------------------------------------------------
 splits:
-  train_fraction: 0.8
-  val_fraction: 0.1
-  test_fraction: 0.1
-  stratify: false
+  strategy: "planet_holdout"
+  fractions: { train: 0.8, val: 0.1, test: 0.1 }
   seed: 1337
-  export_paths:
-    indices_dir: "${paths.processed_dir}/splits"
+  source:
+    dir: "${paths.split_indices_dir_src}"
+    filenames: { train: "train_idx.npy", val: "val_idx.npy", test: "test_idx.npy" }
+    required: false
+  export:
+    enabled: true
+    dir: "${paths.split_indices_dir}"
+    filenames: { train: "train_idx.npy", val: "val_idx.npy", test: "test_idx.npy" }
+  epsilon: 1.0e-6
 
 # ----------------------------------------------------------------------
-# Validation & sanity checks
+# Loader parameters (CI-safe)
+# ----------------------------------------------------------------------
+loader:
+  batch_size: 8
+  num_workers: 0
+  pin_memory: false
+  persistent_workers: false
+  prefetch_factor: 2
+  drop_last: false
+  shuffle_train: true
+  shuffle_val: false
+  shuffle_test: false
+
+# ----------------------------------------------------------------------
+# Validation & sanity checks (fail fast)
 # ----------------------------------------------------------------------
 validate:
   enabled: true
+  fail_fast: true
+  sample_size_preview: 2
   checks:
     - "paths_exist"
     - "schema_match"
     - "no_nan_inf"
-  fail_fast: true
-  sample_size_preview: 2
+    - "split_indices_ok"
+    - "manifest_consistency"     # verify toy_manifest (N, shapes, hashes)
 
 # ----------------------------------------------------------------------
 # Diagnostics (toy artifacts for CI)
 # ----------------------------------------------------------------------
 diagnostics:
+  enabled: true
   save_plots: true
   fft_analysis: false
+  zscore_analysis: true
   symbolic_overlay: false
-  output_dir: "outputs/diagnostics/data_toy"
+  output_dir: "${paths.artifacts_dir}"
   artifacts:
     stats_json: "${diagnostics.output_dir}/stats.json"
     preview_png: "${diagnostics.output_dir}/preview.png"
+    z_png: "${diagnostics.output_dir}/zscore_preview.png"
 
 # ----------------------------------------------------------------------
 # Runtime guardrails (CI/Kaggle safety)
 # ----------------------------------------------------------------------
 runtime:
   kaggle_safe: true
-  max_hours: 0.05          # < 3 min runtime budget
+  max_minutes: 3.0             # < 3 min runtime budget
   write_intermediates: false
+  reduce_heavy_ops: true
 
 # ----------------------------------------------------------------------
-# Interface hooks
+# Safety bounds (numeric sanity)
 # ----------------------------------------------------------------------
-interface:
-  num_bins: 283
-  output_dir: "${hydra.run.dir}"
+safety:
+  max_abs_mu: 10.0
+  min_sigma: 1.0e-8
+  max_sigma: 1.0
+  action_on_violation: "fail"
 
 # ----------------------------------------------------------------------
-# Notes
+# Logging / manifests
 # ----------------------------------------------------------------------
-notes: |
-  • Minimal synthetic dataset for CI pipelines.
-  • Shapes: (64, 128, 32) FGS1, (64, 32, 283) AIRS.
-  • Batch size = 8, deterministic seed = 1337.
-  • Disables calibration/augmentation for speed.
-  • Produces quick preview diagnostics for CI.
+logging:
+  enable: true
+  save_dir: "outputs/data_toy/logs"
+  format: "jsonl"
+  include_config_hash: true
+  capture_manifest:
+    enabled: true
+    path: "${paths.toy_manifest_json}"
+    fields:
+      - "version"
+      - "N"
+      - "T_fgs1"
+      - "T_airs"
+      - "bins"
+      - "hashes"
+
+# ----------------------------------------------------------------------
+# Hydra output dirs
+# ----------------------------------------------------------------------
+hydra:
+  run:
+    dir: outputs/data_toy/${now:%Y%m%d_%H%M%S}
+  sweep:
+    dir: outputs/data_toy/multirun
+    subdir: ${hydra.job.num}
