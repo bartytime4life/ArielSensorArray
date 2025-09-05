@@ -1,0 +1,35 @@
+# ==============================================================================
+# 📌 Pin Memory — Test/Inference Policy
+# ------------------------------------------------------------------------------
+# Purpose:
+#   • Control use of page-locked (pinned) host memory in **test/inference DataLoaders**.
+#   • Ensures consistent configuration with `persistent_workers` in test loaders.
+#   • Accelerates host→GPU transfers by avoiding OS paging overhead.
+# ------------------------------------------------------------------------------
+# When to Use
+#   • 🚫 Default: false — safe baseline for CI/leaderboard (minimal RAM, deterministic).
+#   • ✅ True if:
+#       – Running on GPU (T4/A10/L4/A100) with large test batches.
+#       – Multi-pass inference (ensembles, MC dropout, calibration).
+#   • ⚠️ Ignored on CPU-only runs.
+#
+# Hydra Usage:
+#   spectramind predict local/pin_memory@test_loader=enabled
+#   spectramind predict local/pin_memory@test_loader=disabled
+# ==============================================================================
+
+pin_memory: false
+
+notes: |
+  Test loaders:
+  • Disabled by default to reduce memory footprint and simplify CI/leaderboard runs.
+  • Enables reproducibility and ensures compatibility with Kaggle's 9h runtime guardrails.
+  • For GPU inference with many batches, enabling improves transfer throughput.
+  • Always coordinate with `persistent_workers@test_loader`:
+      – If `persistent_workers=true`, also set `pin_memory=true` for maximal benefit.
+      – If `persistent_workers=false`, pinning alone may still help, but benefit is smaller.
+  • Environment-aware best practices:
+      – Kaggle/CI leaderboard runs → keep both `persistent_workers=false` and `pin_memory=false`.
+      – Local/HPC jobs → enable both for long, repeated inference (ensembles, MC dropout).
+  • Log both `pin_memory` and `persistent_workers` settings in v50_debug_log.md to
+    preserve run-time auditability.
