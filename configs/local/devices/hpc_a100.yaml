@@ -1,0 +1,16 @@
+# ==============================================================================
+# 🖥️ HPC Devices — A100 multi-GPU cluster
+# ------------------------------------------------------------------------------
+# Purpose:
+#   - Large-scale HPC cluster training (e.g. 4–8 A100 GPUs).
+#   - Use with local=hpc and trainer=multi_gpu.
+# ==============================================================================
+
+_target_: torch.device
+devices: 8
+strategy: ddp
+sync_batchnorm: true
+precision: bf16-mixed
+deterministic: false
+cudnn_benchmark: true
+notes: "Optimized for A100 multi-GPU HPC jobs (DDP)."
