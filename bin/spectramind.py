@@ -136,23 +136,16 @@ case “${1:-}” in
 –print-python)    PRINT_PY=1 ;;
 –version)         APP_ARGS=(–version); shift; break ;; # convenience passthrough
 -h|–help)         print_help; exit 0 ;;
-–*)               # unknown shim flag: forward entire remainder to app
-APP_ARGS=(”$@”); break ;;
-*)                 # first non-flag: treat as app args
-APP_ARGS=(”$@”); break ;;
+–*)               APP_ARGS=(”$@”); break ;;            # forward remainder to app
+*)                 APP_ARGS=(”$@”); break ;;            # first non-flag = app args
 esac
 shift
 done
 
 –––– locate repo root (best-effort) ––––
 
-if command -v git >/dev/null 2>&1; then
-if git_root=”$(git rev-parse –show-toplevel 2>/dev/null)”; then
+if command -v git >/dev/null 2>&1 && git_root=”$(git rev-parse –show-toplevel 2>/dev/null)”; then
 ROOT=”$git_root”
-else
-SCRIPT_DIR=”$(cd – “$(dirname – “${BASH_SOURCE[0]}”)” && pwd)”
-ROOT=”$(cd “$SCRIPT_DIR/..” && pwd)”
-fi
 else
 SCRIPT_DIR=”$(cd – “$(dirname – “${BASH_SOURCE[0]}”)” && pwd)”
 ROOT=”$(cd “$SCRIPT_DIR/..” && pwd)”
@@ -167,9 +160,9 @@ mkdir -p outputs logs outputs/diagnostics outputs/predictions outputs/submission
 
 export PYTHONUNBUFFERED=1
 export HYDRA_FULL_ERROR=1
-export MPLBACKEND=${MPLBACKEND:-Agg}
-export TOKENIZERS_PARALLELISM=${TOKENIZERS_PARALLELISM:-false}
-export CUBLAS_WORKSPACE_CONFIG=${CUBLAS_WORKSPACE_CONFIG:-:16:8}
+export MPLBACKEND=”${MPLBACKEND:-Agg}”
+export TOKENIZERS_PARALLELISM=”${TOKENIZERS_PARALLELISM:-false}”
+export CUBLAS_WORKSPACE_CONFIG=”${CUBLAS_WORKSPACE_CONFIG:-:16:8}”
 
 –––– detect Kaggle ––––
 
@@ -191,18 +184,19 @@ printf ‘%s’ “${VIRTUAL_ENV}/bin/python”; return 0
 fi
 if have python3; then printf ‘%s’ “python3”; return 0; fi
 if have python;  then printf ‘%s’ “python”;  return 0; fi
-printf ‘%s’ “python3” # best-effort default
+printf ‘%s’ “python3”
 }
 
 activate_conda() {
 [[ $NO_CONDA -eq 1 ]] && return 0
-[[ -z “$CONDA_ARG” ]] && return 0
+[[ -n “$CONDA_ARG” ]] || return 0
 if have conda; then
 # shellcheck disable=SC1091
-__conda_sh=”$(conda info –base 2>/dev/null)/etc/profile.d/conda.sh”
-if [[ -f “$__conda_sh” ]]; then
+local conda_sh
+conda_sh=”$(conda info –base 2>/dev/null)/etc/profile.d/conda.sh”
+if [[ -f “$conda_sh” ]]; then
 # shellcheck disable=SC1090
-source “$__conda_sh”
+source “$conda_sh”
 if [[ -d “$CONDA_ARG” ]]; then
 conda activate “$CONDA_ARG” || warn “Conda activate by path failed: $CONDA_ARG”
 else
@@ -247,9 +241,6 @@ fi
 }
 
 resolve_python_path() {
-
-Print and exit if requested
-
 if [[ $PRINT_PY -eq 1 ]]; then
 command -v “$(py_cmd)” || true
 exit 0
@@ -268,7 +259,7 @@ else
 sha=“nogit”
 fi
 
-Try to get CLI version and config hash best-effort (non-blocking)
+Best-effort: CLI version and config hash
 
 ver=“unknown”; cfg=”-”
 {
@@ -338,11 +329,10 @@ resolve_python_path
 
 if [[ “$is_kaggle” -eq 1 ]]; then
 inject_src_path
+append_log_line “${APP_ARGS[*]}”
 if [[ $PREFER_SCRIPT -eq 1 ]]; then
-append_log_line “${APP_ARGS[]}”
 run_with_script || run_with_module || fail “Could not locate SpectraMind entrypoint (Kaggle).”
 else
-append_log_line “${APP_ARGS[]}”
 run_with_module || run_with_script || fail “Could not locate SpectraMind entrypoint (Kaggle).”
 fi
 fi
@@ -373,11 +363,11 @@ run_with_poetry || run_with_module || run_with_script || fail “Could not locat
 
 Tried (in order):
 	1.	poetry run spectramind              $( [[ $NO_POETRY -eq 1 ]] && echo ‘(skipped by –no-poetry)’ )
-	2.	python -m spectramind               $( [[ -n “${PYTHONPATH:-}” ]] && echo ’(with PYTHONPATH) ’ )
+	2.	python -m spectramind               $( [[ -n “${PYTHONPATH:-}” ]] && echo ‘(with PYTHONPATH)’ )
 	3.	python spectramind.py               (repo dev script)
 
 Hints:
 • If using Poetry: ‘poetry install –no-root’ then re-run.
 • Or install editable: ‘python -m pip install -e .’
-• Ensure one of: ‘spectramind.py’, or ‘src/spectramind/init.py’ exists.
+• Ensure one of: ‘spectramind.py’ or ‘src/spectramind/init.py’ exists.
 “
