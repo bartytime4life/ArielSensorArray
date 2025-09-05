@@ -3,13 +3,17 @@
 # ------------------------------------------------------------------------------
 # Purpose:
 #   • Conservative prefetching for debugging or memory-constrained runs.
-#   • Minimizes memory pressure when inspecting small jobs.
+#   • Minimizes memory pressure when inspecting small jobs interactively.
+#   • Recommended for CI smoke tests or step-through debugging.
 # ==============================================================================
 
-prefetch_factor: 1
+prefetch_factor: 1              # each worker preloads only 1 batch
+persistent_workers: false       # reset workers each epoch (safer for debugging)
 
 notes: |
-  Debug mode:
-  • Each worker preloads only 1 batch at a time.
-  • Simplifies reproducibility and makes step-through debugging easier.
-  • Slower, but avoids memory spikes.
+  Debug / Low-Memory mode:
+  • Each DataLoader worker preloads only 1 batch at a time → lowest RAM usage.
+  • Simplifies reproducibility (e.g., PyTorch breakpoints hit consistently).
+  • Persistent workers disabled: workers restart each epoch, avoiding stale state.
+  • Slower throughput expected, but prevents memory spikes on small GPUs/CPUs.
+  • Use in combination with `data.num_workers=0` for minimal-resource CI runs.
