@@ -1,0 +1,17 @@
+# ==============================================================================
+# 🏅 Kaggle Seed — Competition Reproducibility
+# ------------------------------------------------------------------------------
+# Purpose:
+#   - Fixed seeds for Kaggle submissions (to ensure leaderboard stability).
+#   - Deterministic where feasible; cuDNN benchmark off.
+# ==============================================================================
+
+seed: 2025
+numpy_seed: 2025
+torch_seed: 2025
+pythonhashseed: 2025
+
+deterministic: true
+cudnn_benchmark: false
+
+notes: "Kaggle-safe seed profile for reproducible competition submissions."
