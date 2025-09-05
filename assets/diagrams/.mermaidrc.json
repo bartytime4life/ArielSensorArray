@@ -1,265 +1,373 @@
-# SpectraMind V50 — Diagrams Wiring Bundle
-# Purpose: render Mermaid `.mmd` → `.svg` + `.png`, wire into Makefile + CI.
-# Drop these files at the indicated paths in your repo.
 
 ================================================================================
 BEGIN FILE: assets/diagrams/.mermaidrc.json
-================================================================================
+
 {
-  "$schema": "https://mermaid.js.org/config/schema.json",
-  "theme": "neutral",
-  "startOnLoad": false,
-  "securityLevel": "strict",
-  "arrowMarkerAbsolute": true,
-  "deterministicIds": true,
-  "deterministicIDSeed": "spectramind-v50",
-  "logLevel": "error",
-  "wrap": true,
-  "fontFamily": "Inter, Roboto, Segoe UI, Helvetica Neue, Arial, ui-sans-serif, system-ui, sans-serif",
-  "themeCSS": ".edgeLabel{padding:2px 6px;border-radius:6px}.node rect,.node circle,.node ellipse{shape-rendering:geometricPrecision}.cluster rect{rx:12px;ry:12px}.mermaid svg{max-width:100%;height:auto}.mermaid .messageText{font-variant-ligatures:none}",
-  "themeVariables": {
-    "background": "transparent",
-    "primaryColor": "#38bdf8",
-    "primaryTextColor": "#f8fafc",
-    "primaryBorderColor": "#0ea5e9",
-    "secondaryColor": "#22d3ee",
-    "secondaryTextColor": "#e2e8f0",
-    "secondaryBorderColor": "#0891b2",
-    "tertiaryColor": "#a78bfa",
-    "tertiaryTextColor": "#111827",
-    "tertiaryBorderColor": "#6d28d9"
-  }
+“$schema”: “https://mermaid.js.org/config/schema.json”,
+“theme”: “neutral”,
+“startOnLoad”: false,
+“securityLevel”: “strict”,
+“arrowMarkerAbsolute”: true,
+“deterministicIds”: true,
+“deterministicIDSeed”: “spectramind-v50”,
+“logLevel”: “error”,
+“wrap”: true,
+“fontFamily”: “Inter, Roboto, Segoe UI, Helvetica Neue, Arial, ui-sans-serif, system-ui, sans-serif”,
+
+“flowchart”: {
+“diagramPadding”: 8,
+“htmlLabels”: true,
+“curve”: “basis”,
+“nodeSpacing”: 40,
+“rankSpacing”: 50,
+“padding”: 8
+},
+“sequence”: {
+“mirrorActors”: false,
+“useMaxWidth”: true,
+“wrap”: true,
+“actorFontSize”: 12,
+“noteFontSize”: 12
+},
+“er”: { “useMaxWidth”: true },
+“gantt”: { “topPadding”: 32, “barHeight”: 24 },
+
+“themeCSS”: “.edgeLabel{padding:2px 6px;border-radius:6px}.node rect,.node circle,.node ellipse{shape-rendering:geometricPrecision}.cluster rect{rx:12px;ry:12px}.mermaid svg{max-width:100%;height:auto}.mermaid .messageText{font-variant-ligatures:none}”,
+
+“themeVariables”: {
+“background”: “transparent”,
+
+"primaryColor": "#38bdf8",
+"primaryTextColor": "#0b1220",
+"primaryBorderColor": "#0ea5e9",
+
+"secondaryColor": "#22d3ee",
+"secondaryTextColor": "#0b1a1f",
+"secondaryBorderColor": "#0891b2",
+
+"tertiaryColor": "#a78bfa",
+"tertiaryTextColor": "#1e0b3a",
+"tertiaryBorderColor": "#6d28d9",
+
+"lineColor": "#1f2937",
+"textColor": "#111827",
+"fontSize": "14px"
+
+}
 }
 
 ================================================================================
 BEGIN FILE: assets/diagrams/.gitignore
-================================================================================
-# Rendered outputs
+
+Rendered outputs
+
 outputs/
 *.svg
 *.png
+*.pdf
 
-# Local preview artifacts
+Local preview artifacts
+
 *.html
 
 ================================================================================
 BEGIN FILE: assets/diagrams/README.md
-================================================================================
-# Diagrams (Mermaid)
 
-Canonical sources live here as `.mmd`. Outputs are auto-rendered to `outputs/`:
+Diagrams (Mermaid)
 
-```
+Canonical sources live here as .mmd. Outputs are auto-rendered to outputs/:
+
 assets/diagrams/
-  architecture_stack.mmd   # source (already provided)
+  architecture_stack.mmd   # source
   .mermaidrc.json          # rendering config
   outputs/
     architecture_stack.svg # generated (CI/Make)
     architecture_stack.png # generated (CI/Make)
-```
+    architecture_stack.pdf # generated if PDF export enabled
 
-## Quick start
+Quick start
 
 Render everything locally (requires Node 20+):
 
-```bash
 npm ci
 npm run diag:render
-```
+# Optional: optimize SVGs and produce PDFs
+npm run diag:optimize
+DIAG_PDF=1 npm run diag:render
 
 Or via Makefile:
 
-```bash
-make diagrams
-```
+make diagrams                 # SVG + PNG
+make diagrams-pdf             # also PDF
+make diagrams-open            # open a common artifact
+make diagrams-clean           # clean outputs
 
-Outputs land under `assets/diagrams/outputs/`.
+Outputs land under assets/diagrams/outputs/.
 
-## Conventions
-- `.mmd` is the single source of truth (committed).
-- `.svg` and `.png` are derived artifacts (ignored locally, built in CI, uploaded as artifacts; optionally committed by CI on `main`).
-- Style is controlled by `.mermaidrc.json`.
+Conventions
+	•	.mmd diagrams are the single source of truth (committed).
+	•	.svg, .png, .pdf are derived artifacts (ignored locally, built in CI, uploaded as artifacts; optionally committed by CI on main).
+	•	Style is controlled by .mermaidrc.json.
+	•	Deterministic IDs are enabled so small edits don’t churn SVG diffs.
 
 ================================================================================
 BEGIN FILE: bin/render-diagrams.sh
-================================================================================
+
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Render all Mermaid diagrams under assets/diagrams → outputs (svg + png)
-# Usage: bin/render-diagrams.sh [DIAG_DIR]
+Render all Mermaid diagrams under assets/diagrams → outputs (svg + png [+ pdf])
+
+Usage:
+
+bin/render-diagrams.sh [DIAG_DIR]
+
+Env:
+
+DIAG_CONCURRENCY: parallel jobs for rendering (default: number of cores or 4)
+
+DIAG_PDF: if set to 1, also render PDF outputs
+
+DIAG_SCALE: PNG scale factor (default: 2)
 
 DIAG_DIR=${1:-assets/diagrams}
-CFG="$DIAG_DIR/.mermaidrc.json"
-OUT_DIR="$DIAG_DIR/outputs"
+CFG=”$DIAG_DIR/.mermaidrc.json”
+OUT_DIR=”$DIAG_DIR/outputs”
+PNG_SCALE=”${DIAG_SCALE:-2}”
 
-if [[ ! -f "$CFG" ]]; then
-  echo "[render-diagrams] Missing config: $CFG" >&2
-  exit 1
+if [[ ! -f “$CFG” ]]; then
+echo “[render-diagrams] Missing config: $CFG” >&2
+exit 1
 fi
 
-mkdir -p "$OUT_DIR"
+mkdir -p “$OUT_DIR”
 
-# Find all .mmd files (excluding outputs dir)
-mapfile -t FILES < <(find "$DIAG_DIR" -type f -name '*.mmd' -not -path "*/outputs/*" | sort)
+Find all .mmd files (excluding outputs dir)
+
+mapfile -t FILES < <(find “$DIAG_DIR” -type f -name ‘.mmd’ -not -path “/outputs/*” | sort)
 
 if [[ ${#FILES[@]} -eq 0 ]]; then
-  echo "[render-diagrams] No .mmd files found under $DIAG_DIR" >&2
-  exit 0
+echo “[render-diagrams] No .mmd files found under $DIAG_DIR” >&2
+exit 0
 fi
 
-# Use local devDependency first; fallback to npx with pinned version
-MMDCCMD="node_modules/.bin/mmdc"
-if [[ ! -x "$MMDCCMD" ]]; then
-  MMDCCMD="npx -y @mermaid-js/mermaid-cli@10.9.1 mmdc"
+Use local devDependency first; fallback to npx with pinned version
+
+MMDCCMD=“node_modules/.bin/mmdc”
+if [[ ! -x “$MMDCCMD” ]]; then
+MMDCCMD=“npx -y @mermaid-js/mermaid-cli@10.9.1 mmdc”
 fi
 
-for f in "${FILES[@]}"; do
-  rel=${f#"$DIAG_DIR/"}
-  base=${rel%.mmd}
-  out_svg="$OUT_DIR/${base}.svg"
-  out_png="$OUT_DIR/${base}.png"
-  mkdir -p "$(dirname "$out_svg")"
+Print version
 
-  echo "[render-diagrams] SVG  <- $rel"
-  $MMDCCMD -i "$f" -o "$out_svg" -b transparent -t neutral -c "$CFG" >/dev/null
+$MMDCCMD -V || true
 
-  echo "[render-diagrams] PNG  <- $rel"
-  $MMDCCMD -i "$f" -o "$out_png" -b transparent -t neutral -c "$CFG" -s 2 >/dev/null
+Determine concurrency
 
-done
+CPU_DEFAULT=4
+if command -v getconf >/dev/null 2>&1; then
+CPU_DEFAULT=”$(getconf _NPROCESSORS_ONLN || echo 4)”
+fi
+JOBS=”${DIAG_CONCURRENCY:-$CPU_DEFAULT}”
 
-echo "[render-diagrams] Done → $OUT_DIR"
+Render function (runs in subshell via xargs -P)
+
+_render_one() {
+local f=”$1”
+local rel=”${f#”$DIAG_DIR/”}”
+local base=”${rel%.mmd}”
+local outdir=”$OUT_DIR/$(dirname “$rel”)”
+local svg=”$OUT_DIR/${base}.svg”
+local png=”$OUT_DIR/${base}.png”
+local pdf=”$OUT_DIR/${base}.pdf”
+
+mkdir -p “$outdir”
+echo “[render-diagrams] SVG  <- $rel”
+$MMDCCMD -i “$f” -o “$svg” -b transparent -t neutral -c “$CFG” >/dev/null
+
+echo “[render-diagrams] PNG  <- $rel (scale=$PNG_SCALE)”
+$MMDCCMD -i “$f” -o “$png” -b transparent -t neutral -c “$CFG” -s “$PNG_SCALE” >/dev/null
+
+if [[ “${DIAG_PDF:-0}” == “1” ]]; then
+echo “[render-diagrams] PDF  <- $rel”
+$MMDCCMD -i “$f” -o “$pdf” -b transparent -t neutral -c “$CFG” –pdfFit –pdfMargin 8 >/dev/null
+fi
+}
+
+export -f _render_one
+export DIAG_DIR OUT_DIR CFG PNG_SCALE MMDCCMD
+
+Parallel render
+
+printf ‘%s\0’ “${FILES[@]}” | xargs -0 -n1 -P “${JOBS}” bash -c ‘_render_one “$@”’ –
+
+echo “[render-diagrams] Done → $OUT_DIR”
 
 ================================================================================
 BEGIN FILE: mk/diagrams.mk
-================================================================================
-# Mermaid diagrams Makefile fragment
-# Include from root Makefile: `include mk/diagrams.mk`
+
+Mermaid diagrams Makefile fragment
+
+Include from root Makefile: include mk/diagrams.mk
 
 DIAG_DIR       ?= assets/diagrams
 DIAG_OUT       ?= $(DIAG_DIR)/outputs
-NODE_BIN       ?= node
 NPM_BIN        ?= npm
-MERMAID_BIN    ?= node_modules/.bin/mmdc
 
-.PHONY: diagrams diagrams-clean diagrams-open
+.PHONY: diagrams diagrams-clean diagrams-open diagrams-pdf diagrams-opt
 
 diagrams:
-	@echo "[Make] Rendering Mermaid diagrams…"
-	@$(NPM_BIN) ci
-	@bash bin/render-diagrams.sh $(DIAG_DIR)
-	@echo "[Make] Render complete → $(DIAG_OUT)"
+@echo “[Make] Rendering Mermaid diagrams…”
+@$(NPM_BIN) ci
+@bash bin/render-diagrams.sh $(DIAG_DIR)
+@echo “[Make] Render complete → $(DIAG_OUT)”
+
+diagrams-pdf:
+@echo “[Make] Rendering Mermaid diagrams (including PDF)…”
+@$(NPM_BIN) ci
+@DIAG_PDF=1 bash bin/render-diagrams.sh $(DIAG_DIR)
+@echo “[Make] Render complete → $(DIAG_OUT)”
+
+diagrams-opt:
+@echo “[Make] Optimizing SVG outputs (svgo)…”
+@$(NPM_BIN) run diag:optimize
 
 diagrams-clean:
-	@echo "[Make] Cleaning diagram outputs…"
-	@rm -rf $(DIAG_OUT)
+@echo “[Make] Cleaning diagram outputs…”
+@rm -rf $(DIAG_OUT)
 
-# Attempt to open a common artifact (best-effort)
+Attempt to open a common artifact (best-effort)
+
 diagrams-open:
-	@if command -v xdg-open >/dev/null 2>&1; then xdg-open $(DIAG_OUT)/architecture_stack.svg || true; \
-	elif command -v open >/dev/null 2>&1; then open $(DIAG_OUT)/architecture_stack.svg || true; \
-	else echo "Open $(DIAG_OUT)/architecture_stack.svg manually"; fi
+@if command -v xdg-open >/dev/null 2>&1; then xdg-open $(DIAG_OUT)/architecture_stack.svg || true; 
+elif command -v open >/dev/null 2>&1; then open $(DIAG_OUT)/architecture_stack.svg || true; 
+else echo “Open $(DIAG_OUT)/architecture_stack.svg manually”; fi
 
 ================================================================================
 BEGIN FILE: package.json
-================================================================================
+
 {
-  "name": "spectramind-v50-diagrams",
-  "private": true,
-  "version": "0.1.0",
-  "description": "Mermaid diagram rendering for SpectraMind V50.",
-  "type": "module",
-  "engines": {
-    "node": ">=20.10",
-    "npm": ">=10"
-  },
-  "scripts": {
-    "diag:clean": "rimraf assets/diagrams/outputs && shx mkdir -p assets/diagrams/outputs",
-    "diag:render": "bash bin/render-diagrams.sh assets/diagrams",
-    "diag:version": "mmdc -V"
-  },
-  "devDependencies": {
-    "@mermaid-js/mermaid-cli": "^10.9.1",
-    "rimraf": "^5.0.7",
-    "shx": "^0.3.4"
-  }
+“name”: “spectramind-v50-diagrams”,
+“private”: true,
+“version”: “0.2.0”,
+“description”: “Mermaid diagram rendering for SpectraMind V50.”,
+“type”: “module”,
+“engines”: {
+“node”: “>=20.10”,
+“npm”: “>=10”
+},
+“scripts”: {
+“diag:clean”: “rimraf assets/diagrams/outputs && shx mkdir -p assets/diagrams/outputs”,
+“diag:render”: “bash bin/render-diagrams.sh assets/diagrams”,
+“diag:version”: “mmdc -V”,
+“diag:optimize”: “svgo -q -f assets/diagrams/outputs –config ‘{"multipass":true,"plugins":[{"name":"preset-default","params":{"overrides":{"removeViewBox":false}}}]}’”
+},
+“devDependencies”: {
+“@mermaid-js/mermaid-cli”: “^10.9.1”,
+“rimraf”: “^5.0.7”,
+“shx”: “^0.3.4”,
+“svgo”: “^3.3.2”
+}
 }
 
 ================================================================================
 BEGIN FILE: .github/workflows/mermaid-export.yml
-================================================================================
+
 name: diagrams
 
 on:
-  push:
-    paths:
-      - "assets/diagrams/**.mmd"
-      - "assets/diagrams/.mermaidrc.json"
-      - "bin/render-diagrams.sh"
-      - "mk/diagrams.mk"
-  pull_request:
-    paths:
-      - "assets/diagrams/**.mmd"
-      - "assets/diagrams/.mermaidrc.json"
-      - "bin/render-diagrams.sh"
-      - "mk/diagrams.mk"
-  workflow_dispatch: {}
+push:
+paths:
+- “assets/diagrams/.mmd”
+- “assets/diagrams/.mermaidrc.json”
+- “bin/render-diagrams.sh”
+- “mk/diagrams.mk”
+- “package.json”
+- “package-lock.json”
+pull_request:
+paths:
+- “assets/diagrams/.mmd”
+- “assets/diagrams/.mermaidrc.json”
+- “bin/render-diagrams.sh”
+- “mk/diagrams.mk”
+- “package.json”
+- “package-lock.json”
+workflow_dispatch: {}
 
 permissions:
-  contents: write
+contents: write
+
+concurrency:
+group: diagrams-${{ github.ref }}
+cancel-in-progress: true
 
 jobs:
-  render:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+render:
+runs-on: ubuntu-latest
+steps:
+- name: Checkout
+uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
+  - name: Setup Node
+    uses: actions/setup-node@v4
+    with:
+      node-version: 20
+      cache: 'npm'
 
-      - name: Install OS deps (fonts for headless chromium)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y fonts-noto fonts-noto-cjk fonts-noto-color-emoji
+  - name: Install OS deps (fonts for headless chromium)
+    run: |
+      sudo apt-get update
+      sudo apt-get install -y fonts-noto fonts-noto-cjk fonts-noto-color-emoji
 
-      - name: Install JS deps
-        run: npm ci
+  - name: Install JS deps
+    run: npm ci
 
-      - name: Render Mermaid diagrams
-        run: npm run diag:render
+  - name: Render Mermaid diagrams (SVG/PNG)
+    run: npm run diag:render
 
-      - name: Upload rendered artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: diagrams-rendered
-          path: assets/diagrams/outputs
+  - name: Optimize SVGs
+    run: npm run diag:optimize
 
-      - name: Commit rendered outputs (main branch only)
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        run: |
-          if ! git diff --quiet -- assets/diagrams/outputs; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add assets/diagrams/outputs
-            git commit -m "ci(diagrams): render Mermaid outputs"
-            git push
-          else
-            echo "No output changes to commit."
-          fi
+  - name: Render PDFs (optional)
+    if: ${{ github.event_name == 'push' }}
+    run: DIAG_PDF=1 npm run diag:render
+
+  - name: Upload rendered artifacts
+    uses: actions/upload-artifact@v4
+    with:
+      name: diagrams-rendered
+      path: assets/diagrams/outputs
+      retention-days: 14
+
+  - name: Commit rendered outputs (main branch only)
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    run: |
+      if ! git diff --quiet -- assets/diagrams/outputs; then
+        git config user.name "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git add assets/diagrams/outputs
+        git commit -m "ci(diagrams): render Mermaid outputs"
+        git push
+      else
+        echo "No output changes to commit."
 
 ================================================================================
 BEGIN FILE: .gitignore.snippet    # (append these lines to your root .gitignore)
-================================================================================
-# Mermaid
+
+Mermaid
+
 assets/diagrams/outputs/
 
 ================================================================================
 BEGIN FILE: NOTE.txt
-================================================================================
-- `assets/diagrams/architecture_stack.mmd` already exists (in canvas). Place it under your repo's `assets/diagrams/`.
-- Run `npm ci && npm run diag:render` locally, or push to GitHub to trigger the workflow and collect artifacts.
-- Include `include mk/diagrams.mk` in your root Makefile to get `make diagrams`.
+	•	Place all .mmd sources under assets/diagrams/ (e.g., assets/diagrams/architecture_stack.mmd).
+	•	Local: npm ci && npm run diag:render (add DIAG_PDF=1 to also emit PDFs; npm run diag:optimize to SVGO-opt SVGs).
+	•	Make: make diagrams (or make diagrams-pdf, make diagrams-open, make diagrams-clean).
+	•	CI: Push a change touching .mmd or config to trigger the diagrams workflow; artifacts appear as diagrams-rendered.
+	•	Concurrency: CI cancels in-flight runs for the same ref to avoid duplicate work.
+	•	Parallelism: the renderer uses multiple cores; tune with DIAG_CONCURRENCY if needed.
+	•	PNG density: control via DIAG_SCALE (default 2).
+	•	Fonts: CI installs Noto fonts for consistent glyph coverage in headless Chromium.
+	•	Outputs are ignored from Git locally; on main, CI will commit updated outputs if they changed.
+
+— end bundle —
