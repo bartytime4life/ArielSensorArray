@@ -1,0 +1,64 @@
+# configs/calibration/fast.yaml
+# ================================================================
+# SpectraMind V50 — Calibration Profile (Fast / CI-Safe)
+# Purpose: Quick, smoke-test-friendly kill chain (≤ ~1–2h locally/Kaggle)
+# Composes atomic stage configs under configs/calibration/method/*
+# ================================================================
+
+defaults:
+  - method/adc
+  - method/dark
+  - method/flat
+  - method/cds
+  - method/photometry
+  - method/trace
+  - method/phase
+  - method/corel
+
+profile:
+  name: "fast"
+  description: >
+    Speed-first calibration chain for CI and rapid iteration:
+    • Minimal-but-sound ADC→dark→flat→CDS
+    • Lightweight photometry & trace (reduced precision/iters)
+    • Coarser phase binning to cut runtime
+    • COREL set to "lite" (or disabled via toggle) for fast uncertainty checks
+    Intended for smoke tests and quick dev loops before 'nominal'/'strict'.
+  runtime_budget_hours: 2
+  reproducibility: true
+  ci_safe: true
+
+# High-level toggles to trim heavy work in CI
+fast_mode:
+  enable_lite_align: true         # cheaper trace/align heuristics
+  enable_corel: false             # disable heavy COREL by default in CI; set true for 'lite' mode below
+  save_intermediates: false       # skip writing big intermediates to speed I/O
+  validate_shapes_only: false     # set true for ultra-fast dry runs (no heavy math)
+
+tuning:
+  # Faster detrend & coarser binning; still preserves transit shape/SNR tradeoff
+  phase_bins: 100                 # coarser than nominal (e.g., 100 vs 200 bins/orbit)
+  savgol_window: 21               # smaller window for speed (adequate for smoke tests)
+  outlier_sigma_clip: 4           # slightly tighter clip to suppress jitter spikes quickly
+  fgs1_weight: 58.0               # keep metric emphasis consistent
+  seed: 1337                      # deterministic fast profile
+
+# COREL fits can be costly; 'lite' parameters if enabled
+corel:
+  enabled: ${fast_mode.enable_corel}
+  mode: "lite"                    # cheaper graph/calibration pass than full run
+  target_quantile: 0.90           # slightly looser coverage in fast mode
+
+trace:
+  max_iters: 50                   # fewer iterations for alignment
+  subpixel_refine: false          # skip subpixel refine in fast mode
+  low_precision: true             # use lower precision math where acceptable
+
+photometry:
+  apertures: [2.0, 2.5]           # minimal aperture sweep
+  psf_fit: false                  # skip PSF fit in fast pass; aperture-only
+
+logging:
+  log_level: WARN
+  outputs_dir: ${hydra:run.dir}/calibration_fast
+  save_intermediates: ${fast_mode.save_intermediates}
