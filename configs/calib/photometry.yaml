@@ -1,328 +1,513 @@
-# FILE: configs/calib/photometry.yaml
-# ==============================================================================
-# PHOTOMETRIC EXTRACTION — SpectraMind V50 Calibration Kill Chain (stage 05)
-# ------------------------------------------------------------------------------
-# Purpose
-#   Extract time-series flux from calibrated frames using:
-#     • aperture  — circular/elliptical/box apertures with robust background removal
-#     • psf       — PSF model fitting or matched filtering
-#     • optimal   — variance-weighted (Horne-style) profile extraction along a trace
-#
-# Contract
-#   In : io.input_key   (typically produced by configs/calib/cds.yaml)
-#   Out: io.output_key  (flux series and ancillary metrics for trace/phase/modeling)
-#
-# Conventions
-#   • Supports 3D [B,H,W] or 4D [B,C,H,W] tensors; if C>1, apply per-channel when requested.
-#   • Background is estimated and removed before flux measurement unless disabled.
-#   • Error/variance propagation is optional and requires noise_model settings.
-# ==============================================================================
+FILE: configs/calib/photometry.yaml
 
-version: 1
+==============================================================================
+
+PHOTOMETRIC EXTRACTION — SpectraMind V50 Calibration Kill Chain (stage 05, upgraded)
+
+——————————————————————————
+
+Purpose
+
+Extract time-series flux from calibrated frames using:
+
+• aperture  — circular/elliptical/box apertures with robust background removal
+
+• psf       — PSF model fitting or matched filtering
+
+• optimal   — variance-weighted (Horne-style) profile extraction along a trace
+
+
+
+Contract
+
+In : io.input_key   (typically produced by configs/calib/cds.yaml)
+
+Out: io.output_key  (flux series and ancillary metrics for trace/phase/modeling)
+
+
+
+Conventions
+
+• Supports 3D [B,H,W] or 4D [B,C,H,W] tensors; if C>1, apply per-channel when requested.
+
+• Background is estimated and removed before flux measurement unless disabled.
+
+• Error/variance propagation is optional and requires noise_model settings.
+
+• All pixel coordinates are 0-indexed, half-open; subpixel centers are allowed.
+
+==============================================================================
+
+version: 2
 enabled: true
 
-# ------------------------------------------------------------------------------
-# Instrument/channel handling
-# ------------------------------------------------------------------------------
+——————————————————————————
+
+Instrument / channel handling
+
+——————————————————————————
+
 instrument:
-  # "FGS1" (broadband, 2D photometry) | "AIRS" (spectral channels, trace-aware)
-  name: "FGS1"
-  # If input is [B,C,H,W] and name == "AIRS", choose:
-  per_channel: false            # true: extract each channel; false: collapse with weights
-  channel_weights_path: "${oc.env:DATA_DIR, data}/calib/photometry/channel_weights.npy"  # (C,)
 
-# ------------------------------------------------------------------------------
-# Centroiding / target localization
-# ------------------------------------------------------------------------------
+“FGS1” (broadband, 2D photometry) | “AIRS” (spectral channels, trace-aware)
+
+name: “FGS1”
+
+If input is [B,C,H,W] and name == “AIRS”, choose per-channel or a weighted collapse:
+
+per_channel: false                   # true: extract each channel; false: collapse with weights
+channel_weights_path: “${oc.env:DATA_DIR, data}/calib/photometry/channel_weights.npy”  # (C,)
+
+Optional guard on channel count (null to skip)
+
+channels_expected: null
+
+——————————————————————————
+
+Centroiding / target localization
+
+——————————————————————————
+
 centroid:
-  enabled: true
-  # method: "barycenter" | "gaussian2d" | "quadratic" | "peak" | "none"
-  method: "gaussian2d"
-  # ROI around nominal target location to speed centroiding
-  roi:
-    use: true
-    # For FGS1: x/y pixels around the nominal guess
-    half_width: 30
-    half_height: 30
-  # Initial guess (if known); if not provided, method=peak will search full/ROI
-  initial_guess:
-    x: null   # set to a pixel coordinate or keep null
-    y: null
-  # Gaussian2D fit options
-  gaussian:
-    max_iters: 50
-    tol: 1.0e-6
-    bounds:
-      sigma_x: [0.5, 8.0]
-      sigma_y: [0.5, 8.0]
-  # Barycenter options (masked moments)
-  barycenter:
-    clip_sigma: 5.0
-    max_iters: 2
+enabled: true
 
-# ------------------------------------------------------------------------------
-# Background estimation (removed before photometry)
-# ------------------------------------------------------------------------------
+method: “barycenter” | “gaussian2d” | “quadratic” | “peak” | “phase_corr” | “none”
+
+method: “gaussian2d”
+
+ROI around nominal target location to speed centroiding
+
+roi:
+use: true
+half_width: 30                     # in pixels
+half_height: 30
+
+Initial guess; if not provided, method=peak/phase_corr searches ROI/full
+
+initial_guess:
+x: null
+y: null
+
+Drift tracking across frames (helps recenter apertures and PSF init)
+
+track:
+enabled: true
+max_step_px: 5.0                   # soft clamp for frame-to-frame motion
+smooth_window: 5                   # moving average to denoise drift
+
+Gaussian2D fit options
+
+gaussian:
+max_iters: 50
+tol: 1.0e-6
+bounds:
+sigma_x: [0.5, 8.0]
+sigma_y: [0.5, 8.0]
+
+Barycenter options (masked moments)
+
+barycenter:
+clip_sigma: 5.0
+max_iters: 2
+
+Phase correlation (FFT registration) options
+
+phase_corr:
+upsample: 1                        # 1|2|4 subpixel refinement factor
+window: “hann”                     # apodization window
+
+——————————————————————————
+
+Background estimation (removed before photometry)
+
+——————————————————————————
+
 background:
-  enabled: true
-  # method: "annulus" | "mesh" | "poly2d" | "spline2d" | "none"
-  method: "annulus"
+enabled: true
 
-  # Annulus (classic local sky)
-  annulus:
-    inner_r_px: 18.0
-    outer_r_px: 28.0
-    # robust stats inside annulus
-    robust:
-      sigma_clip: 3.0
-      max_iters: 3
-    # optional exclusion mask (1=valid) e.g., neighboring sources
-    valid_mask_path: "${oc.env:DATA_DIR, data}/calib/masks/sky_valid_mask.npy"
+method: “annulus” | “mesh” | “poly2d” | “spline2d” | “none” | “auto”
 
-  # Mesh (SExtractor-style coarse background with interpolation)
-  mesh:
-    cell: [32, 32]        # HxW cell size in pixels
-    filter_size: [3, 3]   # median filter in mesh domain
-    robust:
-      sigma_clip: 3.0
-      max_iters: 3
+“auto” chooses annulus for FGS1, mesh for AIRS
 
-  # Low-order polynomial fit to the frame/sub-ROI
-  poly2d:
-    degree_x: 2
-    degree_y: 2
-    robust:
-      sigma_clip: 3.0
-      max_iters: 3
+method: “annulus”
 
-  # Spline surface fit
-  spline2d:
-    grid: [24, 24]
-    robust:
-      sigma_clip: 3.0
-      max_iters: 3
+Annulus (classic local sky)
 
-  # After background model evaluation, subtract before flux measurement
-  subtract: true
+annulus:
+inner_r_px: 18.0
+outer_r_px: 28.0
+# Dynamically follow centroid? (recenter annulus per frame)
+follow_centroid: true
+# robust stats inside annulus
+robust:
+sigma_clip: 3.0
+max_iters: 3
+# optional exclusion mask (1=valid) e.g., neighboring sources
+valid_mask_path: “${oc.env:DATA_DIR, data}/calib/masks/sky_valid_mask.npy”
 
-# ------------------------------------------------------------------------------
-# Photometric method selection
-# ------------------------------------------------------------------------------
+Mesh (SExtractor-style coarse background with interpolation)
+
+mesh:
+cell: [32, 32]                     # HxW cell size in pixels
+filter_size: [3, 3]                # median filter in mesh domain
+robust:
+sigma_clip: 3.0
+max_iters: 3
+
+Low-order polynomial fit to frame/sub-ROI
+
+poly2d:
+degree_x: 2
+degree_y: 2
+robust:
+sigma_clip: 3.0
+max_iters: 3
+
+Spline surface fit
+
+spline2d:
+grid: [24, 24]                     # control-point grid
+robust:
+sigma_clip: 3.0
+max_iters: 3
+
+After background model evaluation, subtract before flux measurement
+
+subtract: true
+
+Safety: prevent negative sky catastrophes
+
+clamp:
+enabled: true
+min_sky_adu: -1.0e3
+max_sky_adu:  1.0e6
+
+——————————————————————————
+
+Photometric method selection
+
+——————————————————————————
+
 photometry:
-  # method: "aperture" | "psf" | "optimal"
-  method: "aperture"
 
-  # Common options
-  saturation:
-    enabled: true
-    # If any pixel in the aperture exceeds this, flag the frame
-    threshold_adu: 60000.0
+method: “aperture” | “psf” | “optimal”
 
-  bad_pixel_handling:
-    enabled: true
-    bpm_path: "${oc.env:DATA_DIR, data}/calib/masks/bad_pixel_map.npy"
-    replace_mode: "median4"         # "median4" | "median8" | "gaussian3"
-    max_replace_fraction: 0.05
+method: “aperture”
 
-  # ------------------------
-  # APERTURE PHOTOMETRY
-  # ------------------------
-  aperture:
-    # shape: "circular" | "elliptical" | "box"
-    shape: "circular"
-    radius_px: 12.0
-    # Elliptical params (used if shape == "elliptical")
-    ellipse:
-      a_px: 12.0
-      b_px: 9.0
-      theta_deg: 0.0
-    # Box aperture (WxH) used if shape == "box"
-    box:
-      width_px: 20
-      height_px: 16
+Common options
 
-    # Subpixel sampling at the aperture edge to reduce discretization error
-    edge_sampling:
-      enabled: true
-      samples: 5               # NxN subsamples per pixel at the boundary
+saturation:
+enabled: true
+# If any pixel in the (aperture | PSF window | optimal window) exceeds this, flag the frame
+threshold_adu: 60000.0
 
-    # Aperture correction based on a precomputed curve of growth
-    aperture_correction:
-      enabled: false
-      curve_path: "${oc.env:DATA_DIR, data}/calib/photometry/apcorr_curve.npy" # radius->corr
+cosmic_rays:
+enabled: true
+# sigma-clip in a small Laplacian-of-Gaussian band to downweight spikes
+sigma_clip: 6.0
+replace_mode: “median4”            # “median4” | “median8” | “gaussian3”
 
-    # Per-frame centroid recentering (use centroid.x/y)
-    recenter_on_centroid: true
-    # Optional static offset to account for known pointing bias
-    centroid_offset:
-      dx_px: 0.0
-      dy_px: 0.0
+bad_pixel_handling:
+enabled: true
+bpm_path: “${oc.env:DATA_DIR, data}/calib/masks/bad_pixel_map.npy”
+replace_mode: “median4”            # “median4” | “median8” | “gaussian3”
+max_replace_fraction: 0.05
 
-  # ------------------------
-  # PSF PHOTOMETRY
-  # ------------------------
-  psf:
-    # mode: "fit" (nonlinear least squares 2D PSF fit) | "matched_filter" (correlation)
-    mode: "fit"
-    # PSF model: "gaussian_moffat" | "empirical"
-    model: "gaussian_moffat"
-    # Empirical PSF kernel path (NPY HxW or normalized stamp)
-    kernel_path: "${oc.env:DATA_DIR, data}/calib/photometry/psf_kernel.npy"
-    # Fit bounds/priors
-    bounds:
-      flux: [0.0, 1.0e12]
-      x: [0.0, inf]
-      y: [0.0, inf]
-      sigma_x: [0.5, 8.0]
-      sigma_y: [0.5, 8.0]
-      beta_moffat: [1.0, 8.0]
-    init:
-      use_centroid: true
-      sigma_x: 2.5
-      sigma_y: 2.5
-      beta_moffat: 3.5
-    optimizer:
-      max_iters: 200
-      tol: 1.0e-6
-      method: "lm"           # "lm" | "dogbox" | "trf"
-    matched_filter:
-      normalize_kernel: true
-      # Local search box (half sizes) for picking the MF peak
-      local_search_halfwidth: 10
+————————
 
-  # ------------------------
-  # OPTIMAL EXTRACTION (variance-weighted profile; Horne-like)
-  # ------------------------
-  optimal:
-    # Intended primarily for trace-aligned extractions (AIRS/2D trace)
-    # trace model: "centerline_spline" | "centerline_poly" | "fixed_row"
-    trace_model: "centerline_spline"
-    trace:
-      # Optional precomputed trace center per column/channel: path to (W,) vector
-      center_path: "${oc.env:DATA_DIR, data}/calib/photometry/trace_center.npy"
-      # If not provided, estimate per-frame using centroid + small search window
-      search_halfheight_px: 8
-      # Smooth the trace center (per-frame) before extraction
-      smoothing:
-        enabled: true
-        width_px: 7
-        method: "median"      # "median" | "gaussian"
-    profile:
-      # Cross-dispersion profile model used for weights
-      model: "gaussian"       # "gaussian" | "empirical"
-      empirical_path: "${oc.env:DATA_DIR, data}/calib/photometry/emp_profile.npy"
-      # Profile width limits
-      sigma_y_bounds: [1.0, 8.0]
-      # Re-estimate profile per frame?
-      refit_per_frame: true
-    window:
-      half_height_px: 10
-      # Reject deviant pixels in the extraction window before weighting
-      robust:
-        sigma_clip: 5.0
-        max_iters: 2
+APERTURE PHOTOMETRY
 
-# ------------------------------------------------------------------------------
-# Noise & variance propagation (optional)
-# ------------------------------------------------------------------------------
-noise_model:
+————————
+
+aperture:
+# shape: “circular” | “elliptical” | “box”
+shape: “circular”
+radius_px: 12.0
+# Elliptical params (used if shape == “elliptical”)
+ellipse:
+a_px: 12.0
+b_px: 9.0
+theta_deg: 0.0
+# Box aperture (WxH) used if shape == “box”
+box:
+width_px: 20
+height_px: 16
+
+# Subpixel sampling at the aperture edge to reduce discretization error
+edge_sampling:
   enabled: true
-  # Provide variance per pixel if available; else construct from read/shot terms
-  variance_from_input_key: null    # e.g., "var_flat_corrected"
-  read_noise_adu: 5.0
-  gain_e_per_adu: 1.0
-  include_shot_noise: true
-  floor_variance_adu2: 1.0
+  samples: 5                       # NxN subsamples per pixel at the boundary
 
-# ------------------------------------------------------------------------------
-# Output products and normalization
-# ------------------------------------------------------------------------------
+# Aperture growth curve (optional curve-of-growth correction)
+aperture_correction:
+  enabled: false
+  curve_path: "${oc.env:DATA_DIR, data}/calib/photometry/apcorr_curve.npy" # radius->corr
+  # If enabled but curve missing, auto-estimate from bright, unsaturated frames
+  auto_estimate_if_missing: false
+  auto_min_snr: 50.0
+
+# Per-frame centroid recentering (use centroid.x/y)
+recenter_on_centroid: true
+# Optional static offset to account for known pointing bias
+centroid_offset:
+  dx_px: 0.0
+  dy_px: 0.0
+
+————————
+
+PSF PHOTOMETRY
+
+————————
+
+psf:
+# mode: “fit” (nonlinear least squares 2D PSF fit) | “matched_filter” (correlation)
+mode: “fit”
+# PSF model: “gaussian_moffat” | “empirical”
+model: “gaussian_moffat”
+# Empirical PSF kernel path (NPY HxW or normalized stamp)
+kernel_path: “${oc.env:DATA_DIR, data}/calib/photometry/psf_kernel.npy”
+# Fit window around centroid (half sizes)
+fit_window:
+half_w: 20
+half_h: 20
+# Fit bounds/priors
+bounds:
+flux: [0.0, 1.0e12]
+x: [0.0, inf]
+y: [0.0, inf]
+sigma_x: [0.5, 8.0]
+sigma_y: [0.5, 8.0]
+beta_moffat: [1.0, 8.0]
+init:
+use_centroid: true
+sigma_x: 2.5
+sigma_y: 2.5
+beta_moffat: 3.5
+optimizer:
+max_iters: 200
+tol: 1.0e-6
+method: “lm”                     # “lm” | “dogbox” | “trf”
+matched_filter:
+normalize_kernel: true
+# Local search box (half sizes) for picking the MF peak
+local_search_halfwidth: 10
+snr_threshold: 3.5
+
+————————
+
+OPTIMAL EXTRACTION (variance-weighted profile; Horne-like)
+
+————————
+
+optimal:
+# Intended primarily for trace-aligned extractions (AIRS/2D trace)
+# trace model: “centerline_spline” | “centerline_poly” | “fixed_row”
+trace_model: “centerline_spline”
+trace:
+# Optional precomputed trace center per column/channel: path to (W,) vector
+center_path: “${oc.env:DATA_DIR, data}/calib/photometry/trace_center.npy”
+# If not provided, estimate per-frame using centroid + small search window
+search_halfheight_px: 8
+# Smooth the trace center (per-frame) before extraction
+smoothing:
+enabled: true
+width_px: 7
+method: “median”               # “median” | “gaussian”
+profile:
+# Cross-dispersion profile model used for weights
+model: “gaussian”                # “gaussian” | “empirical”
+empirical_path: “${oc.env:DATA_DIR, data}/calib/photometry/emp_profile.npy”
+# Profile width limits
+sigma_y_bounds: [1.0, 8.0]
+# Re-estimate profile per frame?
+refit_per_frame: true
+# Variance-aware weighting?
+variance_weighted: true
+window:
+half_height_px: 10
+# Reject deviant pixels in the extraction window before weighting
+robust:
+sigma_clip: 5.0
+max_iters: 2
+
+——————————————————————————
+
+Noise & variance propagation (optional)
+
+——————————————————————————
+
+noise_model:
+enabled: true
+
+Provide variance per pixel if available; else construct from read/shot terms
+
+variance_from_input_key: null        # e.g., “var_flat_corrected”
+read_noise_adu: 5.0
+gain_e_per_adu: 1.0
+include_shot_noise: true
+floor_variance_adu2: 1.0
+
+Optional dark / background variance additions
+
+include_background_var: true
+
+——————————————————————————
+
+Output products and normalization
+
+——————————————————————————
+
 output:
-  # flux_units: "ADU" | "e" | "e_per_s"
-  flux_units: "ADU"
-  # Optional normalization by median or reference star (if provided elsewhere)
-  normalize:
-    enabled: false
-    method: "median"          # "median" | "reference_series"
-    reference_series_key: "ref_star_flux"
 
-  # What to save alongside the flux
-  save:
-    centroid_xy: true
-    sky_level: true
-    sky_sigma: true
-    aperture_area_px: true
-    flags: true
-    variance: true            # if noise_model.enabled
+flux_units: “ADU” | “e” | “e_per_s”
 
-# ------------------------------------------------------------------------------
-# Flags & QC thresholds
-# ------------------------------------------------------------------------------
+flux_units: “ADU”
+
+Optional normalization by median or reference star (if provided elsewhere)
+
+normalize:
+enabled: false
+method: “median”                  # “median” | “reference_series”
+reference_series_key: “ref_star_flux”
+
+Differential photometry (multi-aperture / comparison star support)
+
+differential:
+enabled: false
+# key in memory dict that contains comparison flux series [B] or [B,K]
+comparison_key: “photometry_comparison_flux”
+combine: “median”                 # “median” | “mean” | “weighted”
+
+What to save alongside the flux
+
+save:
+centroid_xy: true
+sky_level: true
+sky_sigma: true
+aperture_area_px: true
+psf_sigma_xy: true
+flags: true
+variance: true                    # if noise_model.enabled
+quality: true                     # QC bitfield / score
+
+——————————————————————————
+
+Flags & QC thresholds
+
+——————————————————————————
+
 flags:
-  # Flag frames with any of the following conditions
-  saturation:
-    enabled: true
-    threshold_adu: 60000.0
-  excessive_bkg:
-    enabled: true
-    max_sky_adu: 30000.0
-  off_center:
-    enabled: true
-    max_centroid_shift_px: 10.0   # from initial/nominal position
-  too_many_replaced:
-    enabled: true
-    max_replace_fraction: 0.05
+
+Flag frames with any of the following conditions
+
+saturation:
+enabled: true
+threshold_adu: 60000.0
+excessive_bkg:
+enabled: true
+max_sky_adu: 30000.0
+off_center:
+enabled: true
+max_centroid_shift_px: 10.0       # from initial/nominal or smoothed track
+too_many_replaced:
+enabled: true
+max_replace_fraction: 0.05
+low_snr:
+enabled: true
+min_snr: 3.0
 
 quality_checks:
-  enabled: true
-  sampling_fraction: 0.10
-  min_samples: 2
-  flux_stats:
-    # sanity on post-extraction series
-    median_range: [0.0, 1.0e12]
-    robust_std_max: 1.0e12
-  action_on_fail: "warn"           # "warn" | "error"
+enabled: true
+sampling_fraction: 0.10
+min_samples: 2
+flux_stats:
+# sanity on post-extraction series (broad bounds; tighten per dataset)
+median_range: [0.0, 1.0e12]
+robust_std_max: 1.0e12
+percentiles:
+enabled: true
+p_low: 1
+p_high: 99
+max_span_factor: 100.0            # p99 / max(p1, tiny) <= this
+action_on_fail: “warn”              # “warn” | “error”
 
-# ------------------------------------------------------------------------------
-# I/O routing for pipeline memory dict
-# ------------------------------------------------------------------------------
+——————————————————————————
+
+I/O routing for pipeline memory dict
+
+——————————————————————————
+
 io:
-  input_key: "cds_corrected"
-  # Output dict may contain:
-  #   photometry_flux       [B] or [B,C]
-  #   photometry_flux_var   [B] or [B,C] (if variance propagated)
-  #   photometry_centroid_x [B]
-  #   photometry_centroid_y [B]
-  #   photometry_sky        [B]
-  #   photometry_flags      [B] bitfield or int
-  output_key: "photometry"
+input_key: “cds_corrected”
 
-# ------------------------------------------------------------------------------
-# Caching & DVC
-# ------------------------------------------------------------------------------
+Output dict may contain:
+
+photometry_flux        [B] or [B,C]
+
+photometry_flux_var    [B] or [B,C] (if variance propagated)
+
+photometry_centroid_x  [B]
+
+photometry_centroid_y  [B]
+
+photometry_sky         [B]
+
+photometry_flags       [B] bitfield or int
+
+photometry_quality     [B] optional QC score/bitfield
+
+output_key: “photometry”
+
+——————————————————————————
+
+Caching & DVC
+
+——————————————————————————
+
 cache:
-  write_intermediate: true
-  out_dir: "${oc.env:RUN_DIR, runs}/calib/photometry"
-  dvc_stage_name: "calib_photometry"
+write_intermediate: true
+out_dir: “${oc.env:RUN_DIR, runs}/calib/photometry”
+dvc_stage_name: “calib_photometry”
+cache_key:
+instrument: “${instrument.name}”
+method: “${photometry.method}”
 
-# ------------------------------------------------------------------------------
-# Logging & runtime
-# ------------------------------------------------------------------------------
+——————————————————————————
+
+Logging & runtime
+
+——————————————————————————
+
 logging:
-  level: "INFO"                     # "DEBUG" | "INFO" | "WARNING" | "ERROR"
-  log_sample_stats: true
-  save_debug_images: false          # stamps of ROI, bkg model, aperture/PSF overlay
+level: “INFO”                       # “DEBUG” | “INFO” | “WARNING” | “ERROR”
+log_sample_stats: true
+save_debug_images: false            # stamps of ROI, bkg model, aperture/PSF overlay
 
 runtime:
-  num_workers: 2
-  seed: 1337
+num_workers: 2
+seed: 1337
+per_frame_budget_ms: 75             # soft guardrail for fast modes
 
-# ------------------------------------------------------------------------------
-# Validation (fail fast for missing/incompatible resources)
-# ------------------------------------------------------------------------------
+——————————————————————————
+
+Validation (fail fast for missing/incompatible resources)
+
+——————————————————————————
+
 validation:
-  require_existing_paths: true      # kernel/curves/trace/profile files must exist if used
-  check_shape_compatibility: true   # (C,H,W) compatibility with first batch
-  # Metadata keys that may be required by centroid/background methods (if used)
-  require_metadata_keys:
-    optional: []
+require_existing_paths: true        # kernel/curves/trace/profile files must exist if used
+check_shape_compatibility: true     # (C,H,W) compatibility with first batch
+check_centroid_roi_bounds: true
+
+Metadata keys that may be required by centroid/background methods (if used)
+
+require_metadata_keys:
+optional: []
+
+Ensure finite frames before measurement
+
+require_finite_inputs: true
+
+Require positive aperture radii / window sizes
+
+geometry_sanity: true
