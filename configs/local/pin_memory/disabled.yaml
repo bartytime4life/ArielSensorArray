@@ -1,0 +1,19 @@
+# ==============================================================================
+# 📌 Pin Memory — Disabled
+# ------------------------------------------------------------------------------
+# Purpose:
+#   • Use regular pageable host memory.
+#   • Lower RAM footprint; deterministic and safe for debugging.
+# ------------------------------------------------------------------------------
+# When to Use
+#   • ✅ CPU-only runs (no effect).
+#   • ✅ Low-RAM environments (avoid extra pinned allocations).
+# ==============================================================================
+
+pin_memory: false
+
+notes: |
+  Pin memory disabled:
+  • Safer in memory-constrained or CPU-only environments.
+  • Slightly slower GPU data transfers, but reproducible.
+  • Good default for CI or audit/debug runs.
