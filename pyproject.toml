@@ -13,7 +13,7 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry]
 name = "spectramindv50"
-version = "0.3.2"  # bump: tooling parity (88 cols), coverage paths fix, CI tune-ups
+version = "0.3.3"  # bump: stricter lint set, security tooling, filename templating, CI tune-ups
 description = "SpectraMind V50: Neuro-symbolic, physics-informed exoplanet spectroscopy with Typer CLI, Hydra configs, DVC, diagnostics, CI, and Kaggle-ready runtime."
 readme = "README.md"
 license = "Apache-2.0"
@@ -58,6 +58,7 @@ packages = [
 # Entrypoints: primary CLI is `spectramind`
 [tool.poetry.scripts]
 spectramind = "spectramind:app"
+smind = "spectramind:app"  # convenience alias
 
 [tool.poetry.dependencies]
 # Python runtime policy (Kaggle/CI-safe; keep <3.13 for torch/geometric ecosystem)
@@ -132,6 +133,8 @@ types-requests = "2.32.0.20240712"
 nbqa = "1.9.1"
 nbstripout = "0.7.1"
 yamllint = "1.35.1"
+bandit = "1.7.9"
+codespell = "2.3.0"
 
 [tool.poetry.group.viz.dependencies]
 altair = "5.3.0"
@@ -227,17 +230,24 @@ src = ["src", "tests"]
 extend-exclude = ["data", "outputs", "logs", "docs", "notebooks"]
 
 [tool.ruff.lint]
+# Broader, production-ready rule-set: enables security, complexity, and best-practice checks.
 select = [
-  "E", "F", "I", "UP", "B", "C4", "SIM", "D", "N"
+  "E", "F", "I", "UP", "B", "C4", "SIM", "D", "N", "S", "ARG", "PL", "TRY", "RET", "ERA"
 ]
 ignore = [
   "D100","D101","D102","D103","D104","D105","D107",
 ]
-per-file-ignores = { "tests/**" = ["S101","D"], "notebooks/**" = ["E402","F401","D"] }
+per-file-ignores = {
+  "tests/**" = ["S101","D"],
+  "notebooks/**" = ["E402","F401","D"]
+}
 
 [tool.ruff.lint.isort]
 profile = "black"
 known-first-party = ["spectramind", "asa"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
 
 [tool.ruff.format]
 quote-style = "preserve"
@@ -278,6 +288,11 @@ addopts = ["--nbqa-mutate"]
 minversion = "7.0"
 addopts = "-ra --maxfail=5 --strict-markers"
 testpaths = ["tests"]
+markers = [
+  "slow: may take several minutes",
+  "gpu: requires CUDA-capable GPU",
+  "integration: covers multiple subsystems"
+]
 log_cli = true
 log_cli_level = "INFO"
 log_file = "logs/test.log"
@@ -302,6 +317,9 @@ skip_covered = true
 fail_under = 80
 precision = 2
 
+[tool.coverage.xml]
+output = "coverage.xml"
+
 [tool.coverage.paths]
 source = [
   "src",
@@ -317,8 +335,9 @@ ignore_missing_imports = true
 pretty = true
 plugins = ["pydantic.mypy"]
 
-[tool.mypy.plugins.django-stubs]
-django_settings_module = "spectramind.settings"
+[tool.bandit]
+skips = ["B101"]  # allow assert in tests; security checks run via pre-commit
+exclude = ["tests", "docs", "notebooks"]
 
 # ==============================================================================
 # Poetry build tweaks
