@@ -1,0 +1,83 @@
+name: Mermaid Diagram Export
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "diagrams/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".svgo.json"
+      - ".github/workflows/diag-export.yml"
+  push:
+    branches:
+      - main
+      - develop
+      - "feature/**"
+    paths:
+      - "diagrams/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".svgo.json"
+      - ".github/workflows/diag-export.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: diag-export-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mermaid-diagram-export:
+    name: Build & Upload Mermaid Diagrams
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci --no-audit --no-fund
+          else
+            npm i --no-audit --no-fund
+          fi
+
+      - name: Show mermaid-cli version
+        run: npx mmdc -V
+
+      - name: Build diagrams (SVG/PNG/PDF) + optimize
+        env:
+          # Optional: control Chromium download mirror if you have corporate proxies.
+          PUPPETEER_SKIP_DOWNLOAD: "false"
+        run: |
+          npm run build
+          test -d outputs/diagrams && ls -la outputs/diagrams || (echo "No diagrams produced." && exit 1)
+
+      - name: Upload diagrams artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mermaid-diagrams-${{ github.sha }}
+          path: outputs/diagrams
+          if-no-files-found: error
+          retention-days: 7
+
+      # Optional: fail if repo includes committed exports and they diverge
+      # - name: Check for uncommitted changes (exports drift)
+      #   run: |
+      #     if ! git diff --quiet; then
+      #       echo "::error::Generated outputs differ from committed files. Run 'npm run build' and commit."
+      #       git status --porcelain
+      #       exit 1
+      #     fi
