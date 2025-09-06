@@ -1,9 +1,18 @@
 {
   "name": "spectramind-v50-mermaid-export",
-  "version": "2.1.1",
-  "description": "Mermaid diagram rendering/export utilities for SpectraMind V50 (NeurIPS 2025 Ariel Data Challenge).",
+  "version": "2.1.2",  
+  "description": "Mermaid diagram rendering/export utilities for SpectraMind V50 (NeurIPS 2025 Ariel Data Challenge). CLI-first, reproducible exports (SVG, PNG, PDF) with CI/Kaggle-safe guardrails.",
   "private": true,
   "type": "module",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/bartytime4life/SpectraMindV50",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bartytime4life/SpectraMindV50.git"
+  },
+  "bugs": {
+    "url": "https://github.com/bartytime4life/SpectraMindV50/issues"
+  },
   "engines": {
     "node": ">=20.10",
     "npm": ">=10"
@@ -37,7 +46,7 @@
     "svgo": "^3.3.2"
   },
   "prettier": {
-    "printWidth": 100,
+    "printWidth": 88,
     "singleQuote": true,
     "proseWrap": "always"
   }
