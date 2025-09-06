@@ -1,4 +1,3 @@
-```yaml
 # configs/train.yaml
 # ==============================================================================
 # 🛰️ SpectraMind V50 — Training Configuration (Hydra-safe, Kaggle/CI-ready)
@@ -24,34 +23,38 @@
 # ----------------------------------------------------------------------
 defaults:
   # Environment/hardware/precision/seed
-  - local: default                 # environment (paths, workers, etc.)
-  - local/devices: kaggle_t4       # {cpu|single_gpu|multi_gpu|kaggle_t4|kaggle_a10|kaggle_l4|hpc_a100}
-  - local/precision: 16-mixed      # {32|16-mixed|bf16-mixed|64}
-  - local/seed: default            # {default|fast|random|kaggle}
-  - local/prefetch_factor: default # {default|fast|debug|heavy}
+  - local: default                      # environment (paths, workers, etc.)
+  - local/devices: kaggle_t4            # {cpu|single_gpu|multi_gpu|kaggle_t4|kaggle_a10|kaggle_l4|hpc_a100}
+  - local/precision: 16-mixed           # {32|16-mixed|bf16-mixed|64}
+  - local/seed: default                 # {default|fast|random|kaggle}
+  - local/prefetch_factor: default      # {default|fast|debug|heavy}
 
   # Per-stage DataLoader policies (persistent_workers)
-  - local/persistent_workers: train                 # applies to training loader
-  - local/persistent_workers@val_loader: val        # applies to validation loader
-  - local/persistent_workers@test_loader: test      # applies to test/inference loader
+  - local/persistent_workers: train
+  - local/persistent_workers@val_loader: val
+  - local/persistent_workers@test_loader: test
 
   # Per-stage gradient accumulation policies
-  - local/accumulate_grad_batches: train                 # applies to training
-  - local/accumulate_grad_batches@val_loader: val        # (no-op; symmetry)
-  - local/accumulate_grad_batches@test_loader: test      # (no-op; symmetry)
+  - local/accumulate_grad_batches: train
+  - local/accumulate_grad_batches@val_loader: val         # (no-op; symmetry)
+  - local/accumulate_grad_batches@test_loader: test       # (no-op; symmetry)
 
   # Core pipeline groups
-  - data: nominal                  # data/{nominal|kaggle|debug}.yaml
-  - model: v50                     # model architecture & heads (FGS1+AIRS fusion)
-  - model/decoder: decoder         # unified μ/σ decoder config
-  - optimizer: adamw               # optimizer/{adam|adamw|sgd}.yaml
-  - loss: gll                      # loss stack; add smoothness/symbolic below
+  - data: nominal                     # data/{nominal|kaggle|debug}.yaml
+  - model: v50                        # model architecture & heads (FGS1+AIRS fusion)
+  - model/decoder: decoder            # unified μ/σ decoder config
+  - optimizer: adamw                  # optimizer/{adam|adamw|sgd}.yaml
+  - loss: gll                         # loss stack; add smoothness/symbolic below
   - loss: smoothness
   - loss: symbolic
-  - trainer: kaggle_safe           # device/loop knobs (Kaggle-safe baseline)
-  - logger: tensorboard            # lightweight logging by default
-  # - logger: mlflow               # enable if desired
-  # - logger: wandb                # enable if desired
+  - trainer: kaggle_safe              # device/loop knobs (Kaggle-safe baseline)
+
+  # Logging
+  - logger: tensorboard               # lightweight logging by default
+  # - logger: mlflow
+  # - logger: wandb
+
+  # Hydra logging
   - override hydra/job_logging: default
   - override hydra/hydra_logging: default
   - _self_
@@ -63,9 +66,9 @@ experiment:
   name: "v50_train"
   tag: "baseline"
   description: "V50 baseline: FGS1-Mamba + AIRS-GNN, GLL loss + optional priors"
-  seed: ${seed}                    # reflect selected seed profile
-  deterministic: ${deterministic}  # sourced from seed/precision profiles
-  cudnn_benchmark: ${cudnn_benchmark}
+  seed: ${seed}                        # from local/seed profile
+  deterministic: ${deterministic}      # from local/seed/precision profiles
+  cudnn_benchmark: ${cudnn_benchmark}  # from local/precision profile
 
 # ----------------------------------------------------------------------
 # Hydra run/sweep directories and behavior
@@ -86,17 +89,26 @@ hydra:
 # (Precision/AMP are controlled via `local/precision=*` defaults above)
 # ----------------------------------------------------------------------
 training:
-  epochs: 20                         # bump for leaderboard training
+  epochs: 20                             # bump for leaderboard training
   resume: false
-  resume_ckpt: null                  # path to checkpoint to resume
+  resume_ckpt: null                      # path to checkpoint to resume
+
+  # Lightning-style: we surface both for clarity; CLI honors this value.
   gradient_accumulation_steps: ${accumulate_grad_batches}
   grad_clip_norm: 1.0
+  grad_checkpointing: false              # model.enable_gradient_checkpointing() if supported
 
   # fast-dev toggles (for CI/smoke)
-  limit_train_batches: null          # e.g., 0.2 for 20% of the data
+  limit_train_batches: null              # e.g., 0.2 for 20% of the data
   limit_val_batches: null
   limit_test_batches: null
   num_sanity_val_steps: 0
+
+  # AMP/autocast guardrails (mirrors local/precision; override only if needed)
+  autocast:
+    enabled: true
+    dtype: "fp16"                        # "fp16"|"bf16" (must match precision profile)
+    cache_enabled: true
 
 # ----------------------------------------------------------------------
 # Data loader knobs (can be overridden by data/*.yaml)
@@ -106,10 +118,10 @@ data:
   eval_batch_size: 64
   num_workers: 4
   pin_memory: true
-  prefetch_factor: ${prefetch_factor}            # wired to local/prefetch_factor group
+  prefetch_factor: ${prefetch_factor}            # from local/prefetch_factor group
   persistent_workers: ${persistent_workers}      # from local/persistent_workers=train
 
-# Note:
+# Notes:
 # • `persistent_workers` only has effect when `num_workers > 0`.
 # • For GPU, pair with `pin_memory: true` for optimal H2D transfer throughput.
 # • Effective batch size = batch_size * gradient_accumulation_steps.
@@ -124,28 +136,30 @@ optimizer:
   eps: 1.0e-8
 
 scheduler:
-  name: "cosine"                 # "none"|"cosine"|"onecycle"
+  name: "cosine"                         # "none"|"cosine"|"onecycle"
   warmup_steps: 500
   min_lr: 1.0e-6
+  # Epoch-aware fallback for short runs (set one of the two)
+  warmup_epochs: null
 
 # ----------------------------------------------------------------------
 # Loss weights (physics/symbolic regularization)
 # ----------------------------------------------------------------------
 loss:
   gll:
-    weight: 1.0                  # primary task loss (μ,σ via Gaussian LL)
+    weight: 1.0                          # primary task loss (μ,σ via Gaussian LL)
   smoothness:
-    weight: 0.0                  # set >0 to encourage spectral smoothness
+    weight: 0.0                          # set >0 to encourage spectral smoothness
     l2_lambda: 1.0
   symbolic:
-    weight: 0.0                  # set >0 to enforce rule-based priors
-    mode: "soft"                 # "soft"|"hard"
+    weight: 0.0                          # set >0 to enforce rule-based priors
+    mode: "soft"                         # "soft"|"hard"
 
 # ----------------------------------------------------------------------
 # Uncertainty (train-time hooks; post-hoc calibration may run after train)
 # ----------------------------------------------------------------------
 uncertainty:
-  enable_sigma_head: true        # predict per-bin σ (aleatoric)
+  enable_sigma_head: true                # predict per-bin σ (aleatoric)
   epistemic:
     mc_dropout:
       enabled: false
@@ -158,7 +172,7 @@ uncertainty:
       enabled: false
       T: 1.0
     corel:
-      enabled: false             # joint, graph-aware calibration post-train
+      enabled: false                     # joint, graph-aware calibration post-train
       coverage: 0.9
       weight: 0.005
 
@@ -167,6 +181,7 @@ uncertainty:
 # ----------------------------------------------------------------------
 checkpoint:
   dir: "artifacts/checkpoints/${experiment.name}"
+  filename: "epoch={epoch:03d}-step={step}-val_gll={val/gll:.6f}"
   save_top_k: 2
   monitor: "val/gll"
   mode: "min"
@@ -184,14 +199,14 @@ early_stopping:
 # Evaluation & metrics
 # ----------------------------------------------------------------------
 eval:
-  frequency: 1                     # evaluate every N epochs
+  frequency: 1                           # evaluate every N epochs
   metrics:
-    - "gll"                        # Gaussian Log-Likelihood
+    - "gll"                              # Gaussian Log-Likelihood
     - "rmse"
     - "mae"
-    - "calibration/error_vs_sigma" # σ-vs-residual diagnostic
+    - "calibration/error_vs_sigma"       # σ-vs-residual diagnostic
   num_workers: ${data.num_workers}
-  persistent_workers: ${val_loader.persistent_workers}  # from local/persistent_workers@val_loader
+  persistent_workers: ${val_loader.persistent_workers}      # from local/persistent_workers@val_loader
   gradient_accumulation_steps: ${val_loader.accumulate_grad_batches}  # informational (no-op)
 
 # ----------------------------------------------------------------------
@@ -199,7 +214,7 @@ eval:
 # ----------------------------------------------------------------------
 test:
   num_workers: ${data.num_workers}
-  persistent_workers: ${test_loader.persistent_workers}    # from local/persistent_workers@test_loader
+  persistent_workers: ${test_loader.persistent_workers}     # from local/persistent_workers@test_loader
   gradient_accumulation_steps: ${test_loader.accumulate_grad_batches} # informational (no-op)
 
 # ----------------------------------------------------------------------
@@ -207,14 +222,14 @@ test:
 # ----------------------------------------------------------------------
 diagnostics:
   output_dir: "outputs/diagnostics/train"
-  html_report: false               # keep false on Kaggle; enable locally
+  html_report: false                     # keep false on Kaggle; enable locally
   plots:
     loss_curves: true
     spectra_examples: true
     fft_power: false
     zscore_hist: true
   explainability:
-    shap_overlay: false            # heavy on Kaggle; toggle as needed
+    shap_overlay: false                  # heavy on Kaggle; toggle as needed
     symbolic_overlay: false
     umap: false
     tsne: false
@@ -227,6 +242,7 @@ logger:
   tensorboard:
     enabled: true
     log_dir: "logs/${experiment.name}"
+    flush_secs: 30
   mlflow:
     enabled: false
     tracking_uri: null
@@ -239,21 +255,25 @@ logger:
 # Runtime guardrails (Kaggle/CI)
 # ----------------------------------------------------------------------
 runtime:
-  kaggle_safe: true            # disables heavy viz and I/O patterns automatically
+  kaggle_safe: true                # disables heavy viz and I/O patterns automatically
   max_hours: 9
-  device: "auto"               # "cuda"|"cpu"|"auto"
+  device: "auto"                   # "cuda"|"cpu"|"auto"
   find_unused_parameters: false
   cudnn_allow_tf32: true
   torch_compile:
-    enabled: false             # enable if stable with current model/PyTorch version
+    enabled: false                 # enable if stable with current model/PyTorch version
     mode: "default"
-  fail_fast: false             # set true in CI to abort early on failure
+  fail_fast: false                 # set true in CI to abort early on failure
+  profiler:
+    enabled: false                 # set true locally to profile; auto-disables on Kaggle/CI
+    schedule: "simple"             # "simple"|"advanced"
+    output_dir: "outputs/profiling/${experiment.name}"
 
 # ----------------------------------------------------------------------
 # Inter-config hooks (shared values or convenience)
 # ----------------------------------------------------------------------
 data_interface:
-  num_classes: 283             # number of spectral bins (AIRS output)
+  num_classes: 283                 # number of spectral bins (AIRS output)
   output_dir: "${hydra.run.dir}"
 
 # ----------------------------------------------------------------------
@@ -262,10 +282,10 @@ data_interface:
 selftest:
   enabled: true
   checks:
-    - "paths_exist"            # verify critical paths exist (raw/cals/templates)
-    - "dvc_tracked"            # verify DVC pointers for large artifacts
-    - "config_hash_log"        # write config hash to v50_debug_log.md
-    - "dry_run_ok"             # pipeline can initialize in dry-run
+    - "paths_exist"                # verify critical paths exist (raw/cals/templates)
+    - "dvc_tracked"                # verify DVC pointers for large artifacts
+    - "config_hash_log"            # write config hash to v50_debug_log.md
+    - "dry_run_ok"                 # pipeline can initialize in dry-run
 
 # ----------------------------------------------------------------------
 # CLI-side quality-of-life (read by spectramind CLI)
@@ -292,5 +312,5 @@ cli:
 #      diagnostics.html_report=false local/accumulate_grad_batches=train@accumulate_grad_batches=1
 #  • `persistent_workers` only applies when `num_workers > 0`.
 #  • Effective LR tip: effective_lr = optimizer.lr * training.gradient_accumulation_steps.
+#  • Filename template in `checkpoint.filename` includes epoch/step/val_gll for quick triage.
 # ----------------------------------------------------------------------
-```
